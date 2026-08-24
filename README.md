@@ -14,6 +14,7 @@ The durable asset is the **settlement rail underneath every app**: **Mint** (a f
 | **vend** | Stripe-meets-OpenRouter: resellable metered AI SDK on the rail. | needs crash reaper |
 | **abacus** | Inline proxy enforcing hard, receipted per-agent spend budgets (kill-switch). | single-process |
 | **turnstile** | Drop-in agent paywall middleware ("Stripe for AI agents"). | engine solid, SDK thin |
+| **context-passport** | **Character Lock Passport** — provider-agnostic locked character/brand/personalization identity, resolved to any AI provider via Relay for consistent generation. | vision (see apps/context-passport/VISION.md) |
 | **ledgerline** | Gross-margin lens: revenue + provider COGS on one Mint-backed ledger. | non-atomic settle |
 
 ## Consumed by
