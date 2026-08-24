@@ -15,7 +15,6 @@ The durable asset is the **settlement rail underneath every app**: **Mint** (a f
 | **abacus** | Inline proxy enforcing hard, receipted per-agent spend budgets (kill-switch). | single-process |
 | **turnstile** | Drop-in agent paywall middleware ("Stripe for AI agents"). | engine solid, SDK thin |
 | **ledgerline** | Gross-margin lens: revenue + provider COGS on one Mint-backed ledger. | non-atomic settle |
-| **prism-media-gateway** | OpenAI-shaped media (image/video) generation gateway. | ⚠ see DECOUPLING below |
 
 ## Consumed by
 Menivor (`../videogen`) and other products call Railyard over HTTP + shared contract packages — they do **not** own it.
