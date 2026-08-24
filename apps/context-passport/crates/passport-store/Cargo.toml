@@ -1,0 +1,15 @@
+[package]
+name = "passport-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "In-memory PassportStore + ProvenanceLog for tests and embedded demos."
+
+[dependencies]
+passport-core = { workspace = true }
+passport-provenance = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+chrono = { workspace = true }

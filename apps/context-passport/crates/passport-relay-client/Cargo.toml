@@ -1,0 +1,12 @@
+[package]
+name = "passport-relay-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Real reqwest client implementing RelayConditioningSink: submits resolved conditioning to the Relay gateway for generation."
+
+[dependencies]
+passport-core = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }

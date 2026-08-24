@@ -1,24 +1,60 @@
-[package]
-name = "context-passport"
+# Character Lock Passport — standalone cargo workspace.
+#
+# Deliberately NOT a member of the repo-root workspace (the root excludes
+# apps/context-passport) so it never enters the desktop GPUI/Metal build graph.
+# Build and test only from here: `cd apps/context-passport && cargo test`.
+#
+# House rules (shared with apps/mint, apps/vend):
+#   1. sqlx uses the RUNTIME query API only (`sqlx::query` + `.bind`), never the
+#      `query!` macros, so every store crate compiles with no `DATABASE_URL`.
+#   2. All HTTP to sibling services (Relay, Mint) goes through injectable
+#      transport TRAITS declared in passport-core, faked in tests.
+
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Character Lock Passport: versioned, lockable character/brand/persona identity resolved into provider-specific conditioning"
 
-# Standalone by design: never enter the root desktop GPUI/Metal build graph.
-[workspace]
+[workspace.dependencies]
+# ---- internal crates (path deps declared once, referenced as { workspace = true }) ----
+passport-core = { path = "crates/passport-core" }
+passport-resolve = { path = "crates/passport-resolve" }
+passport-provenance = { path = "crates/passport-provenance" }
+passport-store = { path = "crates/passport-store" }
+passport-store-postgres = { path = "crates/passport-store-postgres" }
+passport-relay-client = { path = "crates/passport-relay-client" }
+passport-mint-client = { path = "crates/passport-mint-client" }
+passport-testkit = { path = "crates/passport-testkit" }
 
-[[bin]]
-name = "context-passport-server"
-path = "src/main.rs"
-
-[dependencies]
-anyhow = "1"
-async-trait = "0.1"
-axum = "0.7"
-chrono = { version = "0.4", features = ["serde", "clock"] }
+# ---- serde / domain ----
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+thiserror = "2"
+sha2 = "0.10"
+hex = "0.4"
+
+# ---- async runtime ----
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3"
+
+# ---- HTTP server stack ----
+axum = "0.7"
+tower-http = { version = "0.6", features = ["trace"] }
+subtle = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+
+# ---- HTTP clients (to Relay / Mint) ----
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# ---- sqlx (runtime API only) ----
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls",
@@ -28,12 +64,6 @@ sqlx = { version = "0.8", default-features = false, features = [
     "chrono",
     "json",
 ] }
-subtle = "2"
-thiserror = "2"
-tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["trace"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-[dev-dependencies]
+# ---- test-only ----
 tower = { version = "0.5", features = ["util"] }
