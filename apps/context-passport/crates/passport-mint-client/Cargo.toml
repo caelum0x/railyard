@@ -1,0 +1,12 @@
+[package]
+name = "passport-mint-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Real reqwest client implementing MintMeter: settles passport-conditioned generations on the Mint ledger (success-only)."
+
+[dependencies]
+passport-core = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }

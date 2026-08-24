@@ -1,0 +1,34 @@
+[package]
+name = "passport-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Character Lock Passport axum API + service: create/edit/lock/version, resolve, and generate-AS-passport wiring Relay + provenance + Mint."
+
+[[bin]]
+name = "context-passport-server"
+path = "src/main.rs"
+
+[dependencies]
+passport-core = { workspace = true }
+passport-resolve = { workspace = true }
+passport-provenance = { workspace = true }
+passport-store = { workspace = true }
+passport-store-postgres = { workspace = true }
+passport-relay-client = { workspace = true }
+passport-mint-client = { workspace = true }
+
+axum = { workspace = true }
+tower-http = { workspace = true }
+subtle = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+passport-testkit = { workspace = true }
+tower = { workspace = true }

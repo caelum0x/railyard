@@ -1,0 +1,15 @@
+[package]
+name = "passport-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Character Lock Passport domain kernel: typed identity, versioning/lock invariants, integrity digest, and injectable ports. No I/O."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }

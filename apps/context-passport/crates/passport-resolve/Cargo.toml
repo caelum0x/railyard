@@ -1,0 +1,14 @@
+[package]
+name = "passport-resolve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Resolve a locked passport version into provider-specific conditioning: modality mappings + a capability-routed provider adapter registry."
+
+[dependencies]
+passport-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }
