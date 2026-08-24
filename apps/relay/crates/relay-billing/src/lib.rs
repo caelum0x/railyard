@@ -14,8 +14,13 @@
 //!   Postgres/ClickHouse-backed impl behind the same trait.
 //! * [`ledger`] — the [`Ledger`] reserve -> settle/release engine (ADR-0002:
 //!   success-only; settle is the ONLY debit path; failure nets exactly zero).
+//! * [`pricing`] / [`catalog`] — the per-model [`PriceTable`] and the real
+//!   provider list-price [`catalog`] that seeds it (integer micro-USD per token),
+//!   so each model is billed at its own rate with a conservative default
+//!   fallback — never one flat rate for every model.
 
 pub mod backend;
+pub mod catalog;
 pub mod domain;
 pub mod error;
 pub mod ledger;
@@ -27,6 +32,7 @@ pub mod usage;
 
 // Flat re-exports for ergonomic downstream `use relay_billing::...`.
 pub use backend::BillingLedger;
+pub use catalog::price_table as catalog_price_table;
 pub use domain::{AccountId, ChatMessage, JobId, KeyId, ModelId, Role, OPENROUTER_PREFIX};
 pub use error::{BillingError, ProviderError, RelayError, Result};
 pub use ledger::{cost_micros, Ledger, Reservation};

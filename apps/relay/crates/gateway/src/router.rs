@@ -79,10 +79,14 @@ pub async fn build_axum_router(
     // explicitly disable billing for local gateway development.
     if crate::billing::billing_enabled() {
         let ledger: Arc<dyn relay_billing::BillingLedger> = build_billing_ledger()?;
-        // Model-aware pricing: a per-model price table with a safe default rate
-        // for models absent from the table. Per-model rates are populated from
-        // provider config later.
-        let prices = Arc::new(relay_billing::PriceTable::new(
+        // Model-aware pricing: a per-model price table seeded from the real
+        // provider list-price catalog (`relay_billing::catalog`), so each model is
+        // billed at its own accurate per-token micro-USD rate. Any model not in
+        // the catalog falls back to the conservative safe default — never one flat
+        // rate for every model.
+        // NOTE: `relay-hedge` is a separate workspace crate and is NOT wired into
+        // the request path yet (no dependent crate); integrating it is out of scope.
+        let prices = Arc::new(relay_billing::catalog_price_table(
             crate::billing::default_model_price(),
         ));
         let payee = std::env::var("RELAY_AITP_PAYEE")

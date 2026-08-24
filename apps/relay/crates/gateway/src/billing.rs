@@ -579,13 +579,15 @@ async fn buffer_request_model(request: Request) -> (Request, ModelId) {
 
 /// Whether the success-only billing layer should be wired into the router.
 ///
-/// The [`Ledger`] is currently backed by an in-memory, per-process, UNFUNDED
-/// [`relay_billing::InMemoryStore`]: enabling it against that store rejects every
-/// authenticated inference request with `402 Payment Required` (there is no
-/// deposit path yet) and loses all holds on restart, and each replica keeps an
-/// independent balance. Billing is therefore OFF by default and must be
-/// explicitly opted into via `RELAY_BILLING_ENABLED=1|true|yes` — intended only
-/// once a durable, funded `Store` impl is wired behind the same `Ledger` seam.
+/// Billing is OFF by default and must be explicitly opted into via
+/// `RELAY_BILLING_ENABLED=1|true|yes`. When enabled, the router wires a real,
+/// mint-server-backed [`relay_billing::MintLedger`] (see
+/// `router.rs::build_billing_ledger`) that places holds, captures the exact
+/// actual cost, and releases against a durable, funded ledger over HTTP — NOT
+/// the in-memory `InMemoryStore` (that store is only used in tests). Enabling
+/// billing is fail-closed: it requires `MINT_SERVER_URL`, `MINT_API_KEY`, and
+/// `MINT_PAYEE_ACCOUNT`, and startup aborts with a config error if any is
+/// missing, so billing is never silently run against an unconfigured backend.
 pub fn billing_enabled() -> bool {
     matches!(
         std::env::var("RELAY_BILLING_ENABLED")
@@ -687,11 +689,11 @@ mod tests {
     use axum::Router;
     use axum::middleware as axum_middleware;
     use axum::routing::post;
+    use relay_billing::MintLedger;
+    use relay_billing::mint::fake::FakeMint;
     use relay_billing::{
         InMemoryStore, Ledger, LedgerEntry, LedgerKind, LedgerStore, ModelPrice, PriceTable,
     };
-    use relay_billing::mint::fake::FakeMint;
-    use relay_billing::MintLedger;
     use tensorzero_auth::key::TensorZeroApiKey;
     use tensorzero_auth::middleware::RequestApiKeyExtension;
     use tensorzero_auth::postgres::KeyInfo;
