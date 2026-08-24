@@ -428,6 +428,21 @@ mod tests {
     }
 
     #[test]
+    fn hold_reaper_candidate_selection_is_ttl_bounded_pending_and_capture_safe() {
+        // The hold-reaper (vend-reconcile `--reap-holds`) selects its orphaned
+        // candidates through LEASE_ATTACHED_SQL. Assert the safety invariants the
+        // reaper relies on so a captured or fresh hold can never be leased for
+        // release: (a) TTL bound via `created_at < $1`, (b) still `pending`,
+        // (c) fail-closed payout signal, plus a crash-expiring lease.
+        assert!(LEASE_ATTACHED_SQL.contains("u.created_at < $1")); // (a) past TTL
+        assert!(LEASE_ATTACHED_SQL.contains("outcome = 'pending'")); // (b) pending
+        assert!(LEASE_ATTACHED_SQL.contains("hold_id <> ''")); // has a Mint hold
+        assert!(LEASE_ATTACHED_SQL.contains("payout_started")); // (c) fail-closed
+        assert!(LEASE_ATTACHED_SQL.contains("reconcile_lease_until < now()"));
+        assert!(LEASE_ATTACHED_SQL.contains("FOR UPDATE OF u SKIP LOCKED"));
+    }
+
+    #[test]
     fn captured_recovery_record_has_terminal_replay_shape() {
         let charge_id = ChargeId::generate();
         let raw = captured_recovery_replay("request-hash", &charge_id, 700, 1_000);
