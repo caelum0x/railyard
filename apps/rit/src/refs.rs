@@ -153,11 +153,7 @@ fn parse_ref_content(content: &str) -> Result<RefTarget> {
 }
 
 /// Recursively collect loose refs under `dir`, keyed by full ref name.
-fn collect_loose(
-    root: &Path,
-    dir: &Path,
-    out: &mut HashMap<String, ObjectId>,
-) -> Result<()> {
+fn collect_loose(root: &Path, dir: &Path, out: &mut HashMap<String, ObjectId>) -> Result<()> {
     let read_dir = match std::fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(_) => return Ok(()),

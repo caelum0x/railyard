@@ -63,6 +63,13 @@ pub enum ForgeError {
     /// zlib decompression of a loose object failed or exceeded the size cap.
     #[error("decompression failed: {0}")]
     Decompress(String),
+
+    /// A packfile could not be opened or an object could not be decoded from a
+    /// pack (corrupt pack, broken delta chain, or an error surfaced by the
+    /// gitoxide `gix-pack`/`gix-odb` engine). Repository data is adversarial, so
+    /// pack decode errors fail **closed** as a typed error rather than a panic.
+    #[error("packfile error: {0}")]
+    Pack(String),
 }
 
 impl ForgeError {

@@ -80,14 +80,20 @@ mod tests {
 
     #[test]
     fn parses_standard_signature() {
-        let sig = Signature::parse("Alice Example <alice@example.com> 1700000000 +0100", "commit")
-            .unwrap();
+        let sig = Signature::parse(
+            "Alice Example <alice@example.com> 1700000000 +0100",
+            "commit",
+        )
+        .unwrap();
         assert_eq!(sig.name, "Alice Example");
         assert_eq!(sig.email, "alice@example.com");
         assert_eq!(sig.time, 1700000000);
         assert_eq!(sig.tz, "+0100");
         // raw preserved for byte-exact re-serialization
-        assert_eq!(sig.to_raw(), "Alice Example <alice@example.com> 1700000000 +0100");
+        assert_eq!(
+            sig.to_raw(),
+            "Alice Example <alice@example.com> 1700000000 +0100"
+        );
     }
 
     #[test]

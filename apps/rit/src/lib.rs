@@ -15,6 +15,12 @@
 //!   loose object kinds with byte-exact serialization.
 //! - [`odb`] — the loose object database under `.git/objects/xx/...` with zlib
 //!   compression and read-time SHA-1 verification.
+//! - [`pack`] — **packed** object reads, adopted from **gitoxide** (`gix-odb` /
+//!   `gix-pack`): objects living in `.git/objects/pack/*.pack` are resolved
+//!   (including delta chains) through the same [`Object`]/[`Repository`] API, so
+//!   callers get one interface over loose **or** packed objects. This is the
+//!   OSS-fork strategy — the highest-cost from-scratch subsystem is reused, not
+//!   rewritten, while `rit` keeps ownership of the loose path.
 //! - [`refs`] — `HEAD`, loose refs, symbolic refs, and `packed-refs`.
 //! - [`repo`] — the porcelain-ish [`Repository`] API: `hash-object`, `cat-file`,
 //!   `rev-parse`, tree/commit traversal, and `log`.
@@ -27,9 +33,10 @@
 //!
 //! ## Deferred (per PLAN)
 //!
-//! Packfiles/delta resolution, the index/worktree, the smart wire protocol,
-//! merge/rebase, SHA-256 repositories, SHA-1 collision detection (sha1dc), and
-//! the entire forge layer are out of scope for this slice.
+//! The index/worktree, the smart wire protocol, merge/rebase, SHA-256
+//! repositories, SHA-1 collision detection (sha1dc), and the entire forge layer
+//! are out of scope for this slice. Packfile **reads** are now covered by
+//! adopting gitoxide (see [`pack`]); pack **writing** remains deferred.
 
 pub mod blob;
 pub mod commit;
@@ -38,6 +45,7 @@ pub mod headers;
 pub mod object;
 pub mod odb;
 pub mod oid;
+pub mod pack;
 pub mod refs;
 pub mod repo;
 pub mod signature;
@@ -50,6 +58,7 @@ pub use error::{ForgeError, Result};
 pub use object::{hash_content, parse_loose, Object, ObjectType};
 pub use odb::Odb;
 pub use oid::ObjectId;
+pub use pack::PackStore;
 pub use refs::{RefTarget, Refs};
 pub use repo::Repository;
 pub use signature::Signature;
