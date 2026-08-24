@@ -108,6 +108,9 @@ mod tests {
         assert_eq!(block.headers[0].key, "gpgsig");
         assert_eq!(block.headers[0].value, b"line1\nline2\nline3");
         // round-trips back to the on-disk continuation form
-        assert_eq!(serialize_value(&block.headers[0].value), b"line1\n line2\n line3");
+        assert_eq!(
+            serialize_value(&block.headers[0].value),
+            b"line1\n line2\n line3"
+        );
     }
 }

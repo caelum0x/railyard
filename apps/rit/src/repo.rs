@@ -33,11 +33,7 @@ impl Repository {
         }
         let odb = Odb::new(&git_dir);
         let refs = Refs::new(&git_dir);
-        Ok(Self {
-            git_dir,
-            odb,
-            refs,
-        })
+        Ok(Self { git_dir, odb, refs })
     }
 
     /// Discover a repository by walking up from `start` looking for `.git`.

@@ -8,6 +8,7 @@
 use crate::error::{ForgeError, Result};
 use crate::object::{self, Object, ObjectType, MAX_OBJECT_SIZE};
 use crate::oid::ObjectId;
+use crate::pack::PackStore;
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
@@ -15,17 +16,29 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// A loose object database rooted at a `.git/objects` directory.
+/// The object database rooted at a `.git/objects` directory.
+///
+/// `rit` owns the **loose** path (write + verified read of `objects/xx/<rest>`),
+/// while the **packed** path is delegated to gitoxide via an optional
+/// [`PackStore`]. Reads try loose first (the `rit` code), then fall back to
+/// packs (gitoxide), so every consumer sees one unified object interface.
 pub struct Odb {
     objects_dir: PathBuf,
+    /// Packed-object reader (gitoxide). `None` only if the store could not be
+    /// opened at all; a missing/empty pack directory still yields a working
+    /// store that simply never finds anything.
+    pack: Option<PackStore>,
 }
 
 impl Odb {
     /// Open the object database inside a `.git` directory.
     pub fn new(git_dir: &Path) -> Self {
-        Self {
-            objects_dir: git_dir.join("objects"),
-        }
+        let objects_dir = git_dir.join("objects");
+        // Opening the gitoxide store is cheap (indices load lazily). If it fails
+        // we simply have no packed fallback; the loose path still works, and any
+        // genuinely corrupt pack surfaces as a typed error at read time.
+        let pack = PackStore::open(&objects_dir).ok();
+        Self { objects_dir, pack }
     }
 
     /// The on-disk path for an object (`objects/xx/<rest>`).
@@ -35,9 +48,9 @@ impl Odb {
             .join(oid.file_suffix())
     }
 
-    /// Whether an object exists on disk.
+    /// Whether an object exists, loose **or** packed.
     pub fn contains(&self, oid: &ObjectId) -> bool {
-        self.loose_path(oid).exists()
+        self.loose_path(oid).exists() || self.pack.as_ref().is_some_and(|p| p.contains(oid))
     }
 
     /// Write a payload as a loose object and return its oid.
@@ -75,10 +88,22 @@ impl Odb {
     }
 
     /// Read an object's raw type and payload, verifying its SHA-1.
+    ///
+    /// Tries the loose store first (rit's own reader); on a loose miss, falls
+    /// back to the packed store (gitoxide). Both paths verify the bytes hash
+    /// back to `oid` before returning them.
     pub fn read_raw(&self, oid: &ObjectId) -> Result<(ObjectType, Vec<u8>)> {
         let path = self.loose_path(oid);
-        let compressed = std::fs::read(&path)
-            .map_err(|_| ForgeError::ObjectNotFound(oid.to_hex()))?;
+        let compressed = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            // Not loose — try the packed path (gitoxide) if we have one.
+            Err(_) => {
+                return match &self.pack {
+                    Some(pack) => pack.read_raw(oid),
+                    None => Err(ForgeError::ObjectNotFound(oid.to_hex())),
+                };
+            }
+        };
         let full = zlib_decompress(&compressed)?;
 
         // Verify integrity before trusting the bytes.
@@ -135,6 +160,26 @@ impl Odb {
             }
         }
         let _ = file_part;
+
+        // Also consult packed objects (gitoxide). After `git repack`/`git gc`
+        // the loose copies are gone, so packed prefix resolution keeps
+        // abbreviated-oid lookups working on packed repositories.
+        if let Some(pack) = &self.pack {
+            match pack.resolve_prefix(prefix) {
+                Ok(Some(id)) => {
+                    if !matches.contains(&id) {
+                        matches.push(id);
+                    }
+                }
+                Ok(None) => {}
+                // A prefix ambiguous within the packs is ambiguous overall.
+                Err(ForgeError::AmbiguousPrefix(_)) => {
+                    return Err(ForgeError::AmbiguousPrefix(prefix.to_string()))
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
         match matches.len() {
             0 => Err(ForgeError::ObjectNotFound(prefix.to_string())),
             1 => Ok(matches[0]),

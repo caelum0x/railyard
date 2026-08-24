@@ -12,7 +12,7 @@ use std::path::Path;
 use std::process::Command;
 
 use rit::object::{hash_content, Object};
-use rit::{ObjectType, Repository};
+use rit::{ObjectId, ObjectType, Repository};
 use tempfile::TempDir;
 
 /// Run `git` with args in `cwd`, returning trimmed stdout; panics on failure.
@@ -73,10 +73,51 @@ fn init_repo_with_commit() -> TempDir {
     dir
 }
 
+/// The deterministic `-c` identity overrides used for reproducible commits.
+const ID_OVERRIDES: [&str; 4] = [
+    "-c",
+    "user.name=Forge Tester",
+    "-c",
+    "user.email=forge@example.com",
+];
+
+/// Commit the current index with the fixed identity and the given message.
+fn commit_all(p: &Path, message: &str) {
+    git(p, &["add", "."]);
+    let mut args: Vec<&str> = ID_OVERRIDES.to_vec();
+    args.extend_from_slice(&["commit", "-q", "-m", message]);
+    git(p, &args);
+}
+
+/// Force **every reachable object into a single packfile** and drop the loose
+/// copies — the real-git way to move objects out of loose storage and into a
+/// pack (`git repack -a -d` builds the pack; `git prune-packed` removes the now
+/// redundant loose objects). After this, any object we can still read *must*
+/// have come from the packfile.
+fn pack_everything(p: &Path) {
+    git(p, &["repack", "-a", "-d"]);
+    git(p, &["prune-packed"]);
+}
+
+/// Assert a packfile physically exists under `.git/objects/pack`.
+fn assert_has_packfile(p: &Path) {
+    let pack_dir = p.join(".git").join("objects").join("pack");
+    let has_pack = std::fs::read_dir(&pack_dir)
+        .expect("pack directory should exist after repack")
+        .flatten()
+        .any(|e| e.path().extension().map(|x| x == "pack").unwrap_or(false));
+    assert!(has_pack, "expected a .pack file under {pack_dir:?}");
+}
+
 #[test]
 fn blob_oid_matches_git_hash_object() {
     let dir = tempfile::tempdir().unwrap();
-    let contents: &[&[u8]] = &[b"hello world\n", b"", b"no trailing newline", b"\x00\x01\x02binary"];
+    let contents: &[&[u8]] = &[
+        b"hello world\n",
+        b"",
+        b"no trailing newline",
+        b"\x00\x01\x02binary",
+    ];
 
     for (i, content) in contents.iter().enumerate() {
         let file = dir.path().join(format!("f{i}.bin"));
@@ -265,7 +306,10 @@ fn log_walks_multi_commit_history() {
         .map(str::to_string)
         .collect();
     let ours: Vec<String> = history.iter().map(|(oid, _)| oid.to_hex()).collect();
-    assert_eq!(ours, git_list, "log order/content differs from git rev-list");
+    assert_eq!(
+        ours, git_list,
+        "log order/content differs from git rev-list"
+    );
     assert_eq!(history[0].1.summary(), "third commit");
 }
 
@@ -289,4 +333,272 @@ fn corrupt_object_is_rejected_not_panicked() {
         let result = repo.read_object(&head);
         assert!(result.is_err(), "corrupt object must be rejected");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Packfile interop — the objects are read from a PACKED repository (via the
+// gitoxide-backed pack path), and every result is cross-checked against real
+// `git`. Each test first proves the object is no longer loose, so a pass can
+// only mean the packfile reader worked.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn reads_commit_tree_blob_from_packfile() {
+    let dir = init_repo_with_commit();
+    let p = dir.path();
+    pack_everything(p);
+    assert_has_packfile(p);
+
+    let repo = Repository::discover(p).unwrap();
+    let head = repo.head().unwrap();
+
+    // Prove the object is NOT loose: it can only be served from the packfile.
+    assert!(
+        !repo.odb().loose_path(&head).exists(),
+        "HEAD should be packed, but a loose object still exists"
+    );
+    assert_eq!(head.to_hex(), git(p, &["rev-parse", "HEAD"]));
+
+    // Commit decoded from the pack matches git.
+    let commit = repo.commit(&head).unwrap();
+    assert_eq!(commit.tree.to_hex(), git(p, &["rev-parse", "HEAD^{tree}"]));
+    assert_eq!(commit.author.name, "Forge Tester");
+    assert_eq!(commit.summary(), "initial commit");
+
+    // Tree decoded from the pack matches git, and its entry oids match.
+    let tree = repo.tree(&commit.tree).unwrap();
+    assert!(
+        !repo.odb().loose_path(&commit.tree).exists(),
+        "tree should be packed"
+    );
+    let entry = tree.entry(b"hello.txt").expect("hello.txt in tree");
+    assert_eq!(entry.oid.to_hex(), git(p, &["rev-parse", "HEAD:hello.txt"]));
+
+    // Blob decoded from the pack matches git's content byte-for-byte.
+    let blob = repo.blob(&entry.oid).unwrap();
+    assert!(
+        !repo.odb().loose_path(&entry.oid).exists(),
+        "blob should be packed"
+    );
+    assert_eq!(blob.data, b"Hello, Forge!\n");
+    assert_eq!(
+        git_bytes(p, &["cat-file", "-p", &entry.oid.to_hex()]),
+        blob.data
+    );
+
+    // A packed sub-tree and its nested blob also match git.
+    let sub = tree.entry(b"sub").expect("sub dir in tree");
+    assert_eq!(sub.kind(), "tree");
+    let subtree = repo.tree(&sub.oid).unwrap();
+    let nested = subtree.entry(b"nested.txt").expect("nested.txt");
+    assert_eq!(
+        nested.oid.to_hex(),
+        git(p, &["rev-parse", "HEAD:sub/nested.txt"])
+    );
+    assert_eq!(repo.blob(&nested.oid).unwrap().data, b"nested content\n");
+}
+
+#[test]
+fn packed_objects_reserialize_to_same_oids() {
+    // Parsing a packed object then re-serializing must reproduce git's exact
+    // bytes — i.e. our oid recomputation matches, proving faithful decoding.
+    let dir = init_repo_with_commit();
+    let p = dir.path();
+    pack_everything(p);
+
+    let repo = Repository::discover(p).unwrap();
+    let head = repo.head().unwrap();
+    assert!(
+        !repo.odb().loose_path(&head).exists(),
+        "HEAD should be packed"
+    );
+
+    match repo.read_object(&head).unwrap() {
+        Object::Commit(c) => {
+            let (id, _) = hash_content(ObjectType::Commit, &c.serialize());
+            assert_eq!(id, head, "packed commit re-serialization is not byte-exact");
+        }
+        other => panic!("HEAD should be a commit, got {other:?}"),
+    }
+
+    let tree_oid = repo.head_commit().unwrap().tree;
+    let tree = repo.tree(&tree_oid).unwrap();
+    let (id, _) = hash_content(ObjectType::Tree, &tree.serialize());
+    assert_eq!(
+        id, tree_oid,
+        "packed tree re-serialization is not byte-exact"
+    );
+}
+
+#[test]
+fn reads_deltified_blobs_across_history_from_packfile() {
+    // Build an evolving file across several commits so `git repack` stores the
+    // blob versions as a DELTA CHAIN, then read every historical version back
+    // from the pack and match git. This is the delta-resolution path that is
+    // the whole point of adopting gitoxide.
+    let dir = init_repo_with_commit();
+    let p = dir.path();
+
+    let mut expected: Vec<(String, String)> = Vec::new();
+    let mut content = String::new();
+    for i in 0..8 {
+        content.push_str(&format!(
+            "line {i} ------------------------------------------------------------\n"
+        ));
+        std::fs::write(p.join("data.txt"), &content).unwrap();
+        commit_all(p, &format!("rev {i}"));
+        let blob_oid = git(p, &["rev-parse", "HEAD:data.txt"]);
+        expected.push((blob_oid, content.clone()));
+    }
+
+    // Aggressive repack to encourage deep delta chains, then drop loose copies.
+    git(
+        p,
+        &["repack", "-a", "-d", "-f", "--depth=50", "--window=50"],
+    );
+    git(p, &["prune-packed"]);
+    assert_has_packfile(p);
+
+    let repo = Repository::discover(p).unwrap();
+    for (blob_hex, want) in &expected {
+        let oid = ObjectId::from_hex(blob_hex).unwrap();
+        assert!(
+            !repo.odb().loose_path(&oid).exists(),
+            "blob {blob_hex} should be packed (delta chain)"
+        );
+        let blob = repo.blob(&oid).unwrap();
+        assert_eq!(
+            blob.data,
+            want.as_bytes(),
+            "packed/deltified blob {blob_hex} content mismatch"
+        );
+        assert_eq!(git_bytes(p, &["cat-file", "-p", blob_hex]), want.as_bytes());
+    }
+}
+
+#[test]
+fn contains_verify_and_log_work_on_packed_repo() {
+    let dir = init_repo_with_commit();
+    let p = dir.path();
+
+    // Two more commits so the packed history is non-trivial.
+    std::fs::write(p.join("second.txt"), b"second\n").unwrap();
+    commit_all(p, "second commit");
+    std::fs::write(p.join("third.txt"), b"third\n").unwrap();
+    commit_all(p, "third commit");
+
+    pack_everything(p);
+    assert_has_packfile(p);
+
+    let repo = Repository::discover(p).unwrap();
+    let head = repo.head().unwrap();
+    assert!(
+        !repo.odb().loose_path(&head).exists(),
+        "HEAD should be packed"
+    );
+
+    // contains() and verify() both see through to the packfile.
+    assert!(
+        repo.odb().contains(&head),
+        "packed object must be contained"
+    );
+    assert!(repo.verify(&head).unwrap(), "packed object must verify");
+
+    // Missing objects are still reported as absent, not errors.
+    let absent = ObjectId::from_hex("0123456789012345678901234567890123456789").unwrap();
+    assert!(!repo.odb().contains(&absent));
+
+    // `log` walks the fully-packed history and matches `git rev-list HEAD`.
+    let history = repo.log(head).unwrap();
+    let git_list: Vec<String> = git(p, &["rev-list", "HEAD"])
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let ours: Vec<String> = history.iter().map(|(oid, _)| oid.to_hex()).collect();
+    assert_eq!(ours, git_list, "packed log order differs from git rev-list");
+    assert_eq!(history.len(), 3);
+    assert_eq!(history[0].1.summary(), "third commit");
+}
+
+#[test]
+fn reads_annotated_tag_from_packfile() {
+    let dir = init_repo_with_commit();
+    let p = dir.path();
+    git(
+        p,
+        &[
+            "-c",
+            "user.name=Forge Tester",
+            "-c",
+            "user.email=forge@example.com",
+            "tag",
+            "-a",
+            "v1.0.0",
+            "-m",
+            "first release",
+        ],
+    );
+    pack_everything(p);
+    assert_has_packfile(p);
+
+    let repo = Repository::discover(p).unwrap();
+    let tag_oid = repo.resolve("v1.0.0").unwrap();
+    assert!(
+        !repo.odb().loose_path(&tag_oid).exists(),
+        "annotated tag object should be packed"
+    );
+    match repo.read_object(&tag_oid).unwrap() {
+        Object::Tag(t) => {
+            assert_eq!(t.tag, "v1.0.0");
+            assert_eq!(t.object_type, ObjectType::Commit);
+            assert_eq!(t.object, repo.head().unwrap());
+            assert!(t.message_str().contains("first release"));
+            let (id, _) = hash_content(ObjectType::Tag, &t.serialize());
+            assert_eq!(id, tag_oid, "packed tag re-serialization is not byte-exact");
+        }
+        other => panic!("expected annotated tag, got {other:?}"),
+    }
+    // Peeling the packed tag reaches the packed commit.
+    assert_eq!(
+        repo.peel_to_commit(tag_oid).unwrap().summary(),
+        "initial commit"
+    );
+}
+
+#[test]
+fn corrupt_packfile_is_rejected_not_panicked() {
+    // A truncated/garbled .pack must fail closed (typed error), never panic.
+    let dir = init_repo_with_commit();
+    let p = dir.path();
+    pack_everything(p);
+
+    let repo = Repository::discover(p).unwrap();
+    let head = repo.head().unwrap();
+    assert!(
+        !repo.odb().loose_path(&head).exists(),
+        "HEAD should be packed"
+    );
+
+    // Corrupt every .pack by overwriting its body with garbage (keep the file
+    // so the index still points into it).
+    let pack_dir = p.join(".git").join("objects").join("pack");
+    for entry in std::fs::read_dir(&pack_dir).unwrap().flatten() {
+        let path = entry.path();
+        if path.extension().map(|x| x == "pack").unwrap_or(false) {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644));
+            }
+            std::fs::write(&path, b"PACK\xff\xff\xff\xffnot a real packfile body").unwrap();
+        }
+    }
+
+    // A fresh repo handle so no cached mmap masks the corruption.
+    let repo2 = Repository::discover(p).unwrap();
+    let result = repo2.read_object(&head);
+    assert!(
+        result.is_err(),
+        "reading from a corrupt packfile must return an error, not succeed or panic"
+    );
 }
