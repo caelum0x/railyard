@@ -1,0 +1,4 @@
+PAK1 sample texture archive placeholder — binary-ish content for hashing demo.
+0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF
+The integrity monitor treats this as an opaque game asset and only fingerprints
+its bytes with SHA-256. Editing any byte here changes the hash and is flagged.

@@ -1,0 +1,21 @@
+[package]
+name = "ranguard"
+version = "0.1.0"
+edition = "2021"
+description = "Educational, defensive, userspace integrity monitor (Riot Vanguard-style, but honest subset). NO kernel driver."
+license = "MIT"
+
+# Zero external dependencies on purpose: this prototype implements SHA-256 and
+# HMAC-SHA256 in pure, safe Rust so it builds and runs fully offline.
+[dependencies]
+
+[[bin]]
+name = "ranguard"
+path = "src/main.rs"
+
+[lib]
+name = "ranguard"
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = 2
