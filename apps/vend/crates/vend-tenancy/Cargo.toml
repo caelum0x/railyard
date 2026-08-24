@@ -1,0 +1,15 @@
+[package]
+name = "vend-tenancy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Tenant/App/EndUser hierarchy + resolution. Pure logic over the TenantRepo port
+# (implemented in vend-store). No I/O of its own.
+[dependencies]
+vend-core = { workspace = true }
+serde = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

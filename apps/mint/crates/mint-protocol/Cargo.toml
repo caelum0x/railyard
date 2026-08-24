@@ -1,0 +1,24 @@
+[package]
+name = "mint-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mint-core = { workspace = true }
+mint-store = { workspace = true }
+mint-receipts = { workspace = true }
+mint-ledger = { path = "../mint-ledger" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
+thiserror = { workspace = true }
+ulid = { workspace = true }
+base64 = "0.22"
+
+[dev-dependencies]
+proptest = { workspace = true }
+tokio = { workspace = true }
+rand = { workspace = true }

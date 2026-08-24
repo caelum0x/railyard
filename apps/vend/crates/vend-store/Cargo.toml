@@ -1,0 +1,30 @@
+[package]
+name = "vend-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Neon Postgres persistence via the sqlx RUNTIME query API ONLY (sqlx::query /
+# query_as + .bind, no query! macros) so it builds with NO DATABASE_URL. Concrete
+# impls of TenantRepo / KeyRepo / UsageRepo / ReserveRepo / IdempotencyRepo.
+# Stores tenancy / policy / usage / hold_id<->job mapping — NEVER a money ledger.
+[dependencies]
+vend-core = { workspace = true }
+vend-tenancy = { workspace = true }
+vend-keys = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+async-trait = { workspace = true }
+sqlx = { workspace = true }
+tracing = { workspace = true }
+argon2 = { workspace = true }
+password-hash = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+ulid = { workspace = true }
+tokio = { workspace = true }
+base64 = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

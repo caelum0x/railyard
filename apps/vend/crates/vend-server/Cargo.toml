@@ -1,0 +1,51 @@
+[package]
+name = "vend-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vend-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "vend-bootstrap"
+path = "src/bin/vend-bootstrap.rs"
+
+[lib]
+name = "vend_server"
+path = "src/lib.rs"
+
+# The public data plane: an axum metered-proxy that runs the full flow and wires
+# the REAL vend-mint-client + vend-relay-client + vend-store from the environment.
+[dependencies]
+vend-core = { workspace = true }
+vend-tenancy = { workspace = true }
+vend-keys = { workspace = true }
+vend-store = { workspace = true }
+vend-mint-client = { workspace = true }
+vend-relay-client = { workspace = true }
+vend-settlement = { workspace = true }
+
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+base64 = { workspace = true }
+reqwest = { workspace = true }
+jsonwebtoken = { workspace = true }
+password-hash = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+vend-testkit = { workspace = true }

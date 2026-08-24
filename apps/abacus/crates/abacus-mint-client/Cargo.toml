@@ -1,0 +1,21 @@
+[package]
+name = "abacus-mint-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Real HTTP client to the LIVE mint-server. Implements MintTransport over reqwest.
+# Ported from vend-mint-client: X-API-Key auth, {success,data}/{success,error}
+# envelope parse, i64 amount_micros, deterministic per-request idem keys with
+# :hold/:capture/:release suffixes. Implements BOTH the direct-holds path and the
+# allowance-ceiling (hold-backed spend) path, and resolves ait1… payees via
+# GET /v1/addresses/:address before capture (the aitp-client gap-#1 bridge).
+[dependencies]
+abacus-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

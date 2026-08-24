@@ -1,0 +1,15 @@
+[package]
+name = "turnstile-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Framework-agnostic AITP-402 paywall engine: config, challenge, nonce replay-guard, server-side verifier over the reused HttpTransport seam, success-only settle, and the admit() guard."
+
+[dependencies]
+aitp-client.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+rand.workspace = true

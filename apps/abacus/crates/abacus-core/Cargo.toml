@@ -1,0 +1,17 @@
+[package]
+name = "abacus-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# abacus-core is the domain kernel: pure logic, NO I/O. It declares the injectable
+# transport TRAITS (MintTransport, UpstreamTransport) plus the BudgetRepo /
+# ReceiptStore ports, so no downstream crate has to depend on HTTP. The real
+# clients live in abacus-mint-client / abacus-upstream; the in-memory fakes in
+# abacus-testkit. Port of vend-core.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+ulid = { workspace = true }
+async-trait = { workspace = true }

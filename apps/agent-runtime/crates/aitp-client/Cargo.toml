@@ -1,0 +1,23 @@
+[package]
+name = "aitp-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "AITP-402 payment seam (trait + types + header codec + stub gateway) for the agent runtime. No rig or Mint dependency."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+# Real Mint-backed gateway: HTTP transport + canonical op_hash + ed25519 signer.
+# rustls is reqwest 0.13's default TLS provider (already resolved by the vendored
+# rig stack), so no OpenSSL/native-tls is pulled in.
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+blake3 = "1"
+ed25519-dalek = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }

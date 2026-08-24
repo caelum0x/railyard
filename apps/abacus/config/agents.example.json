@@ -1,0 +1,16 @@
+{
+  "agents": [
+    {
+      "agent_id": "agent_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "agent_acct": "acct_agent_example",
+      "treasury": "acct_treasury_example",
+      "payee": "ait1qprovider",
+      "budget": {
+        "budget_id": "budget_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "funding_path": "direct_hold",
+        "allowance_id": null,
+        "per_request_max_micros": 5000000
+      }
+    }
+  ]
+}

@@ -1,0 +1,107 @@
+# Ledgerline
+
+**Status: runnable Sx0 product slice.** Ledgerline accepts AI usage events,
+settles their customer revenue and provider COGS through Mint, and exposes the
+resulting request-level gross margin. It is a side-car margin lens: it does not
+replace Mint's money ledger or Relay's inference gateway.
+
+The complete product thesis and phased plan live in
+[`docs/apps-vision/ledgerline.md`](../../docs/apps-vision/ledgerline.md).
+
+## Shipped surface
+
+| Route | Auth | Purpose |
+|---|---|---|
+| `GET /healthz` | public | Process liveness |
+| `GET /readyz` | public | Postgres readiness |
+| `POST /v1/events` | `X-API-Key` | Validate and idempotently settle one billable request |
+| `GET /v1/margins/:request_id` | `X-API-Key` | Fetch one request's revenue, COGS, margin, dimensions, and Mint references |
+| `GET /v1/margins` | `X-API-Key` | Explore margins; optional `customer_id`, `feature`, `model`, and `limit` filters |
+
+A successful event makes three real, retry-safe Mint calls with deterministic
+operation keys:
+
+1. hold the customer-facing revenue amount;
+2. capture that hold to the revenue account;
+3. transfer provider COGS from the configured COGS account to the provider.
+
+All three operations share the event's `request_id` as their Mint reference.
+Failed requests are accepted only when both amounts are zero and create no Mint
+movements, preserving ADR-0002. Replaying an identical `idempotency_key` returns
+the original record with `idempotent_replay: true`; changing the event behind a
+key returns `409`.
+
+## Run locally
+
+Ledgerline is a standalone Cargo workspace, deliberately outside the root
+desktop workspace. Start a Postgres database and a configured `mint-server`, then:
+
+```bash
+cd apps/ledgerline
+DATABASE_URL='postgres://postgres:postgres@localhost:5432/ledgerline' \
+MINT_BASE='http://127.0.0.1:8088' \
+MINT_API_KEY='mint-internal-key' \
+LEDGERLINE_API_KEY='ledgerline-client-key' \
+cargo run --bin ledgerline-server
+```
+
+The server runs its embedded Postgres migration at startup and listens on
+`0.0.0.0:8093` by default.
+
+### Environment contract
+
+| Variable | Required | Meaning |
+|---|---:|---|
+| `DATABASE_URL` | yes | Postgres DSN for event metadata and margin projections |
+| `MINT_BASE` | yes | Base URL of the live Mint service |
+| `MINT_API_KEY` | yes | Mint's internal `X-API-Key` credential |
+| `LEDGERLINE_API_KEY` | yes | Credential clients send to Ledgerline as `X-API-Key` |
+| `LEDGERLINE_BIND_ADDR` | no | Listener address; default `0.0.0.0:8093` |
+| `RUST_LOG` | no | Tracing filter; default `info` |
+
+No deployment silently starts without its database or credentials.
+
+## Ingest an event
+
+```bash
+curl --fail-with-body http://127.0.0.1:8093/v1/events \
+  -H 'content-type: application/json' \
+  -H 'x-api-key: ledgerline-client-key' \
+  --data '{
+    "idempotency_key": "rf-job-01JABC",
+    "request_id": "job_01JABC",
+    "customer_id": "reelforge-internal",
+    "feature": "image-to-video",
+    "model": "wan-2.2-i2v",
+    "source": "reelforge",
+    "outcome": "succeeded",
+    "revenue_micros": 2400000,
+    "cogs_micros": 1750000,
+    "customer_account": "acct_customer",
+    "revenue_account": "acct_reelforge_revenue",
+    "cogs_account": "acct_reelforge_cogs",
+    "provider_account": "acct_runpod"
+  }'
+```
+
+The returned `margin_micros` is exact integer math (`650000` above), and
+`margin_bps` is `2708` (27.08%). Negative margins are valid and visible.
+
+## Validate
+
+```bash
+cd apps/ledgerline
+cargo fmt --all -- --check
+cargo check --all-targets
+cargo test
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+## Current Sx0 boundary
+
+This slice deliberately stops before Sx1 rating catalogs and Relay cost-feed
+subscription. Clients currently provide the already-rated revenue and exact or
+estimated COGS amounts. Postgres stores operational metadata and projections;
+Mint remains the authoritative ledger. Completing the Sx0 scale gate still
+requires load-testing one million events and replacing request-time three-call
+settlement with a durable outbox/workflow for crash-visible progress.

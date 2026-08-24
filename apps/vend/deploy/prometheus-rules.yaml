@@ -1,0 +1,51 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: vend
+spec:
+  groups:
+    - name: vend.availability
+      rules:
+        - alert: VendTargetDown
+          expr: up{job=~".*vend.*"} == 0
+          for: 5m
+          labels:
+            severity: page
+          annotations:
+            summary: Vend has an unreachable metrics target
+            runbook_url: apps/vend/docs/OPERATIONS.md
+        - alert: VendReadinessProbeFailed
+          expr: probe_success{job="vend-readiness"} == 0
+          for: 3m
+          labels:
+            severity: page
+          annotations:
+            summary: Vend external readiness probe is failing
+            runbook_url: apps/vend/docs/OPERATIONS.md
+        - alert: VendHighServerErrorRate
+          expr: |
+            sum(rate(vend_http_responses_total{class="5xx"}[5m]))
+              / clamp_min(sum(rate(vend_http_requests_total[5m])), 0.001) > 0.02
+          for: 10m
+          labels:
+            severity: page
+          annotations:
+            summary: Vend 5xx responses exceed 2 percent
+            runbook_url: apps/vend/docs/OPERATIONS.md
+        - alert: VendSettlementFailure
+          expr: increase(vend_settlements_total{outcome="failed"}[5m]) > 0
+          for: 0m
+          labels:
+            severity: page
+          annotations:
+            summary: Vend reported a failed settlement
+            description: Process counters reset on restart; correlate with durable usage, Mint holds, and payout legs.
+            runbook_url: apps/vend/docs/OPERATIONS.md
+        - alert: VendReconcilerJobFailed
+          expr: kube_job_status_failed{job_name=~"vend-reconcile.*"} > 0
+          for: 0m
+          labels:
+            severity: page
+          annotations:
+            summary: Vend reconciliation job failed
+            runbook_url: apps/vend/docs/OPERATIONS.md

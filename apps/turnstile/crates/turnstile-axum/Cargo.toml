@@ -1,0 +1,24 @@
+[package]
+name = "turnstile-axum"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Drop-in axum integration for turnstile-core: a from_fn_with_state middleware that runs admit(), short-circuits 402, and captures/releases the hold around the inner handler, plus a PaidRequest extractor and 402/receipt responses."
+
+[dependencies]
+turnstile-core.workspace = true
+aitp-client.workspace = true
+axum.workspace = true
+tower.workspace = true
+
+[dev-dependencies]
+# middleware_402.rs spins a real axum Router gated by the admit layer, driving it
+# with tower::ServiceExt::oneshot and a FakeMintTransport at the aitp-client seam.
+turnstile-core.workspace = true
+aitp-client.workspace = true
+axum.workspace = true
+tower = { workspace = true, features = ["util"] }
+http.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+async-trait.workspace = true
+serde_json.workspace = true

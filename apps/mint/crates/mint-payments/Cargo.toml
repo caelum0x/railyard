@@ -1,0 +1,38 @@
+[package]
+name = "mint-payments"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# `mint-payments` is the ONLY crate that talks to provider HTTP APIs and the
+# ONLY crate that knows provider signature schemes. `mint-reserve` (the `Ramp`
+# trait), `mint-server` (routing/mint) and `mint-store` stay provider-agnostic.
+#
+# NO axum dependency: the webhook verification fns take raw `&[u8]` bodies +
+# borrowed header values (via the `Headers` seam), so the crate is axum-free and
+# unit-testable. The thin axum glue (Bytes/HeaderMap → verifier → reserve.mint)
+# lives in `mint-server`.
+
+[dependencies]
+mint-core = { workspace = true }
+mint-reserve = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+subtle = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+wiremock = "0.6"
+serde_json = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+mint-core = { workspace = true }
+mint-reserve = { workspace = true }

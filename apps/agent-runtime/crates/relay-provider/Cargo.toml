@@ -1,0 +1,20 @@
+[package]
+name = "relay-provider"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "A rig CompletionModel backed by Relay's OpenAI-compatible gateway (TensorZero). Genuinely reuses the vendored external/rig openai Chat Completions client."
+
+[dependencies]
+rig-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# MockCompletionModel for no-network tests lives behind rig-core's test-utils.
+rig-core = { path = "../../../../external/rig/crates/rig-core", default-features = false, features = [
+    "reqwest",
+    "rustls",
+    "test-utils",
+] }
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }

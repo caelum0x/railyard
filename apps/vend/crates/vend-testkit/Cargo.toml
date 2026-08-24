@@ -1,0 +1,18 @@
+[package]
+name = "vend-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# FakeMint + FakeRelay in-memory transports + an in-memory repo + fixtures. Used
+# by every integration + property test; no network, no database.
+[dependencies]
+vend-core = { workspace = true }
+vend-tenancy = { workspace = true }
+vend-keys = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

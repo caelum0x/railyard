@@ -1,0 +1,23 @@
+[package]
+name = "vend-mint-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Real HTTP client to the live mint-server. Implements MintTransport over reqwest.
+[dependencies]
+vend-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+mint-core = { path = "../../../mint/crates/mint-core" }
+mint-protocol = { path = "../../../mint/crates/mint-protocol" }
+mint-reserve = { path = "../../../mint/crates/mint-reserve" }
+mint-server = { path = "../../../mint/crates/mint-server" }
+mint-store = { path = "../../../mint/crates/mint-store" }

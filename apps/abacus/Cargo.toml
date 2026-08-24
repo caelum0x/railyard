@@ -1,0 +1,60 @@
+# apps/abacus — inline reverse-proxy that enforces a hard, receipted per-agent
+# spend budget by calling the LIVE mint-server over HTTP.
+#
+# This is its OWN standalone cargo workspace, mirroring `apps/mint`, `apps/relay`
+# and `apps/vend`, so that `cargo build --workspace` from the repo root never
+# pulls Abacus into the `apps/desktop` GPUI/Metal build graph. The root
+# `Cargo.toml` excludes this directory defensively; `apps/abacus` is NOT a root
+# member.
+#
+# Build/test from here ONLY:  cd apps/abacus && cargo check   (never the repo root)
+#
+# HARD RULE: Abacus is a REAL service. It enforces a per-agent budget via Mint
+# allowances/holds by calling the live mint-server through injectable transport
+# TRAITS (fake mint-server only in tests, real reqwest client in prod). Every
+# enforced request produces a hold->capture with a Mint receipt — the
+# system-of-record for agent spend.
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# --- shared serde / domain deps ---
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+ulid = "1.2.1"
+async-trait = "0.1.89"
+
+# --- async runtime ---
+tokio = { version = "1.52.3", features = ["full"] }
+
+# --- HTTP server stack (abacus-proxy) ---
+axum = "0.7"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+subtle = "2"
+
+# --- HTTP clients (abacus-mint-client / abacus-upstream) ---
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+
+# --- AITP-402 payment seam (address resolution + hold-backed spend bridge) ---
+# The proxy reuses this / a Mint HTTP client to talk to the live mint-server.
+aitp-client = { path = "../agent-runtime/crates/aitp-client" }
+
+# --- internal path deps (the Abacus crate graph) ---
+abacus-core = { path = "crates/abacus-core" }
+abacus-mint-client = { path = "crates/abacus-mint-client" }
+abacus-upstream = { path = "crates/abacus-upstream" }
+abacus-testkit = { path = "crates/abacus-testkit" }

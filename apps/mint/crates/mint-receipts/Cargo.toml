@@ -1,0 +1,17 @@
+[package]
+name = "mint-receipts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mint-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
+getrandom = "0.2"
+
+[dev-dependencies]
+proptest = { workspace = true }
+ulid = { workspace = true }
