@@ -11,8 +11,9 @@
 //!
 //! Because async work cannot run in `Drop`, settlement is driven explicitly via
 //! [`settle`], which disarms the guard; a guard dropped still-armed logs loudly
-//! so an out-of-band reaper can release the orphaned hold. Vend does not yet
-//! ship that reaper, so this crate does not claim crash safety.
+//! so an out-of-band reaper can release the orphaned hold. That reaper now ships
+//! in [`reap`]: it releases a hold only when it is past a TTL, still pending,
+//! and confirmed still-`Open` by Mint — closing the panic-orphaned-hold gap.
 
 use async_trait::async_trait;
 
@@ -23,7 +24,11 @@ use vend_core::ports::{UsageOutcome, UsageRepo};
 use vend_core::transport::{CaptureRequest, MintTransport, RelayResponse, ReleaseRequest};
 
 pub mod payout;
+pub mod reap;
 pub use payout::{execute_payout, prepare_payout, PayoutConfig};
+pub use reap::{
+    classify_hold, past_ttl, reap_orphaned_hold, ReapAction, ReapCandidate, ReapOutcome,
+};
 
 /// What the request's terminal state tells settlement to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
