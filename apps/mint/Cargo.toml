@@ -1,0 +1,74 @@
+# apps/mint — AI Token (AIT) settlement layer.
+#
+# This is its OWN standalone cargo workspace, mirroring `apps/relay`, so that
+# `cargo build --workspace` from the repo root never pulls Mint into the
+# `apps/desktop` GPUI/Metal build graph. The root `Cargo.toml` excludes this
+# directory defensively; `apps/mint` is NOT a root member.
+#
+# Build/test from here only:  cd apps/mint && cargo test
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# --- shared runtime deps ---
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+blake3 = "1.8.5"
+ed25519-dalek = "2"
+bech32 = "0.11.0"
+ulid = "1.2.1"
+async-trait = "0.1.89"
+base64 = "0.22"
+
+# --- HTTP server stack (mint-server) ---
+axum = "0.7"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+tracing = "0.1"
+
+# --- provider HTTP client (mint-payments) ---
+# The ONLY crate allowed to talk to provider HTTP APIs. rustls-only so the
+# crate builds with no OpenSSL system dependency.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+subtle = "2"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+
+# --- Postgres store (mint-store-postgres) ---
+# RUNTIME query API ONLY (sqlx::query / query_as with .bind) — never the
+# compile-time query! macros — so the crate builds with NO live DATABASE_URL.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "macros",
+    "migrate",
+    "chrono",
+    "json",
+] }
+
+# --- dev/test-only deps ---
+tokio = { version = "1.52.3", features = ["macros", "rt", "rt-multi-thread"] }
+proptest = "1.9.0"
+rand = "0.9.2"
+
+# --- internal path deps (the Mint crate graph) ---
+mint-core = { path = "crates/mint-core" }
+mint-store = { path = "crates/mint-store" }
+mint-receipts = { path = "crates/mint-receipts" }
+mint-ledger = { path = "crates/mint-ledger" }
+mint-protocol = { path = "crates/mint-protocol" }
+mint-stream = { path = "crates/mint-stream" }
+mint-reserve = { path = "crates/mint-reserve" }
+mint-store-postgres = { path = "crates/mint-store-postgres" }
+mint-payments = { path = "crates/mint-payments" }

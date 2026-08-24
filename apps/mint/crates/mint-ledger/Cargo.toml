@@ -1,0 +1,18 @@
+[package]
+name = "mint-ledger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mint-core = { workspace = true }
+mint-store = { workspace = true }
+mint-receipts = { workspace = true }
+async-trait = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+proptest = { workspace = true }
+rand = { workspace = true }
+ulid = { workspace = true }

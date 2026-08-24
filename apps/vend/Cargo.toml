@@ -1,0 +1,88 @@
+# apps/vend — white-label metered inference gateway + reserve-backed wallet.
+#
+# This is its OWN standalone cargo workspace, mirroring `apps/mint` and
+# `apps/relay`, so that `cargo build --workspace` from the repo root never pulls
+# Vend into the `apps/desktop` GPUI/Metal build graph. The root `Cargo.toml`
+# excludes this directory defensively; `apps/vend` is NOT a root member.
+#
+# Build/test from here only:  cd apps/vend && cargo test   (never the repo root)
+#
+# HARD RULE: Vend is a REAL service. It calls the live mint-server and Relay over
+# HTTP via injectable transport TRAITS (fake only in tests). Vend's own
+# persistence is Neon Postgres via the sqlx RUNTIME query API (no query! macros,
+# builds with no DATABASE_URL). The money ledger lives on Mint, never here.
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# --- shared serde / domain deps ---
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+ulid = "1.2.1"
+async-trait = "0.1.89"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+
+# --- provisioning-key hashing ---
+argon2 = "0.5"
+# `OsRng` (used for argon2 salt generation) lives in password-hash's re-exported
+# rand_core and is gated behind its `getrandom` feature. argon2 does not pass that
+# feature through, so depend on password-hash directly with `getrandom` enabled —
+# this makes vend-keys build standalone (not just under full-workspace feature
+# unification).
+password-hash = { version = "0.5", features = ["getrandom"] }
+subtle = "2"
+sha2 = "0.10"
+base64 = "0.22"
+jsonwebtoken = { version = "10.4", default-features = false, features = ["aws_lc_rs"] }
+
+# --- property-based testing (dev only) ---
+proptest = "1"
+
+# --- async runtime ---
+tokio = { version = "1.52.3", features = ["full"] }
+futures = "0.3"
+
+# --- HTTP server stack (vend-server) ---
+axum = "0.7"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "limit"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow = "1"
+
+# --- HTTP clients (vend-mint-client / vend-relay-client) ---
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+    "stream",
+] }
+
+# --- Neon Postgres store (vend-store) ---
+# RUNTIME query API ONLY (sqlx::query / query_as with .bind) — never the
+# compile-time query! macros — so the crate builds with NO live DATABASE_URL.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "macros",
+    "migrate",
+    "chrono",
+    "json",
+] }
+
+# --- internal path deps (the Vend crate graph) ---
+vend-core = { path = "crates/vend-core" }
+vend-tenancy = { path = "crates/vend-tenancy" }
+vend-keys = { path = "crates/vend-keys" }
+vend-store = { path = "crates/vend-store" }
+vend-mint-client = { path = "crates/vend-mint-client" }
+vend-relay-client = { path = "crates/vend-relay-client" }
+vend-settlement = { path = "crates/vend-settlement" }
+vend-testkit = { path = "crates/vend-testkit" }

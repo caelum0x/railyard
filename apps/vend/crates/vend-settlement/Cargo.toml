@@ -1,0 +1,19 @@
+[package]
+name = "vend-settlement"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The panic-safe reserve -> capture/release state machine. RAII HoldGuard over
+# the hold -> terminal window; captures the EXACT actual on 2xx-with-usage,
+# releases on any non-2xx / transport error / aborted stream / handler panic.
+[dependencies]
+vend-core = { workspace = true }
+serde = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true }
+vend-testkit = { workspace = true }

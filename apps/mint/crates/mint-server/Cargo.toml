@@ -1,0 +1,53 @@
+[package]
+name = "mint-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mint-server"
+path = "src/main.rs"
+
+[lib]
+name = "mint_server"
+path = "src/lib.rs"
+
+[dependencies]
+# Domain crates (all read-only for this lane).
+mint-core = { workspace = true }
+mint-store = { workspace = true }
+mint-receipts = { workspace = true }
+mint-ledger = { workspace = true }
+mint-protocol = { workspace = true }
+mint-stream = { workspace = true }
+mint-reserve = { workspace = true }
+# Provider HTTP clients + webhook signature verification + BYOK registry.
+mint-payments = { workspace = true }
+# The concrete Postgres store — referenced ONLY in main.rs behind DATABASE_URL.
+mint-store-postgres = { workspace = true }
+
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+ed25519-dalek = { workspace = true }
+anyhow = { workspace = true }
+subtle = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+ulid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+mint-store = { workspace = true }
+mint-core = { workspace = true }
+ed25519-dalek = { workspace = true }
+base64 = { workspace = true }
+blake3 = { workspace = true }

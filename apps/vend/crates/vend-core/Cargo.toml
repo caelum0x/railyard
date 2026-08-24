@@ -1,0 +1,19 @@
+[package]
+name = "vend-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# vend-core is the domain kernel: pure logic, NO I/O. It declares the injectable
+# transport TRAITS (MintTransport, RelayTransport) so no downstream crate has to
+# depend on HTTP, plus the repo PORT traits implemented by vend-store.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+ulid = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

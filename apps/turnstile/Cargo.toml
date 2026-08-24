@@ -1,0 +1,50 @@
+# apps/turnstile — the drop-in agent-paywall SDK + reference verifier.
+#
+# This is its OWN standalone cargo workspace, mirroring `apps/relay`, `apps/mint`
+# and `apps/agent-runtime`, so that `cargo build --workspace` from the repo root
+# never pulls Turnstile's async/axum stack into the `apps/desktop` GPUI/Metal
+# build graph. The repo-root `Cargo.toml` excludes this directory defensively;
+# `apps/turnstile` is NOT a root member.
+#
+# Build/test from here only:  cd apps/turnstile && cargo check   (or cargo test)
+[workspace]
+resolver = "2"
+members = [
+    "crates/turnstile-core",
+    "crates/turnstile-axum",
+    "crates/turnstile-demo",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# --- Reused AITP-402 rail (path dep on the REAL agent-runtime crate) ---------
+# Turnstile does NOT re-implement the wire contract or crypto. It reuses the wire
+# types, header codec, injectable HttpTransport seam (ReqwestTransport in prod),
+# signer (agent-side test harness only), amount, and PayError from aitp-client.
+# The path is resolved relative to THIS manifest.
+aitp-client = { path = "../agent-runtime/crates/aitp-client" }
+
+# --- Internal crates ---------------------------------------------------------
+turnstile-core = { path = "crates/turnstile-core" }
+turnstile-axum = { path = "crates/turnstile-axum" }
+
+# --- Async runtime + HTTP server stack ---------------------------------------
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+axum = "0.7"
+tower = "0.5"
+http = "1"
+
+# --- Serialization / traits / errors / entropy -------------------------------
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+async-trait = "0.1"
+rand = "0.8"
+
+# --- Production HTTP client (used via aitp-client's ReqwestTransport) ---------
+# Pinned to the same major aitp-client resolves so the graph shares one reqwest.
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }

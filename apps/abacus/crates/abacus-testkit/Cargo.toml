@@ -1,0 +1,16 @@
+[package]
+name = "abacus-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# FAKE transports for TDD with NO live server. LedgerFakeMint enforces the
+# balance/allowance ceiling invariant with a serialized per-account apply so N
+# concurrent holds cannot collectively overshoot; ScriptedUpstream returns canned
+# success-with-usage / failure / timeout responses; fixtures seed agents/budgets
+# plus in-memory BudgetRepo + ReceiptStore. Mirrors vend-testkit + aitp stub.rs.
+[dependencies]
+abacus-core = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }

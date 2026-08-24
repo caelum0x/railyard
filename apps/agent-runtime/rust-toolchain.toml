@@ -1,0 +1,6 @@
+# The vendored external/rig crates are edition 2024 and pin rustc 1.94.0
+# (external/rig/rust-toolchain.toml). Path-depending on them means agent-runtime
+# also needs rustc >= 1.94 even though its own crates stay edition 2021.
+[toolchain]
+channel = "1.94.0"
+profile = "minimal"

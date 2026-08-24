@@ -1,0 +1,46 @@
+# =============================================================================
+# Relay (TensorZero) -- Local mistral.rs provider, ENV-configurable base URL.
+# =============================================================================
+#
+# This is a TEMPLATE. TensorZero TOML values are literals (there is no built-in
+# ${VAR} interpolation for `api_base`), so render this file with `envsubst`
+# before pointing the gateway at it. This keeps the base URL ComfyUI-style
+# env-configurable (MISTRAL_RS_URL) with a sane default:
+#
+#     export MISTRAL_RS_URL="${MISTRAL_RS_URL:-http://localhost:1234/v1/}"
+#     envsubst < examples/local-mistral/config/tensorzero.template.toml \
+#         > examples/local-mistral/config/tensorzero.rendered.toml
+#     gateway --config-file examples/local-mistral/config/tensorzero.rendered.toml
+#
+# For a Dockerized gateway reaching a host-run server, set e.g.
+#     MISTRAL_RS_URL=http://host.docker.internal:1234/v1/
+# For a remote GPU host:
+#     MISTRAL_RS_URL=http://gpu-host.internal:1234/v1/
+#
+# api_base MUST end at `/v1/` and MUST NOT include `/chat/completions`.
+# =============================================================================
+
+[models.local-mistral]
+routing = ["mistralrs"]
+
+[models.local-mistral.providers.mistralrs]
+type = "vllm"
+api_base = "${MISTRAL_RS_URL}"
+model_name = "mistralai/Mistral-7B-Instruct-v0.3"
+api_key_location = "none"
+
+[models.local-qwen]
+routing = ["mistralrs"]
+
+[models.local-qwen.providers.mistralrs]
+type = "openai"
+api_base = "${MISTRAL_RS_URL}"
+model_name = "Qwen/Qwen3-4B"
+api_key_location = "none"
+
+[functions.generate]
+type = "chat"
+
+[functions.generate.variants.local_mistral]
+type = "chat_completion"
+model = "local-mistral"

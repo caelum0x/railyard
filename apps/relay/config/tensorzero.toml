@@ -1,0 +1,17 @@
+# Relay's active Neon + Cloudflare R2 runtime config. Direct provider model
+# names remain available; add operator-owned model/function tables below as the
+# product catalog is promoted. Secrets are resolved only from the environment.
+[gateway]
+bind_address = "0.0.0.0:3000"
+
+[gateway.observability]
+enabled = true
+backend = "postgres"
+
+[object_storage]
+type = "s3_compatible"
+bucket_name = "env::R2_BUCKET_NAME"
+region = "auto"
+endpoint = "env::R2_S3_ENDPOINT"
+
+[functions]

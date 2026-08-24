@@ -1,0 +1,21 @@
+[package]
+name = "vend-keys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Provisioning-key lifecycle: mint vk_live_/vk_test_ secrets ONCE, store
+# argon2id(secret) + non-secret prefix shard, verify Bearer keys, revoke, and the
+# atomic check-and-reserve spend-cap gate.
+[dependencies]
+vend-core = { workspace = true }
+vend-tenancy = { workspace = true }
+serde = { workspace = true }
+async-trait = { workspace = true }
+argon2 = { workspace = true }
+password-hash = { workspace = true }
+subtle = { workspace = true }
+ulid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

@@ -1,0 +1,19 @@
+[package]
+name = "vend-relay-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Real HTTP client to the live Relay. Implements RelayTransport over reqwest,
+# forwarding OpenAI-shaped bodies verbatim and parsing usage from JSON or SSE.
+[dependencies]
+vend-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+axum = { workspace = true }

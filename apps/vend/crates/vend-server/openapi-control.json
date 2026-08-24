@@ -1,0 +1,95 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Vend Control Plane",
+    "version": "0.1.0",
+    "description": "Authenticated operator API for Vend tenant products, apps, keys, end users, and daily spend. All responses use Vend's success/error envelope."
+  },
+  "servers": [{"url": "/"}],
+  "security": [{"adminBearer": []}],
+  "paths": {
+    "/v1/auth/setup": {
+      "post": {"security": [], "summary": "Consume a one-time invitation token and set an Argon2id password", "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["setup_token", "password"], "properties": {"setup_token": {"type": "string"}, "password": {"type": "string", "minLength": 12, "maxLength": 256}}}}}}, "responses": {"200": {"description": "Activated membership"}, "401": {"description": "Invalid, expired, or consumed setup token"}, "429": {"$ref": "#/components/responses/RateLimited"}}}
+    },
+    "/v1/auth/login": {
+      "post": {"security": [], "summary": "Email/password login for an active tenant membership", "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["tenant_id", "email", "password"], "properties": {"tenant_id": {"type": "string"}, "email": {"type": "string", "format": "email"}, "password": {"type": "string"}}}}}}, "responses": {"200": {"description": "One-time plaintext, expiring session bearer; Cache-Control: no-store"}, "401": {"description": "Invalid credentials or inactive membership"}, "429": {"$ref": "#/components/responses/RateLimited"}}}
+    },
+    "/v1/auth/github/start": {"get": {"security": [], "summary": "Start GitHub OAuth with PKCE", "parameters": [{"$ref": "#/components/parameters/TenantIdQuery"}], "responses": {"303": {"description": "Redirect to GitHub"}, "429": {"$ref": "#/components/responses/RateLimited"}, "503": {"description": "GitHub login is unconfigured"}}}},
+    "/v1/auth/github/callback": {"get": {"security": [], "summary": "GitHub OAuth callback; verified primary email must match an invited membership", "responses": {"200": {"description": "Vend session bearer"}, "401": {"description": "OAuth or membership validation failed"}, "429": {"$ref": "#/components/responses/RateLimited"}}}},
+    "/v1/auth/google/start": {"get": {"security": [], "summary": "Start Google OIDC with PKCE and nonce", "parameters": [{"$ref": "#/components/parameters/TenantIdQuery"}], "responses": {"303": {"description": "Redirect to Google"}, "429": {"$ref": "#/components/responses/RateLimited"}, "503": {"description": "Google login is unconfigured"}}}},
+    "/v1/auth/google/callback": {"get": {"security": [], "summary": "Google OIDC callback; validates JWKS signature, issuer, audience, expiry, nonce, and verified email", "responses": {"200": {"description": "Vend session bearer"}, "401": {"description": "OIDC or membership validation failed"}, "429": {"$ref": "#/components/responses/RateLimited"}}}},
+    "/v1/customer/tenant": {"get": {"security": [{"customerSession": []}], "summary": "Get the authenticated membership's tenant", "responses": {"200": {"description": "Tenant"}, "401": {"$ref": "#/components/responses/Unauthorized"}}}},
+    "/v1/customer/apps": {
+      "get": {"security": [{"customerSession": []}], "summary": "List own-tenant apps (viewer+) ", "responses": {"200": {"description": "App list"}}},
+      "post": {"security": [{"customerSession": []}], "summary": "Create own-tenant app (admin+)", "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateApp"}}}}, "responses": {"200": {"description": "Created app"}, "403": {"$ref": "#/components/responses/Forbidden"}}}
+    },
+    "/v1/customer/apps/{app_id}": {"get": {"security": [{"customerSession": []}], "summary": "Get an own-tenant app (viewer+)", "parameters": [{"$ref": "#/components/parameters/AppId"}], "responses": {"200": {"description": "App"}, "404": {"description": "Missing or belongs to another tenant"}}}},
+    "/v1/customer/apps/{app_id}/enabled": {"patch": {"security": [{"customerSession": []}], "summary": "Enable or disable an own-tenant app (admin+)", "parameters": [{"$ref": "#/components/parameters/AppId"}], "responses": {"200": {"description": "Updated app"}, "403": {"$ref": "#/components/responses/Forbidden"}, "404": {"description": "Missing or belongs to another tenant"}}}},
+    "/v1/customer/apps/{app_id}/usage": {"get": {"security": [{"customerSession": []}], "summary": "Read own-tenant daily usage (viewer+)", "parameters": [{"$ref": "#/components/parameters/AppId"}], "responses": {"200": {"description": "Usage totals"}, "404": {"description": "Missing or belongs to another tenant"}}}},
+    "/v1/customer/apps/{app_id}/keys": {
+      "get": {"security": [{"customerSession": []}], "summary": "List own-tenant provisioning key metadata (viewer+)", "parameters": [{"$ref": "#/components/parameters/AppId"}], "responses": {"200": {"description": "Safe key metadata"}}},
+      "post": {"security": [{"customerSession": []}], "summary": "Issue own-tenant provisioning key (admin+)", "parameters": [{"$ref": "#/components/parameters/AppId"}], "responses": {"200": {"description": "One-time plaintext provisioning key"}, "403": {"$ref": "#/components/responses/Forbidden"}}}
+    },
+    "/v1/customer/apps/{app_id}/end-users": {"post": {"security": [{"customerSession": []}], "summary": "Provision own-tenant end-user mapping (admin+)", "parameters": [{"$ref": "#/components/parameters/AppId"}], "responses": {"200": {"description": "End-user mapping"}, "403": {"$ref": "#/components/responses/Forbidden"}, "404": {"description": "Missing or belongs to another tenant"}}}},
+    "/v1/customer/keys/{key_id}": {"delete": {"security": [{"customerSession": []}], "summary": "Revoke own-tenant provisioning key (admin+)", "responses": {"200": {"description": "Revoked key"}, "403": {"$ref": "#/components/responses/Forbidden"}, "404": {"description": "Missing or belongs to another tenant"}}}},
+    "/v1/customer/users": {
+      "get": {"security": [{"customerSession": []}], "summary": "List tenant memberships (owner)", "responses": {"200": {"description": "Membership list"}, "403": {"$ref": "#/components/responses/Forbidden"}}},
+      "post": {"security": [{"customerSession": []}], "summary": "Invite tenant member (owner); returns setup token once", "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/InviteUser"}}}}, "responses": {"200": {"description": "Invitation and one-time setup token"}, "403": {"$ref": "#/components/responses/Forbidden"}}}
+    },
+    "/v1/customer/users/{user_id}": {"patch": {"security": [{"customerSession": []}], "summary": "Change membership role or disabled status (owner)", "responses": {"200": {"description": "Updated membership"}, "403": {"$ref": "#/components/responses/Forbidden"}, "409": {"description": "Would remove the last active owner"}}}},
+    "/v1/customer/users/{user_id}/sessions": {"delete": {"security": [{"customerSession": []}], "summary": "Revoke all sessions for a tenant membership (owner)", "responses": {"200": {"description": "Revoked session count"}, "403": {"$ref": "#/components/responses/Forbidden"}}}},
+    "/v1/customer/logout": {"post": {"security": [{"customerSession": []}], "summary": "Revoke current session", "responses": {"200": {"description": "Logged out"}}}},
+    "/v1/customer/session/rotate": {"post": {"security": [{"customerSession": []}], "summary": "Atomically revoke the current session and return one replacement bearer", "responses": {"200": {"description": "One-time replacement session bearer; Cache-Control: no-store"}, "401": {"$ref": "#/components/responses/Unauthorized"}}}},
+    "/v1/customer/password": {"patch": {"security": [{"customerSession": []}], "summary": "Change native password and revoke every other principal session", "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["current_password", "new_password"], "properties": {"current_password": {"type": "string", "minLength": 12, "maxLength": 256}, "new_password": {"type": "string", "minLength": 12, "maxLength": 256}}}}}}, "responses": {"200": {"description": "Password changed and other session count returned; Cache-Control: no-store"}, "401": {"description": "Current password or session is invalid"}}}},
+    "/v1/control/tenants/{tenant_id}/users": {
+      "get": {"summary": "List tenant memberships", "parameters": [{"$ref": "#/components/parameters/TenantId"}], "responses": {"200": {"description": "Membership list"}}},
+      "post": {"summary": "Invite a tenant member and return setup token once", "parameters": [{"$ref": "#/components/parameters/TenantId"}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/InviteUser"}}}}, "responses": {"200": {"description": "Invitation"}}}
+    },
+    "/v1/control/tenants": {
+      "get": {"summary": "List tenants", "responses": {"200": {"description": "Tenant list"}, "401": {"$ref": "#/components/responses/Unauthorized"}}},
+      "post": {"summary": "Atomically create a tenant, first app, policy, and provisioning key", "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/BootstrapRequest"}}}}, "responses": {"200": {"description": "Product and one-time plaintext provisioning key"}, "401": {"$ref": "#/components/responses/Unauthorized"}}}
+    },
+    "/v1/control/tenants/{tenant_id}": {
+      "get": {"summary": "Get a tenant", "parameters": [{"$ref": "#/components/parameters/TenantId"}], "responses": {"200": {"description": "Tenant"}, "404": {"description": "Not found"}}}
+    },
+    "/v1/control/tenants/{tenant_id}/apps": {
+      "get": {"summary": "List tenant apps", "parameters": [{"$ref": "#/components/parameters/TenantId"}], "responses": {"200": {"description": "App list"}}},
+      "post": {"summary": "Create an app", "parameters": [{"$ref": "#/components/parameters/TenantId"}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateApp"}}}}, "responses": {"200": {"description": "Created app"}}}
+    },
+    "/v1/control/apps/{app_id}": {
+      "get": {"summary": "Get an app", "parameters": [{"$ref": "#/components/parameters/AppId"}], "responses": {"200": {"description": "App"}, "404": {"description": "Not found"}}}
+    },
+    "/v1/control/apps/{app_id}/enabled": {
+      "patch": {"summary": "Enable or disable an app", "parameters": [{"$ref": "#/components/parameters/AppId"}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}}}}}, "responses": {"200": {"description": "Updated app"}}}
+    },
+    "/v1/control/apps/{app_id}/keys": {
+      "get": {"summary": "List safe app key metadata", "parameters": [{"$ref": "#/components/parameters/AppId"}], "responses": {"200": {"description": "Key metadata without hashes or plaintext"}}},
+      "post": {"summary": "Issue an app provisioning key", "parameters": [{"$ref": "#/components/parameters/AppId"}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/IssueKey"}}}}, "responses": {"200": {"description": "Key metadata and one-time plaintext secret"}}}
+    },
+    "/v1/control/keys/{key_id}": {
+      "delete": {"summary": "Revoke a provisioning key", "parameters": [{"name": "key_id", "in": "path", "required": true, "schema": {"type": "string", "pattern": "^sub_key_[0-9A-HJKMNP-TV-Z]{26}$"}}], "responses": {"200": {"description": "Revoked key metadata"}, "404": {"description": "Not found"}}}
+    },
+    "/v1/control/apps/{app_id}/end-users": {
+      "post": {"summary": "Provision an app end user with an existing Mint account", "parameters": [{"$ref": "#/components/parameters/AppId"}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["external_ref", "mint_account_id"], "properties": {"external_ref": {"type": "string", "minLength": 1}, "mint_account_id": {"type": "string", "minLength": 1}}}}}}, "responses": {"200": {"description": "Provisioned or idempotently existing end user"}, "409": {"description": "External reference already points at another Mint account"}}}
+    },
+    "/v1/control/apps/{app_id}/usage": {
+      "get": {"summary": "Get billed and pending app spend for one UTC day", "parameters": [{"$ref": "#/components/parameters/AppId"}, {"name": "utc_day", "in": "query", "schema": {"type": "string", "format": "date"}, "description": "Defaults to the current UTC day"}], "responses": {"200": {"description": "Request counts, pending authorization, and captured billed spend in microdollars"}}}
+    }
+  },
+  "components": {
+    "securitySchemes": {"adminBearer": {"type": "http", "scheme": "bearer"}, "customerSession": {"type": "http", "scheme": "bearer", "description": "Expiring, revocable Vend customer session (not a provisioning key)"}},
+    "parameters": {
+      "TenantId": {"name": "tenant_id", "in": "path", "required": true, "schema": {"type": "string", "pattern": "^ten_[0-9A-HJKMNP-TV-Z]{26}$"}},
+      "AppId": {"name": "app_id", "in": "path", "required": true, "schema": {"type": "string", "pattern": "^app_[0-9A-HJKMNP-TV-Z]{26}$"}},
+      "TenantIdQuery": {"name": "tenant_id", "in": "query", "required": true, "schema": {"type": "string", "pattern": "^ten_[0-9A-HJKMNP-TV-Z]{26}$"}}
+    },
+    "responses": {"Unauthorized": {"description": "Missing, invalid, expired, or revoked bearer"}, "Forbidden": {"description": "Authenticated membership lacks the required role"}, "RateLimited": {"description": "Postgres-enforced distributed rate limit; Retry-After seconds and Cache-Control: no-store are returned", "headers": {"Retry-After": {"schema": {"type": "integer", "minimum": 1}}, "Cache-Control": {"schema": {"type": "string", "const": "no-store"}}}}},
+    "schemas": {
+      "MarkupPolicy": {"type": "object", "required": ["markup_bps", "min_fee_micros", "platform_fee_bps", "funding_mode"], "properties": {"markup_bps": {"type": "integer", "minimum": 0, "maximum": 10000}, "min_fee_micros": {"type": "integer", "minimum": 0}, "platform_fee_bps": {"type": "integer", "minimum": 0, "maximum": 10000}, "funding_mode": {"type": "string", "enum": ["tenant_reserve"]}}},
+      "BootstrapRequest": {"type": "object", "required": ["tenant_name", "owner_email", "owner_display_name", "app_name", "mint_account_id", "model_allowlist", "markup_policy", "daily_cap_micros"], "properties": {"tenant_name": {"type": "string", "minLength": 1}, "owner_email": {"type": "string", "format": "email"}, "owner_display_name": {"type": "string", "minLength": 1}, "app_name": {"type": "string", "minLength": 1}, "mint_account_id": {"type": "string", "minLength": 1}, "model_allowlist": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}, "zdr": {"type": "boolean", "default": false}, "markup_policy": {"$ref": "#/components/schemas/MarkupPolicy"}, "environment": {"type": "string", "enum": ["live", "test"], "default": "live"}, "daily_cap_micros": {"type": "integer", "minimum": 1}, "per_end_user_daily_cap_micros": {"type": ["integer", "null"], "minimum": 1}}},
+      "InviteUser": {"type": "object", "required": ["email", "display_name", "role"], "properties": {"email": {"type": "string", "format": "email"}, "display_name": {"type": "string", "minLength": 1}, "role": {"type": "string", "enum": ["owner", "admin", "viewer"]}}},
+      "CreateApp": {"type": "object", "required": ["name", "mint_account_id", "markup_policy"], "properties": {"name": {"type": "string", "minLength": 1}, "mint_account_id": {"type": "string", "minLength": 1}, "model_allowlist": {"type": "array", "items": {"type": "string"}, "default": []}, "zdr": {"type": "boolean", "default": false}, "markup_policy": {"$ref": "#/components/schemas/MarkupPolicy"}}},
+      "IssueKey": {"type": "object", "required": ["daily_cap_micros"], "properties": {"environment": {"type": "string", "enum": ["live", "test"], "default": "live"}, "daily_cap_micros": {"type": "integer", "minimum": 1}, "per_end_user_daily_cap_micros": {"type": ["integer", "null"], "minimum": 1}}}
+    }
+  }
+}

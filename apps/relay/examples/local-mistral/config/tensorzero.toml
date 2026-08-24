@@ -1,0 +1,67 @@
+# =============================================================================
+# Relay (TensorZero) -- Local self-hosted inference via mistral.rs
+# =============================================================================
+#
+# mistral.rs (https://github.com/EricLBuehler/mistral.rs, MIT) runs an
+# OpenAI-compatible HTTP server. Its inference engine is `candle`
+# (https://github.com/huggingface/candle, Apache-2.0). Because the server speaks
+# the OpenAI chat-completions contract, Relay needs NO new Rust code to use it --
+# it is wired in purely through this config as a self-hosted provider whose
+# `api_base` points at the mistral.rs server.
+#
+# Launch mistral.rs on a GPU host (see docs/relay/LOCAL-INFERENCE.md):
+#
+#     mistralrs serve -m Qwen/Qwen3-4B -p 1234
+#
+# Then run the gateway:
+#
+#     gateway --config-file examples/local-mistral/config/tensorzero.toml
+#
+# ENV-CONFIGURABLE BASE URL (ComfyUI-style):
+#   The `api_base` values below default to http://localhost:1234/v1/ (the
+#   mistral.rs default port). To point Relay at a remote GPU host without
+#   editing this file, render the sibling `tensorzero.template.toml` with the
+#   MISTRAL_RS_URL environment variable -- see that file and the docs. This
+#   file is the ready-to-run default (localhost) variant.
+#
+# api_base GOTCHA: it MUST end at `/v1/` (trailing slash) and MUST NOT include
+#   `/chat/completions` -- the gateway appends that itself.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Model 1: served via the generic OpenAI-compatible `vllm` self-hosted driver.
+# -----------------------------------------------------------------------------
+[models.local-mistral]
+routing = ["mistralrs"]
+
+[models.local-mistral.providers.mistralrs]
+type = "vllm"                                      # OpenAI-compatible self-hosted driver
+api_base = "http://localhost:1234/v1/"             # mistral.rs default; trailing slash required
+model_name = "mistralai/Mistral-7B-Instruct-v0.3" # must match GET /v1/models on the server
+api_key_location = "none"                          # mistral.rs is keyless by default
+
+# -----------------------------------------------------------------------------
+# Model 2: same server, different served model, using the generic `openai`
+# driver instead (functionally equivalent -- shows the alternative kind).
+# -----------------------------------------------------------------------------
+[models.local-qwen]
+routing = ["mistralrs"]
+
+[models.local-qwen.providers.mistralrs]
+type = "openai"                                    # generic OpenAI-compatible driver
+api_base = "http://localhost:1234/v1/"
+model_name = "Qwen/Qwen3-4B"
+api_key_location = "none"
+
+# -----------------------------------------------------------------------------
+# A function that selects the local model through a chat_completion variant.
+# Callable via the gateway at POST /openai/v1/chat/completions with
+# `"model": "tensorzero::function_name::generate"`, or directly by model name
+# `"model": "tensorzero::model_name::local-mistral"`.
+# -----------------------------------------------------------------------------
+[functions.generate]
+type = "chat"
+
+[functions.generate.variants.local_mistral]
+type = "chat_completion"
+model = "local-mistral"

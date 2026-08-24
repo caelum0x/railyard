@@ -1,0 +1,19 @@
+[package]
+name = "abacus-upstream"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Real reqwest impl of UpstreamTransport: forwards the OpenAI-compatible / tool
+# body verbatim to the real provider base URL and parses normalized token usage.
+# A separate crate (mirroring vend-relay-client) so the provider forwarder is
+# swappable and fake-able independently of Mint.
+[dependencies]
+abacus-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

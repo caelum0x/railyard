@@ -1,0 +1,42 @@
+[package]
+name = "abacus-proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The axum/tokio reverse-proxy SERVER — the enforcement point. It resolves the
+# agent identity, prices the MAX possible cost, opens a Mint hold (direct or
+# allowance-backed) as the reserve gate, forwards the request verbatim to the real
+# provider, then captures the EXACT actual on success / releases on failure
+# (HoldGuard RAII, ADR-0002 success-only), recording a Mint receipt as the
+# system-of-record. Wires the REAL abacus-mint-client + abacus-upstream in
+# main.rs; tests inject the abacus-testkit fakes.
+[[bin]]
+name = "abacus-proxy"
+path = "src/main.rs"
+
+[lib]
+name = "abacus_proxy"
+path = "src/lib.rs"
+
+[dependencies]
+abacus-core = { workspace = true }
+abacus-mint-client = { workspace = true }
+abacus-upstream = { workspace = true }
+
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+subtle = { workspace = true }
+ulid = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+abacus-testkit = { workspace = true }
+tower = { workspace = true }

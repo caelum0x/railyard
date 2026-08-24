@@ -1,0 +1,44 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+# apps/agent-runtime is its OWN standalone cargo workspace (rig / async stack,
+# NO gpui). It is also listed in the repo-root Cargo.toml `exclude` array so that
+# no member glob or `cargo build --workspace` from the repo root ever pulls it
+# into the desktop GPUI/Metal build graph. Build/test only with:
+#   cd apps/agent-runtime && cargo check   (or cargo test)
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.94"
+
+[workspace.dependencies]
+# --- Vendored rig (MIT, 0.42.0) via PATH deps on the real crate dirs ---------
+# Paths are resolved relative to THIS manifest (apps/agent-runtime/Cargo.toml).
+# In 0.42 the Agent/Tool/Prompt layer was split OUT of rig-core into rig-agent;
+# rig-core now holds only the model/provider/completion layer. We use both.
+rig-core = { path = "../../external/rig/crates/rig-core", default-features = false, features = [
+    "reqwest",
+    "rustls",
+] }
+rig-agent = { path = "../../external/rig/crates/rig-agent", default-features = false, features = [
+    "derive",
+] }
+
+# --- Internal crates ---------------------------------------------------------
+aitp-client = { path = "crates/aitp-client" }
+relay-provider = { path = "crates/relay-provider" }
+agent-core = { path = "crates/agent-core" }
+
+# --- Third-party -------------------------------------------------------------
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+async-trait = "0.1"
+base64 = "0.22"
+tracing = "0.1"
+tokio = { version = "1", features = ["rt", "macros"] }
+anyhow = "1"
+hex = "0.4"
