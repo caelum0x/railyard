@@ -6,3 +6,18 @@ rust-version = "1.96.1"
 publish = false
 
 [dependencies]
+# kira — an engine-agnostic (no Bevy) game audio library. It is a DEFAULT dependency
+# because it never pulls Bevy 0.19 into the workspace graph, so the hard "default
+# build must not pull Bevy 0.19" constraint is unaffected.
+#   - cpal        : the real device backend used in production (`DefaultBackend`).
+#   - wav + pcm   : RIFF/WAV container + PCM codec so uncompressed sfx load from bytes.
+#   - ogg + vorbis: OGG container + Vorbis codec for compressed music.
+# (`cpal-realtime-dbus` is deliberately omitted so no libdbus is pulled on Linux.)
+# The mock backend used by the unit tests is always compiled in (no feature needed).
+kira = { version = "0.12", default-features = false, features = [
+    "cpal",
+    "wav",
+    "pcm",
+    "ogg",
+    "vorbis",
+] }
