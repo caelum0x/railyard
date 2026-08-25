@@ -56,7 +56,7 @@ const USD_PER_MILLION: i64 = 1_000_000;
 /// engine's **micro-USD per token**, rounding half-up (matching
 /// [`crate::money::usd_to_micros`]). `const` so the whole catalog is built from
 /// compile-time constants with no float anywhere.
-const fn per_token_micros(micro_usd_per_million: i64) -> i64 {
+pub(crate) const fn per_token_micros(micro_usd_per_million: i64) -> i64 {
     // Half-up rounding for a non-negative integer: (x + 0.5*scale) / scale.
     (micro_usd_per_million + USD_PER_MILLION / 2) / USD_PER_MILLION
 }
