@@ -1,0 +1,12 @@
+// Duskblade Sovereign — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Duskblade Sovereign",
+    cost: 3200,
+    tier: Legendary,
+    stats: Stats(
+        ad: 60,
+    ),
+    passive: Some("Takedowns grant brief invisibility."),
+    build_from: ["verdant-barrier", "forbidden-idol", "caulfields-hammer"],
+    tags: ["legendary", "ad", "lethality", "assassin"],
+)

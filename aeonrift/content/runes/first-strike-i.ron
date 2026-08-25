@@ -1,0 +1,7 @@
+// First Strike — Inspiration / Keystone.
+RuneSpec(
+    name: "First Strike",
+    tree: Inspiration,
+    tier: Keystone,
+    effect: "Striking a champion first grants bonus damage and extra gold for a short window.",
+)

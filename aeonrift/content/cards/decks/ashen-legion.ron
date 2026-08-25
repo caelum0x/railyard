@@ -1,0 +1,2 @@
+// Preset deck 17 — Ashen Legion.
+DeckDef(name: "Ashen Legion", cards: ["toran","vashka","ysmera","kaeza","nerreth","vulcan","gorehoof","xelphine"])

@@ -1,0 +1,63 @@
+// content/maps/twin-lanes-crucible.ron
+//
+// A two-lane "twin crucible" map for the MOBA rules layer and scripted match tests.
+// Two bases (team 0 = Blue, team 1 = Red) connected by a top and a bottom lane, each
+// defended by one turret + one inhibitor, plus two shared jungle camps and one neutral
+// epic objective. All coordinates live inside the sim's [-50, 50] play-plane.
+//
+// Structure/neutral STATS resolve by id/kind from the content catalogs
+// (content/turrets/structures.ron, content/objectives/neutrals.ron), so this file is
+// pure LAYOUT — positions, teams, and lane topology.
+MapData(
+    name: "Twin Lanes Crucible",
+    bounds: 50.0,
+    bases: [
+        BaseDef(team: 0, nexus: P(x: -45.0, y: -45.0), spawn: P(x: -47.0, y: -47.0)),
+        BaseDef(team: 1, nexus: P(x:  45.0, y:  45.0), spawn: P(x:  47.0, y:  47.0)),
+    ],
+    lanes: [
+        LaneDef(
+            name: "top",
+            waypoints: [
+                P(x: -45.0, y: -40.0),
+                P(x: -40.0, y:   0.0),
+                P(x: -20.0, y:  30.0),
+                P(x:  10.0, y:  42.0),
+                P(x:  42.0, y:  45.0),
+            ],
+            turrets: [
+                TurretDef(team: 0, pos: P(x: -38.0, y: -10.0), tier: 1),
+                TurretDef(team: 1, pos: P(x:  20.0, y:  40.0), tier: 1),
+            ],
+            inhibitors: [
+                InhibDef(team: 0, pos: P(x: -42.0, y: -38.0)),
+                InhibDef(team: 1, pos: P(x:  38.0, y:  42.0)),
+            ],
+        ),
+        LaneDef(
+            name: "bot",
+            waypoints: [
+                P(x: -40.0, y: -45.0),
+                P(x:   0.0, y: -42.0),
+                P(x:  30.0, y: -20.0),
+                P(x:  42.0, y:  10.0),
+                P(x:  45.0, y:  42.0),
+            ],
+            turrets: [
+                TurretDef(team: 0, pos: P(x: -10.0, y: -38.0), tier: 1),
+                TurretDef(team: 1, pos: P(x:  40.0, y:  20.0), tier: 1),
+            ],
+            inhibitors: [
+                InhibDef(team: 0, pos: P(x: -38.0, y: -42.0)),
+                InhibDef(team: 1, pos: P(x:  42.0, y:  38.0)),
+            ],
+        ),
+    ],
+    jungle: [
+        CampDef(id: "crimson_golem", pos: P(x: -12.0, y:  12.0)),
+        CampDef(id: "azure_sentinel", pos: P(x:  12.0, y: -12.0)),
+    ],
+    objectives: [
+        ObjectiveDef(id: "tidewyrm", pos: P(x: 0.0, y: 0.0)),
+    ],
+)

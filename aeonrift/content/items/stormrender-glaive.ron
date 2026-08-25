@@ -1,0 +1,13 @@
+// Stormrender Glaive — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Stormrender Glaive",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 50,
+        attack_speed: 0.2,
+    ),
+    passive: Some("Empowered attacks cleave a cone for bonus magic."),
+    build_from: ["emberfont-orb", "verdant-fang-jungle", "aether-crystal"],
+    tags: ["legendary", "ad", "attack-speed", "aoe"],
+)

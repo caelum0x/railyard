@@ -1,0 +1,12 @@
+// Shadowreign Mantle — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Shadowreign Mantle",
+    cost: 3100,
+    tier: Legendary,
+    stats: Stats(
+        ap: 70,
+    ),
+    passive: Some("Dealing ability damage grants stacking magic penetration."),
+    build_from: ["aether-catalyst", "gale-longbow", "fiendish-codex"],
+    tags: ["legendary", "ap", "penetration", "burst"],
+)

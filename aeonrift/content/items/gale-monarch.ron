@@ -1,0 +1,13 @@
+// Gale Monarch — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Gale Monarch",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 50,
+        attack_speed: 0.3,
+    ),
+    passive: Some("Basic attacks build stacks that grant bonus move and attack speed."),
+    build_from: ["stalwart-greatshield", "emberheart-censer", "arclight-filament"],
+    tags: ["legendary", "ad", "attack-speed"],
+)

@@ -1,0 +1,21 @@
+// content/cards/packs/seasonal-eclipse-vault.ron
+// Limited seasonal vault for the Eclipse season.
+CardPack(
+    id: "seasonal-eclipse-vault",
+    name: "Eclipse Season Vault",
+    description: "Limited seasonal vault for the Eclipse season.",
+    category: "event",
+    card_count: 10,
+    cost: PackCost(currency: "tickets", amount: 240),
+    one_time: false,
+    guaranteed_floor: Some("epic"),
+    faction_bias: Some("Umbral"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 300),
+        RarityOdd(rarity: "uncommon",  weight: 300),
+        RarityOdd(rarity: "rare",      weight: 240),
+        RarityOdd(rarity: "epic",      weight: 110),
+        RarityOdd(rarity: "legendary", weight: 40),
+        RarityOdd(rarity: "mythic",    weight: 10),
+    ],
+)

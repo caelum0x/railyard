@@ -1,0 +1,13 @@
+// Gale Sovereign Bow — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Gale Sovereign Bow",
+    cost: 3400,
+    tier: Legendary,
+    stats: Stats(
+        ad: 50,
+        attack_speed: 0.3,
+    ),
+    passive: Some("Attacks ramp attack speed toward a high cap."),
+    build_from: ["solar-focus", "stormbreaker-maul", "arclight-filament"],
+    tags: ["legendary", "ad", "attack-speed", "marksman"],
+)

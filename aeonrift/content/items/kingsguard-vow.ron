@@ -1,0 +1,13 @@
+// Kingsguard Vow — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Kingsguard Vow",
+    cost: 1000,
+    tier: Epic,
+    stats: Stats(
+        hp: 200,
+        armor: 20,
+    ),
+    passive: Some("Shields a bonded ally."),
+    build_from: ["warblade", "crystalline-bracer"],
+    tags: ["epic", "hp", "armor", "shield", "support"],
+)

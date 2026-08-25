@@ -1,0 +1,12 @@
+// Cindershot Ore — BASIC. Warm to the touch.
+ItemSpec(
+    name: "Cindershot Ore",
+    cost: 300,
+    tier: Basic,
+    stats: Stats(
+        ad: 9,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "ad"],
+)

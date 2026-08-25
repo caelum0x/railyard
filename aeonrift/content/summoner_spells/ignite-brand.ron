@@ -1,0 +1,7 @@
+// Ignite Brand — summoner spell.
+SummonerSpell(
+    name: "Ignite Brand",
+    cooldown: 180,
+    effect: "Ignite an enemy champion, dealing true damage over time and applying grievous wounds.",
+    tags: ["damage", "antiheal"],
+)

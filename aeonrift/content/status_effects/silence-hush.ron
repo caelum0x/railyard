@@ -1,0 +1,11 @@
+// Hush — HardCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "silence-hush",
+    name: "Hush",
+    category: HardCC,
+    vocab_ref: Some("DebuffSilence"),
+    fields: ["duration"],
+    cleansable: true,
+    stacking: Longest,
+    description: "Prevents the target from casting abilities for a short time.",
+)

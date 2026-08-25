@@ -1,0 +1,7 @@
+// Gathering Storm — Sorcery / Tier3.
+RuneSpec(
+    name: "Gathering Storm",
+    tree: Sorcery,
+    tier: Tier3,
+    effect: "Periodically gain scaling adaptive force that grows for the whole match.",
+)

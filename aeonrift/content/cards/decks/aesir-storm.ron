@@ -1,0 +1,2 @@
+// Preset deck 14 — Aesir Storm.
+DeckDef(name: "Aesir Storm", cards: ["thor","odin","tyr","freyja","ullr","loki","vanguard","brackmoor"])

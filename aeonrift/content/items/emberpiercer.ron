@@ -1,0 +1,12 @@
+// Emberpiercer — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Emberpiercer",
+    cost: 1200,
+    tier: Epic,
+    stats: Stats(
+        ad: 25,
+    ),
+    passive: Some("Grants armor penetration."),
+    build_from: ["wayfarer-boots", "runic-chip"],
+    tags: ["epic", "ad", "penetration"],
+)

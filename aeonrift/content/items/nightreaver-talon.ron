@@ -1,0 +1,12 @@
+// Nightreaver Talon — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Nightreaver Talon",
+    cost: 1250,
+    tier: Epic,
+    stats: Stats(
+        ad: 22,
+    ),
+    passive: Some("Bonus damage from stealth or brush."),
+    build_from: ["lost-chapter", "cindershot-ore"],
+    tags: ["epic", "ad", "lethality", "assassin"],
+)

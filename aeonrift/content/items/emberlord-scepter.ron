@@ -1,0 +1,12 @@
+// Emberlord Scepter — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Emberlord Scepter",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ap: 85,
+    ),
+    passive: Some("Burn effects deal bonus damage scaling with target's health."),
+    build_from: ["hexdrinker", "warden-mail", "minor-tome"],
+    tags: ["legendary", "ap", "dot", "amplify"],
+)

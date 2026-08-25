@@ -1,0 +1,13 @@
+// Stalwart Greatshield — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Stalwart Greatshield",
+    cost: 1200,
+    tier: Epic,
+    stats: Stats(
+        hp: 250,
+        armor: 30,
+    ),
+    passive: Some("Reduces damage from the largest source."),
+    build_from: ["iron-vest", "keeper-sigil"],
+    tags: ["epic", "hp", "armor", "tank"],
+)

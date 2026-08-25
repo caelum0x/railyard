@@ -1,0 +1,12 @@
+// Colossus Girdle — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Colossus Girdle",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        hp: 550,
+    ),
+    passive: Some("Converts a share of bonus health into attack damage."),
+    build_from: ["spectre-cowl", "phantomsong-dirk", "soulbead-charm"],
+    tags: ["legendary", "hp", "tank"],
+)

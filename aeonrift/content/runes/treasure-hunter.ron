@@ -1,0 +1,7 @@
+// Treasure Hunter — Domination / Tier2.
+RuneSpec(
+    name: "Treasure Hunter",
+    tree: Domination,
+    tier: Tier2,
+    effect: "Each unique champion takedown grants increasing bonus gold.",
+)

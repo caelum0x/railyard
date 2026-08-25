@@ -1,0 +1,13 @@
+// Celestial Warden — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Celestial Warden",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        hp: 300,
+        ap: 40,
+    ),
+    passive: Some("Casting an ability shields the lowest-health nearby ally."),
+    build_from: ["oathkeeper-banner", "kingsguard-vow", "minor-tome"],
+    tags: ["legendary", "hp", "ap", "heal-shield", "support"],
+)

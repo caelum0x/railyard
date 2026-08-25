@@ -1,0 +1,13 @@
+// Juggernaut Warplate — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Juggernaut Warplate",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        hp: 450,
+        armor: 30,
+    ),
+    passive: Some("Bonus damage and sustain the longer you stay in a fight."),
+    build_from: ["emberfont-orb", "dreadnought-plating", "short-blade"],
+    tags: ["legendary", "hp", "armor", "tank", "bruiser"],
+)

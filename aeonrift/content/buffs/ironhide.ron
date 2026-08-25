@@ -1,0 +1,10 @@
+// Ironhide — Defensive buff. Maps to closed vocab.
+BuffSpec(
+    id: "ironhide",
+    name: "Ironhide",
+    category: Defensive,
+    vocab_ref: Some("BuffResist"),
+    fields: ["armor", "magic_resist", "duration"],
+    stacking: Strongest,
+    description: "Grants a temporary bulwark of armor and magic resist.",
+)

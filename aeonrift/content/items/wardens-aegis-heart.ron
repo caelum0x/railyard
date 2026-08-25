@@ -1,0 +1,13 @@
+// Warden's Aegis Heart — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Warden's Aegis Heart",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        hp: 350,
+        armor: 40,
+    ),
+    passive: Some("Periodically grants nearby allies a shield."),
+    build_from: ["sorcerer-shoes", "gale-runners", "cloth-wrap"],
+    tags: ["legendary", "hp", "armor", "shield", "aura", "support"],
+)

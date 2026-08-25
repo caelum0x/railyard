@@ -1,0 +1,12 @@
+// Seraph's Embrace — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Seraph's Embrace",
+    cost: 1200,
+    tier: Epic,
+    stats: Stats(
+        ap: 35,
+    ),
+    passive: Some("Converts excess mana into a shield."),
+    build_from: ["great-rod", "long-blade"],
+    tags: ["epic", "ap", "mana", "shield"],
+)

@@ -1,0 +1,13 @@
+// Tidebreaker Bulwark — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Tidebreaker Bulwark",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        hp: 400,
+        armor: 45,
+    ),
+    passive: Some("Knockback immunity and a shockwave when you dash."),
+    build_from: ["duskforge-gauntlet", "tideguard-mantle", "frostglass-vial"],
+    tags: ["legendary", "hp", "armor", "tank", "cc"],
+)

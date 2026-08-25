@@ -1,0 +1,7 @@
+// Ultimate Hunter — Domination / Tier3.
+RuneSpec(
+    name: "Ultimate Hunter",
+    tree: Domination,
+    tier: Tier3,
+    effect: "Gain ability haste for your ultimate, increasing with each unique champion takedown.",
+)

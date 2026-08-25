@@ -1,0 +1,7 @@
+// Bone Armor — Resolve / Tier2.
+RuneSpec(
+    name: "Bone Armor",
+    tree: Resolve,
+    tier: Tier2,
+    effect: "Gain a small stacking bonus to resistances that grows near allies.",
+)

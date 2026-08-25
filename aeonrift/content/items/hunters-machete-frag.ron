@@ -1,0 +1,12 @@
+// Hunter's Machete Fragment — BASIC. Nicked from use.
+ItemSpec(
+    name: "Hunter's Machete Fragment",
+    cost: 350,
+    tier: Basic,
+    stats: Stats(
+        ad: 12,
+    ),
+    passive: Some("Bonus damage to monsters."),
+    build_from: [],
+    tags: ["basic", "ad", "jungle"],
+)

@@ -1,0 +1,20 @@
+// content/cards/packs/ascendant-mythic-vault.ron
+// The richest vault, with the best mythic odds.
+CardPack(
+    id: "ascendant-mythic-vault",
+    name: "Ascendant Mythic Vault",
+    description: "The richest vault, with the best mythic odds.",
+    category: "premium",
+    card_count: 12,
+    cost: PackCost(currency: "gems", amount: 1500),
+    one_time: false,
+    guaranteed_floor: Some("legendary"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 300),
+        RarityOdd(rarity: "uncommon",  weight: 300),
+        RarityOdd(rarity: "rare",      weight: 240),
+        RarityOdd(rarity: "epic",      weight: 110),
+        RarityOdd(rarity: "legendary", weight: 40),
+        RarityOdd(rarity: "mythic",    weight: 10),
+    ],
+)

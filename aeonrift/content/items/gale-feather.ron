@@ -1,0 +1,12 @@
+// Gale Feather — BASIC. Weightless plume.
+ItemSpec(
+    name: "Gale Feather",
+    cost: 300,
+    tier: Basic,
+    stats: Stats(
+        move_speed: 25.0,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "mobility"],
+)

@@ -1,0 +1,7 @@
+// Last Stand — Precision / Tier3.
+RuneSpec(
+    name: "Last Stand",
+    tree: Precision,
+    tier: Tier3,
+    effect: "Deal increasing damage as your own health drops below half.",
+)

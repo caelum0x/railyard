@@ -1,0 +1,12 @@
+// Duskfall Verdict — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Duskfall Verdict",
+    cost: 3100,
+    tier: Legendary,
+    stats: Stats(
+        ad: 60,
+    ),
+    passive: Some("Damaging a champion curses them; the curse detonates for bonus true damage."),
+    build_from: ["quicksilver-treads", "skyfin-quiver", "lost-chapter"],
+    tags: ["legendary", "ad", "lethality", "burst"],
+)

@@ -1,0 +1,13 @@
+// Titanbreaker Cleaver — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Titanbreaker Cleaver",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 45,
+        hp: 300,
+    ),
+    passive: Some("Attacks shred enemy armor and deal max-health physical."),
+    build_from: ["silentveil-mantle", "infernal-spur", "lost-chapter"],
+    tags: ["legendary", "ad", "hp", "penetration", "bruiser"],
+)

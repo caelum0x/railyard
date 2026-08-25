@@ -1,0 +1,7 @@
+// Flash Step — summoner spell.
+SummonerSpell(
+    name: "Flash Step",
+    cooldown: 300,
+    effect: "Blink a short distance instantly toward the cursor.",
+    tags: ["mobility", "escape"],
+)

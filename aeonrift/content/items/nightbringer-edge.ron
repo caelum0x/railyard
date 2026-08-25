@@ -1,0 +1,12 @@
+// Nightbringer Edge — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Nightbringer Edge",
+    cost: 3200,
+    tier: Legendary,
+    stats: Stats(
+        ad: 60,
+    ),
+    passive: Some("First strike from stealth deals massive bonus damage."),
+    build_from: ["nightstalker-fang", "mindshatter-rod", "tithe-shard"],
+    tags: ["legendary", "ad", "lethality", "assassin", "burst"],
+)

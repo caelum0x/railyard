@@ -1,0 +1,13 @@
+// Gale Longbow — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Gale Longbow",
+    cost: 1250,
+    tier: Epic,
+    stats: Stats(
+        ad: 22,
+        attack_speed: 0.15,
+    ),
+    passive: Some("Bonus attack range."),
+    build_from: ["lost-chapter", "bloodroot-vial"],
+    tags: ["epic", "ad", "attack-speed"],
+)

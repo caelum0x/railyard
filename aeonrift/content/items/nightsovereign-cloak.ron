@@ -1,0 +1,12 @@
+// Nightsovereign Cloak — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Nightsovereign Cloak",
+    cost: 3100,
+    tier: Legendary,
+    stats: Stats(
+        ad: 55,
+    ),
+    passive: Some("Leaving combat grants stealth and a burst of move speed."),
+    build_from: ["noonquiver", "emberglow-catalyst", "shadow-cloak"],
+    tags: ["legendary", "ad", "lethality", "mobility", "assassin"],
+)

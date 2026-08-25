@@ -1,0 +1,12 @@
+// Emberglow Catalyst — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Emberglow Catalyst",
+    cost: 1100,
+    tier: Epic,
+    stats: Stats(
+        ap: 40,
+    ),
+    passive: Some("+250 max mana; gain ability haste."),
+    build_from: ["great-rod", "almsgivers-coin"],
+    tags: ["epic", "ap", "mana", "haste"],
+)

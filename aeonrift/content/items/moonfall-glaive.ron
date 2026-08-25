@@ -1,0 +1,12 @@
+// Moonfall Glaive — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Moonfall Glaive",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 55,
+    ),
+    passive: Some("Abilities mark foes; attacking a marked foe deals bonus magic."),
+    build_from: ["phage-heart", "tideguard-mantle", "great-rod"],
+    tags: ["legendary", "ad", "onhit", "burst"],
+)

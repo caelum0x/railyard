@@ -1,0 +1,13 @@
+// Celestial Buckler — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Celestial Buckler",
+    cost: 1050,
+    tier: Epic,
+    stats: Stats(
+        hp: 150,
+        mr: 30,
+    ),
+    passive: Some("Reduces incoming magic burst."),
+    build_from: ["ironbark-buckle", "warblade"],
+    tags: ["epic", "hp", "mr", "tank"],
+)

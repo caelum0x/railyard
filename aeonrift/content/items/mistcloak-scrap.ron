@@ -1,0 +1,12 @@
+// Mistcloak Scrap — BASIC. Cool and damp.
+ItemSpec(
+    name: "Mistcloak Scrap",
+    cost: 250,
+    tier: Basic,
+    stats: Stats(
+        mr: 20,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "mr"],
+)

@@ -1,0 +1,12 @@
+// Stoneheart Core — BASIC. A slow, steady beat.
+ItemSpec(
+    name: "Stoneheart Core",
+    cost: 400,
+    tier: Basic,
+    stats: Stats(
+        hp: 100,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "hp"],
+)

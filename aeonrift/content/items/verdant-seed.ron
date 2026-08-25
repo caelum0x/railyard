@@ -1,0 +1,12 @@
+// Verdant Seed — BASIC. It hums with growth.
+ItemSpec(
+    name: "Verdant Seed",
+    cost: 250,
+    tier: Basic,
+    stats: Stats(
+        hp: 75,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "hp"],
+)

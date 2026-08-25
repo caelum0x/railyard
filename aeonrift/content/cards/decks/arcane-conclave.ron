@@ -1,0 +1,2 @@
+// Preset deck 22 — Arcane Conclave.
+DeckDef(name: "Arcane Conclave", cards: ["zeus","pyromancer","nyxralla","xelphine","ysmera","sporeveil","odin","ra-radiant-dawn"])

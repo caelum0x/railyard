@@ -1,0 +1,13 @@
+// Dawnguard Oath — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Dawnguard Oath",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        hp: 300,
+        mr: 40,
+    ),
+    passive: Some("Bonded ally revives with a fraction of health once per match."),
+    build_from: ["glacial-buckler", "phantomsong-dirk", "serrated-dirk"],
+    tags: ["legendary", "hp", "mr", "support"],
+)

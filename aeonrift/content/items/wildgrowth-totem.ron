@@ -1,0 +1,13 @@
+// Wildgrowth Totem — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Wildgrowth Totem",
+    cost: 1050,
+    tier: Epic,
+    stats: Stats(
+        hp: 180,
+        ap: 20,
+    ),
+    passive: Some("Bonus health regeneration."),
+    build_from: ["frostglass-vial", "runic-chip"],
+    tags: ["epic", "hp", "ap", "sustain"],
+)

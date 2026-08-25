@@ -1,0 +1,12 @@
+// Voidglass Lens — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Voidglass Lens",
+    cost: 1250,
+    tier: Epic,
+    stats: Stats(
+        ap: 40,
+    ),
+    passive: Some("Grants magic penetration."),
+    build_from: ["razor-fan", "cloth-wrap"],
+    tags: ["epic", "ap", "penetration"],
+)

@@ -1,0 +1,13 @@
+// Dreadnought Plating — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Dreadnought Plating",
+    cost: 1200,
+    tier: Epic,
+    stats: Stats(
+        hp: 300,
+        armor: 20,
+    ),
+    passive: None,
+    build_from: ["keeper-sigil", "scryers-lens"],
+    tags: ["epic", "hp", "armor", "tank"],
+)

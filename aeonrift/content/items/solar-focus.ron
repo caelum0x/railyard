@@ -1,0 +1,12 @@
+// Solar Focus — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Solar Focus",
+    cost: 1150,
+    tier: Epic,
+    stats: Stats(
+        ap: 35,
+    ),
+    passive: Some("Ability hits build stacks of adaptive force."),
+    build_from: ["almsgivers-coin", "famine-flask"],
+    tags: ["epic", "ap"],
+)

@@ -1,0 +1,13 @@
+// Windborne Repeater — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Windborne Repeater",
+    cost: 3200,
+    tier: Legendary,
+    stats: Stats(
+        ad: 45,
+        attack_speed: 0.35,
+    ),
+    passive: Some("Attacks fire an extra bolt at reduced damage."),
+    build_from: ["windrunner-treads", "glacial-buckler", "swift-dagger"],
+    tags: ["legendary", "ad", "attack-speed", "marksman"],
+)

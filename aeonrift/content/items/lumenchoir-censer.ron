@@ -1,0 +1,13 @@
+// Lumenchoir Censer — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Lumenchoir Censer",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        ap: 45,
+        hp: 200,
+    ),
+    passive: Some("Empowers ally heals and grants them move speed."),
+    build_from: ["glacial-buckler", "shadowstep-greaves", "fiendish-codex"],
+    tags: ["legendary", "ap", "hp", "heal-shield", "support"],
+)

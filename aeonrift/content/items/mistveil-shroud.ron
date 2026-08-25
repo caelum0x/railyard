@@ -1,0 +1,13 @@
+// Mistveil Shroud — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Mistveil Shroud",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ap: 70,
+        mr: 45,
+    ),
+    passive: Some("A spell shield that recharges faster out of combat."),
+    build_from: ["kindlespark", "emberglow-catalyst", "razor-fan"],
+    tags: ["legendary", "ap", "mr", "spellshield"],
+)

@@ -1,0 +1,13 @@
+// Skyfin Stormbow — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Skyfin Stormbow",
+    cost: 3400,
+    tier: Legendary,
+    stats: Stats(
+        ad: 55,
+        attack_speed: 0.2,
+    ),
+    passive: Some("Critical strikes arc lightning to a second target."),
+    build_from: ["phage-heart", "stormbreaker-maul", "oaken-aegis"],
+    tags: ["legendary", "ad", "attack-speed", "crit"],
+)

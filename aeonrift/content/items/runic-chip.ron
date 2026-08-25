@@ -1,0 +1,12 @@
+// Runic Chip — BASIC. Etched with sigils.
+ItemSpec(
+    name: "Runic Chip",
+    cost: 300,
+    tier: Basic,
+    stats: Stats(
+        ap: 12,
+    ),
+    passive: Some("+3 ability haste."),
+    build_from: [],
+    tags: ["basic", "ap", "haste"],
+)

@@ -1,0 +1,12 @@
+// Umbral Splinter — BASIC. A shard of night.
+ItemSpec(
+    name: "Umbral Splinter",
+    cost: 300,
+    tier: Basic,
+    stats: Stats(
+        ad: 10,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "ad", "lethality"],
+)

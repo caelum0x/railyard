@@ -1,0 +1,13 @@
+// Everbloom Scepter — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Everbloom Scepter",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        ap: 50,
+        hp: 250,
+    ),
+    passive: Some("Shields you cast leave a healing bloom where they break."),
+    build_from: ["bastion-plating", "forbidden-idol", "brute-pick"],
+    tags: ["legendary", "ap", "hp", "heal-shield", "support"],
+)

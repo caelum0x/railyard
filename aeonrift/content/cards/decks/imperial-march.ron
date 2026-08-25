@@ -1,0 +1,2 @@
+// Preset deck 15 — Imperial March.
+DeckDef(name: "Imperial March", cards: ["mars","bellona","vulcan","neptune","mercury","janus","sentinel","vanguard"])

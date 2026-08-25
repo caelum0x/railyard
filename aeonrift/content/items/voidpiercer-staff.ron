@@ -1,0 +1,12 @@
+// Voidpiercer Staff — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Voidpiercer Staff",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        ap: 75,
+    ),
+    passive: Some("Grants percentage magic penetration."),
+    build_from: ["harrowing-crescent", "gravemind-tome", "cloth-wrap"],
+    tags: ["legendary", "ap", "penetration"],
+)

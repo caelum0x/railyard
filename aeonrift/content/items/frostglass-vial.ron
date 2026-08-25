@@ -1,0 +1,12 @@
+// Frostglass Vial — BASIC. Bitterly cold.
+ItemSpec(
+    name: "Frostglass Vial",
+    cost: 300,
+    tier: Basic,
+    stats: Stats(
+        ap: 14,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "ap", "slow"],
+)

@@ -1,0 +1,13 @@
+// Aegislight Charm — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Aegislight Charm",
+    cost: 1000,
+    tier: Epic,
+    stats: Stats(
+        hp: 150,
+        ap: 20,
+    ),
+    passive: Some("Grants a periodic shield."),
+    build_from: ["giants-girdle", "famine-flask"],
+    tags: ["epic", "hp", "ap", "shield"],
+)

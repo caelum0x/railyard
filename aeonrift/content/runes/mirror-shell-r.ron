@@ -1,0 +1,7 @@
+// Mirror Shell — Resolve / Tier2.
+RuneSpec(
+    name: "Mirror Shell",
+    tree: Resolve,
+    tier: Tier2,
+    effect: "Gain bonus magic resist that scales with level.",
+)

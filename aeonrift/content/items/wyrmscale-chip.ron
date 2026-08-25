@@ -1,0 +1,13 @@
+// Wyrmscale Chip — BASIC. Shed by an elder wyrm.
+ItemSpec(
+    name: "Wyrmscale Chip",
+    cost: 350,
+    tier: Basic,
+    stats: Stats(
+        armor: 18,
+        hp: 40,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "armor", "hp"],
+)

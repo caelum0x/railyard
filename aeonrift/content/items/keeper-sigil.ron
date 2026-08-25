@@ -1,0 +1,13 @@
+// Keeper's Sigil — BASIC. A guardian's mark.
+ItemSpec(
+    name: "Keeper's Sigil",
+    cost: 250,
+    tier: Basic,
+    stats: Stats(
+        mr: 15,
+        hp: 40,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "mr", "hp"],
+)

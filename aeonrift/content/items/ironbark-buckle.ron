@@ -1,0 +1,12 @@
+// Ironbark Buckle — BASIC. Bark over steel.
+ItemSpec(
+    name: "Ironbark Buckle",
+    cost: 300,
+    tier: Basic,
+    stats: Stats(
+        armor: 20,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "armor"],
+)

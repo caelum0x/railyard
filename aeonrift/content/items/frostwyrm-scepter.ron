@@ -1,0 +1,13 @@
+// Frostwyrm Scepter — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Frostwyrm Scepter",
+    cost: 3200,
+    tier: Legendary,
+    stats: Stats(
+        ap: 80,
+        hp: 250,
+    ),
+    passive: Some("Damaging abilities slow; slowed foes take bonus magic."),
+    build_from: ["bami-cinder", "last-whisper-shard", "runic-chip"],
+    tags: ["legendary", "ap", "hp", "slow"],
+)
