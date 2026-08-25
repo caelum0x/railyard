@@ -1,0 +1,7 @@
+// Minion Dematerializer — Inspiration / Tier2.
+RuneSpec(
+    name: "Minion Dematerializer",
+    tree: Inspiration,
+    tier: Tier2,
+    effect: "Start with charges that instantly destroy a minion and grant permanent bonus damage to that type.",
+)

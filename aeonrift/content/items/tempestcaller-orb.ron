@@ -1,0 +1,12 @@
+// Tempestcaller Orb — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Tempestcaller Orb",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ap: 85,
+    ),
+    passive: Some("Chained lightning between damaged enemies."),
+    build_from: ["bloodhunter-cleaver", "gale-runners", "tithe-shard"],
+    tags: ["legendary", "ap", "aoe", "burst"],
+)

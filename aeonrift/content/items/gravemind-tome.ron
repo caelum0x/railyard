@@ -1,0 +1,12 @@
+// Gravemind Tome — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Gravemind Tome",
+    cost: 1200,
+    tier: Epic,
+    stats: Stats(
+        ap: 45,
+    ),
+    passive: None,
+    build_from: ["lost-chapter", "gilded-coin"],
+    tags: ["epic", "ap"],
+)

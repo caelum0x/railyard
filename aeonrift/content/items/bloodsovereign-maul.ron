@@ -1,0 +1,13 @@
+// Bloodsovereign Maul — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Bloodsovereign Maul",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 55,
+        hp: 300,
+    ),
+    passive: Some("Abilities heal for a percent of damage dealt to champions."),
+    build_from: ["gloomweave-cowl", "warden-mail", "caulfields-hammer"],
+    tags: ["legendary", "ad", "hp", "lifesteal", "bruiser"],
+)

@@ -1,0 +1,12 @@
+// Stellar Convergence — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Stellar Convergence",
+    cost: 3200,
+    tier: Legendary,
+    stats: Stats(
+        ap: 70,
+    ),
+    passive: Some("Spellblade: after an ability, your next attack deals bonus magic."),
+    build_from: ["forbidden-idol", "starweave-shroud", "faerie-charm"],
+    tags: ["legendary", "ap", "spellblade"],
+)

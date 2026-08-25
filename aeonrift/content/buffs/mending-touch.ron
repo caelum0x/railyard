@@ -1,0 +1,10 @@
+// Mending Touch — Sustain buff. Maps to closed vocab.
+BuffSpec(
+    id: "mending-touch",
+    name: "Mending Touch",
+    category: Sustain,
+    vocab_ref: Some("BuffSelfHeal"),
+    fields: ["amount"],
+    stacking: Independent,
+    description: "Restores a flat amount of health to the caster.",
+)

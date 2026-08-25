@@ -1,0 +1,7 @@
+// Cleanse of Will — summoner spell.
+SummonerSpell(
+    name: "Cleanse of Will",
+    cooldown: 210,
+    effect: "Remove most crowd control from yourself and reduce the duration of the next control effect.",
+    tags: ["cleanse", "utility"],
+)

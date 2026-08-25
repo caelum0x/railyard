@@ -1,0 +1,7 @@
+// Summon Tempest — Sorcery / Keystone.
+RuneSpec(
+    name: "Summon Tempest",
+    tree: Sorcery,
+    tier: Keystone,
+    effect: "A storm cloud follows you; damaging a champion with an ability triggers a bolt for bonus adaptive damage.",
+)

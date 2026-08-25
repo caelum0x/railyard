@@ -1,0 +1,35 @@
+// Riftling Bombard — the artillery minion. A rare long-range siege caster that spawns
+// in reinforced waves once an inhibitor falls. Very low HP but the longest reach on the
+// field, lobbing shells that out-range turrets. Base stats at 0:00; growth via
+// minion-scaling.ron.
+MinionSpec(
+    id: "artillery_minion",
+    display_name: "Riftling Bombard",
+    class: "Caster",
+    count_per_wave: 1,        // one bombard per reinforced wave
+    collision_radius: 0.45,
+
+    base: MinionStats(
+        hp: 240,
+        ad: 40,
+        armor: 0,
+        magic_resist: 0,
+        attack_speed: 0.7,
+        move_speed: 12.5,
+        attack_range: 9.0,     // longest reach on the field
+        attack_type: Magic,
+    ),
+
+    bounty: (gold_last_hit: 18, gold_shared: 0, xp: 34),
+
+    aggro_priority: [
+        "EnemyStructure",
+        "EnemyMinionAttackingAlly",
+        "EnemyChampionAttackingAlly",
+        "NearestEnemyMinion",
+        "NearestEnemyChampion",
+    ],
+
+    ai: "minion_ai_behavior",
+    scaling: "minion_scaling",
+)

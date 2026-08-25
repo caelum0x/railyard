@@ -1,0 +1,12 @@
+// Bloodhunter Cleaver — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Bloodhunter Cleaver",
+    cost: 1300,
+    tier: Epic,
+    stats: Stats(
+        ad: 30,
+    ),
+    passive: Some("Heals when striking low-health foes."),
+    build_from: ["serrated-dirk", "umbral-splinter"],
+    tags: ["epic", "ad", "lifesteal", "sustain"],
+)

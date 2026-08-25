@@ -1,0 +1,13 @@
+// Emberguard Aegis — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Emberguard Aegis",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        hp: 350,
+        armor: 45,
+    ),
+    passive: Some("Burns nearby foes and refreshes a shield on takedown."),
+    build_from: ["lumenward-icon", "oblivion-orb", "sentinels-band"],
+    tags: ["legendary", "hp", "armor", "tank", "dot"],
+)

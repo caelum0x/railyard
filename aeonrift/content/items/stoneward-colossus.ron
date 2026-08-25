@@ -1,0 +1,13 @@
+// Stoneward Colossus — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Stoneward Colossus",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        hp: 500,
+        armor: 35,
+    ),
+    passive: Some("Immune to slows while shielded."),
+    build_from: ["oblivion-orb", "windshear-blades", "emberdust-vial"],
+    tags: ["legendary", "hp", "armor", "tank"],
+)

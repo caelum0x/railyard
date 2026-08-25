@@ -1,0 +1,13 @@
+// Sentinel's Band — BASIC. Standard issue.
+ItemSpec(
+    name: "Sentinel's Band",
+    cost: 250,
+    tier: Basic,
+    stats: Stats(
+        hp: 50,
+        armor: 10,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "hp", "armor"],
+)

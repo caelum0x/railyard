@@ -1,0 +1,7 @@
+// Perfect Timing — Inspiration / Tier2.
+RuneSpec(
+    name: "Perfect Timing",
+    tree: Inspiration,
+    tier: Tier2,
+    effect: "Start with a stopwatch that upgrades into a brief stasis item.",
+)

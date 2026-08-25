@@ -1,0 +1,7 @@
+// Iron Skin — Resolve / Tier2.
+RuneSpec(
+    name: "Iron Skin",
+    tree: Resolve,
+    tier: Tier2,
+    effect: "Gain bonus armor that scales with level.",
+)

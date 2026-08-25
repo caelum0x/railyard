@@ -1,0 +1,13 @@
+// Groveheart Idol — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Groveheart Idol",
+    cost: 1000,
+    tier: Epic,
+    stats: Stats(
+        hp: 150,
+        ap: 25,
+    ),
+    passive: Some("Periodic area heal for allies."),
+    build_from: ["cloth-wrap", "swiftwind-band"],
+    tags: ["epic", "hp", "ap", "heal-shield", "support"],
+)

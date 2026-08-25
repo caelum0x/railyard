@@ -1,0 +1,13 @@
+// Tempest Sovereign — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Tempest Sovereign",
+    cost: 3400,
+    tier: Legendary,
+    stats: Stats(
+        ad: 55,
+        attack_speed: 0.25,
+    ),
+    passive: Some("Every third attack chains lightning to nearby foes."),
+    build_from: ["gale-longbow", "aegis-emblem", "vanguard-fang"],
+    tags: ["legendary", "ad", "attack-speed", "onhit"],
+)

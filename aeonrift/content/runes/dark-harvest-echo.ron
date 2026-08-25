@@ -1,0 +1,7 @@
+// Dark Harvest — Domination / Keystone.
+RuneSpec(
+    name: "Dark Harvest",
+    tree: Domination,
+    tier: Keystone,
+    effect: "Damaging a low-health champion reaps a soul for permanent bonus adaptive damage.",
+)

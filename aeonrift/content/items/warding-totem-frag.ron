@@ -1,0 +1,12 @@
+// Warding Totem Fragment — BASIC. Old sentry stone.
+ItemSpec(
+    name: "Warding Totem Fragment",
+    cost: 250,
+    tier: Basic,
+    stats: Stats(
+        armor: 15,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "armor"],
+)

@@ -1,0 +1,13 @@
+// Grovewarden Heart — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Grovewarden Heart",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        hp: 350,
+        ap: 40,
+    ),
+    passive: Some("Grants nearby allies bonus health regeneration."),
+    build_from: ["skyfin-quiver", "solar-focus", "lost-chapter"],
+    tags: ["legendary", "hp", "ap", "aura", "support", "sustain"],
+)

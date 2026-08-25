@@ -1,0 +1,13 @@
+// Solaris Mantle — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Solaris Mantle",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        hp: 350,
+        mr: 45,
+    ),
+    passive: Some("Shields nearby allies when you fall below half health."),
+    build_from: ["lumenward-icon", "celestial-buckler", "aether-crystal"],
+    tags: ["legendary", "hp", "mr", "aura", "shield", "support"],
+)

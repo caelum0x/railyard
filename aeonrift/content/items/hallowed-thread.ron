@@ -1,0 +1,12 @@
+// Hallowed Thread — BASIC. Woven against magic.
+ItemSpec(
+    name: "Hallowed Thread",
+    cost: 250,
+    tier: Basic,
+    stats: Stats(
+        mr: 18,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "mr"],
+)

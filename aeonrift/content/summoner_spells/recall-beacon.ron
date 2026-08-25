@@ -1,0 +1,7 @@
+// Recall Beacon — summoner spell.
+SummonerSpell(
+    name: "Recall Beacon",
+    cooldown: 240,
+    effect: "Channel to return to base quickly; interrupted by damage.",
+    tags: ["utility", "recall"],
+)

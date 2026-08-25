@@ -1,0 +1,12 @@
+// Swiftwind Band — BASIC. It never stills.
+ItemSpec(
+    name: "Swiftwind Band",
+    cost: 300,
+    tier: Basic,
+    stats: Stats(
+        attack_speed: 0.12,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "attack-speed"],
+)

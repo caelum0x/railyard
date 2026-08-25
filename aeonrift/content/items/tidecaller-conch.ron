@@ -1,0 +1,13 @@
+// Tidecaller Conch — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Tidecaller Conch",
+    cost: 1100,
+    tier: Epic,
+    stats: Stats(
+        ap: 25,
+        hp: 150,
+    ),
+    passive: Some("Restores mana on ability hit."),
+    build_from: ["blasting-rod", "short-blade"],
+    tags: ["epic", "ap", "hp", "mana"],
+)

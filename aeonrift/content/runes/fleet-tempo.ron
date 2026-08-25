@@ -1,0 +1,7 @@
+// Fleet Tempo — Precision / Keystone.
+RuneSpec(
+    name: "Fleet Tempo",
+    tree: Precision,
+    tier: Keystone,
+    effect: "Attacking and moving builds energy; expend it to heal and gain move speed on your next attack.",
+)

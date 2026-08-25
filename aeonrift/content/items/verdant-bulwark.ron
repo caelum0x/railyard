@@ -1,0 +1,13 @@
+// Verdant Bulwark — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Verdant Bulwark",
+    cost: 1200,
+    tier: Epic,
+    stats: Stats(
+        hp: 250,
+        armor: 25,
+    ),
+    passive: None,
+    build_from: ["giants-girdle", "famine-flask"],
+    tags: ["epic", "hp", "armor", "tank"],
+)

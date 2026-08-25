@@ -1,0 +1,7 @@
+// Presence of Mind — Precision / Tier1.
+RuneSpec(
+    name: "Presence of Mind",
+    tree: Precision,
+    tier: Tier1,
+    effect: "Takedowns immediately restore resource and raise your maximum resource.",
+)

@@ -1,0 +1,13 @@
+// Brackwater Shield — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Brackwater Shield",
+    cost: 1150,
+    tier: Epic,
+    stats: Stats(
+        hp: 200,
+        armor: 30,
+    ),
+    passive: None,
+    build_from: ["stoneheart-core", "warblade"],
+    tags: ["epic", "hp", "armor", "tank"],
+)

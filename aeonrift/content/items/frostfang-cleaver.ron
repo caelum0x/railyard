@@ -1,0 +1,12 @@
+// Frostfang Cleaver — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Frostfang Cleaver",
+    cost: 1300,
+    tier: Epic,
+    stats: Stats(
+        ad: 30,
+    ),
+    passive: Some("Basic attacks slow on hit."),
+    build_from: ["famine-flask", "brute-pick"],
+    tags: ["epic", "ad", "slow", "onhit"],
+)

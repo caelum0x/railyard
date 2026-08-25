@@ -1,0 +1,11 @@
+// Toss — HardCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "knockup-toss",
+    name: "Toss",
+    category: HardCC,
+    vocab_ref: Some("DebuffKnockup"),
+    fields: ["duration"],
+    cleansable: false,
+    stacking: Refresh,
+    description: "Launches the target briefly into the air.",
+)

@@ -1,0 +1,13 @@
+// Guardian's Oathshield — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Guardian's Oathshield",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        hp: 300,
+        mr: 40,
+    ),
+    passive: Some("Bonds to an ally, sharing a shield when either is struck hard."),
+    build_from: ["emberclaw-jungle", "astral-conduit", "fiendish-codex"],
+    tags: ["legendary", "hp", "mr", "shield", "support"],
+)

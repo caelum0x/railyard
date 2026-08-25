@@ -1,0 +1,13 @@
+// Aegisward Sovereign — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Aegisward Sovereign",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        hp: 300,
+        mr: 45,
+    ),
+    passive: Some("Grants a spell shield to a bonded ally on a cooldown."),
+    build_from: ["frostbite-orb", "swiftmarch-sandals", "vanguard-fang"],
+    tags: ["legendary", "hp", "mr", "spellshield", "support"],
+)

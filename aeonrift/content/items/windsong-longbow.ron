@@ -1,0 +1,12 @@
+// Windsong Longbow — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Windsong Longbow",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 55,
+    ),
+    passive: Some("Bonus attack range and energized critical strikes."),
+    build_from: ["gale-longbow", "bastion-plating", "crystalline-bracer"],
+    tags: ["legendary", "ad", "crit", "marksman"],
+)

@@ -1,0 +1,7 @@
+// Lethal Tempo — Precision / Keystone.
+RuneSpec(
+    name: "Lethal Tempo",
+    tree: Precision,
+    tier: Keystone,
+    effect: "Attacking a champion ramps your attack speed above the normal cap and grants bonus attack range while ramped.",
+)

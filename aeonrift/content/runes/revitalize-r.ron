@@ -1,0 +1,7 @@
+// Revitalize — Resolve / Tier3.
+RuneSpec(
+    name: "Revitalize",
+    tree: Resolve,
+    tier: Tier3,
+    effect: "Healing and shielding are amplified, more so on low-health targets.",
+)

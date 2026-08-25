@@ -1,0 +1,13 @@
+// Windshear Blades — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Windshear Blades",
+    cost: 1250,
+    tier: Epic,
+    stats: Stats(
+        ad: 18,
+        attack_speed: 0.28,
+    ),
+    passive: None,
+    build_from: ["vampiric-scepter", "aether-tears"],
+    tags: ["epic", "ad", "attack-speed", "marksman"],
+)

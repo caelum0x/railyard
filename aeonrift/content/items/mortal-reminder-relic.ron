@@ -1,0 +1,13 @@
+// Mortal Reminder Relic — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Mortal Reminder Relic",
+    cost: 3200,
+    tier: Legendary,
+    stats: Stats(
+        ad: 45,
+        attack_speed: 0.25,
+    ),
+    passive: Some("Attacks apply grievous wounds and bonus armor penetration."),
+    build_from: ["phantomsong-dirk", "oblivion-orb", "hunters-talon"],
+    tags: ["legendary", "ad", "attack-speed", "antiheal", "penetration"],
+)

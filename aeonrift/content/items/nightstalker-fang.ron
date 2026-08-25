@@ -1,0 +1,12 @@
+// Nightstalker Fang — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Nightstalker Fang",
+    cost: 1250,
+    tier: Epic,
+    stats: Stats(
+        ad: 20,
+    ),
+    passive: Some("Grants lethality and out-of-combat move speed."),
+    build_from: ["cindershot-ore", "arcane-seedling"],
+    tags: ["epic", "ad", "lethality", "mobility"],
+)

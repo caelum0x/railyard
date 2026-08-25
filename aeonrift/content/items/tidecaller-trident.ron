@@ -1,0 +1,12 @@
+// Tidecaller Trident — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Tidecaller Trident",
+    cost: 3200,
+    tier: Legendary,
+    stats: Stats(
+        ap: 85,
+    ),
+    passive: Some("Every third ability cast unleashes a slowing tidal wave."),
+    build_from: ["verdant-barrier", "lumenward-icon", "regrowth-charm"],
+    tags: ["legendary", "ap", "slow", "burst"],
+)

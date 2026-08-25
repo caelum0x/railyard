@@ -1,0 +1,13 @@
+// Dawnpetal — BASIC. Opens at first light.
+ItemSpec(
+    name: "Dawnpetal",
+    cost: 250,
+    tier: Basic,
+    stats: Stats(
+        hp: 60,
+        mr: 10,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "hp", "mr"],
+)

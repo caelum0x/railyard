@@ -1,0 +1,50 @@
+// content/cards/tuning/seasonal_balance.ron
+//
+// Card-only tuning: SEASONAL BALANCE PASSES. Each ranked season may nudge a card's
+// card-mode power without ever touching the MOBA ChampionSpec in content/champions/*.ron.
+// A season lists per-archetype elixir deltas and per-card overrides applied on top of
+// the base elixir_curve; the live client picks the block whose `id` matches the active
+// season. Deltas are added to the derived elixir cost, then clamped to the 1..=10 band.
+// Card economy only.
+SeasonalBalance(
+    active_season: "s3-eclipse",
+    seasons: [
+        Season(
+            id: "s1-dawn",
+            display_name: "Season 1: Dawn",
+            archetype_elixir_delta: [
+                ArchetypeDelta(archetype: "assassin", delta: 0),
+                ArchetypeDelta(archetype: "mage",     delta: 0),
+                ArchetypeDelta(archetype: "tank",     delta: 0),
+            ],
+            card_overrides: [],
+        ),
+        Season(
+            id: "s2-tides",
+            display_name: "Season 2: Tides",
+            archetype_elixir_delta: [
+                ArchetypeDelta(archetype: "marksman", delta: -1),
+                ArchetypeDelta(archetype: "support",  delta: 0),
+                ArchetypeDelta(archetype: "tank",     delta: 1),
+            ],
+            card_overrides: [
+                CardOverride(slug: "cyranth",  elixir_cost: 4, note: "Tide season pushes marksman tempo."),
+                CardOverride(slug: "brackmoor", elixir_cost: 6, note: "Tank frontline priced up for the meta."),
+            ],
+        ),
+        Season(
+            id: "s3-eclipse",
+            display_name: "Season 3: Eclipse",
+            archetype_elixir_delta: [
+                ArchetypeDelta(archetype: "assassin", delta: 1),
+                ArchetypeDelta(archetype: "mage",     delta: -1),
+                ArchetypeDelta(archetype: "support",  delta: 0),
+            ],
+            card_overrides: [
+                CardOverride(slug: "zeryth", elixir_cost: 5, note: "Umbral assassins reined in for Eclipse."),
+                CardOverride(slug: "loki",   elixir_cost: 5, note: "Burst assassin priced up."),
+                CardOverride(slug: "xelphine", elixir_cost: 5, note: "Eclipse mage discount to promote diversity."),
+            ],
+        ),
+    ],
+)

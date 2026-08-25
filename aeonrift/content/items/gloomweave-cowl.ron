@@ -1,0 +1,13 @@
+// Gloomweave Cowl — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Gloomweave Cowl",
+    cost: 1100,
+    tier: Epic,
+    stats: Stats(
+        ap: 30,
+        mr: 25,
+    ),
+    passive: None,
+    build_from: ["hunters-machete-frag", "shadow-cloak"],
+    tags: ["epic", "ap", "mr"],
+)

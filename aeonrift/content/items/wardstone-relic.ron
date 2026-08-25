@@ -1,0 +1,13 @@
+// Wardstone Relic — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Wardstone Relic",
+    cost: 1000,
+    tier: Epic,
+    stats: Stats(
+        hp: 150,
+        mr: 20,
+    ),
+    passive: Some("Nearby allies gain resistances."),
+    build_from: ["serrated-dirk", "short-blade"],
+    tags: ["epic", "hp", "mr", "aura", "support"],
+)

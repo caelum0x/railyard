@@ -1,0 +1,7 @@
+// Future's Market — Inspiration / Tier2.
+RuneSpec(
+    name: "Future's Market",
+    tree: Inspiration,
+    tier: Tier2,
+    effect: "You may go slightly into gold debt to purchase items.",
+)

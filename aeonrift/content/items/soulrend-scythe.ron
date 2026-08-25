@@ -1,0 +1,12 @@
+// Soulrend Scythe — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Soulrend Scythe",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 55,
+    ),
+    passive: Some("Champion takedowns grant a stacking, permanent bonus."),
+    build_from: ["emberglow-catalyst", "kingsguard-vow", "mistcloak-scrap"],
+    tags: ["legendary", "ad", "lethality"],
+)

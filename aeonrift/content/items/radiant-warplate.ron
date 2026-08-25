@@ -1,0 +1,13 @@
+// Radiant Warplate — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Radiant Warplate",
+    cost: 1150,
+    tier: Epic,
+    stats: Stats(
+        hp: 250,
+        mr: 25,
+    ),
+    passive: None,
+    build_from: ["short-blade", "fiendish-codex"],
+    tags: ["epic", "hp", "mr", "tank"],
+)

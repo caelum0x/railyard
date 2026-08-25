@@ -1,0 +1,12 @@
+// Hollowfrost Orb — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Hollowfrost Orb",
+    cost: 3100,
+    tier: Legendary,
+    stats: Stats(
+        ap: 80,
+    ),
+    passive: Some("Immobilizing an enemy detonates a frost nova."),
+    build_from: ["nightstalker-fang", "gravemind-tome", "serrated-dirk"],
+    tags: ["legendary", "ap", "slow", "cc"],
+)

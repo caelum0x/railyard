@@ -1,0 +1,12 @@
+// Tempered Shard — BASIC. Cold-forged iron.
+ItemSpec(
+    name: "Tempered Shard",
+    cost: 300,
+    tier: Basic,
+    stats: Stats(
+        ad: 8,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "ad"],
+)

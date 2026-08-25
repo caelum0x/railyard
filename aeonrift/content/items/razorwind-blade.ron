@@ -1,0 +1,13 @@
+// Razorwind Blade — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Razorwind Blade",
+    cost: 1200,
+    tier: Epic,
+    stats: Stats(
+        ad: 22,
+        attack_speed: 0.2,
+    ),
+    passive: None,
+    build_from: ["almsgivers-coin", "regrowth-charm"],
+    tags: ["epic", "ad", "attack-speed"],
+)

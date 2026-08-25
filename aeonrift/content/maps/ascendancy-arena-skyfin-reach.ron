@@ -1,0 +1,38 @@
+// Skyfin Reach — an Ascendancy card arena (games/aeonrift-ascendancy). A wider, wind-
+// swept board with four lanes for swarm-and-flank strategies. Arenas define lane count,
+// board length, spawn tiles, hazard tiles and the passive that skews play.
+ArenaSpec(
+    id: "ascendancy_skyfin_reach",
+    display_name: "Skyfin Reach",
+    faction_theme: "Storm",
+    game: "aeonrift_ascendancy",
+
+    board: (
+        lanes: 4,
+        length: 9,
+        lane_names: ["Gale", "Updraft", "Squall", "Zephyr"],
+    ),
+
+    ascendants: [
+        (player: "A", pos: (lane: 1, tile: 0), start_hp: 32),
+        (player: "B", pos: (lane: 2, tile: 8), start_hp: 32),
+    ],
+
+    deploy_tiles: [
+        (player: "A", tiles: [(lane: 0, tile: 0), (lane: 1, tile: 0), (lane: 2, tile: 0), (lane: 3, tile: 0)]),
+        (player: "B", tiles: [(lane: 0, tile: 8), (lane: 1, tile: 8), (lane: 2, tile: 8), (lane: 3, tile: 8)]),
+    ],
+
+    hazards: [
+        (id: "wind_shear", tile: (lane: 0, tile: 4), effect: "PushBack", magnitude: 1, note: "Edge lanes shove a unit back a tile at end of turn."),
+        (id: "wind_shear", tile: (lane: 3, tile: 4), effect: "PushBack", magnitude: 1),
+    ],
+
+    passive: (
+        id: "tailwind",
+        desc: "A unit that advances two tiles in a turn gains +1 attack until end of next turn.",
+        stacks_max: 3,
+    ),
+
+    resolution_order: ["Hazards", "PlayerA_Advance", "PlayerB_Advance", "Combat", "Deaths"],
+)

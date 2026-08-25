@@ -1,0 +1,7 @@
+// Second Wind — Resolve / Tier2.
+RuneSpec(
+    name: "Second Wind",
+    tree: Resolve,
+    tier: Tier2,
+    effect: "After taking damage from a champion, regenerate a portion of missing health over time.",
+)

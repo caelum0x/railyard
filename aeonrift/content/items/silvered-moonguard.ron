@@ -1,0 +1,13 @@
+// Silvered Moonguard — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Silvered Moonguard",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        mr: 60,
+        hp: 250,
+    ),
+    passive: Some("Cleanses one crowd-control effect on a long cooldown."),
+    build_from: ["verdant-barrier", "emberpiercer", "caulfields-hammer"],
+    tags: ["legendary", "mr", "hp", "cleanse", "tank"],
+)

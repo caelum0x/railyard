@@ -1,0 +1,12 @@
+// Emberpierce Lance — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Emberpierce Lance",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 60,
+    ),
+    passive: Some("Bonus lethality; takedowns refund part of the ability rotation."),
+    build_from: ["tideguard-mantle", "celestial-buckler", "cindershot-ore"],
+    tags: ["legendary", "ad", "lethality", "assassin"],
+)

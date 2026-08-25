@@ -1,0 +1,13 @@
+// Lumenward Icon — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Lumenward Icon",
+    cost: 1000,
+    tier: Epic,
+    stats: Stats(
+        ap: 20,
+        hp: 150,
+    ),
+    passive: Some("Ally shields persist longer."),
+    build_from: ["gale-feather", "serrated-dirk"],
+    tags: ["epic", "ap", "hp", "heal-shield", "support"],
+)
