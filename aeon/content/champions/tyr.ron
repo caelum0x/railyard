@@ -1,0 +1,50 @@
+// Tyr — a stalwart TANK who trades blows so allies don't have to.
+//
+// The one-handed god of law and sacrifice: he binds a single foe in place and
+// endures. Massive HP/armor, low damage, a hard single-target lockdown, an
+// area cripple, and a heavy self-sustain — all pure DSL data.
+ChampionSpec(
+    name: "Tyr",
+    base: BaseStats(
+        hp: 880,
+        ad: 44,
+        armor: 44,
+        attack_speed: 0.8,
+        move_speed: 10.0,
+        range: 5.0,
+    ),
+    abilities: [
+        // Lockdown: seize one enemy, deal light AD-scaled damage, hold them still.
+        AbilitySpec(
+            name: "Oath of the Bound",
+            cooldown: 120,
+            cost: Some(50),
+            targeting: Target,
+            range: 12.0,
+            effects: [
+                Damage(amount: 50, scaling: Some(AttackDamage(ratio: 0.3))),
+                Stun(duration: 24),
+            ],
+        ),
+        // Area cripple: slam the ground, chip and slow everyone nearby.
+        AbilitySpec(
+            name: "Warden's Toll",
+            cooldown: 90,
+            cost: Some(40),
+            targeting: Area,
+            range: 10.0,
+            effects: [
+                Damage(amount: 40),
+                Slow(duration: 30),
+            ],
+        ),
+        // Sacrificial resolve: a large self-heal when the line must hold.
+        AbilitySpec(
+            name: "Unyielding Sacrifice",
+            cooldown: 210,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 160) ],
+        ),
+    ],
+)

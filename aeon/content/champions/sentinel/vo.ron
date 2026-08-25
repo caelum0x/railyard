@@ -1,0 +1,75 @@
+// Voice-line manifest for Sentinel: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "sentinel",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.sentinel.select",
+            kind: "Selected",
+            audio: "audio/vo/sentinel/select.ogg",
+            text: "Sentinel answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.sentinel.move_a",
+            kind: "Move",
+            audio: "audio/vo/sentinel/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.sentinel.move_b",
+            kind: "Move",
+            audio: "audio/vo/sentinel/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.sentinel.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/sentinel/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.sentinel.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/sentinel/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.sentinel.ability_q",
+            kind: "Ability: Second Wind",
+            audio: "audio/vo/sentinel/ability_q.ogg",
+            text: "Second Wind!",
+        ),
+        VoiceLine(
+            id: "vo.sentinel.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/sentinel/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.sentinel.joke",
+            kind: "Joke",
+            audio: "audio/vo/sentinel/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.sentinel.low_health",
+            kind: "Low health",
+            audio: "audio/vo/sentinel/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.sentinel.victory",
+            kind: "Victory",
+            audio: "audio/vo/sentinel/victory.ogg",
+            text: "The field is ours.",
+        ),
+        VoiceLine(
+            id: "vo.sentinel.death",
+            kind: "Death",
+            audio: "audio/vo/sentinel/death.ogg",
+            text: "Not... the end.",
+        ),
+    ],
+)

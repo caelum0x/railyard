@@ -1,0 +1,37 @@
+// The Sunderer — the map's premier epic monster (the "baron"-style objective, but
+// original IP). Spawns in the Sunder Hollow north of the Sever in the mid-to-late
+// game, replacing the Rift Vanguard. It hits hard and has a ranged sunder-slam, so
+// it must be fought as a team. Slaying it grants the Sunderer's Aegis: an empowered
+// recall and a wave-pushing aura that buffs nearby allied minions.
+ObjectiveSpec(
+    id: "the_sunderer",
+    display_name: "The Sunderer",
+    class: "EpicMonster",
+    pit: "sunder_hollow",
+
+    // Replaces the Rift Vanguard at this time (see sunder-hollow.ron).
+    spawn_gate: (earliest_minute: 20, replaces: "rift_vanguard"),
+
+    stats: NeutralStats(
+        hp: 9500,
+        armor: 60,
+        magic_resist: 60,
+        attack_damage: 240,
+        attack_speed: 0.5,
+        attack_range: 6.0,      // ranged sunder-slam
+        move_speed: 0.0,
+    ),
+
+    scaling: (hp_per_minute: 320, ad_per_minute: 9, start_minute: 20),
+
+    // Team buff on kill: empowered recall + minion-empowering aura.
+    reward: (
+        buff: "sunderers_aegis",   // -> content/objectives/objective-rewards.ron
+        scope: "KillingTeam",
+        permanent: false,
+        duration_seconds: 210,
+        stacking: false,
+    ),
+
+    bounty: (gold_local: 300, gold_global: 100, xp: 400),
+)

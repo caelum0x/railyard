@@ -1,0 +1,12 @@
+// Navori Flails — LEGENDARY AD. Momentum given form.
+ItemSpec(
+    name: "Navori Flails",
+    cost: 3400,
+    tier: Legendary,
+    stats: Stats(
+        ad: 60,
+    ),
+    passive: Some("+20% crit chance; +15 ability haste; attacks reduce ability cooldowns."),
+    build_from: ["agility-cloak", "brute-pick", "caulfields-hammer"],
+    tags: ["legendary", "ad", "crit", "haste"],
+)

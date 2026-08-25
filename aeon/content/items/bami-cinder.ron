@@ -1,0 +1,12 @@
+// Bami's Cinder — EPIC tank.
+ItemSpec(
+    name: "Bami's Cinder",
+    cost: 900,
+    tier: Epic,
+    stats: Stats(
+        hp: 250,
+    ),
+    passive: Some("Deal 12 magic damage per second to nearby enemies."),
+    build_from: ["ruby-shard"],
+    tags: ["epic", "hp", "aura"],
+)

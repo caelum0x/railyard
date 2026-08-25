@@ -1,0 +1,7 @@
+// Second Wind Strike — Precision / Tier3.
+RuneSpec(
+    name: "Second Wind Strike",
+    tree: Precision,
+    tier: Tier3,
+    effect: "Attacks against low-health champions deal bonus true damage, ramping with the missing health.",
+)

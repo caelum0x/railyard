@@ -1,0 +1,13 @@
+// Maw of the Deep — LEGENDARY AD. It feeds when you falter.
+ItemSpec(
+    name: "Maw of the Deep",
+    cost: 3100,
+    tier: Legendary,
+    stats: Stats(
+        ad: 55,
+        mr: 40,
+    ),
+    passive: Some("At low health gain a magic shield and bonus omnivamp (90s cooldown)."),
+    build_from: ["hexdrinker", "brute-pick"],
+    tags: ["legendary", "ad", "mr", "lifesteal"],
+)

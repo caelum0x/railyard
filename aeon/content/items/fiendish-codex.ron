@@ -1,0 +1,12 @@
+// Fiendish Codex — BASIC AP.
+ItemSpec(
+    name: "Fiendish Codex",
+    cost: 900,
+    tier: Basic,
+    stats: Stats(
+        ap: 25,
+    ),
+    passive: Some("+15 ability haste."),
+    build_from: ["minor-tome"],
+    tags: ["basic", "haste"],
+)

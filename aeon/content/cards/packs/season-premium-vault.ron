@@ -1,0 +1,22 @@
+// content/cards/packs/season-premium-vault.ron
+// Season-pass reward pack. Premium currency, legendary floor, tuned for whales and
+// dedicated grinders alike.
+CardPack(
+    id: "season-premium-vault",
+    name: "Season Premium Vault",
+    description: "The seasonal centerpiece: a guaranteed legendary and top mythic odds.",
+    category: "season",
+    card_count: 12,
+    cost: PackCost(currency: "gems", amount: 1200),
+    one_time: false,
+    cadence: Some("seasonal"),
+    guaranteed_floor: Some("legendary"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 180),
+        RarityOdd(rarity: "uncommon",  weight: 250),
+        RarityOdd(rarity: "rare",      weight: 280),
+        RarityOdd(rarity: "epic",      weight: 200),
+        RarityOdd(rarity: "legendary", weight: 78),
+        RarityOdd(rarity: "mythic",    weight: 12),
+    ],
+)

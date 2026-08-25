@@ -1,0 +1,50 @@
+// Neptune — the tide BURST MAGE. Fragile, long-range wave burst with heavy slows.
+ChampionSpec(
+    name: "Neptune",
+    base: BaseStats(
+        hp: 560,
+        ad: 36,
+        armor: 22,
+        attack_speed: 0.7,
+        move_speed: 9.0,
+        range: 6.0,
+    ),
+    abilities: [
+        // Crashing wave: long-range skillshot nuke that slows.
+        AbilitySpec(
+            name: "Tidal Surge",
+            cooldown: 34,
+            cost: Some(60),
+            targeting: Skillshot,
+            range: 26.0,
+            effects: [
+                Damage(amount: 100, scaling: Some(AttackDamage(ratio: 0.5))),
+                Slow(duration: 40),
+            ],
+        ),
+        // Whirlpool that churns a zone.
+        AbilitySpec(
+            name: "Maelstrom",
+            cooldown: 90,
+            cost: Some(70),
+            targeting: Area,
+            range: 9.0,
+            effects: [
+                Damage(amount: 85, scaling: Some(AttackDamage(ratio: 0.4))),
+                Slow(duration: 45),
+            ],
+        ),
+        // Trident pins a single foe.
+        AbilitySpec(
+            name: "Trident's Wrath",
+            cooldown: 70,
+            cost: Some(55),
+            targeting: Target,
+            range: 12.0,
+            effects: [
+                Damage(amount: 70, scaling: Some(AttackDamage(ratio: 0.3))),
+                Stun(duration: 12),
+            ],
+        ),
+    ],
+)

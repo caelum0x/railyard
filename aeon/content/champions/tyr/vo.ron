@@ -1,0 +1,81 @@
+// Voice-line manifest for Tyr: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "tyr",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.tyr.select",
+            kind: "Selected",
+            audio: "audio/vo/tyr/select.ogg",
+            text: "Tyr answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.tyr.move_a",
+            kind: "Move",
+            audio: "audio/vo/tyr/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.tyr.move_b",
+            kind: "Move",
+            audio: "audio/vo/tyr/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.tyr.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/tyr/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.tyr.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/tyr/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.tyr.ability_q",
+            kind: "Ability: Oath of the Bound",
+            audio: "audio/vo/tyr/ability_q.ogg",
+            text: "Oath of the Bound!",
+        ),
+        VoiceLine(
+            id: "vo.tyr.ability_w",
+            kind: "Ability: Warden's Toll",
+            audio: "audio/vo/tyr/ability_w.ogg",
+            text: "Warden's Toll!",
+        ),
+        VoiceLine(
+            id: "vo.tyr.ability_r",
+            kind: "Ability: Unyielding Sacrifice",
+            audio: "audio/vo/tyr/ability_r.ogg",
+            text: "Unyielding Sacrifice!",
+        ),
+        VoiceLine(
+            id: "vo.tyr.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/tyr/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.tyr.joke",
+            kind: "Joke",
+            audio: "audio/vo/tyr/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.tyr.low_health",
+            kind: "Low health",
+            audio: "audio/vo/tyr/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.tyr.victory",
+            kind: "Victory",
+            audio: "audio/vo/tyr/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

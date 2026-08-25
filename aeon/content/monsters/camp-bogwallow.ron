@@ -1,0 +1,12 @@
+// Bogwallow camp — a single large toad. No buff, but high xp and a poison
+// retaliation (see bogwallow.ron thorns). Placement + respawn in the layout file.
+CampSpec(
+    id: "camp_bogwallow",
+    display_name: "Bogwallow",
+    kind: "MonsterCamp",
+    members: [
+        (monster: "bogwallow", count: 1),
+    ],
+    grants_buff: "none",
+    leash_radius: 9.0,
+)

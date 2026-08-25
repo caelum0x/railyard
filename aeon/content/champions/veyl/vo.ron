@@ -1,0 +1,81 @@
+// Voice-line manifest for Veyl: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "veyl",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.veyl.select",
+            kind: "Selected",
+            audio: "audio/vo/veyl/select.ogg",
+            text: "Veyl answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.veyl.move_a",
+            kind: "Move",
+            audio: "audio/vo/veyl/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.veyl.move_b",
+            kind: "Move",
+            audio: "audio/vo/veyl/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.veyl.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/veyl/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.veyl.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/veyl/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.veyl.ability_q",
+            kind: "Ability: Undertow Lunge",
+            audio: "audio/vo/veyl/ability_q.ogg",
+            text: "Undertow Lunge!",
+        ),
+        VoiceLine(
+            id: "vo.veyl.ability_w",
+            kind: "Ability: Drowning Grip",
+            audio: "audio/vo/veyl/ability_w.ogg",
+            text: "Drowning Grip!",
+        ),
+        VoiceLine(
+            id: "vo.veyl.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/veyl/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.veyl.joke",
+            kind: "Joke",
+            audio: "audio/vo/veyl/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.veyl.low_health",
+            kind: "Low health",
+            audio: "audio/vo/veyl/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.veyl.victory",
+            kind: "Victory",
+            audio: "audio/vo/veyl/victory.ogg",
+            text: "The field is ours.",
+        ),
+        VoiceLine(
+            id: "vo.veyl.death",
+            kind: "Death",
+            audio: "audio/vo/veyl/death.ogg",
+            text: "Not... the end.",
+        ),
+    ],
+)

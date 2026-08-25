@@ -1,0 +1,81 @@
+// Voice-line manifest for Mercury: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "mercury",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.mercury.select",
+            kind: "Selected",
+            audio: "audio/vo/mercury/select.ogg",
+            text: "Mercury answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.mercury.move_a",
+            kind: "Move",
+            audio: "audio/vo/mercury/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.mercury.move_b",
+            kind: "Move",
+            audio: "audio/vo/mercury/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.mercury.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/mercury/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.mercury.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/mercury/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.mercury.ability_q",
+            kind: "Ability: Winged Strike",
+            audio: "audio/vo/mercury/ability_q.ogg",
+            text: "Winged Strike!",
+        ),
+        VoiceLine(
+            id: "vo.mercury.ability_w",
+            kind: "Ability: Caduceus Flurry",
+            audio: "audio/vo/mercury/ability_w.ogg",
+            text: "Caduceus Flurry!",
+        ),
+        VoiceLine(
+            id: "vo.mercury.ability_r",
+            kind: "Ability: Fleet Escape",
+            audio: "audio/vo/mercury/ability_r.ogg",
+            text: "Fleet Escape!",
+        ),
+        VoiceLine(
+            id: "vo.mercury.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/mercury/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.mercury.joke",
+            kind: "Joke",
+            audio: "audio/vo/mercury/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.mercury.low_health",
+            kind: "Low health",
+            audio: "audio/vo/mercury/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.mercury.victory",
+            kind: "Victory",
+            audio: "audio/vo/mercury/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

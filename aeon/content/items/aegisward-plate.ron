@@ -1,0 +1,13 @@
+// Aegisward Plate — LEGENDARY tank. Standard-bearer of the last wall.
+ItemSpec(
+    name: "Aegisward Plate",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        hp: 350,
+        armor: 45,
+    ),
+    passive: Some("Aura reduces nearby enemy attack speed by 15%."),
+    build_from: ["warden-mail", "bami-cinder"],
+    tags: ["legendary", "tank", "armor", "aura"],
+)

@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Loki.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/loki.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "loki",
+    display_name: "Loki",
+    abilities: [
+        AbilityTuning(
+            name: "Shadow Step",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 45, cost: Some(50), damage: Some(80), ad_ratio: Some(0.5), heal: None, cc: Some(("Slow", 10))),
+                Rank(rank: 2, cooldown: 43, cost: Some(54), damage: Some(104), ad_ratio: Some(0.55), heal: None, cc: Some(("Slow", 12))),
+                Rank(rank: 3, cooldown: 40, cost: Some(58), damage: Some(128), ad_ratio: Some(0.6), heal: None, cc: Some(("Slow", 13))),
+                Rank(rank: 4, cooldown: 38, cost: Some(62), damage: Some(152), ad_ratio: Some(0.65), heal: None, cc: Some(("Slow", 14))),
+                Rank(rank: 5, cooldown: 36, cost: Some(66), damage: Some(176), ad_ratio: Some(0.7), heal: None, cc: Some(("Slow", 16))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Serpent's Venom",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 30, cost: Some(35), damage: Some(55), ad_ratio: Some(0.4), heal: None, cc: Some(("Slow", 16))),
+                Rank(rank: 2, cooldown: 28, cost: Some(38), damage: Some(72), ad_ratio: Some(0.45), heal: None, cc: Some(("Slow", 18))),
+                Rank(rank: 3, cooldown: 27, cost: Some(41), damage: Some(88), ad_ratio: Some(0.5), heal: None, cc: Some(("Slow", 21))),
+                Rank(rank: 4, cooldown: 26, cost: Some(43), damage: Some(104), ad_ratio: Some(0.55), heal: None, cc: Some(("Slow", 23))),
+                Rank(rank: 5, cooldown: 24, cost: Some(46), damage: Some(121), ad_ratio: Some(0.6), heal: None, cc: Some(("Slow", 26))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Vanishing Trick",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 120, cost: None, damage: None, ad_ratio: None, heal: Some(70), cc: None),
+                Rank(rank: 2, cooldown: 114, cost: None, damage: None, ad_ratio: None, heal: Some(88), cc: None),
+                Rank(rank: 3, cooldown: 108, cost: None, damage: None, ad_ratio: None, heal: Some(105), cc: None),
+                Rank(rank: 4, cooldown: 102, cost: None, damage: None, ad_ratio: None, heal: Some(122), cc: None),
+                Rank(rank: 5, cooldown: 96, cost: None, damage: None, ad_ratio: None, heal: Some(140), cc: None),
+            ],
+        ),
+    ],
+)

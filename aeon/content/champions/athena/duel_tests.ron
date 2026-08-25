@@ -1,0 +1,34 @@
+// Deterministic duel scenarios for Athena.
+// Lifted from the roster/duel test pattern (engine/ability-dsl/tests/
+// duel.rs): a fixed seed makes every run byte-identical, so these double
+// as regression baselines. Data only -- no Rust, no loader impact.
+DuelScenarios(
+    slug: "athena",
+    default_seed: 42,
+    scenarios: [
+        DuelScenario(
+            name: "athena_vs_sentinel",
+            description: "Athena opens against the Sentinel baseline.",
+            challenger: "athena.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Contested, decisive: true),
+        ),
+        DuelScenario(
+            name: "athena_determinism",
+            description: "Same specs + seed run twice must be byte-identical.",
+            challenger: "athena.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Deterministic, hash_stable: true, decisive: true),
+        ),
+        DuelScenario(
+            name: "athena_order_independent",
+            description: "Swapping challenger/opponent slots keeps the same winner.",
+            challenger: "sentinel.ron",
+            opponent: "athena.ron",
+            seed: 42,
+            expect: Expect(outcome: OrderIndependent, decisive: true),
+        ),
+    ],
+)

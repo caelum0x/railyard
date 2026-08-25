@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Ysmera.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "ysmera",
+    display_name: "Ysmera",
+    rarity: "Legendary",
+    elixir_cost: 7,
+    archetype: "mage",
+    faction: "Ember",
+    card_stats: CardStats(
+        hitpoints: 540,
+        attack_damage: 46,
+        attack_speed: 0.9,
+        armor: 20,
+        range: 22.0,
+        approx_dps: 41.4,
+    ),
+    deploy_power: 395,
+    collectible: true,
+)

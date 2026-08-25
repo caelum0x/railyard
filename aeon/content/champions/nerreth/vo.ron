@@ -1,0 +1,81 @@
+// Voice-line manifest for Nerreth: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "nerreth",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.nerreth.select",
+            kind: "Selected",
+            audio: "audio/vo/nerreth/select.ogg",
+            text: "Nerreth answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.nerreth.move_a",
+            kind: "Move",
+            audio: "audio/vo/nerreth/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.nerreth.move_b",
+            kind: "Move",
+            audio: "audio/vo/nerreth/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.nerreth.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/nerreth/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.nerreth.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/nerreth/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.nerreth.ability_q",
+            kind: "Ability: Haze Blink",
+            audio: "audio/vo/nerreth/ability_q.ogg",
+            text: "Haze Blink!",
+        ),
+        VoiceLine(
+            id: "vo.nerreth.ability_w",
+            kind: "Ability: Emberpierce",
+            audio: "audio/vo/nerreth/ability_w.ogg",
+            text: "Emberpierce!",
+        ),
+        VoiceLine(
+            id: "vo.nerreth.ability_r",
+            kind: "Ability: Cremate",
+            audio: "audio/vo/nerreth/ability_r.ogg",
+            text: "Cremate!",
+        ),
+        VoiceLine(
+            id: "vo.nerreth.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/nerreth/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.nerreth.joke",
+            kind: "Joke",
+            audio: "audio/vo/nerreth/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.nerreth.low_health",
+            kind: "Low health",
+            audio: "audio/vo/nerreth/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.nerreth.victory",
+            kind: "Victory",
+            audio: "audio/vo/nerreth/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

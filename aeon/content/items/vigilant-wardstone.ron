@@ -1,0 +1,15 @@
+// Vigilant Wardstone — LEGENDARY support. Nothing moves unseen.
+ItemSpec(
+    name: "Vigilant Wardstone",
+    cost: 2500,
+    tier: Legendary,
+    stats: Stats(
+        ap: 20,
+        hp: 150,
+        armor: 15,
+        mr: 15,
+    ),
+    passive: Some("+15 ability haste; increases ward limits and detection range."),
+    build_from: ["watchful-warding", "aegis-emblem"],
+    tags: ["legendary", "support", "vision", "utility"],
+)

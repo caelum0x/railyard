@@ -1,0 +1,10 @@
+// Lifebloom — Shield buff. Maps to closed vocab.
+BuffSpec(
+    id: "lifebloom_shield",
+    name: "Lifebloom",
+    category: Shield,
+    vocab_ref: Some("BuffShieldWhite"),
+    fields: ["amount"],
+    stacking: Independent,
+    description: "A decaying shield that also grants a small heal on expiry.",
+)

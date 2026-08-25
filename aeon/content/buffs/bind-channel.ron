@@ -1,0 +1,10 @@
+// Bind Channel — Control buff. Maps to closed vocab.
+BuffSpec(
+    id: "bind_channel",
+    name: "Bind Channel",
+    category: Control,
+    vocab_ref: Some("BuffCastBlock"),
+    fields: ["duration"],
+    stacking: Longest,
+    description: "A tethered channel that must complete to release its effect.",
+)

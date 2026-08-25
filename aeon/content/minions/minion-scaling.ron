@@ -1,0 +1,26 @@
+// Minion stat scaling over match time. Base stats in each *-minion.ron are the
+// values at 0:00; these step functions add HP/AD as the game progresses, so late
+// waves matter. Applied uniformly to both teams (deterministic). Percent-per-step
+// compounds additively off the base value.
+MinionScaling(
+    map: "riftline_crucible",
+    // Every `interval_seconds`, apply one growth step, up to `max_steps`.
+    interval_seconds: 90,
+    max_steps: 20,           // caps at 30:00
+
+    // Per-class growth added each step, as flat amounts off base.
+    growth: [
+        (class: "Melee",  hp_per_step: 20,  ad_per_step: 1),
+        (class: "Caster", hp_per_step: 10,  ad_per_step: 2),
+        (class: "Siege",  hp_per_step: 40,  ad_per_step: 4),
+        (class: "Super",  hp_per_step: 50,  ad_per_step: 6),
+    ],
+
+    // Bounty (gold/xp) also creeps up so lane farm stays relevant late.
+    bounty_growth: [
+        (class: "Melee",  gold_per_step: 1, xp_per_step: 2),
+        (class: "Caster", gold_per_step: 1, xp_per_step: 1),
+        (class: "Siege",  gold_per_step: 3, xp_per_step: 3),
+        (class: "Super",  gold_per_step: 0, xp_per_step: 0),
+    ],
+)

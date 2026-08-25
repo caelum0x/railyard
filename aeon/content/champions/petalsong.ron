@@ -1,0 +1,46 @@
+// Petalsong — a disruptor SUPPORT.
+//
+// Locks down a key target, smothers a group with clinging vines, and sings her
+// own wounds shut. Peels and sustains rather than bursts. Pure DSL data.
+ChampionSpec(
+    name: "Petalsong",
+    base: BaseStats(
+        hp: 620,
+        ad: 42,
+        armor: 30,
+        attack_speed: 0.9,
+        move_speed: 11.5,
+        range: 15.0,
+    ),
+    abilities: [
+        // Peel: pin a diving threat.
+        AbilitySpec(
+            name: "Vinebind",
+            cooldown: 210,
+            cost: Some(70),
+            targeting: Target,
+            range: 14.0,
+            effects: [ Stun(duration: 40), Damage(amount: 40, scaling: Some(AttackDamage(ratio: 0.4))) ],
+        ),
+        // Zone denial: clinging petals that damage and slow a group.
+        AbilitySpec(
+            name: "Petal Storm",
+            cooldown: 150,
+            cost: Some(60),
+            targeting: Area,
+            range: 14.0,
+            effects: [
+                Damage(amount: 55, scaling: Some(AttackDamage(ratio: 0.4))),
+                Slow(duration: 90),
+            ],
+        ),
+        // Self-sustain to survive the frontline.
+        AbilitySpec(
+            name: "Mending Verse",
+            cooldown: 140,
+            cost: Some(50),
+            targeting: SelfCast,
+            effects: [ Heal(amount: 120) ],
+        ),
+    ],
+)

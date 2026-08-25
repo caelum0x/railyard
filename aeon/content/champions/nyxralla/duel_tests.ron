@@ -1,0 +1,34 @@
+// Deterministic duel scenarios for Nyxralla.
+// Lifted from the roster/duel test pattern (engine/ability-dsl/tests/
+// duel.rs): a fixed seed makes every run byte-identical, so these double
+// as regression baselines. Data only -- no Rust, no loader impact.
+DuelScenarios(
+    slug: "nyxralla",
+    default_seed: 42,
+    scenarios: [
+        DuelScenario(
+            name: "nyxralla_vs_sentinel",
+            description: "Nyxralla opens against the Sentinel baseline.",
+            challenger: "nyxralla.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Win, winner: Some("Nyxralla"), decisive: true),
+        ),
+        DuelScenario(
+            name: "nyxralla_determinism",
+            description: "Same specs + seed run twice must be byte-identical.",
+            challenger: "nyxralla.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Deterministic, hash_stable: true, decisive: true),
+        ),
+        DuelScenario(
+            name: "nyxralla_order_independent",
+            description: "Swapping challenger/opponent slots keeps the same winner.",
+            challenger: "sentinel.ron",
+            opponent: "nyxralla.ron",
+            seed: 42,
+            expect: Expect(outcome: OrderIndependent, decisive: true),
+        ),
+    ],
+)

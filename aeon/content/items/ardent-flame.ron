@@ -1,0 +1,12 @@
+// Ardent Flame — LEGENDARY support. A kindness with teeth.
+ItemSpec(
+    name: "Ardent Flame",
+    cost: 2200,
+    tier: Legendary,
+    stats: Stats(
+        ap: 40,
+    ),
+    passive: Some("Shielding or healing an ally grants them bonus attack speed and on-hit damage."),
+    build_from: ["forbidden-idol", "bandleglass-mirror"],
+    tags: ["legendary", "support", "aura", "attack-speed"],
+)

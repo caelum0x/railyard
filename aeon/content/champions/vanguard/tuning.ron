@@ -1,0 +1,35 @@
+// Per-rank ability tuning for Vanguard.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/vanguard.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "vanguard",
+    display_name: "Vanguard",
+    abilities: [
+        AbilityTuning(
+            name: "Shield Charge",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 90, cost: Some(40), damage: Some(60), ad_ratio: Some(0.4), heal: None, cc: Some(("Stun", 8))),
+                Rank(rank: 2, cooldown: 86, cost: Some(43), damage: Some(78), ad_ratio: Some(0.45), heal: None, cc: Some(("Stun", 9))),
+                Rank(rank: 3, cooldown: 81, cost: Some(46), damage: Some(96), ad_ratio: Some(0.5), heal: None, cc: Some(("Stun", 10))),
+                Rank(rank: 4, cooldown: 76, cost: Some(50), damage: Some(114), ad_ratio: Some(0.55), heal: None, cc: Some(("Stun", 12))),
+                Rank(rank: 5, cooldown: 72, cost: Some(53), damage: Some(132), ad_ratio: Some(0.6), heal: None, cc: Some(("Stun", 13))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Rally",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 180, cost: None, damage: None, ad_ratio: None, heal: Some(120), cc: None),
+                Rank(rank: 2, cooldown: 171, cost: None, damage: None, ad_ratio: None, heal: Some(150), cc: None),
+                Rank(rank: 3, cooldown: 162, cost: None, damage: None, ad_ratio: None, heal: Some(180), cc: None),
+                Rank(rank: 4, cooldown: 153, cost: None, damage: None, ad_ratio: None, heal: Some(210), cc: None),
+                Rank(rank: 5, cooldown: 144, cost: None, damage: None, ad_ratio: None, heal: Some(240), cc: None),
+            ],
+        ),
+    ],
+)

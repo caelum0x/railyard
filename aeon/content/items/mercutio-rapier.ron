@@ -1,0 +1,12 @@
+// Mercutio Rapier — LEGENDARY AD. Elegant, and fatal.
+ItemSpec(
+    name: "Mercutio Rapier",
+    cost: 3400,
+    tier: Legendary,
+    stats: Stats(
+        ad: 45,
+    ),
+    passive: Some("+25% crit chance; crits heal you for 15% of damage dealt."),
+    build_from: ["agility-cloak", "vampiric-scepter", "brute-pick"],
+    tags: ["legendary", "ad", "crit", "lifesteal"],
+)

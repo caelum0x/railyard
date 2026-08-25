@@ -1,0 +1,81 @@
+// Voice-line manifest for Achilles: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "achilles",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.achilles.select",
+            kind: "Selected",
+            audio: "audio/vo/achilles/select.ogg",
+            text: "Achilles answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.achilles.move_a",
+            kind: "Move",
+            audio: "audio/vo/achilles/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.achilles.move_b",
+            kind: "Move",
+            audio: "audio/vo/achilles/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.achilles.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/achilles/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.achilles.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/achilles/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.achilles.ability_q",
+            kind: "Ability: Spear of Peleus",
+            audio: "audio/vo/achilles/ability_q.ogg",
+            text: "Spear of Peleus!",
+        ),
+        VoiceLine(
+            id: "vo.achilles.ability_w",
+            kind: "Ability: Myrmidon Cleave",
+            audio: "audio/vo/achilles/ability_w.ogg",
+            text: "Myrmidon Cleave!",
+        ),
+        VoiceLine(
+            id: "vo.achilles.ability_r",
+            kind: "Ability: Immortal Rage",
+            audio: "audio/vo/achilles/ability_r.ogg",
+            text: "Immortal Rage!",
+        ),
+        VoiceLine(
+            id: "vo.achilles.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/achilles/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.achilles.joke",
+            kind: "Joke",
+            audio: "audio/vo/achilles/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.achilles.low_health",
+            kind: "Low health",
+            audio: "audio/vo/achilles/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.achilles.victory",
+            kind: "Victory",
+            audio: "audio/vo/achilles/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

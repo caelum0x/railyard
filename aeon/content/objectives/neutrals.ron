@@ -1,0 +1,30 @@
+// content/objectives/neutrals.ron
+//
+// The neutral-unit catalog: jungle camps and epic objectives. A map references
+// these by `id` (see content/maps/*.ron jungle/objectives) for POSITION; their
+// STATS + kill rewards live here. Neutral units are team 255; on death they award
+// their bounty (and any team-wide buff) to the team that killed them.
+NeutralCatalog(
+    entries: [
+        NeutralDef(
+            id: "crimson_golem",
+            stats: UnitStats(hp: 900, ad: 30, armor: 20, range: 5.0, attack_speed: 0.8),
+            bounty: 110,
+            buff: Some(NeutralBuff(bonus_ad: 0, team_heal: 200)),
+        ),
+        NeutralDef(
+            id: "tidewyrm",
+            stats: UnitStats(hp: 1800, ad: 60, armor: 30, range: 6.0, attack_speed: 0.8),
+            bounty: 220,
+            // Epic objective: a permanent team-wide attack-damage buff to every
+            // living champion on the killing team.
+            buff: Some(NeutralBuff(bonus_ad: 20, team_heal: 0)),
+        ),
+        NeutralDef(
+            id: "worldbreaker",
+            stats: UnitStats(hp: 2600, ad: 80, armor: 40, range: 7.0, attack_speed: 0.7),
+            bounty: 300,
+            buff: Some(NeutralBuff(bonus_ad: 35, team_heal: 300)),
+        ),
+    ],
+)

@@ -1,0 +1,11 @@
+// Cripple — SoftCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "slow_major",
+    name: "Cripple",
+    category: SoftCC,
+    vocab_ref: Some("DebuffSlow"),
+    fields: ["percent", "duration"],
+    cleansable: true,
+    stacking: Strongest,
+    description: "A heavy 60% movement slow.",
+)

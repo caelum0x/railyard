@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Athena.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "athena",
+    display_name: "Athena",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "support",
+    faction: "Greek",
+    card_stats: CardStats(
+        hitpoints: 680,
+        attack_damage: 50,
+        attack_speed: 0.85,
+        armor: 33,
+        range: 6.0,
+        approx_dps: 42.5,
+    ),
+    deploy_power: 287,
+    collectible: true,
+)

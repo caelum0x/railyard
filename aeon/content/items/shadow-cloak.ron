@@ -1,0 +1,12 @@
+// Shadow Cloak — BASIC tank.
+ItemSpec(
+    name: "Shadow Cloak",
+    cost: 810,
+    tier: Basic,
+    stats: Stats(
+        mr: 40,
+    ),
+    passive: None,
+    build_from: ["null-mantle"],
+    tags: ["basic", "mr"],
+)

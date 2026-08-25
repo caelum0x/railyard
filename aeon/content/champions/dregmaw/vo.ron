@@ -1,0 +1,81 @@
+// Voice-line manifest for Dregmaw: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "dregmaw",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.dregmaw.select",
+            kind: "Selected",
+            audio: "audio/vo/dregmaw/select.ogg",
+            text: "Dregmaw answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.dregmaw.move_a",
+            kind: "Move",
+            audio: "audio/vo/dregmaw/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.dregmaw.move_b",
+            kind: "Move",
+            audio: "audio/vo/dregmaw/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.dregmaw.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/dregmaw/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.dregmaw.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/dregmaw/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.dregmaw.ability_q",
+            kind: "Ability: Umbral Seize",
+            audio: "audio/vo/dregmaw/ability_q.ogg",
+            text: "Umbral Seize!",
+        ),
+        VoiceLine(
+            id: "vo.dregmaw.ability_w",
+            kind: "Ability: Eclipse Skin",
+            audio: "audio/vo/dregmaw/ability_w.ogg",
+            text: "Eclipse Skin!",
+        ),
+        VoiceLine(
+            id: "vo.dregmaw.ability_r",
+            kind: "Ability: Duskwave",
+            audio: "audio/vo/dregmaw/ability_r.ogg",
+            text: "Duskwave!",
+        ),
+        VoiceLine(
+            id: "vo.dregmaw.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/dregmaw/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.dregmaw.joke",
+            kind: "Joke",
+            audio: "audio/vo/dregmaw/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.dregmaw.low_health",
+            kind: "Low health",
+            audio: "audio/vo/dregmaw/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.dregmaw.victory",
+            kind: "Victory",
+            audio: "audio/vo/dregmaw/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

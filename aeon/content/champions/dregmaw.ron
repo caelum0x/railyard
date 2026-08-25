@@ -1,0 +1,51 @@
+// Dregmaw — the DUSKBULWARK, a frontline tank. (Umbral faction)
+//
+// A hollow-eyed warden fused to a slab of eclipse-iron, Dregmaw plants himself
+// in the dark and refuses to fall. Soaks punishment, chains a threat down with
+// an umbral grip, mends in shadow, and drags a whole line into a crawl. Low
+// offense, immense durability. Pure DATA against the closed DSL.
+ChampionSpec(
+    name: "Dregmaw",
+    base: BaseStats(
+        hp: 690,
+        ad: 46,
+        armor: 37,
+        attack_speed: 0.85,  // slow, heavy swings
+        move_speed: 10.5,
+        range: 6.0,          // melee
+    ),
+    abilities: [
+        // Umbral Seize: point-and-click lockdown to open a fight.
+        AbilitySpec(
+            name: "Umbral Seize",
+            cooldown: 240,
+            cost: Some(60),
+            targeting: Target,
+            range: 9.0,
+            effects: [
+                Stun(duration: 45),
+                Damage(amount: 65, scaling: Some(AttackDamage(ratio: 0.4))),
+            ],
+        ),
+        // Eclipse Skin: self-sustain to hold the line under focus.
+        AbilitySpec(
+            name: "Eclipse Skin",
+            cooldown: 180,
+            cost: Some(50),
+            targeting: SelfCast,
+            effects: [ Heal(amount: 105) ],
+        ),
+        // Duskwave: area chip plus a long slow to peel.
+        AbilitySpec(
+            name: "Duskwave",
+            cooldown: 210,
+            cost: Some(55),
+            targeting: Area,
+            range: 11.0,
+            effects: [
+                Damage(amount: 60, scaling: Some(AttackDamage(ratio: 0.4))),
+                Slow(duration: 90),
+            ],
+        ),
+    ],
+)

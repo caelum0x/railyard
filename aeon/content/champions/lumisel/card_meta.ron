@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Lumisel.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "lumisel",
+    display_name: "Lumisel",
+    rarity: "Rare",
+    elixir_cost: 4,
+    archetype: "support",
+    faction: "Tide",
+    card_stats: CardStats(
+        hitpoints: 600,
+        attack_damage: 44,
+        attack_speed: 0.9,
+        armor: 26,
+        range: 18.0,
+        approx_dps: 39.6,
+    ),
+    deploy_power: 216,
+    collectible: true,
+)

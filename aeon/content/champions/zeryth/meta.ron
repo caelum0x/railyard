@@ -1,0 +1,14 @@
+// Narrative + release metadata for Zeryth.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "zeryth",
+    display_name: "Zeryth",
+    title: "",
+    faction: "Umbral",
+    archetype: "assassin",
+    release_patch: "1.7.0",
+    resource: "Mana",
+    lore: "Zeryth — the UMBRAL FANG, a burst assassin. (Umbral faction) A blade of living shadow that folds the distance to its mark, pins them mid- scream, and finishes in a collapse of darkness. High mobility and damage, little armor to spare. Pure DATA against the closed DSL.",
+    tags: ["assassin", "umbral"],
+)

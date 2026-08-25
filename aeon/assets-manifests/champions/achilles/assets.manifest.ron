@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "achilles",
+    champion: "Achilles",
+    archetype: "bruiser",
+    faction: "Greek",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 35508,
+            blake3: "a4ac27f5082f61d8abb5a16c2bb595ac6104325258db10f8e1dc16d9f04e8dce",
+        ),
+    },
+)

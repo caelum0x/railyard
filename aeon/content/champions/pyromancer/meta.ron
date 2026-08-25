@@ -1,0 +1,14 @@
+// Narrative + release metadata for Pyromancer.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "pyromancer",
+    display_name: "Pyromancer",
+    title: "",
+    faction: "Ember",
+    archetype: "mage",
+    release_patch: "1.4.0",
+    resource: "Mana",
+    lore: "Pyromancer — a BURST MAGE built around a long-range SKILLSHOT nuke. Fragile in stats, but its Fireball out-ranges an auto-attacker and STUNS on hit, so it can poke and lock down a target before it ever closes the gap. Authored entirely as data against the closed effect vocabulary (Damage + Stun).",
+    tags: ["mage", "ember"],
+)

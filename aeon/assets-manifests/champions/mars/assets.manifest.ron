@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "mars",
+    champion: "Mars",
+    archetype: "bruiser",
+    faction: "Roman",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 35508,
+            blake3: "fd250632501acbdd504bd9011cf4a092c03b8d4b1d74d9e6504cc8f2ed78e50b",
+        ),
+    },
+)

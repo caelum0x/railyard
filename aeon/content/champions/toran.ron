@@ -1,0 +1,50 @@
+// Toran — the SLAGWARDEN, a frontline tank.
+//
+// Soaks damage, anchors fights with a heavy stun, and cools himself with a
+// forge-fed self-heal. Low offense, immense durability. Pure DATA — no
+// champion-specific Rust behind it.
+ChampionSpec(
+    name: "Toran",
+    base: BaseStats(
+        hp: 690,
+        ad: 44,
+        armor: 36,
+        attack_speed: 0.85,  // slow, heavy swings
+        move_speed: 10.5,
+        range: 8.0,
+    ),
+    abilities: [
+        // Anvil Slam: point-and-click enemy, moderate hit + long stun.
+        AbilitySpec(
+            name: "Anvil Slam",
+            cooldown: 240,
+            cost: Some(60),
+            targeting: Target,
+            range: 10.0,
+            effects: [
+                Damage(amount: 70, scaling: Some(AttackDamage(ratio: 0.4))),
+                Stun(duration: 45),
+            ],
+        ),
+        // Molten Ward: self-heal to sustain through focus fire.
+        AbilitySpec(
+            name: "Molten Ward",
+            cooldown: 180,
+            cost: Some(50),
+            targeting: SelfCast,
+            effects: [ Heal(amount: 100) ],
+        ),
+        // Cinder Sweep: area burn + slow to peel for allies.
+        AbilitySpec(
+            name: "Cinder Sweep",
+            cooldown: 300,
+            cost: Some(70),
+            targeting: Area,
+            range: 12.0,
+            effects: [
+                Damage(amount: 90, scaling: Some(AttackDamage(ratio: 0.5))),
+                Slow(duration: 90),
+            ],
+        ),
+    ],
+)

@@ -1,0 +1,81 @@
+// Voice-line manifest for Isis: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "isis-mother-of-magic",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.isis_mother_of_magic.select",
+            kind: "Selected",
+            audio: "audio/vo/isis-mother-of-magic/select.ogg",
+            text: "Isis answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.isis_mother_of_magic.move_a",
+            kind: "Move",
+            audio: "audio/vo/isis-mother-of-magic/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.isis_mother_of_magic.move_b",
+            kind: "Move",
+            audio: "audio/vo/isis-mother-of-magic/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.isis_mother_of_magic.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/isis-mother-of-magic/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.isis_mother_of_magic.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/isis-mother-of-magic/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.isis_mother_of_magic.ability_q",
+            kind: "Ability: Healing Ankh",
+            audio: "audio/vo/isis-mother-of-magic/ability_q.ogg",
+            text: "Healing Ankh!",
+        ),
+        VoiceLine(
+            id: "vo.isis_mother_of_magic.ability_w",
+            kind: "Ability: Binding Spell",
+            audio: "audio/vo/isis-mother-of-magic/ability_w.ogg",
+            text: "Binding Spell!",
+        ),
+        VoiceLine(
+            id: "vo.isis_mother_of_magic.ability_r",
+            kind: "Ability: Sorrow's Veil",
+            audio: "audio/vo/isis-mother-of-magic/ability_r.ogg",
+            text: "Sorrow's Veil!",
+        ),
+        VoiceLine(
+            id: "vo.isis_mother_of_magic.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/isis-mother-of-magic/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.isis_mother_of_magic.joke",
+            kind: "Joke",
+            audio: "audio/vo/isis-mother-of-magic/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.isis_mother_of_magic.low_health",
+            kind: "Low health",
+            audio: "audio/vo/isis-mother-of-magic/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.isis_mother_of_magic.victory",
+            kind: "Victory",
+            audio: "audio/vo/isis-mother-of-magic/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

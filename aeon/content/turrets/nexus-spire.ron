@@ -1,0 +1,35 @@
+// Nexus Spire — the twin core turrets. Two flank the Aeon Core (see map). Both
+// must fall before the Core is attackable. They fire faster than lane turrets and
+// gain a large fortification bonus until any enemy Rift Conduit is destroyed, so
+// they cannot be dived until an inhibitor is down.
+TurretSpec(
+    id: "nexus_spire",
+    display_name: "Nexus Spire",
+    tier: "Core",
+
+    stats: TurretStats(
+        hp: 5000,
+        armor: 70,
+        magic_resist: 70,
+        attack_damage: 190,
+        attack_speed: 1.05,     // faster cadence than lane turrets
+        attack_range: 15.0,
+    ),
+
+    // Fortification: near-invulnerable resist bonus until the attackers have at
+    // least one enemy Rift Conduit destroyed anywhere on the map.
+    fortification: (
+        bonus_resist: 300,
+        removed_when: "AnyEnemyInhibitorDestroyed",
+    ),
+
+    heat_ramp: (max_stacks: 3, bonus_per_stack_percent: 40, decay_seconds: 4),
+
+    // Both twin spires must be destroyed to expose the Aeon Core.
+    guards: "aeon_core",       // -> content/turrets/aeon-core.ron
+
+    bounty: (gold_local: 50, gold_global: 50),
+
+    targeting:  "spire_targeting",
+    projectile: "spire_projectile",
+)

@@ -1,0 +1,54 @@
+// Thor — a storm BRUISER: throw the hammer, charge in, call the thunder.
+//
+// Durable and mobile with real burst. Mjölnir is a long skillshot that stuns;
+// Thunder Charge is a gap-closing dash-strike; God of Thunder is an area shock
+// that slows. Multi-effect abilities, all authored as closed-vocabulary data.
+ChampionSpec(
+    name: "Thor",
+    base: BaseStats(
+        hp: 760,
+        ad: 40,
+        armor: 34,
+        attack_speed: 0.9,
+        move_speed: 10.5,
+        range: 5.0,
+    ),
+    abilities: [
+        // Ranged engage: hurl Mjolnir as a skillshot, damage + stun on first hit.
+        AbilitySpec(
+            name: "Mjolnir Hurl",
+            cooldown: 60,
+            cost: Some(50),
+            targeting: Skillshot,
+            range: 24.0,
+            effects: [
+                Damage(amount: 66, scaling: Some(AttackDamage(ratio: 0.4))),
+                Stun(duration: 12),
+            ],
+        ),
+        // Gap-close: dash onto a target and strike for AD-scaled damage.
+        AbilitySpec(
+            name: "Thunder Charge",
+            cooldown: 80,
+            cost: Some(45),
+            targeting: Target,
+            range: 14.0,
+            effects: [
+                Dash(distance: 14.0),
+                Damage(amount: 60, scaling: Some(AttackDamage(ratio: 0.4))),
+            ],
+        ),
+        // Area storm: shock everyone nearby and slow them.
+        AbilitySpec(
+            name: "God of Thunder",
+            cooldown: 100,
+            cost: Some(60),
+            targeting: Area,
+            range: 12.0,
+            effects: [
+                Damage(amount: 70, scaling: Some(AttackDamage(ratio: 0.4))),
+                Slow(duration: 15),
+            ],
+        ),
+    ],
+)

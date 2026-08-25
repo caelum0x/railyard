@@ -1,0 +1,31 @@
+// Wyrm Pit — the south-river neutral pit and its Wyrm rotation logic. Controls
+// which elemental Wyrm is up, respawn timing, and when the Elder Aeonwyrm replaces
+// the rotation. Referenced by riftline-crucible.ron (objective_pits) and by each
+// Wyrm's `pit` field. Deterministic order so both teams can plan around it.
+ObjectivePit(
+    id: "wyrm_pit",
+    display_name: "Wyrm Pit",
+    map: "riftline_crucible",
+    pos: Vec2(x: 96.0, y: 54.0),
+
+    first_spawn_seconds: 300,     // first Wyrm at 5:00
+    respawn_seconds: 300,         // 5:00 between kills
+
+    // Fixed rotation of elemental Wyrms; the element up is index (kills_so_far % len).
+    rotation: ["emberwyrm", "frostwyrm", "stormwyrm", "stonewyrm"],
+
+    // Once a team holds >= elder_gate boon stacks (and it's past the earliest
+    // minute), the next spawn is the Elder Aeonwyrm instead of the rotation.
+    elder: (
+        objective: "aeonwyrm",
+        boon_stack_gate: 4,
+        earliest_minute: 30,
+    ),
+
+    // Contest rules: last-hit decides the kill; a smite-style secure is allowed via
+    // the jungler's Sever Brand (see monster/jungle-buffs.ron interplay is separate).
+    contest: (
+        last_hit_secures: true,
+        steal_window_seconds: 0.0,   // pure last-hit; no channel to interrupt
+    ),
+)

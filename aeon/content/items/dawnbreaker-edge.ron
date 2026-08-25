@@ -1,0 +1,12 @@
+// Dawnbreaker Edge — LEGENDARY AD. First light, last mistake.
+ItemSpec(
+    name: "Dawnbreaker Edge",
+    cost: 3400,
+    tier: Legendary,
+    stats: Stats(
+        ad: 55,
+    ),
+    passive: Some("+20% critical strike chance; crits deal 175% damage."),
+    build_from: ["noonquiver", "brute-pick", "agility-cloak"],
+    tags: ["legendary", "ad", "crit"],
+)

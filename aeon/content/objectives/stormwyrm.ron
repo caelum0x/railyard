@@ -1,0 +1,31 @@
+// Stormwyrm — an elemental Wyrm neutral objective. Spawns in the Wyrm Pit. Slaying
+// it grants the killing team a stacking Storm Boon (bonus attack/move speed).
+// Storm/Sky faction themed. Part of the Wyrm rotation in wyrm-pit.ron.
+ObjectiveSpec(
+    id: "stormwyrm",
+    display_name: "Stormwyrm",
+    class: "ElementalWyrm",
+    element: "Storm",
+    pit: "wyrm_pit",
+
+    stats: NeutralStats(
+        hp: 3400,
+        armor: 20,
+        magic_resist: 20,
+        attack_damage: 100,
+        attack_speed: 0.65,     // quicker strikes, fits the theme
+        attack_range: 3.0,
+        move_speed: 0.0,
+    ),
+
+    scaling: (hp_per_minute: 235, ad_per_minute: 6, start_minute: 5),
+
+    reward: (
+        buff: "storm_boon",
+        scope: "KillingTeam",
+        permanent: true,
+        stacking: true,
+    ),
+
+    bounty: (gold_local: 25, gold_global: 25, xp: 200),
+)

@@ -1,0 +1,46 @@
+// Shared minion AI behaviour — the deterministic state machine every minion runs.
+// Referenced by all *-minion.ron. Governs how minions pick targets, when they
+// break off to defend, and how far they chase. No randomness: identical inputs
+// yield identical decisions (Law 3).
+MinionAI(
+    id: "minion_ai_behavior",
+
+    // Baseline behaviour: march to the next lane waypoint.
+    default_state: "AdvanceLane",
+
+    states: [
+        (
+            name: "AdvanceLane",
+            desc: "Walk toward the next lane waypoint; scan for aggro every tick.",
+            transitions: [
+                (when: "EnemyInAggroRange",         to: "EngageTarget"),
+                (when: "AllyAttackedByEnemy",       to: "DefendAlly"),
+            ],
+        ),
+        (
+            name: "EngageTarget",
+            desc: "Attack the highest-priority target per the minion's aggro_priority list.",
+            transitions: [
+                (when: "TargetDeadOrOutOfRange",    to: "AdvanceLane"),
+                (when: "PulledOffByHigherPriority", to: "EngageTarget"),
+            ],
+        ),
+        (
+            name: "DefendAlly",
+            desc: "Redirect aggro to the enemy attacking a nearby allied champion/structure.",
+            transitions: [
+                (when: "ThreatCleared",             to: "AdvanceLane"),
+            ],
+        ),
+    ],
+
+    // Tunables the state machine reads.
+    params: (
+        aggro_range: 8.0,
+        leash_range: 12.0,          // give up chase past this from the lane path
+        reacquire_cooldown_ticks: 4,
+        // Aggro is sticky: once engaged, only re-target if a strictly higher
+        // priority target appears (prevents jitter).
+        sticky_aggro: true,
+    ),
+)

@@ -1,0 +1,27 @@
+// Shared turret targeting rules for all Warding Spires. Deterministic priority so
+// turret aggro is predictable and identical across both teams (Law 3). Referenced
+// by every TurretSpec via `targeting`.
+TurretTargeting(
+    id: "spire_targeting",
+
+    // Evaluated top to bottom; the first matching rule wins and the turret locks
+    // that target until it dies, leaves range, or a higher rule fires.
+    priority: [
+        "EnemyChampionAttackingAlliedChampionInRange",  // protect our champ
+        "SiegeMinionNearest",     // siege/super are high-value threats to structures
+        "SuperMinionNearest",
+        "MeleeMinionNearest",
+        "CasterMinionNearest",
+        "PetOrSummonNearest",
+        "ChampionNearest",        // otherwise nearest enemy champion
+    ],
+
+    params: (
+        // Target lock is sticky until one of these breaks it.
+        retarget_on: ["TargetDead", "TargetOutOfRange", "AllyChampionNewlyAttacked"],
+        // Once a champion attacks an allied champion inside range, the turret
+        // switches for this many seconds even mid-minion-volley.
+        champion_defense_switch_seconds: 0.25,
+        acquisition_delay_ticks: 1,
+    ),
+)

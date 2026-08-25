@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Pyromancer.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "pyromancer",
+    display_name: "Pyromancer",
+    rarity: "Rare",
+    elixir_cost: 4,
+    archetype: "mage",
+    faction: "Ember",
+    card_stats: CardStats(
+        hitpoints: 470,
+        attack_damage: 28,
+        attack_speed: 0.7,
+        armor: 18,
+        range: 6.0,
+        approx_dps: 19.6,
+    ),
+    deploy_power: 247,
+    collectible: true,
+)

@@ -1,0 +1,7 @@
+// Phantom Dash — summoner spell.
+SummonerSpell(
+    name: "Phantom Dash",
+    cooldown: 210,
+    effect: "Gain greatly increased move speed and ghosting through units for a short duration.",
+    tags: ["mobility"],
+)

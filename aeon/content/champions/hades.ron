@@ -1,0 +1,45 @@
+// Hades — TANK / void controller. Lord of the Underworld: durable, drags a foe in
+// with a stun, blankets the ground in soul-fire that damages and slows, and feeds
+// on the dead to sustain.
+ChampionSpec(
+    name: "Hades",
+    base: BaseStats(
+        hp: 830,
+        ad: 41,
+        armor: 39,
+        attack_speed: 0.8,
+        move_speed: 9.5,
+        range: 5.0,
+    ),
+    abilities: [
+        AbilitySpec(
+            name: "Grasp of the Underworld",
+            cooldown: 100,
+            cost: Some(50),
+            targeting: Target,
+            range: 11.0,
+            effects: [
+                Damage(amount: 55, scaling: Some(AttackDamage(ratio: 0.35))),
+                Stun(duration: 8),
+            ],
+        ),
+        AbilitySpec(
+            name: "Field of Judgment",
+            cooldown: 130,
+            cost: Some(70),
+            targeting: Area,
+            range: 11.0,
+            effects: [
+                Damage(amount: 80, scaling: Some(AttackDamage(ratio: 0.3))),
+                Slow(duration: 40),
+            ],
+        ),
+        AbilitySpec(
+            name: "Soul Harvest",
+            cooldown: 170,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 130) ],
+        ),
+    ],
+)

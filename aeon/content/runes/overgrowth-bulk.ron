@@ -1,0 +1,7 @@
+// Overgrowth — Resolve / Tier3.
+RuneSpec(
+    name: "Overgrowth",
+    tree: Resolve,
+    tier: Tier3,
+    effect: "Gain permanent bonus health as nearby minions and monsters die.",
+)

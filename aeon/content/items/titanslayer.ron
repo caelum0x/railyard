@@ -1,0 +1,13 @@
+// Titanslayer — LEGENDARY AD. No hide too thick.
+ItemSpec(
+    name: "Titanslayer",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ad: 30,
+        attack_speed: 0.25,
+    ),
+    passive: Some("On-hit deals 5% of target max health as physical damage; +20% armor pen."),
+    build_from: ["last-whisper-shard", "stinger-coil"],
+    tags: ["legendary", "ad", "penetration", "onhit"],
+)

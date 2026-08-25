@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Ra.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/ra-radiant-dawn.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "ra-radiant-dawn",
+    display_name: "Ra",
+    abilities: [
+        AbilityTuning(
+            name: "Sunfire Nova",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 40, cost: Some(70), damage: Some(104), ad_ratio: Some(0.45), heal: None, cc: Some(("Slow", 10))),
+                Rank(rank: 2, cooldown: 38, cost: Some(76), damage: Some(135), ad_ratio: Some(0.5), heal: None, cc: Some(("Slow", 12))),
+                Rank(rank: 3, cooldown: 36, cost: Some(81), damage: Some(166), ad_ratio: Some(0.55), heal: None, cc: Some(("Slow", 13))),
+                Rank(rank: 4, cooldown: 34, cost: Some(87), damage: Some(198), ad_ratio: Some(0.6), heal: None, cc: Some(("Slow", 14))),
+                Rank(rank: 5, cooldown: 32, cost: Some(92), damage: Some(229), ad_ratio: Some(0.65), heal: None, cc: Some(("Slow", 16))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Solar Lance",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 30, cost: Some(45), damage: Some(68), ad_ratio: Some(0.35), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 28, cost: Some(49), damage: Some(88), ad_ratio: Some(0.4), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 27, cost: Some(52), damage: Some(109), ad_ratio: Some(0.45), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 26, cost: Some(56), damage: Some(129), ad_ratio: Some(0.5), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 24, cost: Some(59), damage: Some(150), ad_ratio: Some(0.55), heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Reborn at Dawn",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 200, cost: None, damage: None, ad_ratio: None, heal: Some(100), cc: None),
+                Rank(rank: 2, cooldown: 190, cost: None, damage: None, ad_ratio: None, heal: Some(125), cc: None),
+                Rank(rank: 3, cooldown: 180, cost: None, damage: None, ad_ratio: None, heal: Some(150), cc: None),
+                Rank(rank: 4, cooldown: 170, cost: None, damage: None, ad_ratio: None, heal: Some(175), cc: None),
+                Rank(rank: 5, cooldown: 160, cost: None, damage: None, ad_ratio: None, heal: Some(200), cc: None),
+            ],
+        ),
+    ],
+)

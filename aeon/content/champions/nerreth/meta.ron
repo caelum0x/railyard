@@ -1,0 +1,14 @@
+// Narrative + release metadata for Nerreth.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "nerreth",
+    display_name: "Nerreth",
+    title: "",
+    faction: "Ember",
+    archetype: "bruiser",
+    release_patch: "1.4.0",
+    resource: "Mana",
+    lore: "Nerreth — the ASHSTALKER, a burst assassin. Blinks onto a target, dumps a stun-and-burst combo, and disengages. High mobility and damage, low durability. Pure DATA.",
+    tags: ["bruiser", "ember"],
+)

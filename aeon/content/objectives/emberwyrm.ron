@@ -1,0 +1,34 @@
+// Emberwyrm — an elemental Wyrm neutral objective (the "dragon"-style rotation, but
+// original IP). Spawns in the Wyrm Pit south of the Sever. Slaying it grants the
+// whole killing team a permanent, stacking Ember Boon (bonus attack/ability damage).
+// Ember faction themed. Behaviour of the pit/rotation lives in wyrm-pit.ron.
+ObjectiveSpec(
+    id: "emberwyrm",
+    display_name: "Emberwyrm",
+    class: "ElementalWyrm",
+    element: "Ember",
+    pit: "wyrm_pit",
+
+    stats: NeutralStats(
+        hp: 3500,
+        armor: 22,
+        magic_resist: 22,
+        attack_damage: 110,
+        attack_speed: 0.5,
+        attack_range: 3.0,
+        move_speed: 0.0,        // stationary in its pit
+    ),
+
+    // Scales with the average level of the two teams over time.
+    scaling: (hp_per_minute: 240, ad_per_minute: 6, start_minute: 5),
+
+    // Team-wide permanent reward on kill; stacks with repeat kills.
+    reward: (
+        buff: "ember_boon",     // -> content/objectives/objective-rewards.ron
+        scope: "KillingTeam",
+        permanent: true,
+        stacking: true,
+    ),
+
+    bounty: (gold_local: 25, gold_global: 25, xp: 200),
+)

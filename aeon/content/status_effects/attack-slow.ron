@@ -1,0 +1,11 @@
+// Enervate — SoftCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "attack_slow",
+    name: "Enervate",
+    category: SoftCC,
+    vocab_ref: Some("DebuffSlow"),
+    fields: ["percent", "duration"],
+    cleansable: true,
+    stacking: Strongest,
+    description: "Reduces attack speed (modeled as a slow-family debuff).",
+)

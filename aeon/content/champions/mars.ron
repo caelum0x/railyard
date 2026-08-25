@@ -1,0 +1,47 @@
+// Mars — the war BRUISER. Distinct from Ares: disciplined Roman general, not raw fury.
+ChampionSpec(
+    name: "Mars",
+    base: BaseStats(
+        hp: 760,
+        ad: 46,
+        armor: 33,
+        attack_speed: 0.9,
+        move_speed: 10.5,
+        range: 5.0,
+    ),
+    abilities: [
+        // Engage: hurl forward and pin the target.
+        AbilitySpec(
+            name: "Spear of Conquest",
+            cooldown: 80,
+            cost: Some(45),
+            targeting: Target,
+            range: 13.0,
+            effects: [
+                Dash(distance: 13.0),
+                Damage(amount: 56, scaling: Some(AttackDamage(ratio: 0.4))),
+                Stun(duration: 9),
+            ],
+        ),
+        // Sweep the legion's advance across a zone.
+        AbilitySpec(
+            name: "Crimson March",
+            cooldown: 100,
+            cost: Some(50),
+            targeting: Area,
+            range: 10.0,
+            effects: [
+                Damage(amount: 50, scaling: Some(AttackDamage(ratio: 0.3))),
+                Slow(duration: 30),
+            ],
+        ),
+        // Bloodlust sustain.
+        AbilitySpec(
+            name: "Battle Fury",
+            cooldown: 160,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 100) ],
+        ),
+    ],
+)

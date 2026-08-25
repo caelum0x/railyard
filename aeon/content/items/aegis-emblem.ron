@@ -1,0 +1,13 @@
+// Aegis Emblem — EPIC support.
+ItemSpec(
+    name: "Aegis Emblem",
+    cost: 1000,
+    tier: Epic,
+    stats: Stats(
+        hp: 150,
+        mr: 15,
+    ),
+    passive: Some("Grants nearby allies bonus armor and magic resist."),
+    build_from: ["null-mantle", "ruby-shard"],
+    tags: ["epic", "aura", "support"],
+)

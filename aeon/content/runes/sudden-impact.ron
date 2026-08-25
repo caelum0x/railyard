@@ -1,0 +1,7 @@
+// Sudden Impact — Domination / Tier1.
+RuneSpec(
+    name: "Sudden Impact",
+    tree: Domination,
+    tier: Tier1,
+    effect: "After a dash, blink, or emerging from stealth, gain a burst of armor and magic penetration.",
+)

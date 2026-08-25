@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Anubis.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "anubis-warden-of-scales",
+    display_name: "Anubis",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "mage",
+    faction: "Egyptian",
+    card_stats: CardStats(
+        hitpoints: 760,
+        attack_damage: 41,
+        attack_speed: 0.8,
+        armor: 38,
+        range: 5.0,
+        approx_dps: 32.8,
+    ),
+    deploy_power: 257,
+    collectible: true,
+)

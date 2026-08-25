@@ -1,0 +1,50 @@
+// Isis — a SUPPORT built on a huge self-heal and enemy lockdown.
+//
+// Modest damage; her value is the Healing Ankh's large restore, a Binding Spell
+// that stuns, and Sorrow's Veil that blankets an area in a long slow. Peel and
+// sustain, expressed purely as Heal / Stun / Slow.
+ChampionSpec(
+    name: "Isis",
+    base: BaseStats(
+        hp: 540,
+        ad: 30,
+        armor: 22,
+        attack_speed: 0.7,
+        move_speed: 9.5,
+        range: 7.0,
+    ),
+    abilities: [
+        // The Healing Ankh: a large restore that keeps the front line alive.
+        AbilitySpec(
+            name: "Healing Ankh",
+            cooldown: 120,
+            cost: Some(60),
+            targeting: SelfCast,
+            effects: [ Heal(amount: 160) ],
+        ),
+        // Peel: bind a threat with the true name of magic, stunning it.
+        AbilitySpec(
+            name: "Binding Spell",
+            cooldown: 60,
+            cost: Some(50),
+            targeting: Target,
+            range: 18.0,
+            effects: [
+                Damage(amount: 45, scaling: Some(AttackDamage(ratio: 0.3))),
+                Stun(duration: 12),
+            ],
+        ),
+        // Zone control: a veil of mourning drapes an area in a long slow.
+        AbilitySpec(
+            name: "Sorrow's Veil",
+            cooldown: 50,
+            cost: Some(40),
+            targeting: Area,
+            range: 16.0,
+            effects: [
+                Damage(amount: 35, scaling: Some(AttackDamage(ratio: 0.2))),
+                Slow(duration: 20),
+            ],
+        ),
+    ],
+)

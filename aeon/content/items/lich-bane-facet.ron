@@ -1,0 +1,12 @@
+// Lich Bane Facet — LEGENDARY AP. A ghostlight on the blade.
+ItemSpec(
+    name: "Lich Bane Facet",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ap: 100,
+    ),
+    passive: Some("+8% move speed; after an ability, next attack deals bonus magic damage."),
+    build_from: ["sheen-prism", "great-rod"],
+    tags: ["legendary", "ap", "spellblade", "mobility"],
+)

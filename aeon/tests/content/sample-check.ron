@@ -1,0 +1,23 @@
+// tests/content/sample-check.ron
+//
+// SAMPLE content-check config. Declares which checks the cross-crate content gate runs
+// over content/champions/*.ron. This drives tools/content-lint across the whole roster.
+(
+    name: "roster_full_validation",
+    // Glob of specs to validate (relative to repo root).
+    specs_glob: "content/champions/*.ron",
+    schema: (
+        champion: "content/_schema/champion.schema.ron",
+        ability:  "content/_schema/ability.schema.ron",
+        vocabulary:"content/_schema/vocabulary.ron",
+    ),
+    checks: [
+        (id: "schema_shape",       enabled: true,  desc: "Spec matches champion/ability schema."),
+        (id: "closed_vocabulary",  enabled: true,  desc: "All primitives are members of vocabulary.ron."),
+        (id: "assets_resolve",     enabled: true,  desc: "assets_manifest resolves to a valid glTF-2 by blake3."),
+        (id: "duel_gate",          enabled: true,  desc: "duel_tests scenarios reach their expected result."),
+        (id: "unique_ids",         enabled: true,  desc: "No two specs share an id/slug."),
+    ],
+    // A red gate: any failure across any spec fails CI.
+    fail_fast: false,
+)

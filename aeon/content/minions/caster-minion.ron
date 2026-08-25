@@ -1,0 +1,34 @@
+// Riftling Adept — the caster minion. The back rank: ranged magic attackers with
+// low HP that deal strong chip damage from safety. Fragile to AoE, which balances
+// their reach. Base stats at 0:00; growth via minion-scaling.ron.
+MinionSpec(
+    id: "caster_minion",
+    display_name: "Riftling Adept",
+    class: "Caster",
+    count_per_wave: 3,        // three casters trail the melee line
+    collision_radius: 0.45,
+
+    base: MinionStats(
+        hp: 290,
+        ad: 24,
+        armor: 0,
+        magic_resist: 0,
+        attack_speed: 0.9,
+        move_speed: 12.5,
+        attack_range: 6.5,     // ranged
+        attack_type: Magic,
+    ),
+
+    bounty: (gold_last_hit: 15, gold_shared: 0, xp: 30),
+
+    aggro_priority: [
+        "EnemyMinionAttackingAlly",
+        "EnemyChampionAttackingAlly",
+        "NearestEnemyMinion",
+        "EnemyStructure",
+        "NearestEnemyChampion",
+    ],
+
+    ai: "minion_ai_behavior",
+    scaling: "minion_scaling",
+)

@@ -1,0 +1,14 @@
+// Zeke's Convergence — LEGENDARY support. Two fates, one blow.
+ItemSpec(
+    name: "Zeke's Convergence",
+    cost: 2200,
+    tier: Legendary,
+    stats: Stats(
+        hp: 250,
+        armor: 30,
+        mr: 30,
+    ),
+    passive: Some("Bind to an ally; your immobilize sets up bonus damage for them."),
+    build_from: ["glacial-buckler", "kindlegem"],
+    tags: ["legendary", "support", "tank", "aura"],
+)

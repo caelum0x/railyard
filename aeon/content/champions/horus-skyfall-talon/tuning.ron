@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Horus.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/horus-skyfall-talon.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "horus-skyfall-talon",
+    display_name: "Horus",
+    abilities: [
+        AbilityTuning(
+            name: "Falcon Dive",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 85, cost: Some(40), damage: Some(56), ad_ratio: Some(0.45), heal: None, cc: Some(("Stun", 8))),
+                Rank(rank: 2, cooldown: 81, cost: Some(43), damage: Some(73), ad_ratio: Some(0.5), heal: None, cc: Some(("Stun", 9))),
+                Rank(rank: 3, cooldown: 76, cost: Some(46), damage: Some(90), ad_ratio: Some(0.55), heal: None, cc: Some(("Stun", 10))),
+                Rank(rank: 4, cooldown: 72, cost: Some(50), damage: Some(106), ad_ratio: Some(0.6), heal: None, cc: Some(("Stun", 12))),
+                Rank(rank: 5, cooldown: 68, cost: Some(53), damage: Some(123), ad_ratio: Some(0.65), heal: None, cc: Some(("Stun", 13))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Talon Rend",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 40, cost: Some(30), damage: Some(44), ad_ratio: Some(0.4), heal: None, cc: Some(("Slow", 10))),
+                Rank(rank: 2, cooldown: 38, cost: Some(32), damage: Some(57), ad_ratio: Some(0.45), heal: None, cc: Some(("Slow", 12))),
+                Rank(rank: 3, cooldown: 36, cost: Some(35), damage: Some(70), ad_ratio: Some(0.5), heal: None, cc: Some(("Slow", 13))),
+                Rank(rank: 4, cooldown: 34, cost: Some(37), damage: Some(84), ad_ratio: Some(0.55), heal: None, cc: Some(("Slow", 14))),
+                Rank(rank: 5, cooldown: 32, cost: Some(40), damage: Some(97), ad_ratio: Some(0.6), heal: None, cc: Some(("Slow", 16))),
+            ],
+        ),
+        AbilityTuning(
+            name: "War Cry",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 160, cost: None, damage: None, ad_ratio: None, heal: Some(110), cc: None),
+                Rank(rank: 2, cooldown: 152, cost: None, damage: None, ad_ratio: None, heal: Some(138), cc: None),
+                Rank(rank: 3, cooldown: 144, cost: None, damage: None, ad_ratio: None, heal: Some(165), cc: None),
+                Rank(rank: 4, cooldown: 136, cost: None, damage: None, ad_ratio: None, heal: Some(192), cc: None),
+                Rank(rank: 5, cooldown: 128, cost: None, damage: None, ad_ratio: None, heal: Some(220), cc: None),
+            ],
+        ),
+    ],
+)

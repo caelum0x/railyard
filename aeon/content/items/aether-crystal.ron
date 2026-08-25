@@ -1,0 +1,10 @@
+// Aether Crystal — BASIC AP.
+ItemSpec(
+    name: "Aether Crystal",
+    cost: 350,
+    tier: Basic,
+    stats: Stats(),
+    passive: Some("+250 max mana."),
+    build_from: [],
+    tags: ["basic", "mana"],
+)

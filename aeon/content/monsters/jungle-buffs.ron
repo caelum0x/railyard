@@ -1,0 +1,33 @@
+// Jungle buffs granted by the buff camps. Each id is referenced by a MonsterSpec
+// `grants_buff` / CampSpec `grants_buff`. These go to the killing champion for a
+// fixed duration and transfer to a killer if that champion dies while holding one.
+JungleBuffs(
+    buffs: [
+        (
+            id: "ashen_brand",
+            display_name: "Ashen Brand",
+            source_camp: "camp_ashen",
+            duration_seconds: 120,
+            transfers_on_death: true,
+            effects: (
+                on_hit_burn_per_second: 12,
+                on_hit_burn_duration_seconds: 3,
+                on_hit_slow_percent: 8,
+                hp_regen_per_second: 10,
+            ),
+            desc: "Basic attacks and abilities burn and briefly slow the target; grants health regen.",
+        ),
+        (
+            id: "tidal_wellspring",
+            display_name: "Tidal Wellspring",
+            source_camp: "camp_tidal",
+            duration_seconds: 120,
+            transfers_on_death: true,
+            effects: (
+                resource_regen_per_second: 12,
+                cooldown_reduction_percent: 10,
+            ),
+            desc: "Grants strong resource regeneration and cooldown reduction.",
+        ),
+    ],
+)

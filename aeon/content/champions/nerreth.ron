@@ -1,0 +1,49 @@
+// Nerreth — the ASHSTALKER, a burst assassin.
+//
+// Blinks onto a target, dumps a stun-and-burst combo, and disengages.
+// High mobility and damage, low durability. Pure DATA.
+ChampionSpec(
+    name: "Nerreth",
+    base: BaseStats(
+        hp: 560,
+        ad: 58,
+        armor: 22,
+        attack_speed: 1.0,
+        move_speed: 12.0,
+        range: 8.0,
+    ),
+    abilities: [
+        // Haze Blink: dash gap-close onto the target.
+        AbilitySpec(
+            name: "Haze Blink",
+            cooldown: 180,
+            cost: Some(50),
+            targeting: Skillshot,
+            range: 22.0,
+            effects: [ Dash(distance: 22.0) ],
+        ),
+        // Emberpierce: high single-target burst with a short stun.
+        AbilitySpec(
+            name: "Emberpierce",
+            cooldown: 150,
+            cost: Some(55),
+            targeting: Target,
+            range: 9.0,
+            effects: [
+                Damage(amount: 95, scaling: Some(AttackDamage(ratio: 0.9))),
+                Stun(duration: 30),
+            ],
+        ),
+        // Cremate: execute-tier area finisher after the setup.
+        AbilitySpec(
+            name: "Cremate",
+            cooldown: 330,
+            cost: Some(90),
+            targeting: Area,
+            range: 10.0,
+            effects: [
+                Damage(amount: 150, scaling: Some(AttackDamage(ratio: 1.1))),
+            ],
+        ),
+    ],
+)

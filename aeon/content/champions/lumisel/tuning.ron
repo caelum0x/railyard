@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Lumisel.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/lumisel.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "lumisel",
+    display_name: "Lumisel",
+    abilities: [
+        AbilityTuning(
+            name: "Tidal Blessing",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 120, cost: Some(60), damage: None, ad_ratio: None, heal: Some(105), cc: None),
+                Rank(rank: 2, cooldown: 114, cost: Some(65), damage: None, ad_ratio: None, heal: Some(131), cc: None),
+                Rank(rank: 3, cooldown: 108, cost: Some(70), damage: None, ad_ratio: None, heal: Some(158), cc: None),
+                Rank(rank: 4, cooldown: 102, cost: Some(74), damage: None, ad_ratio: None, heal: Some(184), cc: None),
+                Rank(rank: 5, cooldown: 96, cost: Some(79), damage: None, ad_ratio: None, heal: Some(210), cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Frostwater Veil",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 180, cost: Some(70), damage: Some(40), ad_ratio: None, heal: None, cc: Some(("Slow", 90))),
+                Rank(rank: 2, cooldown: 171, cost: Some(76), damage: Some(52), ad_ratio: None, heal: None, cc: Some(("Slow", 103))),
+                Rank(rank: 3, cooldown: 162, cost: Some(81), damage: Some(64), ad_ratio: None, heal: None, cc: Some(("Slow", 117))),
+                Rank(rank: 4, cooldown: 153, cost: Some(87), damage: Some(76), ad_ratio: None, heal: None, cc: Some(("Slow", 130))),
+                Rank(rank: 5, cooldown: 144, cost: Some(92), damage: Some(88), ad_ratio: None, heal: None, cc: Some(("Slow", 144))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Riptide Ward",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 90, cost: Some(40), damage: None, ad_ratio: None, heal: Some(50), cc: None),
+                Rank(rank: 2, cooldown: 86, cost: Some(43), damage: None, ad_ratio: None, heal: Some(62), cc: None),
+                Rank(rank: 3, cooldown: 81, cost: Some(46), damage: None, ad_ratio: None, heal: Some(75), cc: None),
+                Rank(rank: 4, cooldown: 76, cost: Some(50), damage: None, ad_ratio: None, heal: Some(88), cc: None),
+                Rank(rank: 5, cooldown: 72, cost: Some(53), damage: None, ad_ratio: None, heal: Some(100), cc: None),
+            ],
+        ),
+    ],
+)

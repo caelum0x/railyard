@@ -1,0 +1,25 @@
+// Tidal Sentinel — the "blue buff" jungle boss. A living wellspring of aether;
+// slaying it grants the killer the Tidal Wellspring buff (resource regeneration
+// and cooldown reduction). Solo camp, ranged, resistant to magic. Buff in
+// jungle-buffs.ron; placement in camp-tidal.ron / the map.
+MonsterSpec(
+    id: "tidal_sentinel",
+    display_name: "Tidal Sentinel",
+    role: "BuffBoss",
+    camp: "camp_tidal",
+
+    stats: NeutralStats(
+        hp: 1800,
+        armor: 16,
+        magic_resist: 28,       // magic-hardy
+        attack_damage: 80,
+        attack_speed: 0.55,
+        attack_range: 5.0,      // ranged
+        move_speed: 0.0,
+    ),
+
+    scaling: "monster_scaling",
+
+    grants_buff: "tidal_wellspring",
+    bounty: (gold_local: 90, gold_shared: 0, xp: 200),
+)

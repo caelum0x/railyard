@@ -1,0 +1,7 @@
+// Waterwalking — Sorcery / Tier3.
+RuneSpec(
+    name: "Waterwalking",
+    tree: Sorcery,
+    tier: Tier3,
+    effect: "Gain move speed and adaptive force while near river or contested terrain.",
+)

@@ -1,0 +1,13 @@
+// Silvermere Dawn — LEGENDARY AD. A blade that shatters chains.
+ItemSpec(
+    name: "Silvermere Dawn",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ad: 50,
+        hp: 250,
+    ),
+    passive: Some("Active: cleanse crowd control and gain immunity to slows for 3s (90s cooldown)."),
+    build_from: ["phage-heart", "brute-pick", "null-mantle"],
+    tags: ["legendary", "ad", "cleanse", "hp"],
+)

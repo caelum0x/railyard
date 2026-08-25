@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Janus.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "janus",
+    display_name: "Janus",
+    rarity: "Epic",
+    elixir_cost: 6,
+    archetype: "mage",
+    faction: "Roman",
+    card_stats: CardStats(
+        hitpoints: 760,
+        attack_damage: 58,
+        attack_speed: 1.1,
+        armor: 36,
+        range: 6.0,
+        approx_dps: 63.8,
+    ),
+    deploy_power: 312,
+    collectible: true,
+)

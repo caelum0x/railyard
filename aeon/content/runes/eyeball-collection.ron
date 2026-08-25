@@ -1,0 +1,7 @@
+// Eyeball Collection — Domination / Tier2.
+RuneSpec(
+    name: "Eyeball Collection",
+    tree: Domination,
+    tier: Tier2,
+    effect: "Champion and ward takedowns grant eyeballs for permanent adaptive force.",
+)

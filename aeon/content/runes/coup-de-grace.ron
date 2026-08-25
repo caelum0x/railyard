@@ -1,0 +1,7 @@
+// Coup de Grace — Precision / Tier3.
+RuneSpec(
+    name: "Coup de Grace",
+    tree: Precision,
+    tier: Tier3,
+    effect: "Deal increased damage to champions below 40% health.",
+)

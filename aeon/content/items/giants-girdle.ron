@@ -1,0 +1,12 @@
+// Giant's Girdle — BASIC tank.
+ItemSpec(
+    name: "Giant's Girdle",
+    cost: 900,
+    tier: Basic,
+    stats: Stats(
+        hp: 350,
+    ),
+    passive: None,
+    build_from: ["ruby-shard"],
+    tags: ["basic", "hp"],
+)

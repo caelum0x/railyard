@@ -1,0 +1,41 @@
+// content/maps/sandbox_duel.ron
+//
+// A deliberately SMALL single-lane map with low structure HP and a weak defensive
+// turret, used by the "nexus destroyed ends the match" deterministic test. It
+// overrides the global structure catalog with its own low-HP block so a scripted
+// siege reliably tears down turret -> inhibitor -> nexus within a bounded number
+// of ticks (fast, integer-exact, reproducible).
+MapData(
+    name: "Sandbox Duel",
+    bounds: 50.0,
+    bases: [
+        BaseDef(team: 0, nexus: P(x: -30.0, y: 0.0), spawn: P(x: -34.0, y: 0.0)),
+        BaseDef(team: 1, nexus: P(x:  30.0, y: 0.0), spawn: P(x:  34.0, y: 0.0)),
+    ],
+    lanes: [
+        LaneDef(
+            name: "mid",
+            waypoints: [
+                P(x: -28.0, y: 0.0),
+                P(x:   0.0, y: 0.0),
+                P(x:  28.0, y: 0.0),
+            ],
+            turrets: [
+                TurretDef(team: 1, pos: P(x: 14.0, y: 0.0), tier: 1),
+            ],
+            inhibitors: [
+                InhibDef(team: 1, pos: P(x: 26.0, y: 0.0)),
+            ],
+        ),
+    ],
+    // Sandbox override: tiny HP + a weak, short-range turret so the pusher survives
+    // and the siege terminates quickly and deterministically.
+    structures: Some(StructureStats(
+        turret:    UnitStats(hp: 200, ad: 8,  armor: 10, range: 9.0,  attack_speed: 0.8),
+        inhibitor: UnitStats(hp: 120, ad: 0,  armor: 10, range: 0.0,  attack_speed: 1.0),
+        nexus:     UnitStats(hp: 300, ad: 0,  armor: 10, range: 0.0,  attack_speed: 1.0),
+        nexus_shield_armor: 100000,
+    )),
+    jungle: [],
+    objectives: [],
+)

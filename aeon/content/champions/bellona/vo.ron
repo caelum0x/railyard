@@ -1,0 +1,81 @@
+// Voice-line manifest for Bellona: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "bellona",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.bellona.select",
+            kind: "Selected",
+            audio: "audio/vo/bellona/select.ogg",
+            text: "Bellona answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.bellona.move_a",
+            kind: "Move",
+            audio: "audio/vo/bellona/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.bellona.move_b",
+            kind: "Move",
+            audio: "audio/vo/bellona/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.bellona.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/bellona/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.bellona.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/bellona/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.bellona.ability_q",
+            kind: "Ability: Shattering Volley",
+            audio: "audio/vo/bellona/ability_q.ogg",
+            text: "Shattering Volley!",
+        ),
+        VoiceLine(
+            id: "vo.bellona.ability_w",
+            kind: "Ability: Blade Dance",
+            audio: "audio/vo/bellona/ability_w.ogg",
+            text: "Blade Dance!",
+        ),
+        VoiceLine(
+            id: "vo.bellona.ability_r",
+            kind: "Ability: Master's Guard",
+            audio: "audio/vo/bellona/ability_r.ogg",
+            text: "Master's Guard!",
+        ),
+        VoiceLine(
+            id: "vo.bellona.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/bellona/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.bellona.joke",
+            kind: "Joke",
+            audio: "audio/vo/bellona/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.bellona.low_health",
+            kind: "Low health",
+            audio: "audio/vo/bellona/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.bellona.victory",
+            kind: "Victory",
+            audio: "audio/vo/bellona/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

@@ -1,0 +1,14 @@
+// Narrative + release metadata for Odin.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "odin",
+    display_name: "Odin",
+    title: "",
+    faction: "Norse",
+    archetype: "mage",
+    release_patch: "1.1.0",
+    resource: "Mana",
+    lore: "Odin — a BURST MAGE and battlefield commander wielding Gungnir. Fragile but with the longest reach on the roster: the spear that never misses bursts and stuns from afar, his ravens carve an area and slow, and Valhalla's Call restores him. Low HP, high skillshot damage — pure DSL data.",
+    tags: ["mage", "norse"],
+)

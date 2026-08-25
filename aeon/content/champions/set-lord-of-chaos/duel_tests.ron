@@ -1,0 +1,34 @@
+// Deterministic duel scenarios for Set.
+// Lifted from the roster/duel test pattern (engine/ability-dsl/tests/
+// duel.rs): a fixed seed makes every run byte-identical, so these double
+// as regression baselines. Data only -- no Rust, no loader impact.
+DuelScenarios(
+    slug: "set-lord-of-chaos",
+    default_seed: 42,
+    scenarios: [
+        DuelScenario(
+            name: "set-lord-of-chaos_vs_sentinel",
+            description: "Set opens against the Sentinel baseline.",
+            challenger: "set-lord-of-chaos.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Win, winner: Some("Set"), decisive: true),
+        ),
+        DuelScenario(
+            name: "set-lord-of-chaos_determinism",
+            description: "Same specs + seed run twice must be byte-identical.",
+            challenger: "set-lord-of-chaos.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Deterministic, hash_stable: true, decisive: true),
+        ),
+        DuelScenario(
+            name: "set-lord-of-chaos_order_independent",
+            description: "Swapping challenger/opponent slots keeps the same winner.",
+            challenger: "sentinel.ron",
+            opponent: "set-lord-of-chaos.ron",
+            seed: 42,
+            expect: Expect(outcome: OrderIndependent, decisive: true),
+        ),
+    ],
+)

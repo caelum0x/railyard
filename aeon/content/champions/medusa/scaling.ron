@@ -1,0 +1,30 @@
+// Per-level stat growth for Medusa (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "medusa",
+    archetype: "marksman",
+    base: LevelStats(hp: 600, ad: 62, armor: 24, attack_speed: 1.15),
+    per_level: StatGrowth(hp: 74, ad: 3.8, armor: 2.6, attack_speed: 0.035),
+    levels: [
+        LevelRow(level: 1, hp: 600, ad: 62, armor: 24, attack_speed: 1.15),
+        LevelRow(level: 2, hp: 674, ad: 66, armor: 27, attack_speed: 1.185),
+        LevelRow(level: 3, hp: 748, ad: 70, armor: 29, attack_speed: 1.22),
+        LevelRow(level: 4, hp: 822, ad: 73, armor: 32, attack_speed: 1.255),
+        LevelRow(level: 5, hp: 896, ad: 77, armor: 34, attack_speed: 1.29),
+        LevelRow(level: 6, hp: 970, ad: 81, armor: 37, attack_speed: 1.325),
+        LevelRow(level: 7, hp: 1044, ad: 85, armor: 40, attack_speed: 1.36),
+        LevelRow(level: 8, hp: 1118, ad: 89, armor: 42, attack_speed: 1.395),
+        LevelRow(level: 9, hp: 1192, ad: 92, armor: 45, attack_speed: 1.43),
+        LevelRow(level: 10, hp: 1266, ad: 96, armor: 47, attack_speed: 1.465),
+        LevelRow(level: 11, hp: 1340, ad: 100, armor: 50, attack_speed: 1.5),
+        LevelRow(level: 12, hp: 1414, ad: 104, armor: 53, attack_speed: 1.535),
+        LevelRow(level: 13, hp: 1488, ad: 108, armor: 55, attack_speed: 1.57),
+        LevelRow(level: 14, hp: 1562, ad: 111, armor: 58, attack_speed: 1.605),
+        LevelRow(level: 15, hp: 1636, ad: 115, armor: 60, attack_speed: 1.64),
+        LevelRow(level: 16, hp: 1710, ad: 119, armor: 63, attack_speed: 1.675),
+        LevelRow(level: 17, hp: 1784, ad: 123, armor: 66, attack_speed: 1.71),
+        LevelRow(level: 18, hp: 1858, ad: 127, armor: 68, attack_speed: 1.745),
+    ],
+)

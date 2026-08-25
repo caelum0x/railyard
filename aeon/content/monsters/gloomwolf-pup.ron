@@ -1,0 +1,23 @@
+// Gloomwolf Pup — a small monster of the Gloomwolves camp. Two accompany the Alpha.
+// Low HP, quick, minor reward. No buff. Camp grouping in camp-gloomwolves.ron.
+MonsterSpec(
+    id: "gloomwolf_pup",
+    display_name: "Gloomwolf Pup",
+    role: "CampSmall",
+    camp: "camp_gloomwolves",
+
+    stats: NeutralStats(
+        hp: 400,
+        armor: 8,
+        magic_resist: 8,
+        attack_damage: 30,
+        attack_speed: 0.8,
+        attack_range: 1.0,
+        move_speed: 0.0,
+    ),
+
+    scaling: "monster_scaling",
+
+    grants_buff: "none",
+    bounty: (gold_local: 12, gold_shared: 0, xp: 22),
+)

@@ -1,0 +1,11 @@
+// Collision Damage — Damage status effect. Maps to closed vocab.
+StatusEffect(
+    id: "displace_damage",
+    name: "Collision Damage",
+    category: Damage,
+    vocab_ref: Some("Damage"),
+    fields: ["amount", "damage_type", "tag"],
+    cleansable: false,
+    stacking: Independent,
+    description: "Damage dealt as part of a displace effect on impact.",
+)

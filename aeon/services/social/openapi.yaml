@@ -1,0 +1,64 @@
+openapi: "3.0.3"
+info:
+  title: "aeonrift Social API"
+  version: "0.0.0-scaffold"
+  description: >-
+    Planned surface for services/social. Scaffold only — no server behind it yet.
+servers:
+  - url: "https://api.aeonrift.example/social"
+    description: placeholder
+paths:
+  "/v1/friends/{account_id}":
+    get:
+      summary: "List friends + presence."
+      operationId: get_v1_friends_account_id
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/friends/{account_id}/requests":
+    post:
+      summary: "Send a friend request."
+      operationId: post_v1_friends_account_id_requests
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/parties":
+    post:
+      summary: "Create a party."
+      operationId: post_v1_parties
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/parties/{id}/members":
+    post:
+      summary: "Invite/join a party member."
+      operationId: post_v1_parties_id_members
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/parties/{id}/messages":
+    post:
+      summary: "Post a moderated party chat message."
+      operationId: post_v1_parties_id_messages
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/reports":
+    post:
+      summary: "Report a player (behavior/chat)."
+      operationId: post_v1_reports
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"

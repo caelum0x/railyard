@@ -1,0 +1,81 @@
+// Voice-line manifest for Korrathil: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "korrathil",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.korrathil.select",
+            kind: "Selected",
+            audio: "audio/vo/korrathil/select.ogg",
+            text: "Korrathil answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.korrathil.move_a",
+            kind: "Move",
+            audio: "audio/vo/korrathil/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.korrathil.move_b",
+            kind: "Move",
+            audio: "audio/vo/korrathil/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.korrathil.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/korrathil/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.korrathil.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/korrathil/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.korrathil.ability_q",
+            kind: "Ability: Rift Charge",
+            audio: "audio/vo/korrathil/ability_q.ogg",
+            text: "Rift Charge!",
+        ),
+        VoiceLine(
+            id: "vo.korrathil.ability_w",
+            kind: "Ability: Devour",
+            audio: "audio/vo/korrathil/ability_w.ogg",
+            text: "Devour!",
+        ),
+        VoiceLine(
+            id: "vo.korrathil.ability_r",
+            kind: "Ability: Gorge",
+            audio: "audio/vo/korrathil/ability_r.ogg",
+            text: "Gorge!",
+        ),
+        VoiceLine(
+            id: "vo.korrathil.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/korrathil/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.korrathil.joke",
+            kind: "Joke",
+            audio: "audio/vo/korrathil/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.korrathil.low_health",
+            kind: "Low health",
+            audio: "audio/vo/korrathil/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.korrathil.victory",
+            kind: "Victory",
+            audio: "audio/vo/korrathil/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

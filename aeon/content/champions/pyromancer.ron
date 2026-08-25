@@ -1,0 +1,31 @@
+// Pyromancer — a BURST MAGE built around a long-range SKILLSHOT nuke.
+//
+// Fragile in stats, but its Fireball out-ranges an auto-attacker and STUNS on hit,
+// so it can poke and lock down a target before it ever closes the gap. Authored
+// entirely as data against the closed effect vocabulary (Damage + Stun).
+ChampionSpec(
+    name: "Pyromancer",
+    base: BaseStats(
+        hp: 470,
+        ad: 28,
+        armor: 18,
+        attack_speed: 0.7,
+        move_speed: 9.0,
+        range: 6.0,
+    ),
+    abilities: [
+        // Skillshot nuke: heavy burst with an AD ratio, plus a short stun that
+        // interrupts and delays the enemy's approach.
+        AbilitySpec(
+            name: "Fireball",
+            cooldown: 36,
+            cost: Some(60),
+            targeting: Skillshot,
+            range: 28.0,
+            effects: [
+                Damage(amount: 96, scaling: Some(AttackDamage(ratio: 0.5))),
+                Stun(duration: 16),
+            ],
+        ),
+    ],
+)

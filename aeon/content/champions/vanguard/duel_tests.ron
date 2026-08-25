@@ -1,0 +1,34 @@
+// Deterministic duel scenarios for Vanguard.
+// Lifted from the roster/duel test pattern (engine/ability-dsl/tests/
+// duel.rs): a fixed seed makes every run byte-identical, so these double
+// as regression baselines. Data only -- no Rust, no loader impact.
+DuelScenarios(
+    slug: "vanguard",
+    default_seed: 42,
+    scenarios: [
+        DuelScenario(
+            name: "vanguard_vs_sentinel",
+            description: "Vanguard opens against the Sentinel baseline.",
+            challenger: "vanguard.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Win, winner: Some("Vanguard"), decisive: true),
+        ),
+        DuelScenario(
+            name: "vanguard_determinism",
+            description: "Same specs + seed run twice must be byte-identical.",
+            challenger: "vanguard.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Deterministic, hash_stable: true, decisive: true),
+        ),
+        DuelScenario(
+            name: "vanguard_order_independent",
+            description: "Swapping challenger/opponent slots keeps the same winner.",
+            challenger: "sentinel.ron",
+            opponent: "vanguard.ron",
+            seed: 42,
+            expect: Expect(outcome: OrderIndependent, decisive: true),
+        ),
+    ],
+)

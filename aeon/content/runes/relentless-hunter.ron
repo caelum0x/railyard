@@ -1,0 +1,7 @@
+// Relentless Hunter — Domination / Tier3.
+RuneSpec(
+    name: "Relentless Hunter",
+    tree: Domination,
+    tier: Tier3,
+    effect: "Unique champion takedowns grant increasing out-of-combat movement speed.",
+)

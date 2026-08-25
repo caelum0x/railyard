@@ -1,0 +1,12 @@
+// Piercer Shard — EPIC AD.
+ItemSpec(
+    name: "Piercer Shard",
+    cost: 1300,
+    tier: Epic,
+    stats: Stats(
+        ad: 20,
+    ),
+    passive: Some("+18% armor penetration."),
+    build_from: ["long-blade", "cloth-wrap"],
+    tags: ["epic", "penetration"],
+)

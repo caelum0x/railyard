@@ -1,0 +1,11 @@
+// Pop-Up — HardCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "knockup_short",
+    name: "Pop-Up",
+    category: HardCC,
+    vocab_ref: Some("DebuffKnockup"),
+    fields: ["duration"],
+    cleansable: false,
+    stacking: Longest,
+    description: "A brief airborne launch used by juggle combos.",
+)

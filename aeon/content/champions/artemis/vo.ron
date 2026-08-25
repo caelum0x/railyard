@@ -1,0 +1,81 @@
+// Voice-line manifest for Artemis: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "artemis",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.artemis.select",
+            kind: "Selected",
+            audio: "audio/vo/artemis/select.ogg",
+            text: "Artemis answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.artemis.move_a",
+            kind: "Move",
+            audio: "audio/vo/artemis/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.artemis.move_b",
+            kind: "Move",
+            audio: "audio/vo/artemis/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.artemis.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/artemis/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.artemis.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/artemis/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.artemis.ability_q",
+            kind: "Ability: Crescent Leap",
+            audio: "audio/vo/artemis/ability_q.ogg",
+            text: "Crescent Leap!",
+        ),
+        VoiceLine(
+            id: "vo.artemis.ability_w",
+            kind: "Ability: Hunter's Mark",
+            audio: "audio/vo/artemis/ability_w.ogg",
+            text: "Hunter's Mark!",
+        ),
+        VoiceLine(
+            id: "vo.artemis.ability_r",
+            kind: "Ability: Moonlit Volley",
+            audio: "audio/vo/artemis/ability_r.ogg",
+            text: "Moonlit Volley!",
+        ),
+        VoiceLine(
+            id: "vo.artemis.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/artemis/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.artemis.joke",
+            kind: "Joke",
+            audio: "audio/vo/artemis/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.artemis.low_health",
+            kind: "Low health",
+            audio: "audio/vo/artemis/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.artemis.victory",
+            kind: "Victory",
+            audio: "audio/vo/artemis/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

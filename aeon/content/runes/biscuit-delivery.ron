@@ -1,0 +1,7 @@
+// Biscuit Delivery — Inspiration / Tier2.
+RuneSpec(
+    name: "Biscuit Delivery",
+    tree: Inspiration,
+    tier: Tier2,
+    effect: "Periodically receive biscuits that restore health and mana and permanently raise maximum mana.",
+)

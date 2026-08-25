@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "medusa",
+    champion: "Medusa",
+    archetype: "marksman",
+    faction: "Greek",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 17832,
+            blake3: "f785ff4218c19746b022dc487e739171e5f1855895a3093496226d5c989105c3",
+        ),
+    },
+)

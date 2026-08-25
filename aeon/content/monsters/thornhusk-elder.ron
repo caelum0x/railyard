@@ -1,0 +1,27 @@
+// Thornhusk Elder — the large monster of the Thornhusks camp (the "krug"-style
+// stone camp). Very high armor, splits into a Shard on death mechanic handled by the
+// camp grouping. No buff. Camp in camp-thornhusks.ron.
+MonsterSpec(
+    id: "thornhusk_elder",
+    display_name: "Thornhusk Elder",
+    role: "CampLarge",
+    camp: "camp_thornhusks",
+
+    stats: NeutralStats(
+        hp: 1500,
+        armor: 30,              // stone-hard
+        magic_resist: 18,
+        attack_damage: 60,
+        attack_speed: 0.5,
+        attack_range: 1.3,
+        move_speed: 0.0,
+    ),
+
+    scaling: "monster_scaling",
+
+    // On death spawns a smaller Shard (see camp-thornhusks.ron split rule).
+    on_death_spawn: (monster: "thornhusk_shard", count: 1),
+
+    grants_buff: "none",
+    bounty: (gold_local: 45, gold_shared: 0, xp: 80),
+)

@@ -1,0 +1,14 @@
+// Narrative + release metadata for Veyl.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "veyl",
+    display_name: "Veyl",
+    title: "",
+    faction: "Tide",
+    archetype: "assassin",
+    release_patch: "1.5.0",
+    resource: "Mana",
+    lore: "Veyl — an ASSASSIN. Gap-closing dash burst plus a lockdown execute. Squishy but mobile and high-damage. Pure DATA against the closed DSL.",
+    tags: ["assassin", "tide"],
+)

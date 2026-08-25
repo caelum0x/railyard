@@ -1,0 +1,14 @@
+// Terminus — LEGENDARY AD. Where the duel ends.
+ItemSpec(
+    name: "Terminus",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ad: 30,
+        mr: 25,
+        attack_speed: 0.35,
+    ),
+    passive: Some("Alternating stacks grant penetration then resistances on-hit."),
+    build_from: ["kindled-blade", "shadow-cloak", "swift-dagger"],
+    tags: ["legendary", "ad", "onhit", "penetration", "mr"],
+)

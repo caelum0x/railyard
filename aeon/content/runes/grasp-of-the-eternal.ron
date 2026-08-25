@@ -1,0 +1,7 @@
+// Grasp of the Eternal — Resolve / Keystone.
+RuneSpec(
+    name: "Grasp of the Eternal",
+    tree: Resolve,
+    tier: Keystone,
+    effect: "In combat, your next attack on a champion deals bonus max-health damage, heals you, and permanently grants health.",
+)

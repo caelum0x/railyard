@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "ullr",
+    champion: "Ullr",
+    archetype: "marksman",
+    faction: "Norse",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 17816,
+            blake3: "c8943192d8de9b56c36296bc600c222dcc2b9252ad633c6ef3ea4ba64ccd10e9",
+        ),
+    },
+)

@@ -1,0 +1,7 @@
+// Perfect Timing — Inspiration / Tier2.
+RuneSpec(
+    name: "Perfect Timing",
+    tree: Inspiration,
+    tier: Tier2,
+    effect: "Begin with a stopwatch that becomes a stasis trinket; ability haste from items reduces its charge time.",
+)

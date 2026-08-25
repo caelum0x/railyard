@@ -1,0 +1,12 @@
+// Runewoven Striders — EPIC boots.
+ItemSpec(
+    name: "Runewoven Striders",
+    cost: 1000,
+    tier: Epic,
+    stats: Stats(
+        move_speed: 45.0,
+    ),
+    passive: Some("+20 ability haste."),
+    build_from: ["wayfarer-boots"],
+    tags: ["boots", "haste"],
+)

@@ -1,0 +1,7 @@
+// Conditioning — Resolve / Tier2.
+RuneSpec(
+    name: "Conditioning",
+    tree: Resolve,
+    tier: Tier2,
+    effect: "After a delay each game, gain bonus resistances and increased total resistances thereafter.",
+)

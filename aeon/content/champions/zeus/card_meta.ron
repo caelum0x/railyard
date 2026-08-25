@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Zeus.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "zeus",
+    display_name: "Zeus",
+    rarity: "Epic",
+    elixir_cost: 6,
+    archetype: "mage",
+    faction: "Greek",
+    card_stats: CardStats(
+        hitpoints: 610,
+        attack_damage: 38,
+        attack_speed: 0.7,
+        armor: 22,
+        range: 6.0,
+        approx_dps: 26.6,
+    ),
+    deploy_power: 331,
+    collectible: true,
+)

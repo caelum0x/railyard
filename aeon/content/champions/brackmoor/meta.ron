@@ -1,0 +1,14 @@
+// Narrative + release metadata for Brackmoor.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "brackmoor",
+    display_name: "Brackmoor",
+    title: "",
+    faction: "Tide",
+    archetype: "bruiser",
+    release_patch: "1.5.0",
+    resource: "Mana",
+    lore: "Brackmoor — a frontline TANK. Beefy frame, a hard point-and-click freeze, self-sustain, and a slowing shockwave to peel for allies. Pure DATA against the closed DSL.",
+    tags: ["bruiser", "tide"],
+)

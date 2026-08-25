@@ -1,0 +1,13 @@
+// Chronobreak Hourglass — LEGENDARY AP. A borrowed moment.
+ItemSpec(
+    name: "Chronobreak Hourglass",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        ap: 75,
+        armor: 45,
+    ),
+    passive: Some("Active: enter stasis for 2.5s, invulnerable but unable to act (120s cooldown)."),
+    build_from: ["glacial-buckler", "great-rod"],
+    tags: ["legendary", "ap", "armor", "defensive"],
+)

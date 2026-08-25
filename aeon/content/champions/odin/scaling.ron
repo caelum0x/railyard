@@ -1,0 +1,30 @@
+// Per-level stat growth for Odin (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "odin",
+    archetype: "mage",
+    base: LevelStats(hp: 500, ad: 30, armor: 20, attack_speed: 0.75),
+    per_level: StatGrowth(hp: 70, ad: 3.0, armor: 2.2, attack_speed: 0.018),
+    levels: [
+        LevelRow(level: 1, hp: 500, ad: 30, armor: 20, attack_speed: 0.75),
+        LevelRow(level: 2, hp: 570, ad: 33, armor: 22, attack_speed: 0.768),
+        LevelRow(level: 3, hp: 640, ad: 36, armor: 24, attack_speed: 0.786),
+        LevelRow(level: 4, hp: 710, ad: 39, armor: 27, attack_speed: 0.804),
+        LevelRow(level: 5, hp: 780, ad: 42, armor: 29, attack_speed: 0.822),
+        LevelRow(level: 6, hp: 850, ad: 45, armor: 31, attack_speed: 0.84),
+        LevelRow(level: 7, hp: 920, ad: 48, armor: 33, attack_speed: 0.858),
+        LevelRow(level: 8, hp: 990, ad: 51, armor: 35, attack_speed: 0.876),
+        LevelRow(level: 9, hp: 1060, ad: 54, armor: 38, attack_speed: 0.894),
+        LevelRow(level: 10, hp: 1130, ad: 57, armor: 40, attack_speed: 0.912),
+        LevelRow(level: 11, hp: 1200, ad: 60, armor: 42, attack_speed: 0.93),
+        LevelRow(level: 12, hp: 1270, ad: 63, armor: 44, attack_speed: 0.948),
+        LevelRow(level: 13, hp: 1340, ad: 66, armor: 46, attack_speed: 0.966),
+        LevelRow(level: 14, hp: 1410, ad: 69, armor: 49, attack_speed: 0.984),
+        LevelRow(level: 15, hp: 1480, ad: 72, armor: 51, attack_speed: 1.002),
+        LevelRow(level: 16, hp: 1550, ad: 75, armor: 53, attack_speed: 1.02),
+        LevelRow(level: 17, hp: 1620, ad: 78, armor: 55, attack_speed: 1.038),
+        LevelRow(level: 18, hp: 1690, ad: 81, armor: 57, attack_speed: 1.056),
+    ],
+)

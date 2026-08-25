@@ -1,0 +1,12 @@
+// Horizon Focus — LEGENDARY AP. It sees the distant kill.
+ItemSpec(
+    name: "Horizon Focus",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ap: 85,
+    ),
+    passive: Some("Hitting an enemy with a long-range ability marks them to take 10% increased damage."),
+    build_from: ["hextech-alternator", "blasting-rod"],
+    tags: ["legendary", "ap", "amplify", "burst"],
+)

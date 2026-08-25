@@ -1,0 +1,50 @@
+// Korrathil — the VOIDGORGER, a diving bruiser. (Umbral faction)
+//
+// A ravenous thing that steps through a tear in the dark, Korrathil crashes onto
+// prey, clamps them in place, and feeds until the wounds close on its own hide.
+// Sticky, sustained, and hard to shake. Authored entirely as DSL data.
+ChampionSpec(
+    name: "Korrathil",
+    base: BaseStats(
+        hp: 660,
+        ad: 60,
+        armor: 33,
+        attack_speed: 1.0,
+        move_speed: 11.5,
+        range: 8.0,
+    ),
+    abilities: [
+        // Rift Charge: gap-close through the void, then strike on landing.
+        AbilitySpec(
+            name: "Rift Charge",
+            cooldown: 210,
+            cost: Some(55),
+            targeting: Skillshot,
+            range: 22.0,
+            effects: [
+                Dash(distance: 20.0),
+                Damage(amount: 60, scaling: Some(AttackDamage(ratio: 0.6))),
+            ],
+        ),
+        // Devour: single-target trade with a slow to stick.
+        AbilitySpec(
+            name: "Devour",
+            cooldown: 150,
+            cost: Some(45),
+            targeting: Target,
+            range: 9.0,
+            effects: [
+                Damage(amount: 58, scaling: Some(AttackDamage(ratio: 0.7))),
+                Slow(duration: 60),
+            ],
+        ),
+        // Gorge: self-heal after committing to the brawl.
+        AbilitySpec(
+            name: "Gorge",
+            cooldown: 260,
+            cost: Some(50),
+            targeting: SelfCast,
+            effects: [ Heal(amount: 90) ],
+        ),
+    ],
+)

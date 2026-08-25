@@ -1,0 +1,81 @@
+// Voice-line manifest for Kaeza: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "kaeza",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.kaeza.select",
+            kind: "Selected",
+            audio: "audio/vo/kaeza/select.ogg",
+            text: "Kaeza answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.kaeza.move_a",
+            kind: "Move",
+            audio: "audio/vo/kaeza/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.kaeza.move_b",
+            kind: "Move",
+            audio: "audio/vo/kaeza/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.kaeza.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/kaeza/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.kaeza.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/kaeza/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.kaeza.ability_q",
+            kind: "Ability: Scorch Bolt",
+            audio: "audio/vo/kaeza/ability_q.ogg",
+            text: "Scorch Bolt!",
+        ),
+        VoiceLine(
+            id: "vo.kaeza.ability_w",
+            kind: "Ability: Ashstep",
+            audio: "audio/vo/kaeza/ability_w.ogg",
+            text: "Ashstep!",
+        ),
+        VoiceLine(
+            id: "vo.kaeza.ability_r",
+            kind: "Ability: Slagshot",
+            audio: "audio/vo/kaeza/ability_r.ogg",
+            text: "Slagshot!",
+        ),
+        VoiceLine(
+            id: "vo.kaeza.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/kaeza/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.kaeza.joke",
+            kind: "Joke",
+            audio: "audio/vo/kaeza/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.kaeza.low_health",
+            kind: "Low health",
+            audio: "audio/vo/kaeza/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.kaeza.victory",
+            kind: "Victory",
+            audio: "audio/vo/kaeza/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

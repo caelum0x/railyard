@@ -1,0 +1,10 @@
+// Spellguard — Shield buff. Maps to closed vocab.
+BuffSpec(
+    id: "spellguard",
+    name: "Spellguard",
+    category: Shield,
+    vocab_ref: Some("BuffShieldMagic"),
+    fields: ["amount"],
+    stacking: Independent,
+    description: "Absorbs a flat amount of magic damage only.",
+)

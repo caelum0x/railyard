@@ -1,0 +1,22 @@
+// content/cards/packs/daily-drop.ron
+// Free once-a-day pack. Small, common-heavy, but keeps the collection ticking.
+// The first open each day is discounted per pack_economy.daily_first_open_discount_pct.
+CardPack(
+    id: "daily-drop",
+    name: "Daily Drop",
+    description: "A free pack, once per day. Log in, collect, repeat.",
+    category: "recurring",
+    card_count: 3,
+    cost: PackCost(currency: "gold", amount: 0),
+    one_time: false,
+    cadence: Some("daily"),
+    guaranteed_floor: None,
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 700),
+        RarityOdd(rarity: "uncommon",  weight: 230),
+        RarityOdd(rarity: "rare",      weight: 60),
+        RarityOdd(rarity: "epic",      weight: 9),
+        RarityOdd(rarity: "legendary", weight: 1),
+        RarityOdd(rarity: "mythic",    weight: 0),
+    ],
+)

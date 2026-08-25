@@ -1,0 +1,36 @@
+// Outer Warding Spire — the first turret tier in every lane. Moderate HP with an
+// early-game plating bonus and bonus resistances that decay over time, so it is
+// hard to dive early but falls readily once the plating burns off. Uses the shared
+// targeting rules and projectile. Placements in riftline-crucible.ron.
+TurretSpec(
+    id: "outer_spire",
+    display_name: "Outer Warding Spire",
+    tier: "Outer",
+
+    stats: TurretStats(
+        hp: 5000,
+        armor: 40,
+        magic_resist: 40,
+        attack_damage: 152,
+        attack_speed: 0.83,
+        attack_range: 15.0,
+    ),
+
+    // Early-game armour plates: extra gold chunks that also grant resistances until
+    // destroyed or until fall_off_seconds, whichever comes first.
+    plating: (
+        plates: 5,
+        gold_per_plate: 160,
+        bonus_resist_per_plate: 8,
+        fall_off_seconds: 840,   // plating and bonus resist gone at 14:00
+    ),
+
+    // Ramping damage: consecutive shots at the same target hit harder.
+    heat_ramp: (max_stacks: 3, bonus_per_stack_percent: 40, decay_seconds: 4),
+
+    // Team bounty when destroyed (local last-hitter gets a share via game rules).
+    bounty: (gold_local: 250, gold_global: 100),
+
+    targeting:  "spire_targeting",  // -> content/turrets/spire-targeting.ron
+    projectile: "spire_projectile", // -> content/turrets/spire-projectile.ron
+)

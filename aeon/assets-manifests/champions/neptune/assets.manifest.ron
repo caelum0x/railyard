@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "neptune",
+    champion: "Neptune",
+    archetype: "mage",
+    faction: "Roman",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 34680,
+            blake3: "d407607b81d62d52af40c1285072b7792ff445e8c75095a8af221a4c316937b9",
+        ),
+    },
+)

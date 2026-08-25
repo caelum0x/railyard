@@ -1,0 +1,12 @@
+// Emberheart Crown — LEGENDARY AP. A halo of judgement.
+ItemSpec(
+    name: "Emberheart Crown",
+    cost: 3100,
+    tier: Legendary,
+    stats: Stats(
+        ap: 100,
+    ),
+    passive: Some("Immobilizing an enemy detonates for 50-150 bonus magic damage."),
+    build_from: ["kindlespark", "great-rod"],
+    tags: ["legendary", "ap", "burst", "cdr"],
+)

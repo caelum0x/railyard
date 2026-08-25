@@ -1,0 +1,12 @@
+// Warden Mail — EPIC tank.
+ItemSpec(
+    name: "Warden Mail",
+    cost: 1000,
+    tier: Epic,
+    stats: Stats(
+        armor: 40,
+    ),
+    passive: Some("Reduces incoming basic-attack damage by 8."),
+    build_from: ["cloth-wrap"],
+    tags: ["epic", "armor"],
+)

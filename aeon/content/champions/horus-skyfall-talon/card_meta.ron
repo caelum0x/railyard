@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Horus.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "horus-skyfall-talon",
+    display_name: "Horus",
+    rarity: "Rare",
+    elixir_cost: 4,
+    archetype: "bruiser",
+    faction: "Egyptian",
+    card_stats: CardStats(
+        hitpoints: 720,
+        attack_damage: 31,
+        attack_speed: 0.9,
+        armor: 32,
+        range: 5.0,
+        approx_dps: 27.9,
+    ),
+    deploy_power: 227,
+    collectible: true,
+)

@@ -1,0 +1,12 @@
+// Rift Staff — LEGENDARY AP. It thins the walls of the world.
+ItemSpec(
+    name: "Rift Staff",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        ap: 95,
+    ),
+    passive: Some("+40% magic penetration."),
+    build_from: ["oblivion-orb", "blasting-rod"],
+    tags: ["legendary", "ap", "penetration"],
+)

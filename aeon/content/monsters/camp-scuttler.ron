@@ -1,0 +1,13 @@
+// Scuttler camp — a single Currentback Scuttler on a river approach. Neutral and
+// non-aggressive; slaying it drops a vision + Sever Current speed zone (see
+// currentback-scuttler.ron). Two instances exist on the map, one per pit approach.
+CampSpec(
+    id: "camp_scuttler",
+    display_name: "River Scuttler",
+    kind: "RiverCamp",
+    members: [
+        (monster: "currentback_scuttler", count: 1),
+    ],
+    grants_buff: "sever_current",   // via the on-death zone, not a direct champ buff
+    leash_radius: 14.0,             // roams its river approach
+)

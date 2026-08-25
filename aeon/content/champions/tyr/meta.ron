@@ -1,0 +1,14 @@
+// Narrative + release metadata for Tyr.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "tyr",
+    display_name: "Tyr",
+    title: "",
+    faction: "Norse",
+    archetype: "tank",
+    release_patch: "1.1.0",
+    resource: "Mana",
+    lore: "Tyr — a stalwart TANK who trades blows so allies don't have to. The one-handed god of law and sacrifice: he binds a single foe in place and endures. Massive HP/armor, low damage, a hard single-target lockdown, an area cripple, and a heavy self-sustain — all pure DSL data.",
+    tags: ["tank", "norse"],
+)

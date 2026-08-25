@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "bastet-claws-of-the-hunt",
+    champion: "Bastet",
+    archetype: "assassin",
+    faction: "Egyptian",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 16016,
+            blake3: "a9cb956488c8d7630dd0052f7094f6d52e502037e661c962fd58fabb1d13993a",
+        ),
+    },
+)

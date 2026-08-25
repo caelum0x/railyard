@@ -1,0 +1,10 @@
+// Haste — Mobility buff. Maps to closed vocab.
+BuffSpec(
+    id: "haste",
+    name: "Haste",
+    category: Mobility,
+    vocab_ref: Some("BuffMoveSpeed"),
+    fields: ["bonus_percent", "duration"],
+    stacking: Strongest,
+    description: "Grants a percentage bonus to movement speed for the duration.",
+)

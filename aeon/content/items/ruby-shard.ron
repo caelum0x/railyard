@@ -1,0 +1,12 @@
+// Ruby Shard — BASIC tank.
+ItemSpec(
+    name: "Ruby Shard",
+    cost: 400,
+    tier: Basic,
+    stats: Stats(
+        hp: 150,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "hp"],
+)

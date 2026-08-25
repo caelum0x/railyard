@@ -1,0 +1,11 @@
+// Silence — SoftCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "silence",
+    name: "Silence",
+    category: SoftCC,
+    vocab_ref: Some("DebuffSilence"),
+    fields: ["duration"],
+    cleansable: true,
+    stacking: Refresh,
+    description: "Prevents the target from casting abilities for the duration.",
+)

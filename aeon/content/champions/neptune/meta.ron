@@ -1,0 +1,14 @@
+// Narrative + release metadata for Neptune.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "neptune",
+    display_name: "Neptune",
+    title: "",
+    faction: "Roman",
+    archetype: "mage",
+    release_patch: "1.2.0",
+    resource: "Mana",
+    lore: "Neptune — the tide BURST MAGE. Fragile, long-range wave burst with heavy slows.",
+    tags: ["mage", "roman"],
+)

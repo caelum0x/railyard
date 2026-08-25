@@ -1,0 +1,11 @@
+// Petrify — HardCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "stun_heavy",
+    name: "Petrify",
+    category: HardCC,
+    vocab_ref: Some("DebuffStun"),
+    fields: ["duration"],
+    cleansable: true,
+    stacking: Refresh,
+    description: "An extended stun that turns the target to stone.",
+)

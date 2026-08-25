@@ -1,0 +1,14 @@
+// Narrative + release metadata for Zeus.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "zeus",
+    display_name: "Zeus",
+    title: "",
+    faction: "Greek",
+    archetype: "mage",
+    release_patch: "1.0.0",
+    resource: "Mana",
+    lore: "Zeus — BURST MAGE. King of Olympus; a long-range lightning skillshot that stuns, backed by a storm that damages and slows everything around the aim point.",
+    tags: ["mage", "greek"],
+)

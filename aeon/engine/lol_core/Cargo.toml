@@ -1,0 +1,26 @@
+[package]
+name = "lol_core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy.workspace = true
+serde.workspace = true
+lol_base.workspace = true
+lol_share.workspace = true
+rand.workspace = true
+ron.workspace = true
+thiserror.workspace = true
+bincode.workspace = true
+async-channel.workspace = true
+futures-util.workspace = true
+serde_json.workspace = true
+crossbeam-channel.workspace = true
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+tracing = "0.1"
+# sqlx 用于日志落盘（writer 线程）。仅 sqlite + runtime-tokio，不开 type features
+# 以避免与可能的其他 sqlite linker 冲突；日志表的字段类型都是基础类型。
+sqlx = { version = "0.8.3", default-features = false, features = [
+    "runtime-tokio-native-tls",
+    "sqlite",
+] }

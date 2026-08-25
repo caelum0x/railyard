@@ -1,0 +1,12 @@
+// Serrated Dirk — BASIC AD.
+ItemSpec(
+    name: "Serrated Dirk",
+    cost: 1100,
+    tier: Basic,
+    stats: Stats(
+        ad: 25,
+    ),
+    passive: Some("+10 lethality."),
+    build_from: ["long-blade", "short-blade"],
+    tags: ["basic", "lethality"],
+)

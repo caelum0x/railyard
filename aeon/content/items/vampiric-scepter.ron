@@ -1,0 +1,12 @@
+// Vampiric Scepter — BASIC AD.
+ItemSpec(
+    name: "Vampiric Scepter",
+    cost: 900,
+    tier: Basic,
+    stats: Stats(
+        ad: 15,
+    ),
+    passive: Some("+8% life steal."),
+    build_from: ["short-blade"],
+    tags: ["basic", "lifesteal"],
+)

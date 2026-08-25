@@ -1,0 +1,12 @@
+// Kindlespark — EPIC AP.
+ItemSpec(
+    name: "Kindlespark",
+    cost: 1250,
+    tier: Epic,
+    stats: Stats(
+        ap: 40,
+    ),
+    passive: Some("Immobilizing an enemy deals 30-100 magic damage."),
+    build_from: ["blasting-rod", "minor-tome"],
+    tags: ["epic", "burst"],
+)

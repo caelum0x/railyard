@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "dregmaw",
+    champion: "Dregmaw",
+    archetype: "tank",
+    faction: "Umbral",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 32392,
+            blake3: "a96ca90f7d61bce08ea30d25655e88fcf6d4a22756fb7b62124f0efb683f0bbd",
+        ),
+    },
+)

@@ -1,0 +1,52 @@
+// Xelphine — the ECLIPSE SEER, a burst mage. (Umbral faction)
+//
+// She reads the moment the light dies and pours that darkness into a single
+// devastating rotation. Fragile and long-ranged, she blooms shadow at her feet,
+// lances distant prey, and calls a total nightfall to erase what remains. DATA.
+ChampionSpec(
+    name: "Xelphine",
+    base: BaseStats(
+        hp: 555,
+        ad: 47,
+        armor: 21,
+        attack_speed: 0.9,
+        move_speed: 11.0,
+        range: 22.0,          // ranged caster
+    ),
+    abilities: [
+        // Eclipse Bloom: area burst around the aim point.
+        AbilitySpec(
+            name: "Eclipse Bloom",
+            cooldown: 180,
+            cost: Some(65),
+            targeting: Area,
+            range: 20.0,
+            effects: [
+                Damage(amount: 120, scaling: Some(AttackDamage(ratio: 0.7))),
+            ],
+        ),
+        // Umbral Lance: long skillshot with a slow rider.
+        AbilitySpec(
+            name: "Umbral Lance",
+            cooldown: 120,
+            cost: Some(45),
+            targeting: Skillshot,
+            range: 28.0,
+            effects: [
+                Damage(amount: 95, scaling: Some(AttackDamage(ratio: 0.6))),
+                Slow(duration: 75),
+            ],
+        ),
+        // Nightfall: high-damage area ultimate.
+        AbilitySpec(
+            name: "Nightfall",
+            cooldown: 360,
+            cost: Some(100),
+            targeting: Area,
+            range: 24.0,
+            effects: [
+                Damage(amount: 170, scaling: Some(AttackDamage(ratio: 0.9))),
+            ],
+        ),
+    ],
+)

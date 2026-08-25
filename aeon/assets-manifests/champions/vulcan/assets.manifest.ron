@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "vulcan",
+    champion: "Vulcan",
+    archetype: "tank",
+    faction: "Roman",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 32408,
+            blake3: "d5392e013f98a7229e7e5cea4350180302280c69e0bbc00922b0d27325c94033",
+        ),
+    },
+)

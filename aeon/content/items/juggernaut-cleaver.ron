@@ -1,0 +1,13 @@
+// Juggernaut Cleaver — LEGENDARY AD. Nothing outruns it.
+ItemSpec(
+    name: "Juggernaut Cleaver",
+    cost: 3100,
+    tier: Legendary,
+    stats: Stats(
+        ad: 40,
+        hp: 300,
+    ),
+    passive: Some("Attacks slow the target by 30% for 1.5s."),
+    build_from: ["phage-heart", "brute-pick"],
+    tags: ["legendary", "ad", "hp", "slow"],
+)

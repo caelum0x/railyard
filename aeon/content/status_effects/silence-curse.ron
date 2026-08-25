@@ -1,0 +1,11 @@
+// Hex of Silence — SoftCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "silence_curse",
+    name: "Hex of Silence",
+    category: SoftCC,
+    vocab_ref: Some("DebuffSilence"),
+    fields: ["duration"],
+    cleansable: true,
+    stacking: Refresh,
+    description: "An extended silence woven by curses.",
+)

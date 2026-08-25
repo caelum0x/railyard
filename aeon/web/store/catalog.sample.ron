@@ -1,0 +1,40 @@
+// web/store/catalog.sample.ron
+//
+// SAMPLE catalog snapshot. Real catalogs are served by services/inventory (`GET /v1/catalog`)
+// and priced by services/economy; this file documents the SKU listing shape the store renders.
+(
+    version: "2026.08.0",
+    currency_default: "shards",           // soft currency; hard currency is "aeon"
+    skus: [
+        (
+            sku:         "champion.achilles",
+            kind:        "Champion",
+            display_name:"Achilles",
+            price:       (amount: 6300, currency: "shards"),
+            alt_price:   Some((amount: 975, currency: "aeon")),
+            thumbnail:   "cdn://store/achilles/card.webp",   // hash-resolved via assets-manifests
+            grants:      ["champion.achilles"],
+            available:   true,
+        ),
+        (
+            sku:         "skin.achilles.immortal",
+            kind:        "Skin",
+            display_name:"Immortal Achilles",
+            price:       (amount: 1350, currency: "aeon"),
+            alt_price:   None,
+            thumbnail:   "cdn://store/achilles/skin-immortal.webp",
+            grants:      ["skin.achilles.immortal"],
+            available:   true,
+        ),
+        (
+            sku:         "bundle.founders",
+            kind:        "Bundle",
+            display_name:"Founder's Bundle",
+            price:       (amount: 2500, currency: "aeon"),
+            alt_price:   None,
+            thumbnail:   "cdn://store/bundles/founders.webp",
+            grants:      ["champion.achilles", "skin.achilles.immortal", "ward.aegis"],
+            available:   true,
+        ),
+    ],
+)

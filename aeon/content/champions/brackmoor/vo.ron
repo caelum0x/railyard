@@ -1,0 +1,81 @@
+// Voice-line manifest for Brackmoor: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "brackmoor",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.brackmoor.select",
+            kind: "Selected",
+            audio: "audio/vo/brackmoor/select.ogg",
+            text: "Brackmoor answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.brackmoor.move_a",
+            kind: "Move",
+            audio: "audio/vo/brackmoor/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.brackmoor.move_b",
+            kind: "Move",
+            audio: "audio/vo/brackmoor/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.brackmoor.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/brackmoor/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.brackmoor.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/brackmoor/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.brackmoor.ability_q",
+            kind: "Ability: Glacial Anchor",
+            audio: "audio/vo/brackmoor/ability_q.ogg",
+            text: "Glacial Anchor!",
+        ),
+        VoiceLine(
+            id: "vo.brackmoor.ability_w",
+            kind: "Ability: Rimeguard",
+            audio: "audio/vo/brackmoor/ability_w.ogg",
+            text: "Rimeguard!",
+        ),
+        VoiceLine(
+            id: "vo.brackmoor.ability_r",
+            kind: "Ability: Permafrost Wake",
+            audio: "audio/vo/brackmoor/ability_r.ogg",
+            text: "Permafrost Wake!",
+        ),
+        VoiceLine(
+            id: "vo.brackmoor.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/brackmoor/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.brackmoor.joke",
+            kind: "Joke",
+            audio: "audio/vo/brackmoor/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.brackmoor.low_health",
+            kind: "Low health",
+            audio: "audio/vo/brackmoor/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.brackmoor.victory",
+            kind: "Victory",
+            audio: "audio/vo/brackmoor/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

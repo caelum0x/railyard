@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "freyja",
+    champion: "Freyja",
+    archetype: "mage",
+    faction: "Norse",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 34664,
+            blake3: "c3022cf168123654cf7dd33b654980b15b895bf0034dd7de1ce352ebb6ff1025",
+        ),
+    },
+)

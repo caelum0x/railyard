@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "isis-mother-of-magic",
+    champion: "Isis",
+    archetype: "mage",
+    faction: "Egyptian",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 34680,
+            blake3: "824231bc7c91b1774ffd752b8244e627fbbd77fb1ae6c69c45c874441da633b0",
+        ),
+    },
+)

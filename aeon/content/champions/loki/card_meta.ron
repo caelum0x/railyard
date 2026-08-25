@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Loki.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "loki",
+    display_name: "Loki",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "assassin",
+    faction: "Norse",
+    card_stats: CardStats(
+        hitpoints: 520,
+        attack_damage: 54,
+        attack_speed: 1.0,
+        armor: 22,
+        range: 5.0,
+        approx_dps: 54.0,
+    ),
+    deploy_power: 282,
+    collectible: true,
+)

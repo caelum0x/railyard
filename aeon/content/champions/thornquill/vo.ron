@@ -1,0 +1,81 @@
+// Voice-line manifest for Thornquill: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "thornquill",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.thornquill.select",
+            kind: "Selected",
+            audio: "audio/vo/thornquill/select.ogg",
+            text: "Thornquill answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.thornquill.move_a",
+            kind: "Move",
+            audio: "audio/vo/thornquill/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.thornquill.move_b",
+            kind: "Move",
+            audio: "audio/vo/thornquill/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.thornquill.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/thornquill/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.thornquill.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/thornquill/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.thornquill.ability_q",
+            kind: "Ability: Barbed Volley",
+            audio: "audio/vo/thornquill/ability_q.ogg",
+            text: "Barbed Volley!",
+        ),
+        VoiceLine(
+            id: "vo.thornquill.ability_w",
+            kind: "Ability: Piercing Quill",
+            audio: "audio/vo/thornquill/ability_w.ogg",
+            text: "Piercing Quill!",
+        ),
+        VoiceLine(
+            id: "vo.thornquill.ability_r",
+            kind: "Ability: Rootspring",
+            audio: "audio/vo/thornquill/ability_r.ogg",
+            text: "Rootspring!",
+        ),
+        VoiceLine(
+            id: "vo.thornquill.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/thornquill/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.thornquill.joke",
+            kind: "Joke",
+            audio: "audio/vo/thornquill/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.thornquill.low_health",
+            kind: "Low health",
+            audio: "audio/vo/thornquill/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.thornquill.victory",
+            kind: "Victory",
+            audio: "audio/vo/thornquill/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

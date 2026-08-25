@@ -1,0 +1,30 @@
+{
+  "$comment": "infra/cdn/cache-rules.json — SCAFFOLD STUB. Per-path edge caching policy.",
+  "version": "0.0.0-scaffold",
+  "rules": [
+    {
+      "match": "/chunks/*",
+      "description": "Content-addressed patch chunks (blake3). Immutable forever.",
+      "cacheControl": "public, max-age=31536000, immutable",
+      "revalidate": false
+    },
+    {
+      "match": "/champions/*",
+      "description": "SEO champion pages. Short TTL, revalidate so patch updates show fast.",
+      "cacheControl": "public, max-age=300, stale-while-revalidate=86400",
+      "revalidate": true
+    },
+    {
+      "match": "/store/*",
+      "description": "Store art + thumbnails (hash-named). Long TTL.",
+      "cacheControl": "public, max-age=604800",
+      "revalidate": false
+    },
+    {
+      "match": "/patch-notes/*",
+      "description": "Patch notes HTML. Short TTL.",
+      "cacheControl": "public, max-age=300, stale-while-revalidate=3600",
+      "revalidate": true
+    }
+  ]
+}

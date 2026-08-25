@@ -1,0 +1,34 @@
+// Deterministic duel scenarios for Neptune.
+// Lifted from the roster/duel test pattern (engine/ability-dsl/tests/
+// duel.rs): a fixed seed makes every run byte-identical, so these double
+// as regression baselines. Data only -- no Rust, no loader impact.
+DuelScenarios(
+    slug: "neptune",
+    default_seed: 42,
+    scenarios: [
+        DuelScenario(
+            name: "neptune_vs_sentinel",
+            description: "Neptune opens against the Sentinel baseline.",
+            challenger: "neptune.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Win, winner: Some("Neptune"), decisive: true),
+        ),
+        DuelScenario(
+            name: "neptune_determinism",
+            description: "Same specs + seed run twice must be byte-identical.",
+            challenger: "neptune.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Deterministic, hash_stable: true, decisive: true),
+        ),
+        DuelScenario(
+            name: "neptune_order_independent",
+            description: "Swapping challenger/opponent slots keeps the same winner.",
+            challenger: "sentinel.ron",
+            opponent: "neptune.ron",
+            seed: 42,
+            expect: Expect(outcome: OrderIndependent, decisive: true),
+        ),
+    ],
+)

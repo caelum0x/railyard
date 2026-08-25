@@ -1,0 +1,30 @@
+// Per-level stat growth for Sporeveil (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "sporeveil",
+    archetype: "mage",
+    base: LevelStats(hp: 580, ad: 48, armor: 24, attack_speed: 0.85),
+    per_level: StatGrowth(hp: 70, ad: 3.0, armor: 2.2, attack_speed: 0.018),
+    levels: [
+        LevelRow(level: 1, hp: 580, ad: 48, armor: 24, attack_speed: 0.85),
+        LevelRow(level: 2, hp: 650, ad: 51, armor: 26, attack_speed: 0.868),
+        LevelRow(level: 3, hp: 720, ad: 54, armor: 28, attack_speed: 0.886),
+        LevelRow(level: 4, hp: 790, ad: 57, armor: 31, attack_speed: 0.904),
+        LevelRow(level: 5, hp: 860, ad: 60, armor: 33, attack_speed: 0.922),
+        LevelRow(level: 6, hp: 930, ad: 63, armor: 35, attack_speed: 0.94),
+        LevelRow(level: 7, hp: 1000, ad: 66, armor: 37, attack_speed: 0.958),
+        LevelRow(level: 8, hp: 1070, ad: 69, armor: 39, attack_speed: 0.976),
+        LevelRow(level: 9, hp: 1140, ad: 72, armor: 42, attack_speed: 0.994),
+        LevelRow(level: 10, hp: 1210, ad: 75, armor: 44, attack_speed: 1.012),
+        LevelRow(level: 11, hp: 1280, ad: 78, armor: 46, attack_speed: 1.03),
+        LevelRow(level: 12, hp: 1350, ad: 81, armor: 48, attack_speed: 1.048),
+        LevelRow(level: 13, hp: 1420, ad: 84, armor: 50, attack_speed: 1.066),
+        LevelRow(level: 14, hp: 1490, ad: 87, armor: 53, attack_speed: 1.084),
+        LevelRow(level: 15, hp: 1560, ad: 90, armor: 55, attack_speed: 1.102),
+        LevelRow(level: 16, hp: 1630, ad: 93, armor: 57, attack_speed: 1.12),
+        LevelRow(level: 17, hp: 1700, ad: 96, armor: 59, attack_speed: 1.138),
+        LevelRow(level: 18, hp: 1770, ad: 99, armor: 61, attack_speed: 1.156),
+    ],
+)

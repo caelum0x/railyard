@@ -1,0 +1,14 @@
+// Narrative + release metadata for Kaeza.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "kaeza",
+    display_name: "Kaeza",
+    title: "",
+    faction: "Ember",
+    archetype: "marksman",
+    release_patch: "1.4.0",
+    resource: "Mana",
+    lore: "Kaeza — the EMBERLOCK, a ranged marksman. Sustained ranged DPS with a piercing bolt and a repositioning hop. High auto-attack range, thin defenses. Authored as DATA only.",
+    tags: ["marksman", "ember"],
+)

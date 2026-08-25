@@ -1,0 +1,2 @@
+// content/items/aegis_plate.ron — defensive item: armor + health.
+Item(name: "Aegis Plate", cost: 1100, bonus_hp: 350, bonus_ad: 0, bonus_armor: 45)

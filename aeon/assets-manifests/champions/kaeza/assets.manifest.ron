@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "kaeza",
+    champion: "Kaeza",
+    archetype: "marksman",
+    faction: "Ember",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 17832,
+            blake3: "ce46ced92885d088bb9880a7fc3a2b6ecba913ec54546ce8b5af44fbfebccbcf",
+        ),
+    },
+)

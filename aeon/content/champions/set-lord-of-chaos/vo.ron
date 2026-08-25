@@ -1,0 +1,81 @@
+// Voice-line manifest for Set: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "set-lord-of-chaos",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.set_lord_of_chaos.select",
+            kind: "Selected",
+            audio: "audio/vo/set-lord-of-chaos/select.ogg",
+            text: "Set answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.set_lord_of_chaos.move_a",
+            kind: "Move",
+            audio: "audio/vo/set-lord-of-chaos/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.set_lord_of_chaos.move_b",
+            kind: "Move",
+            audio: "audio/vo/set-lord-of-chaos/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.set_lord_of_chaos.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/set-lord-of-chaos/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.set_lord_of_chaos.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/set-lord-of-chaos/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.set_lord_of_chaos.ability_q",
+            kind: "Ability: Desert Ambush",
+            audio: "audio/vo/set-lord-of-chaos/ability_q.ogg",
+            text: "Desert Ambush!",
+        ),
+        VoiceLine(
+            id: "vo.set_lord_of_chaos.ability_w",
+            kind: "Ability: Sandstorm",
+            audio: "audio/vo/set-lord-of-chaos/ability_w.ogg",
+            text: "Sandstorm!",
+        ),
+        VoiceLine(
+            id: "vo.set_lord_of_chaos.ability_r",
+            kind: "Ability: Chaos Step",
+            audio: "audio/vo/set-lord-of-chaos/ability_r.ogg",
+            text: "Chaos Step!",
+        ),
+        VoiceLine(
+            id: "vo.set_lord_of_chaos.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/set-lord-of-chaos/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.set_lord_of_chaos.joke",
+            kind: "Joke",
+            audio: "audio/vo/set-lord-of-chaos/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.set_lord_of_chaos.low_health",
+            kind: "Low health",
+            audio: "audio/vo/set-lord-of-chaos/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.set_lord_of_chaos.victory",
+            kind: "Victory",
+            audio: "audio/vo/set-lord-of-chaos/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

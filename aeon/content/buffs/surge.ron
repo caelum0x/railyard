@@ -1,0 +1,10 @@
+// Aether Surge — Mobility buff. Maps to closed vocab.
+BuffSpec(
+    id: "surge",
+    name: "Aether Surge",
+    category: Mobility,
+    vocab_ref: Some("BuffMoveSpeed"),
+    fields: ["bonus_percent", "duration"],
+    stacking: Strongest,
+    description: "Move speed granted after casting an ability.",
+)

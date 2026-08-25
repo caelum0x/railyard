@@ -1,0 +1,12 @@
+// Razor Fan — BASIC AD.
+ItemSpec(
+    name: "Razor Fan",
+    cost: 800,
+    tier: Basic,
+    stats: Stats(
+        attack_speed: 0.2,
+    ),
+    passive: Some("+15% critical strike chance."),
+    build_from: ["swift-dagger"],
+    tags: ["basic", "attack-speed", "crit"],
+)

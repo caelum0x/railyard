@@ -1,0 +1,24 @@
+// Skyfin Matriarch — the large monster of the Skyfin Raptors camp (the "raptor"-
+// style camp). Surrounded by a flock of small Skyfin Raptors. Ranged, fragile for
+// a large monster, moderate reward. No buff. Camp in camp-skyfin-raptors.ron.
+MonsterSpec(
+    id: "skyfin_matriarch",
+    display_name: "Skyfin Matriarch",
+    role: "CampLarge",
+    camp: "camp_skyfin_raptors",
+
+    stats: NeutralStats(
+        hp: 900,
+        armor: 10,
+        magic_resist: 10,
+        attack_damage: 55,
+        attack_speed: 0.75,
+        attack_range: 4.5,      // ranged
+        move_speed: 0.0,
+    ),
+
+    scaling: "monster_scaling",
+
+    grants_buff: "none",
+    bounty: (gold_local: 40, gold_shared: 0, xp: 75),
+)

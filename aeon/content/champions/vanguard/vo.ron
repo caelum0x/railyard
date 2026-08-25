@@ -1,0 +1,81 @@
+// Voice-line manifest for Vanguard: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "vanguard",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.vanguard.select",
+            kind: "Selected",
+            audio: "audio/vo/vanguard/select.ogg",
+            text: "Vanguard answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.vanguard.move_a",
+            kind: "Move",
+            audio: "audio/vo/vanguard/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.vanguard.move_b",
+            kind: "Move",
+            audio: "audio/vo/vanguard/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.vanguard.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/vanguard/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.vanguard.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/vanguard/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.vanguard.ability_q",
+            kind: "Ability: Shield Charge",
+            audio: "audio/vo/vanguard/ability_q.ogg",
+            text: "Shield Charge!",
+        ),
+        VoiceLine(
+            id: "vo.vanguard.ability_w",
+            kind: "Ability: Rally",
+            audio: "audio/vo/vanguard/ability_w.ogg",
+            text: "Rally!",
+        ),
+        VoiceLine(
+            id: "vo.vanguard.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/vanguard/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.vanguard.joke",
+            kind: "Joke",
+            audio: "audio/vo/vanguard/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.vanguard.low_health",
+            kind: "Low health",
+            audio: "audio/vo/vanguard/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.vanguard.victory",
+            kind: "Victory",
+            audio: "audio/vo/vanguard/victory.ogg",
+            text: "The field is ours.",
+        ),
+        VoiceLine(
+            id: "vo.vanguard.death",
+            kind: "Death",
+            audio: "audio/vo/vanguard/death.ogg",
+            text: "Not... the end.",
+        ),
+    ],
+)

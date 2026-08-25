@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "tyr",
+    champion: "Tyr",
+    archetype: "tank",
+    faction: "Norse",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 32392,
+            blake3: "3295c0311adaca11061d78815fff14f79076cda903b7fd2f6b5d3c05054dfcdf",
+        ),
+    },
+)

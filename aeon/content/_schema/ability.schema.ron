@@ -1,0 +1,51 @@
+// content/_schema/ability.schema.ron
+//
+// Shape of one ability inside a champion spec. Every `kind`, `shape`, `filter`,
+// `damage_type`, `effect` and `buff` MUST be a member of the closed set in
+// vocabulary.ron. content-lint rejects anything else (red gate).
+(
+    slot:        "enum: skill_slots        // Passive | Q | W | E | R | Custom",
+    name:        "String                   // ability display name (original IP)",
+    cooldown_mode:"enum: cooldown_modes     // AfterCast | Manual",
+
+    // An ability is composed of one or more `steps`, each an action from the closed
+    // `actions` set with its parameters. This is a direct, lintable mirror of what the
+    // champion's Rust handler triggers (see crates/lol_champions/src/erebos/mod.rs).
+    steps: [
+        (
+            action: "enum: actions          // e.g. ActionDamage | ActionDash | ActionDisplace",
+
+            // --- for ActionDamage / ActionDelayedDamage ---
+            effects: [
+                (
+                    shape: "enum: damage_shapes    // + its fields, e.g. Rectangle{width,length,start_distance}",
+                    damage_list: [
+                        (
+                            filter:      "enum: target_filters",
+                            amount:      "String            // spell calculation key (see vocabulary.amount_resolution)",
+                            damage_type: "enum: damage_types",
+                            modifier:    "enum: damage_modifiers   // optional, default None",
+                        ),
+                    ],
+                ),
+            ],
+
+            // --- for ActionDash ---
+            dash: (
+                move_type: "enum: dash_move_types",
+                speed:     "f32",
+            ),
+
+            // --- for ActionDisplace ---
+            displace: (
+                targets: "enum: displace_target_selection",
+                motion:  "enum: displace_motion",
+                effects: ["enum: displace_effects"],
+            ),
+
+            // --- self / on-hit buffs applied by this step ---
+            self_buffs:   ["enum: common_buffs"],
+            target_buffs: ["enum: cc_debuffs | common_buffs"],
+        ),
+    ],
+)

@@ -1,0 +1,40 @@
+// content/cards/tuning/upgrade_curve.ron
+//
+// Card-only tuning: the UPGRADE CURVE. Each owned card levels from 1..=13. Leveling
+// costs duplicate copies of that card plus soft-currency shards, and grants a flat
+// per-level stat scalar applied on top of the card's card-mode base (NOT the MOBA
+// ChampionSpec). Cheaper rarities start at a higher level so a fresh common and a
+// fresh legendary meet in the middle of the ladder. Card economy only.
+UpgradeCurve(
+    max_level: 13,
+
+    // Per-level requirement: copies of the card + shards to reach `level`.
+    // level 1 is the base and costs nothing.
+    steps: [
+        UpgradeStep(level: 2,  copies: 2,    shards: 5),
+        UpgradeStep(level: 3,  copies: 4,    shards: 20),
+        UpgradeStep(level: 4,  copies: 10,   shards: 50),
+        UpgradeStep(level: 5,  copies: 20,   shards: 150),
+        UpgradeStep(level: 6,  copies: 50,   shards: 400),
+        UpgradeStep(level: 7,  copies: 100,  shards: 1000),
+        UpgradeStep(level: 8,  copies: 200,  shards: 2000),
+        UpgradeStep(level: 9,  copies: 400,  shards: 4000),
+        UpgradeStep(level: 10, copies: 800,  shards: 8000),
+        UpgradeStep(level: 11, copies: 1000, shards: 15000),
+        UpgradeStep(level: 12, copies: 1500, shards: 35000),
+        UpgradeStep(level: 13, copies: 2500, shards: 100000),
+    ],
+
+    // Starting level by rarity so all cards converge near the top of the ladder.
+    start_level_by_rarity: [
+        RarityStart(rarity: "common",    start_level: 1),
+        RarityStart(rarity: "uncommon",  start_level: 3),
+        RarityStart(rarity: "rare",      start_level: 5),
+        RarityStart(rarity: "epic",      start_level: 7),
+        RarityStart(rarity: "legendary", start_level: 9),
+        RarityStart(rarity: "mythic",    start_level: 10),
+    ],
+
+    // Flat multiplicative stat gain per level over the card's card-mode base.
+    per_level_stat_scalar: 0.10,
+)

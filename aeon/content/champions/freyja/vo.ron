@@ -1,0 +1,81 @@
+// Voice-line manifest for Freyja: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "freyja",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.freyja.select",
+            kind: "Selected",
+            audio: "audio/vo/freyja/select.ogg",
+            text: "Freyja answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.freyja.move_a",
+            kind: "Move",
+            audio: "audio/vo/freyja/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.freyja.move_b",
+            kind: "Move",
+            audio: "audio/vo/freyja/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.freyja.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/freyja/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.freyja.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/freyja/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.freyja.ability_q",
+            kind: "Ability: Blessing of Folkvangr",
+            audio: "audio/vo/freyja/ability_q.ogg",
+            text: "Blessing of Folkvangr!",
+        ),
+        VoiceLine(
+            id: "vo.freyja.ability_w",
+            kind: "Ability: Brisingamen Snare",
+            audio: "audio/vo/freyja/ability_w.ogg",
+            text: "Brisingamen Snare!",
+        ),
+        VoiceLine(
+            id: "vo.freyja.ability_r",
+            kind: "Ability: Falcon Cloak",
+            audio: "audio/vo/freyja/ability_r.ogg",
+            text: "Falcon Cloak!",
+        ),
+        VoiceLine(
+            id: "vo.freyja.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/freyja/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.freyja.joke",
+            kind: "Joke",
+            audio: "audio/vo/freyja/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.freyja.low_health",
+            kind: "Low health",
+            audio: "audio/vo/freyja/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.freyja.victory",
+            kind: "Victory",
+            audio: "audio/vo/freyja/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

@@ -1,0 +1,75 @@
+// Voice-line manifest for Pyromancer: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "pyromancer",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.pyromancer.select",
+            kind: "Selected",
+            audio: "audio/vo/pyromancer/select.ogg",
+            text: "Pyromancer answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.pyromancer.move_a",
+            kind: "Move",
+            audio: "audio/vo/pyromancer/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.pyromancer.move_b",
+            kind: "Move",
+            audio: "audio/vo/pyromancer/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.pyromancer.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/pyromancer/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.pyromancer.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/pyromancer/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.pyromancer.ability_q",
+            kind: "Ability: Fireball",
+            audio: "audio/vo/pyromancer/ability_q.ogg",
+            text: "Fireball!",
+        ),
+        VoiceLine(
+            id: "vo.pyromancer.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/pyromancer/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.pyromancer.joke",
+            kind: "Joke",
+            audio: "audio/vo/pyromancer/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.pyromancer.low_health",
+            kind: "Low health",
+            audio: "audio/vo/pyromancer/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.pyromancer.victory",
+            kind: "Victory",
+            audio: "audio/vo/pyromancer/victory.ogg",
+            text: "The field is ours.",
+        ),
+        VoiceLine(
+            id: "vo.pyromancer.death",
+            kind: "Death",
+            audio: "audio/vo/pyromancer/death.ogg",
+            text: "Not... the end.",
+        ),
+    ],
+)

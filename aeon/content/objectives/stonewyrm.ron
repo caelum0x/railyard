@@ -1,0 +1,31 @@
+// Stonewyrm — an elemental Wyrm neutral objective. Spawns in the Wyrm Pit. Slaying
+// it grants the killing team a stacking Stone Boon (bonus structure/plating damage
+// and tenacity). Earth/Verdant faction themed. Part of the rotation in wyrm-pit.ron.
+ObjectiveSpec(
+    id: "stonewyrm",
+    display_name: "Stonewyrm",
+    class: "ElementalWyrm",
+    element: "Stone",
+    pit: "wyrm_pit",
+
+    stats: NeutralStats(
+        hp: 4200,               // toughest of the elemental wyrms
+        armor: 38,
+        magic_resist: 38,
+        attack_damage: 105,
+        attack_speed: 0.45,
+        attack_range: 3.0,
+        move_speed: 0.0,
+    ),
+
+    scaling: (hp_per_minute: 270, ad_per_minute: 5, start_minute: 5),
+
+    reward: (
+        buff: "stone_boon",
+        scope: "KillingTeam",
+        permanent: true,
+        stacking: true,
+    ),
+
+    bounty: (gold_local: 25, gold_global: 25, xp: 200),
+)

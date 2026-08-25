@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Freyja.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/freyja.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "freyja",
+    display_name: "Freyja",
+    abilities: [
+        AbilityTuning(
+            name: "Blessing of Folkvangr",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 130, cost: Some(60), damage: None, ad_ratio: None, heal: Some(140), cc: None),
+                Rank(rank: 2, cooldown: 124, cost: Some(65), damage: None, ad_ratio: None, heal: Some(175), cc: None),
+                Rank(rank: 3, cooldown: 117, cost: Some(70), damage: None, ad_ratio: None, heal: Some(210), cc: None),
+                Rank(rank: 4, cooldown: 110, cost: Some(74), damage: None, ad_ratio: None, heal: Some(245), cc: None),
+                Rank(rank: 5, cooldown: 104, cost: Some(79), damage: None, ad_ratio: None, heal: Some(280), cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Brisingamen Snare",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 50, cost: Some(50), damage: Some(70), ad_ratio: Some(0.4), heal: None, cc: Some(("Stun", 12))),
+                Rank(rank: 2, cooldown: 48, cost: Some(54), damage: Some(91), ad_ratio: Some(0.45), heal: None, cc: Some(("Stun", 14))),
+                Rank(rank: 3, cooldown: 45, cost: Some(58), damage: Some(112), ad_ratio: Some(0.5), heal: None, cc: Some(("Stun", 16))),
+                Rank(rank: 4, cooldown: 42, cost: Some(62), damage: Some(133), ad_ratio: Some(0.55), heal: None, cc: Some(("Stun", 17))),
+                Rank(rank: 5, cooldown: 40, cost: Some(66), damage: Some(154), ad_ratio: Some(0.6), heal: None, cc: Some(("Stun", 19))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Falcon Cloak",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 70, cost: Some(45), damage: Some(75), ad_ratio: Some(0.35), heal: None, cc: Some(("Slow", 30))),
+                Rank(rank: 2, cooldown: 66, cost: Some(49), damage: Some(98), ad_ratio: Some(0.4), heal: None, cc: Some(("Slow", 34))),
+                Rank(rank: 3, cooldown: 63, cost: Some(52), damage: Some(120), ad_ratio: Some(0.45), heal: None, cc: Some(("Slow", 39))),
+                Rank(rank: 4, cooldown: 60, cost: Some(56), damage: Some(142), ad_ratio: Some(0.5), heal: None, cc: Some(("Slow", 44))),
+                Rank(rank: 5, cooldown: 56, cost: Some(59), damage: Some(165), ad_ratio: Some(0.55), heal: None, cc: Some(("Slow", 48))),
+            ],
+        ),
+    ],
+)

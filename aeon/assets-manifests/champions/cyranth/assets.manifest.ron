@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "cyranth",
+    champion: "Cyranth",
+    archetype: "marksman",
+    faction: "Tide",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 17832,
+            blake3: "7e88cd26074be6c006e6d4dc3045b0e8d9f98c319cc478ee6a36dc7c76e8f877",
+        ),
+    },
+)

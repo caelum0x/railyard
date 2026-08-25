@@ -1,0 +1,30 @@
+// Per-level stat growth for Hades (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "hades",
+    archetype: "tank",
+    base: LevelStats(hp: 830, ad: 41, armor: 39, attack_speed: 0.8),
+    per_level: StatGrowth(hp: 105, ad: 3.0, armor: 4.2, attack_speed: 0.02),
+    levels: [
+        LevelRow(level: 1, hp: 830, ad: 41, armor: 39, attack_speed: 0.8),
+        LevelRow(level: 2, hp: 935, ad: 44, armor: 43, attack_speed: 0.82),
+        LevelRow(level: 3, hp: 1040, ad: 47, armor: 47, attack_speed: 0.84),
+        LevelRow(level: 4, hp: 1145, ad: 50, armor: 52, attack_speed: 0.86),
+        LevelRow(level: 5, hp: 1250, ad: 53, armor: 56, attack_speed: 0.88),
+        LevelRow(level: 6, hp: 1355, ad: 56, armor: 60, attack_speed: 0.9),
+        LevelRow(level: 7, hp: 1460, ad: 59, armor: 64, attack_speed: 0.92),
+        LevelRow(level: 8, hp: 1565, ad: 62, armor: 68, attack_speed: 0.94),
+        LevelRow(level: 9, hp: 1670, ad: 65, armor: 73, attack_speed: 0.96),
+        LevelRow(level: 10, hp: 1775, ad: 68, armor: 77, attack_speed: 0.98),
+        LevelRow(level: 11, hp: 1880, ad: 71, armor: 81, attack_speed: 1.0),
+        LevelRow(level: 12, hp: 1985, ad: 74, armor: 85, attack_speed: 1.02),
+        LevelRow(level: 13, hp: 2090, ad: 77, armor: 89, attack_speed: 1.04),
+        LevelRow(level: 14, hp: 2195, ad: 80, armor: 94, attack_speed: 1.06),
+        LevelRow(level: 15, hp: 2300, ad: 83, armor: 98, attack_speed: 1.08),
+        LevelRow(level: 16, hp: 2405, ad: 86, armor: 102, attack_speed: 1.1),
+        LevelRow(level: 17, hp: 2510, ad: 89, armor: 106, attack_speed: 1.12),
+        LevelRow(level: 18, hp: 2615, ad: 92, armor: 110, attack_speed: 1.14),
+    ],
+)

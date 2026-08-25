@@ -1,0 +1,37 @@
+// Zeus — BURST MAGE. King of Olympus; a long-range lightning skillshot that stuns,
+// backed by a storm that damages and slows everything around the aim point.
+ChampionSpec(
+    name: "Zeus",
+    base: BaseStats(
+        hp: 610,
+        ad: 38,
+        armor: 22,
+        attack_speed: 0.7,
+        move_speed: 9.0,
+        range: 6.0,
+    ),
+    abilities: [
+        AbilitySpec(
+            name: "Thunderbolt",
+            cooldown: 32,
+            cost: Some(65),
+            targeting: Skillshot,
+            range: 30.0,
+            effects: [
+                Damage(amount: 100, scaling: Some(AttackDamage(ratio: 0.55))),
+                Stun(duration: 14),
+            ],
+        ),
+        AbilitySpec(
+            name: "Storm's Wrath",
+            cooldown: 120,
+            cost: Some(90),
+            targeting: Area,
+            range: 12.0,
+            effects: [
+                Damage(amount: 130, scaling: Some(AttackDamage(ratio: 0.6))),
+                Slow(duration: 30),
+            ],
+        ),
+    ],
+)

@@ -1,0 +1,12 @@
+// Blasting Rod — BASIC AP.
+ItemSpec(
+    name: "Blasting Rod",
+    cost: 850,
+    tier: Basic,
+    stats: Stats(
+        ap: 40,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "ap"],
+)

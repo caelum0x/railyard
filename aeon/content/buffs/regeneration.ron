@@ -1,0 +1,10 @@
+// Regeneration — Sustain buff. Maps to closed vocab.
+BuffSpec(
+    id: "regeneration",
+    name: "Regeneration",
+    category: Sustain,
+    vocab_ref: Some("BuffSelfHeal"),
+    fields: ["amount"],
+    stacking: Independent,
+    description: "Restores health in repeated pulses (authored as repeated BuffSelfHeal).",
+)

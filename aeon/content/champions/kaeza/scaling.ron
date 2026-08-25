@@ -1,0 +1,30 @@
+// Per-level stat growth for Kaeza (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "kaeza",
+    archetype: "marksman",
+    base: LevelStats(hp: 560, ad: 56, armor: 22, attack_speed: 1.1),
+    per_level: StatGrowth(hp: 74, ad: 3.8, armor: 2.6, attack_speed: 0.035),
+    levels: [
+        LevelRow(level: 1, hp: 560, ad: 56, armor: 22, attack_speed: 1.1),
+        LevelRow(level: 2, hp: 634, ad: 60, armor: 25, attack_speed: 1.135),
+        LevelRow(level: 3, hp: 708, ad: 64, armor: 27, attack_speed: 1.17),
+        LevelRow(level: 4, hp: 782, ad: 67, armor: 30, attack_speed: 1.205),
+        LevelRow(level: 5, hp: 856, ad: 71, armor: 32, attack_speed: 1.24),
+        LevelRow(level: 6, hp: 930, ad: 75, armor: 35, attack_speed: 1.275),
+        LevelRow(level: 7, hp: 1004, ad: 79, armor: 38, attack_speed: 1.31),
+        LevelRow(level: 8, hp: 1078, ad: 83, armor: 40, attack_speed: 1.345),
+        LevelRow(level: 9, hp: 1152, ad: 86, armor: 43, attack_speed: 1.38),
+        LevelRow(level: 10, hp: 1226, ad: 90, armor: 45, attack_speed: 1.415),
+        LevelRow(level: 11, hp: 1300, ad: 94, armor: 48, attack_speed: 1.45),
+        LevelRow(level: 12, hp: 1374, ad: 98, armor: 51, attack_speed: 1.485),
+        LevelRow(level: 13, hp: 1448, ad: 102, armor: 53, attack_speed: 1.52),
+        LevelRow(level: 14, hp: 1522, ad: 105, armor: 56, attack_speed: 1.555),
+        LevelRow(level: 15, hp: 1596, ad: 109, armor: 58, attack_speed: 1.59),
+        LevelRow(level: 16, hp: 1670, ad: 113, armor: 61, attack_speed: 1.625),
+        LevelRow(level: 17, hp: 1744, ad: 117, armor: 64, attack_speed: 1.66),
+        LevelRow(level: 18, hp: 1818, ad: 121, armor: 66, attack_speed: 1.695),
+    ],
+)

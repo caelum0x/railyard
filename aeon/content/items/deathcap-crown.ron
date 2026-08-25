@@ -1,0 +1,12 @@
+// Deathcap Crown — LEGENDARY AP. Worn only by the truly terrible.
+ItemSpec(
+    name: "Deathcap Crown",
+    cost: 3600,
+    tier: Legendary,
+    stats: Stats(
+        ap: 130,
+    ),
+    passive: Some("Increases your ability power by 35%."),
+    build_from: ["great-rod", "great-rod"],
+    tags: ["legendary", "ap", "amplify"],
+)

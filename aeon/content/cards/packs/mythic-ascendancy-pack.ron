@@ -1,0 +1,21 @@
+// content/cards/packs/mythic-ascendancy-pack.ron
+// The prestige pack. Highest mythic odds in the game with a guaranteed legendary
+// floor; the marquee premium purchase.
+CardPack(
+    id: "mythic-ascendancy-pack",
+    name: "Mythic Ascendancy Pack",
+    description: "The pinnacle pack. Best mythic odds and a guaranteed legendary.",
+    category: "prestige",
+    card_count: 10,
+    cost: PackCost(currency: "gems", amount: 2000),
+    one_time: false,
+    guaranteed_floor: Some("legendary"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 100),
+        RarityOdd(rarity: "uncommon",  weight: 190),
+        RarityOdd(rarity: "rare",      weight: 280),
+        RarityOdd(rarity: "epic",      weight: 250),
+        RarityOdd(rarity: "legendary", weight: 150),
+        RarityOdd(rarity: "mythic",    weight: 30),
+    ],
+)

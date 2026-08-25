@@ -1,0 +1,12 @@
+// Voidcaller Staff — LEGENDARY AP. A rod that drinks the sky.
+ItemSpec(
+    name: "Voidcaller Staff",
+    cost: 3600,
+    tier: Legendary,
+    stats: Stats(
+        ap: 120,
+    ),
+    passive: Some("Amplifies your total ability power by 40%."),
+    build_from: ["great-rod", "blasting-rod", "minor-tome"],
+    tags: ["legendary", "ap", "burst"],
+)

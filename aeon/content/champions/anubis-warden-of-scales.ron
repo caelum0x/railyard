@@ -1,0 +1,50 @@
+// Anubis — a TANK / CONTROLLER who locks enemies down for his team.
+//
+// High HP and armor, low damage. His Mummy's Grasp is a hard point-and-click stun,
+// and the Weight of Judgment presses a whole area into a slow. Embalming Rite keeps
+// him standing. All crowd control, all data.
+ChampionSpec(
+    name: "Anubis",
+    base: BaseStats(
+        hp: 760,
+        ad: 41,
+        armor: 38,
+        attack_speed: 0.8,
+        move_speed: 10.0,
+        range: 5.0,
+    ),
+    abilities: [
+        // Point-and-click lockdown: wrap the target in grave bindings and stun.
+        AbilitySpec(
+            name: "Mummy's Grasp",
+            cooldown: 90,
+            cost: Some(40),
+            targeting: Target,
+            range: 12.0,
+            effects: [
+                Damage(amount: 50, scaling: Some(AttackDamage(ratio: 0.3))),
+                Stun(duration: 11),
+            ],
+        ),
+        // Area control: the scales of judgment press down, damaging and slowing.
+        AbilitySpec(
+            name: "Weight of Judgment",
+            cooldown: 70,
+            cost: Some(50),
+            targeting: Area,
+            range: 14.0,
+            effects: [
+                Damage(amount: 60, scaling: Some(AttackDamage(ratio: 0.35))),
+                Slow(duration: 16),
+            ],
+        ),
+        // Self-preservation: an embalmer's rite mends his wounds.
+        AbilitySpec(
+            name: "Embalming Rite",
+            cooldown: 170,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 100) ],
+        ),
+    ],
+)

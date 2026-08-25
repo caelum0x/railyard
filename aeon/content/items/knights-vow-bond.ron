@@ -1,0 +1,13 @@
+// Knight's Vow Bond — LEGENDARY support. A pledge sealed in steel.
+ItemSpec(
+    name: "Knight's Vow Bond",
+    cost: 2200,
+    tier: Legendary,
+    stats: Stats(
+        hp: 300,
+        armor: 20,
+    ),
+    passive: Some("Bind to an ally; redirect a portion of damage they take to you and heal from their damage."),
+    build_from: ["kindlegem", "aegis-emblem"],
+    tags: ["legendary", "support", "tank", "bond"],
+)

@@ -1,0 +1,83 @@
+// Roster metadata sidecar for the 3D asset pipeline.
+//
+// The champion DSL (ChampionSpec) intentionally carries ONLY combat data -- it
+// has no `archetype` or `faction` field. The 3D pipeline needs both to SHAPE the
+// greybox (archetype -> proportions) and TINT it (faction -> material color).
+//
+// The pipeline first consults this sidecar (deliberate, designer-pinned looks);
+// any slug NOT listed here is inferred from the spec automatically
+// (see tools/aeonrift_assets/roster.py). Every shipped champion is pinned here so
+// the whole cast has a stable, sensible silhouette + faction tint regardless of
+// stat retunes: archetype is chosen from stats (hp/armor -> tank, long range +
+// high AD -> marksman, low hp + ranged abilities -> mage, dash + burst ->
+// assassin, sustain -> support, else bruiser) blended with the champion's
+// identity; faction follows the champion's shipped roster (see the roster tests).
+//
+// archetype: one of tank | bruiser | mage | marksman | assassin | support
+// faction:   one of Umbral | Ember | Tide | Verdant | Greek | Norse | Roman | Egyptian
+RosterMeta({
+    // --- Baseline examples (M2/M5) ---
+    "sentinel":                 (archetype: "marksman", faction: "Umbral"),
+    "pyromancer":               (archetype: "mage",     faction: "Ember"),
+    "vanguard":                 (archetype: "bruiser",  faction: "Roman"),
+
+    // --- Mythology: Greek (gold) ---
+    "zeus":                     (archetype: "mage",     faction: "Greek"),
+    "hades":                    (archetype: "tank",     faction: "Greek"),
+    "athena":                   (archetype: "support",  faction: "Greek"),
+    "medusa":                   (archetype: "marksman", faction: "Greek"),
+    "achilles":                 (archetype: "bruiser",  faction: "Greek"),
+    "artemis":                  (archetype: "marksman", faction: "Greek"),
+
+    // --- Mythology: Norse (steel-blue) ---
+    "tyr":                      (archetype: "tank",     faction: "Norse"),
+    "thor":                     (archetype: "bruiser",  faction: "Norse"),
+    "odin":                     (archetype: "mage",     faction: "Norse"),
+    "loki":                     (archetype: "assassin", faction: "Norse"),
+    "freyja":                   (archetype: "mage",     faction: "Norse"),
+    "ullr":                     (archetype: "marksman", faction: "Norse"),
+
+    // --- Mythology: Roman (crimson) ---
+    "mars":                     (archetype: "bruiser",  faction: "Roman"),
+    "vulcan":                   (archetype: "tank",     faction: "Roman"),
+    "bellona":                  (archetype: "bruiser",  faction: "Roman"),
+    "neptune":                  (archetype: "mage",     faction: "Roman"),
+    "mercury":                  (archetype: "assassin", faction: "Roman"),
+    "janus":                    (archetype: "mage",     faction: "Roman"),
+
+    // --- Mythology: Egyptian (sand-gold) ---
+    "ra-radiant-dawn":          (archetype: "mage",     faction: "Egyptian"),
+    "anubis-warden-of-scales":  (archetype: "mage",     faction: "Egyptian"),
+    "horus-skyfall-talon":      (archetype: "bruiser",  faction: "Egyptian"),
+    "isis-mother-of-magic":     (archetype: "mage",     faction: "Egyptian"),
+    "set-lord-of-chaos":        (archetype: "assassin", faction: "Egyptian"),
+    "bastet-claws-of-the-hunt": (archetype: "assassin", faction: "Egyptian"),
+
+    // --- Fantasy: Ember (orange) ---
+    "toran":                    (archetype: "mage",     faction: "Ember"),
+    "vashka":                   (archetype: "bruiser",  faction: "Ember"),
+    "ysmera":                   (archetype: "mage",     faction: "Ember"),
+    "kaeza":                    (archetype: "marksman", faction: "Ember"),
+    "nerreth":                  (archetype: "bruiser",  faction: "Ember"),
+
+    // --- Fantasy: Tide (cyan) ---
+    "brackmoor":                (archetype: "bruiser",  faction: "Tide"),
+    "nyxralla":                 (archetype: "mage",     faction: "Tide"),
+    "cyranth":                  (archetype: "marksman", faction: "Tide"),
+    "veyl":                     (archetype: "assassin", faction: "Tide"),
+    "lumisel":                  (archetype: "support",  faction: "Tide"),
+
+    // --- Fantasy: Verdant (green) ---
+    "mosscloak":                (archetype: "bruiser",  faction: "Verdant"),
+    "gorehoof":                 (archetype: "bruiser",  faction: "Verdant"),
+    "sporeveil":                (archetype: "mage",     faction: "Verdant"),
+    "thornquill":               (archetype: "marksman", faction: "Verdant"),
+    "petalsong":                (archetype: "support",  faction: "Verdant"),
+
+    // --- Fantasy: Umbral (violet) ---
+    "dregmaw":                  (archetype: "tank",     faction: "Umbral"),
+    "korrathil":                (archetype: "bruiser",  faction: "Umbral"),
+    "xelphine":                 (archetype: "mage",     faction: "Umbral"),
+    "quorvane":                 (archetype: "marksman", faction: "Umbral"),
+    "zeryth":                   (archetype: "assassin", faction: "Umbral"),
+})

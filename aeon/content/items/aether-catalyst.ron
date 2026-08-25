@@ -1,0 +1,13 @@
+// Aether Catalyst — EPIC AP.
+ItemSpec(
+    name: "Aether Catalyst",
+    cost: 1300,
+    tier: Epic,
+    stats: Stats(
+        ap: 40,
+        hp: 150,
+    ),
+    passive: Some("Spending mana deals bonus magic damage nearby."),
+    build_from: ["lost-chapter"],
+    tags: ["epic", "ap", "mana"],
+)

@@ -1,0 +1,14 @@
+// Narrative + release metadata for Freyja.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "freyja",
+    display_name: "Freyja",
+    title: "",
+    faction: "Norse",
+    archetype: "mage",
+    release_patch: "1.1.0",
+    resource: "Mana",
+    lore: "Freyja — an enchanter SUPPORT: mend, snare, and smother the enemy line. Lady of the Vanir and the Brisingamen. Not a duelist: her value is a big self-sustain heal, a snaring skillshot that stuns, and a falcon-cloak area that slows. Peel and control expressed entirely as closed-vocabulary data.",
+    tags: ["mage", "norse"],
+)

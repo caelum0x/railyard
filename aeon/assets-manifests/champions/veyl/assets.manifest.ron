@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "veyl",
+    champion: "Veyl",
+    archetype: "assassin",
+    faction: "Tide",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 16016,
+            blake3: "121debaedcd05a547facff65f4d5c937332a514ee31ab43882741755069a7f66",
+        ),
+    },
+)

@@ -1,0 +1,50 @@
+// Freyja — an enchanter SUPPORT: mend, snare, and smother the enemy line.
+//
+// Lady of the Vanir and the Brisingamen. Not a duelist: her value is a big
+// self-sustain heal, a snaring skillshot that stuns, and a falcon-cloak area
+// that slows. Peel and control expressed entirely as closed-vocabulary data.
+ChampionSpec(
+    name: "Freyja",
+    base: BaseStats(
+        hp: 620,
+        ad: 48,
+        armor: 26,
+        attack_speed: 0.85,
+        move_speed: 10.5,
+        range: 7.0,
+    ),
+    abilities: [
+        // Blessing of Folkvangr: a strong sustaining heal.
+        AbilitySpec(
+            name: "Blessing of Folkvangr",
+            cooldown: 130,
+            cost: Some(60),
+            targeting: SelfCast,
+            effects: [ Heal(amount: 140) ],
+        ),
+        // Brisingamen Snare: a skillshot that pins the first enemy hit.
+        AbilitySpec(
+            name: "Brisingamen Snare",
+            cooldown: 50,
+            cost: Some(50),
+            targeting: Skillshot,
+            range: 22.0,
+            effects: [
+                Damage(amount: 70, scaling: Some(AttackDamage(ratio: 0.4))),
+                Stun(duration: 12),
+            ],
+        ),
+        // Falcon Cloak: sweep an area, chipping and heavily slowing the enemy.
+        AbilitySpec(
+            name: "Falcon Cloak",
+            cooldown: 70,
+            cost: Some(45),
+            targeting: Area,
+            range: 12.0,
+            effects: [
+                Damage(amount: 75, scaling: Some(AttackDamage(ratio: 0.35))),
+                Slow(duration: 30),
+            ],
+        ),
+    ],
+)

@@ -1,0 +1,13 @@
+// Spectre Cowl — EPIC tank.
+ItemSpec(
+    name: "Spectre Cowl",
+    cost: 1250,
+    tier: Epic,
+    stats: Stats(
+        hp: 200,
+        mr: 30,
+    ),
+    passive: Some("+100% base health regeneration."),
+    build_from: ["giants-girdle", "null-mantle"],
+    tags: ["epic", "hp", "mr"],
+)

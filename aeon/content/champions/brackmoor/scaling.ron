@@ -1,0 +1,30 @@
+// Per-level stat growth for Brackmoor (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "brackmoor",
+    archetype: "bruiser",
+    base: LevelStats(hp: 640, ad: 52, armor: 36, attack_speed: 0.85),
+    per_level: StatGrowth(hp: 92, ad: 3.6, armor: 3.4, attack_speed: 0.025),
+    levels: [
+        LevelRow(level: 1, hp: 640, ad: 52, armor: 36, attack_speed: 0.85),
+        LevelRow(level: 2, hp: 732, ad: 56, armor: 39, attack_speed: 0.875),
+        LevelRow(level: 3, hp: 824, ad: 59, armor: 43, attack_speed: 0.9),
+        LevelRow(level: 4, hp: 916, ad: 63, armor: 46, attack_speed: 0.925),
+        LevelRow(level: 5, hp: 1008, ad: 66, armor: 50, attack_speed: 0.95),
+        LevelRow(level: 6, hp: 1100, ad: 70, armor: 53, attack_speed: 0.975),
+        LevelRow(level: 7, hp: 1192, ad: 74, armor: 56, attack_speed: 1.0),
+        LevelRow(level: 8, hp: 1284, ad: 77, armor: 60, attack_speed: 1.025),
+        LevelRow(level: 9, hp: 1376, ad: 81, armor: 63, attack_speed: 1.05),
+        LevelRow(level: 10, hp: 1468, ad: 84, armor: 67, attack_speed: 1.075),
+        LevelRow(level: 11, hp: 1560, ad: 88, armor: 70, attack_speed: 1.1),
+        LevelRow(level: 12, hp: 1652, ad: 92, armor: 73, attack_speed: 1.125),
+        LevelRow(level: 13, hp: 1744, ad: 95, armor: 77, attack_speed: 1.15),
+        LevelRow(level: 14, hp: 1836, ad: 99, armor: 80, attack_speed: 1.175),
+        LevelRow(level: 15, hp: 1928, ad: 102, armor: 84, attack_speed: 1.2),
+        LevelRow(level: 16, hp: 2020, ad: 106, armor: 87, attack_speed: 1.225),
+        LevelRow(level: 17, hp: 2112, ad: 110, armor: 90, attack_speed: 1.25),
+        LevelRow(level: 18, hp: 2204, ad: 113, armor: 94, attack_speed: 1.275),
+    ],
+)

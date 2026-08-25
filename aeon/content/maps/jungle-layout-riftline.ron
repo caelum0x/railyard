@@ -1,0 +1,43 @@
+// Jungle layout for Riftline Crucible — camp placement, respawn timers, and the
+// recommended clear routes the bot AI uses. Camp stat/reward definitions live in
+// content/monsters/*; this file is the spatial + timing layer that binds them to
+// the map. Mirrored across the Sever for Blue and Red sides.
+JungleLayout(
+    map: "riftline_crucible",
+    first_spawn_seconds: 90,        // camps activate 1:30 into the match
+    scaling_ref: "monster_scaling", // -> content/monsters/monster-scaling.ron
+
+    camps: [
+        (id: "camp_ashen",          def: "camp_ashen",          respawn_seconds: 300, first_spawn_seconds: 90,  buff: "ashen_brand"),
+        (id: "camp_tidal",          def: "camp_tidal",          respawn_seconds: 300, first_spawn_seconds: 90,  buff: "tidal_wellspring"),
+        (id: "camp_gloomwolves",    def: "camp_gloomwolves",    respawn_seconds: 150, first_spawn_seconds: 90,  buff: "none"),
+        (id: "camp_thornhusks",     def: "camp_thornhusks",     respawn_seconds: 150, first_spawn_seconds: 102, buff: "none"),
+        (id: "camp_skyfin_raptors", def: "camp_skyfin_raptors", respawn_seconds: 150, first_spawn_seconds: 90,  buff: "none"),
+        (id: "camp_bogwallow",      def: "camp_bogwallow",      respawn_seconds: 150, first_spawn_seconds: 102, buff: "none"),
+        (id: "camp_scuttler",       def: "camp_scuttler",       respawn_seconds: 165, first_spawn_seconds: 210, buff: "sever_current"),
+    ],
+
+    // Standard full-clear routes for the AI jungler, per starting side.
+    routes: [
+        (
+            team_side: "Blue",
+            name: "ashen_start_topside",
+            order: ["camp_ashen", "camp_gloomwolves", "camp_tidal", "camp_thornhusks", "camp_bogwallow", "camp_skyfin_raptors"],
+        ),
+        (
+            team_side: "Blue",
+            name: "tidal_start_botside",
+            order: ["camp_tidal", "camp_thornhusks", "camp_bogwallow", "camp_ashen", "camp_skyfin_raptors", "camp_gloomwolves"],
+        ),
+        (
+            team_side: "Red",
+            name: "ashen_start_topside",
+            order: ["camp_ashen", "camp_gloomwolves", "camp_tidal", "camp_thornhusks", "camp_bogwallow", "camp_skyfin_raptors"],
+        ),
+        (
+            team_side: "Red",
+            name: "tidal_start_botside",
+            order: ["camp_tidal", "camp_thornhusks", "camp_bogwallow", "camp_ashen", "camp_skyfin_raptors", "camp_gloomwolves"],
+        ),
+    ],
+)

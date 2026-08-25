@@ -1,0 +1,12 @@
+// Frozen Heart Relic — LEGENDARY tank. A stilled, ancient pulse.
+ItemSpec(
+    name: "Frozen Heart Relic",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        armor: 70,
+    ),
+    passive: Some("+400 max mana; slows nearby enemy attack speed by 20%; +20 ability haste."),
+    build_from: ["glacial-buckler", "warden-mail"],
+    tags: ["legendary", "tank", "armor", "aura", "mana"],
+)

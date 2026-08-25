@@ -1,0 +1,41 @@
+// content/cards/tuning/rarity_pity.ron
+//
+// Card-only tuning: PITY TIMERS. Guarantees a floor on bad luck when opening packs.
+// After `hard_pity` consecutive opens without hitting a rarity, the next open is
+// forced to that rarity (or better). `soft_pity_start` is where the drop weight for
+// that rarity begins ramping so the guarantee rarely fires flat. Counters reset on
+// hit. Rarity ids match content/cards/rarities.ron. Pack-open economy only.
+RarityPity(
+    // Only the top tiers carry pity; commons/uncommons are frequent enough.
+    tracks: [
+        PityTrack(
+            rarity: "rare",
+            soft_pity_start: 8,
+            hard_pity: 10,
+            // Added to the rarity's base_weight per open once soft pity begins.
+            soft_ramp_weight: 60,
+        ),
+        PityTrack(
+            rarity: "epic",
+            soft_pity_start: 24,
+            hard_pity: 30,
+            soft_ramp_weight: 40,
+        ),
+        PityTrack(
+            rarity: "legendary",
+            soft_pity_start: 70,
+            hard_pity: 90,
+            soft_ramp_weight: 12,
+        ),
+        PityTrack(
+            rarity: "mythic",
+            soft_pity_start: 240,
+            hard_pity: 300,
+            soft_ramp_weight: 3,
+        ),
+    ],
+
+    // If a pack ITSELF guarantees a floor (see pack rarity_odds), that floor also
+    // decrements the matching pity counter so the two systems compose cleanly.
+    guaranteed_floor_decrements_track: true,
+)

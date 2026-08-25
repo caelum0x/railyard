@@ -1,0 +1,13 @@
+// Wit's End Relic — LEGENDARY AD. Patience sharpened to a point.
+ItemSpec(
+    name: "Wit's End Relic",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        mr: 40,
+        attack_speed: 0.4,
+    ),
+    passive: Some("On-hit deals 15-80 bonus magic damage; heals you when below half health."),
+    build_from: ["stinger-coil", "shadow-cloak"],
+    tags: ["legendary", "ad", "mr", "onhit"],
+)

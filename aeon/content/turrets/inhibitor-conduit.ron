@@ -1,0 +1,27 @@
+// Rift Conduit — the inhibitor structure. Sits behind each lane's Inhibitor Spire.
+// While standing it suppresses the enemy's super minions in that lane; once
+// destroyed, the destroying team's waves in that lane gain a Colossus (and an extra
+// Batterer) until it respawns. Cannot be permanently destroyed — it heals back.
+StructureSpec(
+    id: "inhibitor_conduit",
+    display_name: "Rift Conduit",
+    kind: "Inhibitor",
+
+    stats: StructureStats(
+        hp: 4000,
+        armor: 0,
+        magic_resist: 0,
+    ),
+
+    // Only attackable once the lane's Inhibitor Spire is down.
+    unlock: (requires_destroyed: "inhibitor_spire", scope: "SameLane"),
+
+    // Respawns after a timer rather than staying dead.
+    respawn_seconds: 300,
+
+    // While down, the enemy of this conduit's owner gains bonus wave units in the
+    // matching lane. Composition defined in wave-composition.ron.
+    while_down_grants: "inhibitor_broken_bonus",
+
+    bounty: (gold_local: 50, gold_global: 50),
+)

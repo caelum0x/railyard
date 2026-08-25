@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "horus-skyfall-talon",
+    champion: "Horus",
+    archetype: "bruiser",
+    faction: "Egyptian",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 35508,
+            blake3: "c2dc642f87de0ce782e5076fe1591133f1343a3ec51681f81bd4203239f9ff2b",
+        ),
+    },
+)

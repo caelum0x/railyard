@@ -1,0 +1,10 @@
+// Sheen Facet — EPIC AD.
+ItemSpec(
+    name: "Sheen Facet",
+    cost: 700,
+    tier: Epic,
+    stats: Stats(),
+    passive: Some("After an ability, next attack deals bonus physical damage equal to 100% base AD."),
+    build_from: ["aether-crystal"],
+    tags: ["epic", "spellblade"],
+)

@@ -1,0 +1,64 @@
+openapi: "3.0.3"
+info:
+  title: "aeonrift Economy API"
+  version: "0.0.0-scaffold"
+  description: >-
+    Planned surface for services/economy. Scaffold only — no server behind it yet.
+servers:
+  - url: "https://api.aeonrift.example/economy"
+    description: placeholder
+paths:
+  "/v1/wallets/{account_id}":
+    get:
+      summary: "Fetch currency balances for an account."
+      operationId: get_v1_wallets_account_id
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/wallets/{account_id}/grants":
+    post:
+      summary: "Grant currency (purchase, reward, refund)."
+      operationId: post_v1_wallets_account_id_grants
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/wallets/{account_id}/spends":
+    post:
+      summary: "Spend currency against a store order."
+      operationId: post_v1_wallets_account_id_spends
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/orders":
+    post:
+      summary: "Create a store order (idempotent by client key)."
+      operationId: post_v1_orders
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/orders/{id}/refund":
+    post:
+      summary: "Refund a settled order."
+      operationId: post_v1_orders_id_refund
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/ledger/{account_id}":
+    get:
+      summary: "Paginated transaction history."
+      operationId: get_v1_ledger_account_id
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"

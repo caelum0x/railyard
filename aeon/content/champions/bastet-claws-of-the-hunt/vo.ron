@@ -1,0 +1,81 @@
+// Voice-line manifest for Bastet: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "bastet-claws-of-the-hunt",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.bastet_claws_of_the_hunt.select",
+            kind: "Selected",
+            audio: "audio/vo/bastet-claws-of-the-hunt/select.ogg",
+            text: "Bastet answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.bastet_claws_of_the_hunt.move_a",
+            kind: "Move",
+            audio: "audio/vo/bastet-claws-of-the-hunt/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.bastet_claws_of_the_hunt.move_b",
+            kind: "Move",
+            audio: "audio/vo/bastet-claws-of-the-hunt/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.bastet_claws_of_the_hunt.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/bastet-claws-of-the-hunt/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.bastet_claws_of_the_hunt.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/bastet-claws-of-the-hunt/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.bastet_claws_of_the_hunt.ability_q",
+            kind: "Ability: Pounce",
+            audio: "audio/vo/bastet-claws-of-the-hunt/ability_q.ogg",
+            text: "Pounce!",
+        ),
+        VoiceLine(
+            id: "vo.bastet_claws_of_the_hunt.ability_w",
+            kind: "Ability: Rending Claws",
+            audio: "audio/vo/bastet-claws-of-the-hunt/ability_w.ogg",
+            text: "Rending Claws!",
+        ),
+        VoiceLine(
+            id: "vo.bastet_claws_of_the_hunt.ability_r",
+            kind: "Ability: Feral Frenzy",
+            audio: "audio/vo/bastet-claws-of-the-hunt/ability_r.ogg",
+            text: "Feral Frenzy!",
+        ),
+        VoiceLine(
+            id: "vo.bastet_claws_of_the_hunt.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/bastet-claws-of-the-hunt/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.bastet_claws_of_the_hunt.joke",
+            kind: "Joke",
+            audio: "audio/vo/bastet-claws-of-the-hunt/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.bastet_claws_of_the_hunt.low_health",
+            kind: "Low health",
+            audio: "audio/vo/bastet-claws-of-the-hunt/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.bastet_claws_of_the_hunt.victory",
+            kind: "Victory",
+            audio: "audio/vo/bastet-claws-of-the-hunt/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

@@ -1,0 +1,38 @@
+// Aeonwyrm — the Elder Wyrm. The apex of the Wyrm rotation: it only appears in the
+// late game after a team has collected enough elemental Boons, replacing the normal
+// elemental spawn. Slaying it grants a powerful, temporary team-wide Aeon Ascendance
+// (an execute-threshold burn on the team's attacks) on top of the elemental Boons.
+ObjectiveSpec(
+    id: "aeonwyrm",
+    display_name: "Aeonwyrm",
+    class: "ElderWyrm",
+    element: "Aeon",
+    pit: "wyrm_pit",
+
+    // Spawn gating: replaces the elemental Wyrm once either team holds this many
+    // elemental Boon stacks; see wyrm-pit.ron for the exact trigger.
+    spawn_gate: (requires_boon_stacks: 4, earliest_minute: 30),
+
+    stats: NeutralStats(
+        hp: 8500,
+        armor: 45,
+        magic_resist: 45,
+        attack_damage: 200,
+        attack_speed: 0.55,
+        attack_range: 3.5,
+        move_speed: 0.0,
+    ),
+
+    scaling: (hp_per_minute: 300, ad_per_minute: 8, start_minute: 30),
+
+    // Temporary, powerful team buff layered on top of held elemental Boons.
+    reward: (
+        buff: "aeon_ascendance",
+        scope: "KillingTeam",
+        permanent: false,
+        duration_seconds: 150,
+        stacking: false,
+    ),
+
+    bounty: (gold_local: 50, gold_global: 50, xp: 350),
+)

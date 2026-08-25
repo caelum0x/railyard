@@ -1,0 +1,30 @@
+// Per-level stat growth for Dregmaw (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "dregmaw",
+    archetype: "tank",
+    base: LevelStats(hp: 690, ad: 46, armor: 37, attack_speed: 0.85),
+    per_level: StatGrowth(hp: 105, ad: 3.0, armor: 4.2, attack_speed: 0.02),
+    levels: [
+        LevelRow(level: 1, hp: 690, ad: 46, armor: 37, attack_speed: 0.85),
+        LevelRow(level: 2, hp: 795, ad: 49, armor: 41, attack_speed: 0.87),
+        LevelRow(level: 3, hp: 900, ad: 52, armor: 45, attack_speed: 0.89),
+        LevelRow(level: 4, hp: 1005, ad: 55, armor: 50, attack_speed: 0.91),
+        LevelRow(level: 5, hp: 1110, ad: 58, armor: 54, attack_speed: 0.93),
+        LevelRow(level: 6, hp: 1215, ad: 61, armor: 58, attack_speed: 0.95),
+        LevelRow(level: 7, hp: 1320, ad: 64, armor: 62, attack_speed: 0.97),
+        LevelRow(level: 8, hp: 1425, ad: 67, armor: 66, attack_speed: 0.99),
+        LevelRow(level: 9, hp: 1530, ad: 70, armor: 71, attack_speed: 1.01),
+        LevelRow(level: 10, hp: 1635, ad: 73, armor: 75, attack_speed: 1.03),
+        LevelRow(level: 11, hp: 1740, ad: 76, armor: 79, attack_speed: 1.05),
+        LevelRow(level: 12, hp: 1845, ad: 79, armor: 83, attack_speed: 1.07),
+        LevelRow(level: 13, hp: 1950, ad: 82, armor: 87, attack_speed: 1.09),
+        LevelRow(level: 14, hp: 2055, ad: 85, armor: 92, attack_speed: 1.11),
+        LevelRow(level: 15, hp: 2160, ad: 88, armor: 96, attack_speed: 1.13),
+        LevelRow(level: 16, hp: 2265, ad: 91, armor: 100, attack_speed: 1.15),
+        LevelRow(level: 17, hp: 2370, ad: 94, armor: 104, attack_speed: 1.17),
+        LevelRow(level: 18, hp: 2475, ad: 97, armor: 108, attack_speed: 1.19),
+    ],
+)

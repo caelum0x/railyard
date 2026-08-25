@@ -1,0 +1,20 @@
+# infra/docker/Dockerfile.service — SCAFFOLD STUB.
+# Multi-stage build for any services/* binary. Pass SERVICE_BIN as a build arg.
+# NOTE: services/ are design scaffolds today; this Dockerfile is the target shape for
+# when a service graduates into a real crate.
+
+ARG RUST_VERSION=1.96.1
+
+FROM rust:${RUST_VERSION}-slim AS build
+WORKDIR /src
+# Copy the workspace and build only the requested service binary.
+COPY . .
+ARG SERVICE_BIN=matchmaking
+RUN cargo build --release --bin ${SERVICE_BIN}
+RUN cp target/release/${SERVICE_BIN} /out
+
+FROM gcr.io/distroless/cc-debian12 AS runtime
+COPY --from=build /out /usr/local/bin/service
+EXPOSE 8080
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/service"]

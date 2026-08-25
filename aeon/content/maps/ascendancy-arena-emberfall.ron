@@ -1,0 +1,46 @@
+// Emberfall — an Ascendancy card arena (games/aeonrift-ascendancy). Ascendancy is
+// a deterministic lane-battler: two players push units down a fixed number of lanes
+// toward the opponent's Ascendant. Arenas define lane count, board length, spawn
+// tiles, hazard tiles and the passive that skews play. Ember-faction themed.
+ArenaSpec(
+    id: "ascendancy_emberfall",
+    display_name: "Emberfall",
+    faction_theme: "Ember",
+    game: "aeonrift_ascendancy",
+
+    // The board: `lanes` parallel tracks, each `length` tiles long. Player A's
+    // Ascendant sits at tile 0, Player B's at tile length-1.
+    board: (
+        lanes: 3,
+        length: 9,
+        lane_names: ["Cinder", "Pyre", "Ash"],
+    ),
+
+    ascendants: [
+        (player: "A", pos: (lane: 1, tile: 0), start_hp: 30),
+        (player: "B", pos: (lane: 1, tile: 8), start_hp: 30),
+    ],
+
+    // Where each player deploys freshly-played unit cards.
+    deploy_tiles: [
+        (player: "A", tiles: [(lane: 0, tile: 0), (lane: 1, tile: 0), (lane: 2, tile: 0)]),
+        (player: "B", tiles: [(lane: 0, tile: 8), (lane: 1, tile: 8), (lane: 2, tile: 8)]),
+    ],
+
+    // Board hazards resolve deterministically at end of each turn.
+    hazards: [
+        (id: "ember_vent", tile: (lane: 1, tile: 4), effect: "BurnPassing", magnitude: 2, note: "Center Pyre tile burns any unit that ends a step on it."),
+        (id: "ember_vent", tile: (lane: 0, tile: 4), effect: "BurnPassing", magnitude: 1),
+        (id: "ember_vent", tile: (lane: 2, tile: 4), effect: "BurnPassing", magnitude: 1),
+    ],
+
+    // Arena passive — the rule that gives the board its identity.
+    passive: (
+        id: "risen_heat",
+        desc: "Each turn a unit survives, it gains +1 attack (heat rises). Reset on death.",
+        stacks_max: 5,
+    ),
+
+    // Deterministic tie-break priority for simultaneous resolutions (Law 3).
+    resolution_order: ["Hazards", "PlayerA_Advance", "PlayerB_Advance", "Combat", "Deaths"],
+)

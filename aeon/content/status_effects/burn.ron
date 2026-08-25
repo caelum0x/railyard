@@ -1,0 +1,11 @@
+// Burn — Damage status effect. Maps to closed vocab.
+StatusEffect(
+    id: "burn",
+    name: "Burn",
+    category: Damage,
+    vocab_ref: Some("Damage"),
+    fields: ["amount", "damage_type", "tag"],
+    cleansable: false,
+    stacking: Independent,
+    description: "Recurring magic damage over time (authored as repeated Damage ticks).",
+)

@@ -1,0 +1,14 @@
+// Gargoyle Plating — LEGENDARY tank. Stone that stares back.
+ItemSpec(
+    name: "Gargoyle Plating",
+    cost: 2700,
+    tier: Legendary,
+    stats: Stats(
+        hp: 200,
+        armor: 40,
+        mr: 40,
+    ),
+    passive: Some("Active: gain a large shield that grows near enemies (90s cooldown)."),
+    build_from: ["warden-mail", "shadow-cloak"],
+    tags: ["legendary", "tank", "armor", "mr"],
+)

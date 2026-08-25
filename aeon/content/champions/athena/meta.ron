@@ -1,0 +1,14 @@
+// Narrative + release metadata for Athena.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "athena",
+    display_name: "Athena",
+    title: "",
+    faction: "Greek",
+    archetype: "support",
+    release_patch: "1.0.0",
+    resource: "Mana",
+    lore: "Athena — SUPPORT / guardian. Goddess of wisdom and strategic war: raises the Aegis to shield herself, snares foes with a slowing owl, and commands a phalanx that stuns and slows a cluster of enemies.",
+    tags: ["support", "greek"],
+)

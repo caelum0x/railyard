@@ -1,0 +1,13 @@
+// Mikael's Blessing — LEGENDARY support. A touch that breaks all chains.
+ItemSpec(
+    name: "Mikael's Blessing",
+    cost: 2300,
+    tier: Legendary,
+    stats: Stats(
+        ap: 20,
+        mr: 30,
+    ),
+    passive: Some("Active: cleanse all crowd control from an ally and heal them (120s cooldown)."),
+    build_from: ["forbidden-idol", "null-mantle"],
+    tags: ["legendary", "support", "cleanse"],
+)

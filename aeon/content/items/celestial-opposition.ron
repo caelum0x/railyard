@@ -1,0 +1,14 @@
+// Celestial Opposition — LEGENDARY support. The stars stand against them.
+ItemSpec(
+    name: "Celestial Opposition",
+    cost: 2200,
+    tier: Legendary,
+    stats: Stats(
+        hp: 300,
+        armor: 20,
+        mr: 20,
+    ),
+    passive: Some("First enemy damage each fight is reduced and slows the attacker."),
+    build_from: ["aegis-emblem", "kindlegem"],
+    tags: ["legendary", "support", "tank", "shield"],
+)

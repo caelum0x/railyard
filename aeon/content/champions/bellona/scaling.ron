@@ -1,0 +1,30 @@
+// Per-level stat growth for Bellona (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "bellona",
+    archetype: "bruiser",
+    base: LevelStats(hp: 590, ad: 60, armor: 24, attack_speed: 1.15),
+    per_level: StatGrowth(hp: 92, ad: 3.6, armor: 3.4, attack_speed: 0.025),
+    levels: [
+        LevelRow(level: 1, hp: 590, ad: 60, armor: 24, attack_speed: 1.15),
+        LevelRow(level: 2, hp: 682, ad: 64, armor: 27, attack_speed: 1.175),
+        LevelRow(level: 3, hp: 774, ad: 67, armor: 31, attack_speed: 1.2),
+        LevelRow(level: 4, hp: 866, ad: 71, armor: 34, attack_speed: 1.225),
+        LevelRow(level: 5, hp: 958, ad: 74, armor: 38, attack_speed: 1.25),
+        LevelRow(level: 6, hp: 1050, ad: 78, armor: 41, attack_speed: 1.275),
+        LevelRow(level: 7, hp: 1142, ad: 82, armor: 44, attack_speed: 1.3),
+        LevelRow(level: 8, hp: 1234, ad: 85, armor: 48, attack_speed: 1.325),
+        LevelRow(level: 9, hp: 1326, ad: 89, armor: 51, attack_speed: 1.35),
+        LevelRow(level: 10, hp: 1418, ad: 92, armor: 55, attack_speed: 1.375),
+        LevelRow(level: 11, hp: 1510, ad: 96, armor: 58, attack_speed: 1.4),
+        LevelRow(level: 12, hp: 1602, ad: 100, armor: 61, attack_speed: 1.425),
+        LevelRow(level: 13, hp: 1694, ad: 103, armor: 65, attack_speed: 1.45),
+        LevelRow(level: 14, hp: 1786, ad: 107, armor: 68, attack_speed: 1.475),
+        LevelRow(level: 15, hp: 1878, ad: 110, armor: 72, attack_speed: 1.5),
+        LevelRow(level: 16, hp: 1970, ad: 114, armor: 75, attack_speed: 1.525),
+        LevelRow(level: 17, hp: 2062, ad: 118, armor: 78, attack_speed: 1.55),
+        LevelRow(level: 18, hp: 2154, ad: 121, armor: 82, attack_speed: 1.575),
+    ],
+)

@@ -1,0 +1,20 @@
+// content/cards/packs/diamond-cache.ron
+// Top standard premium pack; legendary floor for the endgame grind.
+CardPack(
+    id: "diamond-cache",
+    name: "Diamond Cache",
+    description: "The apex cache, with a guaranteed legendary.",
+    category: "premium",
+    card_count: 12,
+    cost: PackCost(currency: "gems", amount: 900),
+    one_time: false,
+    guaranteed_floor: Some("legendary"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 220),
+        RarityOdd(rarity: "uncommon",  weight: 270),
+        RarityOdd(rarity: "rare",      weight: 270),
+        RarityOdd(rarity: "epic",      weight: 170),
+        RarityOdd(rarity: "legendary", weight: 62),
+        RarityOdd(rarity: "mythic",    weight: 8),
+    ],
+)

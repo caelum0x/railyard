@@ -1,0 +1,12 @@
+// Aether Alternator — BASIC AP.
+ItemSpec(
+    name: "Aether Alternator",
+    cost: 1050,
+    tier: Basic,
+    stats: Stats(
+        ap: 45,
+    ),
+    passive: Some("Dealing ability damage adds a burst of 75 magic damage (30s cooldown)."),
+    build_from: ["blasting-rod"],
+    tags: ["basic", "burst"],
+)

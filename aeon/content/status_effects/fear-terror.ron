@@ -1,0 +1,11 @@
+// Terror — HardCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "fear_terror",
+    name: "Terror",
+    category: HardCC,
+    vocab_ref: Some("DebuffFear"),
+    fields: ["duration"],
+    cleansable: true,
+    stacking: Refresh,
+    description: "A stronger, longer fear that overrides most inputs.",
+)

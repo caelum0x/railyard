@@ -1,0 +1,7 @@
+// Summon Aery — Sorcery / Keystone.
+RuneSpec(
+    name: "Summon Aery",
+    tree: Sorcery,
+    tier: Keystone,
+    effect: "Damaging enemies sends Aery to deal bonus damage; shielding or healing allies sends Aery to shield them.",
+)

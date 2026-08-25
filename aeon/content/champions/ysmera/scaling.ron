@@ -1,0 +1,30 @@
+// Per-level stat growth for Ysmera (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "ysmera",
+    archetype: "mage",
+    base: LevelStats(hp: 540, ad: 46, armor: 20, attack_speed: 0.9),
+    per_level: StatGrowth(hp: 70, ad: 3.0, armor: 2.2, attack_speed: 0.018),
+    levels: [
+        LevelRow(level: 1, hp: 540, ad: 46, armor: 20, attack_speed: 0.9),
+        LevelRow(level: 2, hp: 610, ad: 49, armor: 22, attack_speed: 0.918),
+        LevelRow(level: 3, hp: 680, ad: 52, armor: 24, attack_speed: 0.936),
+        LevelRow(level: 4, hp: 750, ad: 55, armor: 27, attack_speed: 0.954),
+        LevelRow(level: 5, hp: 820, ad: 58, armor: 29, attack_speed: 0.972),
+        LevelRow(level: 6, hp: 890, ad: 61, armor: 31, attack_speed: 0.99),
+        LevelRow(level: 7, hp: 960, ad: 64, armor: 33, attack_speed: 1.008),
+        LevelRow(level: 8, hp: 1030, ad: 67, armor: 35, attack_speed: 1.026),
+        LevelRow(level: 9, hp: 1100, ad: 70, armor: 38, attack_speed: 1.044),
+        LevelRow(level: 10, hp: 1170, ad: 73, armor: 40, attack_speed: 1.062),
+        LevelRow(level: 11, hp: 1240, ad: 76, armor: 42, attack_speed: 1.08),
+        LevelRow(level: 12, hp: 1310, ad: 79, armor: 44, attack_speed: 1.098),
+        LevelRow(level: 13, hp: 1380, ad: 82, armor: 46, attack_speed: 1.116),
+        LevelRow(level: 14, hp: 1450, ad: 85, armor: 49, attack_speed: 1.134),
+        LevelRow(level: 15, hp: 1520, ad: 88, armor: 51, attack_speed: 1.152),
+        LevelRow(level: 16, hp: 1590, ad: 91, armor: 53, attack_speed: 1.17),
+        LevelRow(level: 17, hp: 1660, ad: 94, armor: 55, attack_speed: 1.188),
+        LevelRow(level: 18, hp: 1730, ad: 97, armor: 57, attack_speed: 1.206),
+    ],
+)

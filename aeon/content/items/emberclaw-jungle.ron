@@ -1,0 +1,13 @@
+// Emberclaw — EPIC AD. Forged in the beast-warrens.
+ItemSpec(
+    name: "Emberclaw",
+    cost: 2500,
+    tier: Epic,
+    stats: Stats(
+        ad: 30,
+        attack_speed: 0.25,
+    ),
+    passive: Some("Deal bonus true damage to monsters; on-hit burn vs champions."),
+    build_from: ["hunters-talon", "swift-dagger", "long-blade"],
+    tags: ["epic", "jungle", "ad", "onhit"],
+)

@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "zeryth",
+    champion: "Zeryth",
+    archetype: "assassin",
+    faction: "Umbral",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 16004,
+            blake3: "3145fea91e485293ce3e90469c09d19379a402cd55e3ec2f90370ad34143d8c0",
+        ),
+    },
+)

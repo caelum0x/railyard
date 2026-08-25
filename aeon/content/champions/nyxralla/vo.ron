@@ -1,0 +1,81 @@
+// Voice-line manifest for Nyxralla: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "nyxralla",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.nyxralla.select",
+            kind: "Selected",
+            audio: "audio/vo/nyxralla/select.ogg",
+            text: "Nyxralla answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.nyxralla.move_a",
+            kind: "Move",
+            audio: "audio/vo/nyxralla/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.nyxralla.move_b",
+            kind: "Move",
+            audio: "audio/vo/nyxralla/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.nyxralla.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/nyxralla/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.nyxralla.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/nyxralla/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.nyxralla.ability_q",
+            kind: "Ability: Abyssal Lance",
+            audio: "audio/vo/nyxralla/ability_q.ogg",
+            text: "Abyssal Lance!",
+        ),
+        VoiceLine(
+            id: "vo.nyxralla.ability_w",
+            kind: "Ability: Maelstrom Bloom",
+            audio: "audio/vo/nyxralla/ability_w.ogg",
+            text: "Maelstrom Bloom!",
+        ),
+        VoiceLine(
+            id: "vo.nyxralla.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/nyxralla/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.nyxralla.joke",
+            kind: "Joke",
+            audio: "audio/vo/nyxralla/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.nyxralla.low_health",
+            kind: "Low health",
+            audio: "audio/vo/nyxralla/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.nyxralla.victory",
+            kind: "Victory",
+            audio: "audio/vo/nyxralla/victory.ogg",
+            text: "The field is ours.",
+        ),
+        VoiceLine(
+            id: "vo.nyxralla.death",
+            kind: "Death",
+            audio: "audio/vo/nyxralla/death.ogg",
+            text: "Not... the end.",
+        ),
+    ],
+)

@@ -1,0 +1,45 @@
+// Bellona — the weapon-master MARKSMAN. Fast, long-range auto-attacks plus a pinning volley.
+ChampionSpec(
+    name: "Bellona",
+    base: BaseStats(
+        hp: 590,
+        ad: 60,
+        armor: 24,
+        attack_speed: 1.15,
+        move_speed: 11.0,
+        range: 9.0,
+    ),
+    abilities: [
+        // A ranged volley that shreds and slows the first target hit.
+        AbilitySpec(
+            name: "Shattering Volley",
+            cooldown: 40,
+            cost: Some(35),
+            targeting: Skillshot,
+            range: 22.0,
+            effects: [
+                Damage(amount: 70, scaling: Some(AttackDamage(ratio: 0.6))),
+                Slow(duration: 30),
+            ],
+        ),
+        // Whirling blades hit everything nearby.
+        AbilitySpec(
+            name: "Blade Dance",
+            cooldown: 90,
+            cost: Some(40),
+            targeting: Area,
+            range: 7.0,
+            effects: [
+                Damage(amount: 60, scaling: Some(AttackDamage(ratio: 0.5))),
+            ],
+        ),
+        // Veteran's poise: patch up between fights.
+        AbilitySpec(
+            name: "Master's Guard",
+            cooldown: 140,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 75) ],
+        ),
+    ],
+)

@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Mercury.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "mercury",
+    display_name: "Mercury",
+    rarity: "Epic",
+    elixir_cost: 6,
+    archetype: "assassin",
+    faction: "Roman",
+    card_stats: CardStats(
+        hitpoints: 520,
+        attack_damage: 58,
+        attack_speed: 1.0,
+        armor: 20,
+        range: 5.0,
+        approx_dps: 58.0,
+    ),
+    deploy_power: 311,
+    collectible: true,
+)

@@ -1,0 +1,14 @@
+// Trinity Convergence — LEGENDARY AD. Three virtues in one edge.
+ItemSpec(
+    name: "Trinity Convergence",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 35,
+        hp: 250,
+        attack_speed: 0.3,
+    ),
+    passive: Some("+20 ability haste; after an ability, next attack deals bonus damage and grants move speed."),
+    build_from: ["sheen-facet", "phage-heart", "stinger-coil"],
+    tags: ["legendary", "ad", "spellblade", "hp", "haste"],
+)

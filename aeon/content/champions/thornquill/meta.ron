@@ -1,0 +1,14 @@
+// Narrative + release metadata for Thornquill.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "thornquill",
+    display_name: "Thornquill",
+    title: "",
+    faction: "Verdant",
+    archetype: "marksman",
+    release_patch: "1.6.0",
+    resource: "Mana",
+    lore: "Thornquill — a MARKSMAN. Long-range, high attack speed, low defenses. Rains scaling barbs, cripples with a piercing quill, and springs away to keep distance. DSL data only.",
+    tags: ["marksman", "verdant"],
+)

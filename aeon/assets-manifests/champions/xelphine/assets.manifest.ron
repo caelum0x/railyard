@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "xelphine",
+    champion: "Xelphine",
+    archetype: "mage",
+    faction: "Umbral",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 34668,
+            blake3: "59b8963782612c0ea695d9cfd8a274895024dfb192d567a3b585d32ee9ee8f2d",
+        ),
+    },
+)

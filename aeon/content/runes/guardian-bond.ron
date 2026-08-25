@@ -1,0 +1,7 @@
+// Guardian Bond — Resolve / Keystone.
+RuneSpec(
+    name: "Guardian Bond",
+    tree: Resolve,
+    tier: Keystone,
+    effect: "Guard a nearby ally; if either would take heavy damage, both are shielded and gain move speed.",
+)

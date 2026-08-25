@@ -1,0 +1,7 @@
+// Scorch — Sorcery / Tier3.
+RuneSpec(
+    name: "Scorch",
+    tree: Sorcery,
+    tier: Tier3,
+    effect: "Your first ability hit each few seconds burns the target for bonus magic damage.",
+)

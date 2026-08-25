@@ -1,0 +1,10 @@
+// Aegis — Shield buff. Maps to closed vocab.
+BuffSpec(
+    id: "aegis",
+    name: "Aegis",
+    category: Shield,
+    vocab_ref: Some("BuffShieldWhite"),
+    fields: ["amount"],
+    stacking: Independent,
+    description: "A sturdy general-purpose shield granted to self or ally.",
+)

@@ -1,0 +1,494 @@
+use std::collections::HashMap;
+
+use bevy::prelude::*;
+
+use crate::damage::{DamageType, EventDamageCreate};
+use crate::entities::champion::Champion;
+use crate::entities::minion::Minion;
+use crate::entities::pet::Pet;
+use crate::entities::turret::Turret;
+use crate::life::{Death, EventDead, Health};
+use crate::log::{CommandLog, EnumLogCategory};
+use crate::team::Team;
+
+#[derive(Default)]
+pub struct PluginAggro;
+
+impl Plugin for PluginAggro {
+    fn build(&self, app: &mut App) {
+        app.add_systems(FixedPostUpdate, aggro_scan);
+        app.add_observer(on_team_get_damage);
+        app.add_observer(on_target_dead);
+        app.add_observer(on_reset_aggro);
+    }
+}
+
+pub fn on_reset_aggro(
+    _trigger: On<crate::action::EventReset>,
+    mut q_aggro_state: Query<&mut AggroState>,
+) {
+    for mut state in q_aggro_state.iter_mut() {
+        state.aggros.clear();
+    }
+}
+
+#[derive(Component)]
+#[require(AggroState)]
+pub struct Aggro {
+    pub range: f32,
+}
+
+#[derive(Component, Default)]
+pub struct AggroState {
+    pub aggros: HashMap<Entity, f32>,
+}
+
+#[derive(EntityEvent, Debug)]
+pub struct EventAggroTargetFound {
+    pub entity: Entity,
+    pub target: Entity,
+}
+
+pub fn aggro_scan(
+    mut commands: Commands,
+    q_aggro: Query<
+        (
+            Entity,
+            &Team,
+            &Transform,
+            &Aggro,
+            &AggroState,
+            Option<&Turret>,
+        ),
+        Without<Death>,
+    >,
+    q_attackable: Query<
+        (
+            Entity,
+            &Team,
+            &Transform,
+            Option<&Champion>,
+            Option<&Minion>,
+            Option<&Pet>,
+        ),
+        (Without<Death>, With<Health>),
+    >,
+) {
+    for (entity, team, transform, aggro, aggro_state, is_turret) in q_aggro.iter() {
+        let mut best_score = -1.0;
+        let mut closest_distance = f32::MAX;
+        let mut target_entity = Entity::PLACEHOLDER;
+
+        // 遍历所有可攻击单位筛选目标
+        for (attackable_entity, attackable_team, attackable_transform, champion, minion, pet) in
+            q_attackable.iter()
+        {
+            // 忽略友方单位
+            if attackable_team == team || *attackable_team == Team::Neutral {
+                continue;
+            }
+
+            // 计算距离并检查是否在仇恨范围内
+            let distance = transform
+                .translation
+                .distance(attackable_transform.translation);
+
+            if distance >= aggro.range {
+                continue;
+            }
+
+            // 获取基础优先级（如果是防御塔）
+            let base_priority = if is_turret.is_some() {
+                if pet.is_some() {
+                    100.0 // 召唤物优先级最高
+                } else if let Some(minion) = minion {
+                    match minion {
+                        Minion::Super => 90.0,
+                        Minion::Siege => 80.0,
+                        Minion::Melee => 70.0,
+                        Minion::Ranged => 60.0,
+                    }
+                } else if champion.is_some() {
+                    10.0 // 英雄基础优先级最低，除非触发仇恨转移
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+
+            // 获取累计仇恨值
+            let accumulated_aggro = aggro_state
+                .aggros
+                .get(&attackable_entity)
+                .copied()
+                .unwrap_or(0.0);
+
+            // 总分 = 基础优先级 + 累计仇恨
+            let score = base_priority + accumulated_aggro;
+
+            // 优先选择总分更高的目标，分数相同时选择更近的
+            if score > best_score || (score == best_score && distance < closest_distance) {
+                best_score = score;
+                closest_distance = distance;
+                target_entity = attackable_entity;
+            }
+        }
+
+        // 如果找到有效目标则触发
+        if target_entity != Entity::PLACEHOLDER {
+            commands.trigger(CommandLog {
+                entity,
+                info: format!("找到仇恨目标 {:?}", target_entity),
+                category: EnumLogCategory::Aggro,
+            });
+            commands.trigger(EventAggroTargetFound {
+                entity,
+                target: target_entity,
+            });
+        }
+    }
+}
+
+pub fn on_team_get_damage(
+    trigger: On<EventDamageCreate>,
+    mut q_aggro: Query<(
+        Entity,
+        &Team,
+        &Transform,
+        &Aggro,
+        &mut AggroState,
+        Option<&Turret>,
+    )>,
+    q_transform: Query<&Transform>,
+    q_team: Query<&Team>,
+    q_champion: Query<&Champion>,
+    q_minion: Query<&Minion>,
+) {
+    let source = trigger.source;
+    let target = trigger.event_target();
+
+    // 默认只响应物理伤害（普通攻击），LoL 防御塔仇恨对技能伤害也生效，但此处先保持一致
+    if trigger.damage_type != DamageType::Physical {
+        return;
+    }
+
+    let Ok(source_transform) = q_transform.get(source) else {
+        return;
+    };
+
+    let Ok(target_team) = q_team.get(target) else {
+        return;
+    };
+
+    let is_source_champion = q_champion.contains(source);
+    let is_target_minion = q_minion.contains(target);
+
+    for (entity, team, transform, aggro, mut aggro_state, turret) in q_aggro.iter_mut() {
+        // 只有队友受袭才会引起愤怒
+        if target_team != team {
+            continue;
+        }
+
+        // 英雄攻击小兵时，小兵不增加仇恨值
+        if is_source_champion && is_target_minion && q_minion.contains(entity) {
+            continue;
+        }
+
+        // 攻击者必须在仇恨范围内（防御塔呼救范围）
+        let distance = transform.translation.distance(source_transform.translation);
+        if distance >= aggro.range {
+            continue;
+        }
+
+        let is_target_champion = q_champion.contains(target);
+        let bonus = if turret.is_some() && is_source_champion && is_target_champion {
+            // 英雄在塔下攻击己方英雄：获得极高仇恨（1000），强制转移
+            1000.0
+        } else {
+            // 普通受袭：增加 10 点仇恨
+            10.0
+        };
+
+        let current_aggro = aggro_state.aggros.get(&source).copied().unwrap_or(0.0);
+        aggro_state.aggros.insert(source, current_aggro + bonus);
+    }
+}
+
+fn on_target_dead(trigger: On<EventDead>, mut q_aggro: Query<&mut AggroState>) {
+    let dead_entity = trigger.event_target();
+
+    for mut aggro_state in q_aggro.iter_mut() {
+        aggro_state.aggros.remove(&dead_entity);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use bevy::prelude::*;
+    use bevy::time::TimeUpdateStrategy;
+
+    use super::*;
+    use crate::damage::{DamageResult, DamageType, EventDamageCreate};
+    use crate::life::EventDead;
+
+    // 用于测试中捕获系统选中的目标
+    #[derive(Resource, Default)]
+    struct LastTarget(Option<Entity>);
+
+    // 测试辅助函数：构建 App 并注入必要的 Plugin 和 Resource
+    fn setup_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(PluginAggro);
+        // 手动控制时间更新，使得 app.update() 能运行一次 FixedUpdate
+        app.insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
+        app.init_resource::<LastTarget>();
+
+        // 注册观察者：当 Aggro 系统发出“找到目标”事件时，记录到 Resource 中
+        app.add_observer(
+            |event: On<EventAggroTargetFound>, mut res: ResMut<LastTarget>| {
+                res.0 = Some(event.event().target);
+            },
+        );
+
+        // 运行一次，使 TimePlugin 记录初始值
+        app.update();
+
+        app
+    }
+
+    // 辅助构建 DamageResult
+    fn mock_damage_result() -> DamageResult {
+        DamageResult {
+            final_damage: 10.0,
+            white_shield_absorbed: 0.0,
+            magic_shield_absorbed: 0.0,
+            reduced_damage: 0.0,
+            armor_reduced_damage: 0.0,
+            original_damage: 10.0,
+        }
+    }
+
+    #[test]
+    fn test_scan_closest_target_when_no_aggro() {
+        let mut app = setup_app();
+        let world = app.world_mut();
+
+        // 1. 创建拥有仇恨系统的单位 (Order)
+        let _me = world
+            .spawn((Team::Order, Transform::default(), Aggro { range: 100.0 }))
+            .id();
+
+        // 2. 创建两个敌人，一个近(10m)，一个远(20m)
+        let enemy_near = world
+            .spawn((
+                Team::Chaos,
+                Transform::from_xyz(10.0, 0.0, 0.0),
+                Health::new(100.0),
+            ))
+            .id();
+
+        let _enemy_far = world
+            .spawn((
+                Team::Chaos,
+                Transform::from_xyz(20.0, 0.0, 0.0),
+                Health::new(100.0),
+            ))
+            .id();
+
+        // 运行系统
+        app.update();
+
+        // 断言：在没有仇恨值的情况下，应当选择最近的敌人
+        let target = app.world().resource::<LastTarget>().0;
+        assert_eq!(target, Some(enemy_near), "应优先选择距离最近的目标");
+    }
+
+    #[test]
+    fn test_scan_high_aggro_priority() {
+        let mut app = setup_app();
+        let world = app.world_mut();
+
+        let me = world
+            .spawn((Team::Order, Transform::default(), Aggro { range: 100.0 }))
+            .id();
+
+        let enemy_near = world
+            .spawn((
+                Team::Chaos,
+                Transform::from_xyz(10.0, 0.0, 0.0),
+                Health::new(100.0),
+            ))
+            .id();
+
+        let enemy_far = world
+            .spawn((
+                Team::Chaos,
+                Transform::from_xyz(50.0, 0.0, 0.0),
+                Health::new(100.0),
+            ))
+            .id();
+
+        // 手动注入仇恨值：远处的仇恨极高
+        let mut aggro_state = world.get_mut::<AggroState>(me).unwrap();
+        aggro_state.aggros.insert(enemy_near, 0.0);
+        aggro_state.aggros.insert(enemy_far, 100.0);
+
+        app.update();
+
+        // 断言：应当忽略距离，选择仇恨值最高的目标
+        let target = app.world().resource::<LastTarget>().0;
+        assert_eq!(target, Some(enemy_far), "应优先选择仇恨值最高的目标");
+    }
+
+    #[test]
+    fn test_scan_ignore_out_of_range() {
+        let mut app = setup_app();
+        let world = app.world_mut();
+
+        // 自身范围只有 10
+        world.spawn((Team::Order, Transform::default(), Aggro { range: 10.0 }));
+
+        // 敌人在 20 处
+        world.spawn((
+            Team::Chaos,
+            Transform::from_xyz(20.0, 0.0, 0.0),
+            Health::new(100.0),
+        ));
+
+        app.update();
+
+        // 断言：没有目标被选中
+        let target = app.world().resource::<LastTarget>().0;
+        assert_eq!(target, None, "超出范围的目标应被忽略");
+    }
+
+    #[test]
+    fn test_damage_increases_aggro() {
+        let mut app = setup_app();
+        let world = app.world_mut();
+
+        // 模拟场景：队友被攻击，附近的守卫应该对攻击者产生仇恨
+        let attacker = world
+            .spawn((Team::Order, Transform::from_xyz(5.0, 0.0, 0.0)))
+            .id();
+        let ally = world.spawn((Team::Chaos, Transform::default())).id();
+
+        let guard = world
+            .spawn((Team::Chaos, Transform::default(), Aggro { range: 50.0 }))
+            .id();
+
+        // 触发伤害事件
+        world.trigger(EventDamageCreate {
+            entity: ally,
+            source: attacker,
+            damage_type: DamageType::Physical,
+            damage_result: mock_damage_result(),
+            tag: None,
+        });
+
+        app.update();
+
+        // 验证守卫的仇恨列表
+        let state = app.world().get::<AggroState>(guard).unwrap();
+        let aggro_val = state.aggros.get(&attacker).copied().unwrap_or(0.0);
+
+        assert_eq!(aggro_val, 10.0, "队友受击应增加攻击者的仇恨值");
+    }
+
+    #[test]
+    fn test_remove_aggro_on_dead() {
+        let mut app = setup_app();
+        let world = app.world_mut();
+
+        let enemy = world.spawn(Team::Chaos).id();
+        let me = world.spawn((Team::Order, Aggro { range: 100.0 })).id();
+
+        // 1. 初始化仇恨
+        if let Some(mut state) = world.get_mut::<AggroState>(me) {
+            state.aggros.insert(enemy, 50.0);
+        }
+
+        // 2. 触发目标死亡事件 (在目标实体上触发)
+        // 注意：根据 on_target_dead implementation，EventDead 需触发在死亡实体上
+        world.trigger(EventDead {
+            entity: enemy,
+            killer: None,
+        });
+
+        app.update();
+
+        // 3. 验证清理逻辑
+        let state = app.world().get::<AggroState>(me).unwrap();
+        assert!(
+            !state.aggros.contains_key(&enemy),
+            "目标死亡后应从仇恨列表中移除"
+        );
+    }
+
+    #[test]
+    fn test_turret_priority_minion_over_hero() {
+        let mut app = setup_app();
+
+        // 1. 创建防御塔 (Order)
+        let _turret = app
+            .world_mut()
+            .spawn((
+                Team::Order,
+                Transform::default(),
+                Aggro { range: 100.0 },
+                Turret,
+            ))
+            .id();
+
+        // 2. 创建英雄和英雄
+        let enemy_hero = app
+            .world_mut()
+            .spawn((
+                Team::Chaos,
+                Transform::from_xyz(10.0, 0.0, 0.0),
+                Champion,
+                Health::new(1000.0),
+            ))
+            .id();
+
+        let enemy_minion = app
+            .world_mut()
+            .spawn((
+                Team::Chaos,
+                Transform::from_xyz(15.0, 0.0, 0.0),
+                Minion::Melee,
+                Health::new(500.0),
+            ))
+            .id();
+
+        app.update();
+
+        // 断言：防御塔应当优先攻击小兵而非英雄
+        let target = app.world().resource::<LastTarget>().0;
+        assert_eq!(target, Some(enemy_minion), "防御塔应优先攻击小兵");
+
+        // 3. 模拟英雄攻击我方英雄
+        let ally_hero = app
+            .world_mut()
+            .spawn((Team::Order, Transform::default(), Champion))
+            .id();
+
+        app.world_mut().trigger(EventDamageCreate {
+            entity: ally_hero,
+            source: enemy_hero,
+            damage_type: DamageType::Physical,
+            damage_result: mock_damage_result(),
+            tag: None,
+        });
+
+        app.update();
+
+        // 断言：防御塔应当立即转移仇恨到敌方英雄
+        let target = app.world().resource::<LastTarget>().0;
+        assert_eq!(target, Some(enemy_hero), "防御塔应在英雄受袭击后转移仇恨");
+    }
+}

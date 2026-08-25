@@ -1,0 +1,7 @@
+// Cash Back — Inspiration / Tier1.
+RuneSpec(
+    name: "Cash Back",
+    tree: Inspiration,
+    tier: Tier1,
+    effect: "Purchasing legendary items refunds a portion of their cost as gold.",
+)

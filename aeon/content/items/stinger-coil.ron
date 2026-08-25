@@ -1,0 +1,12 @@
+// Stinger Coil — EPIC AD.
+ItemSpec(
+    name: "Stinger Coil",
+    cost: 1000,
+    tier: Epic,
+    stats: Stats(
+        attack_speed: 0.25,
+    ),
+    passive: Some("+15 ability haste."),
+    build_from: ["swift-dagger", "swift-dagger"],
+    tags: ["epic", "attack-speed", "haste"],
+)

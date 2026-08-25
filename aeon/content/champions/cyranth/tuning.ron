@@ -1,0 +1,35 @@
+// Per-rank ability tuning for Cyranth.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/cyranth.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "cyranth",
+    display_name: "Cyranth",
+    abilities: [
+        AbilityTuning(
+            name: "Squall Volley",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 90, cost: Some(45), damage: Some(90), ad_ratio: Some(1.1), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 86, cost: Some(49), damage: Some(117), ad_ratio: Some(1.15), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 81, cost: Some(52), damage: Some(144), ad_ratio: Some(1.2), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 76, cost: Some(56), damage: Some(171), ad_ratio: Some(1.25), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 72, cost: Some(59), damage: Some(198), ad_ratio: Some(1.3), heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Sleetbind Shot",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 150, cost: Some(50), damage: Some(50), ad_ratio: Some(0.5), heal: None, cc: Some(("Slow", 75))),
+                Rank(rank: 2, cooldown: 142, cost: Some(54), damage: Some(65), ad_ratio: Some(0.55), heal: None, cc: Some(("Slow", 86))),
+                Rank(rank: 3, cooldown: 135, cost: Some(58), damage: Some(80), ad_ratio: Some(0.6), heal: None, cc: Some(("Slow", 98))),
+                Rank(rank: 4, cooldown: 128, cost: Some(62), damage: Some(95), ad_ratio: Some(0.65), heal: None, cc: Some(("Slow", 109))),
+                Rank(rank: 5, cooldown: 120, cost: Some(66), damage: Some(110), ad_ratio: Some(0.7), heal: None, cc: Some(("Slow", 120))),
+            ],
+        ),
+    ],
+)

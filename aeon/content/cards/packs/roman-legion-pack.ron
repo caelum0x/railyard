@@ -1,0 +1,21 @@
+// content/cards/packs/roman-legion-pack.ron
+// Mythology pack biased to the Roman roster (mars, vulcan, bellona, neptune, mercury, janus, vanguard).
+CardPack(
+    id: "roman-legion-pack",
+    name: "Roman Legion Pack",
+    description: "Legionary cards drawn from the Roman faction pool.",
+    category: "mythology",
+    card_count: 9,
+    cost: PackCost(currency: "shards", amount: 3200),
+    one_time: false,
+    guaranteed_floor: Some("epic"),
+    faction_bias: Some("Roman"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 420),
+        RarityOdd(rarity: "uncommon",  weight: 310),
+        RarityOdd(rarity: "rare",      weight: 190),
+        RarityOdd(rarity: "epic",      weight: 62),
+        RarityOdd(rarity: "legendary", weight: 15),
+        RarityOdd(rarity: "mythic",    weight: 3),
+    ],
+)

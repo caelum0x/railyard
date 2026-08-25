@@ -1,0 +1,7 @@
+// Absolute Focus — Sorcery / Tier2.
+RuneSpec(
+    name: "Absolute Focus",
+    tree: Sorcery,
+    tier: Tier2,
+    effect: "While above 70% health, gain bonus adaptive force scaling with level.",
+)

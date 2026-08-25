@@ -1,0 +1,46 @@
+// Mercury — the speed ASSASSIN. Blistering move speed, dash-in burst, dash-out escape.
+ChampionSpec(
+    name: "Mercury",
+    base: BaseStats(
+        hp: 520,
+        ad: 58,
+        armor: 20,
+        attack_speed: 1.0,
+        move_speed: 13.0,
+        range: 5.0,
+    ),
+    abilities: [
+        // Winged strike: dash onto a target and burst it down.
+        AbilitySpec(
+            name: "Winged Strike",
+            cooldown: 50,
+            cost: Some(40),
+            targeting: Target,
+            range: 16.0,
+            effects: [
+                Dash(distance: 16.0),
+                Damage(amount: 95, scaling: Some(AttackDamage(ratio: 0.7))),
+            ],
+        ),
+        // Caduceus flurry: a skillshot lash that slows.
+        AbilitySpec(
+            name: "Caduceus Flurry",
+            cooldown: 60,
+            cost: Some(45),
+            targeting: Skillshot,
+            range: 18.0,
+            effects: [
+                Damage(amount: 60, scaling: Some(AttackDamage(ratio: 0.5))),
+                Slow(duration: 30),
+            ],
+        ),
+        // Fleet escape: reposition instantly.
+        AbilitySpec(
+            name: "Fleet Escape",
+            cooldown: 40,
+            cost: Some(25),
+            targeting: SelfCast,
+            effects: [ Dash(distance: 12.0) ],
+        ),
+    ],
+)

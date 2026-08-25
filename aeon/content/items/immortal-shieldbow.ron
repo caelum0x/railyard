@@ -1,0 +1,12 @@
+// Immortal Shieldbow — LEGENDARY AD. It refuses to let you fall.
+ItemSpec(
+    name: "Immortal Shieldbow",
+    cost: 3400,
+    tier: Legendary,
+    stats: Stats(
+        ad: 50,
+    ),
+    passive: Some("+20% crit; +10% life steal; gain a shield when dropping below 30% health (90s cooldown)."),
+    build_from: ["agility-cloak", "vampiric-scepter", "brute-pick"],
+    tags: ["legendary", "ad", "crit", "lifesteal", "shield"],
+)

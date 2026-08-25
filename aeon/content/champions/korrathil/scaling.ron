@@ -1,0 +1,30 @@
+// Per-level stat growth for Korrathil (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "korrathil",
+    archetype: "bruiser",
+    base: LevelStats(hp: 660, ad: 60, armor: 33, attack_speed: 1.0),
+    per_level: StatGrowth(hp: 92, ad: 3.6, armor: 3.4, attack_speed: 0.025),
+    levels: [
+        LevelRow(level: 1, hp: 660, ad: 60, armor: 33, attack_speed: 1.0),
+        LevelRow(level: 2, hp: 752, ad: 64, armor: 36, attack_speed: 1.025),
+        LevelRow(level: 3, hp: 844, ad: 67, armor: 40, attack_speed: 1.05),
+        LevelRow(level: 4, hp: 936, ad: 71, armor: 43, attack_speed: 1.075),
+        LevelRow(level: 5, hp: 1028, ad: 74, armor: 47, attack_speed: 1.1),
+        LevelRow(level: 6, hp: 1120, ad: 78, armor: 50, attack_speed: 1.125),
+        LevelRow(level: 7, hp: 1212, ad: 82, armor: 53, attack_speed: 1.15),
+        LevelRow(level: 8, hp: 1304, ad: 85, armor: 57, attack_speed: 1.175),
+        LevelRow(level: 9, hp: 1396, ad: 89, armor: 60, attack_speed: 1.2),
+        LevelRow(level: 10, hp: 1488, ad: 92, armor: 64, attack_speed: 1.225),
+        LevelRow(level: 11, hp: 1580, ad: 96, armor: 67, attack_speed: 1.25),
+        LevelRow(level: 12, hp: 1672, ad: 100, armor: 70, attack_speed: 1.275),
+        LevelRow(level: 13, hp: 1764, ad: 103, armor: 74, attack_speed: 1.3),
+        LevelRow(level: 14, hp: 1856, ad: 107, armor: 77, attack_speed: 1.325),
+        LevelRow(level: 15, hp: 1948, ad: 110, armor: 81, attack_speed: 1.35),
+        LevelRow(level: 16, hp: 2040, ad: 114, armor: 84, attack_speed: 1.375),
+        LevelRow(level: 17, hp: 2132, ad: 118, armor: 87, attack_speed: 1.4),
+        LevelRow(level: 18, hp: 2224, ad: 121, armor: 91, attack_speed: 1.425),
+    ],
+)

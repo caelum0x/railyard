@@ -1,0 +1,20 @@
+// content/cards/packs/bronze-cache.ron
+// Entry-tier standard pack. The cheapest repeatable gold pack.
+CardPack(
+    id: "bronze-cache",
+    name: "Bronze Cache",
+    description: "A modest handful of cards for steady progression.",
+    category: "standard",
+    card_count: 6,
+    cost: PackCost(currency: "gold", amount: 500),
+    one_time: false,
+    guaranteed_floor: None,
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 620),
+        RarityOdd(rarity: "uncommon",  weight: 270),
+        RarityOdd(rarity: "rare",      weight: 95),
+        RarityOdd(rarity: "epic",      weight: 14),
+        RarityOdd(rarity: "legendary", weight: 1),
+        RarityOdd(rarity: "mythic",    weight: 0),
+    ],
+)

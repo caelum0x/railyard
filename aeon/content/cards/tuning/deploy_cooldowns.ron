@@ -1,0 +1,37 @@
+// content/cards/tuning/deploy_cooldowns.ron
+//
+// Card-only tuning: DEPLOY COOLDOWNS. After a card is played onto the board it enters
+// a per-card deploy cooldown before it (or an identical copy) can be redeployed, plus
+// a short global "deploy lock" that prevents dumping the whole hand in one frame.
+//
+// Cooldowns are keyed by rarity (heavier cards recur more slowly) with per-archetype
+// multipliers so, e.g., assassins cycle back faster than tanks. Archetype ids match
+// content/champions/roster_meta.ron (tank|bruiser|mage|marksman|assassin|support).
+// All times are seconds of real match time. Card-mode only.
+DeployCooldowns(
+    // Applies to every deploy regardless of card; stops one-frame hand-dumping.
+    global_deploy_lock_s: 0.35,
+
+    // Base redeploy cooldown per rarity tier.
+    by_rarity: [
+        RarityCooldown(rarity: "common",    base_s: 3.5),
+        RarityCooldown(rarity: "uncommon",  base_s: 4.5),
+        RarityCooldown(rarity: "rare",      base_s: 6.0),
+        RarityCooldown(rarity: "epic",      base_s: 8.0),
+        RarityCooldown(rarity: "legendary", base_s: 11.0),
+        RarityCooldown(rarity: "mythic",    base_s: 15.0),
+    ],
+
+    // Multiplier applied to the rarity base by the card's archetype. <1 = faster.
+    by_archetype: [
+        ArchetypeModifier(archetype: "assassin", multiplier: 0.75),
+        ArchetypeModifier(archetype: "marksman", multiplier: 0.90),
+        ArchetypeModifier(archetype: "mage",     multiplier: 1.00),
+        ArchetypeModifier(archetype: "support",  multiplier: 1.05),
+        ArchetypeModifier(archetype: "bruiser",  multiplier: 1.15),
+        ArchetypeModifier(archetype: "tank",     multiplier: 1.30),
+    ],
+
+    // Hard ceiling so no combination of modifiers produces an unfun wait.
+    max_effective_s: 18.0,
+)

@@ -1,0 +1,2 @@
+// Preset deck 03 — Roman Legion.
+DeckDef(name: "Roman Legion", cards: ["mars","vulcan","bellona","neptune","mercury","janus","vanguard","sentinel"])

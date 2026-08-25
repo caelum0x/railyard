@@ -1,0 +1,14 @@
+// Narrative + release metadata for Vashka.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "vashka",
+    display_name: "Vashka",
+    title: "",
+    faction: "Ember",
+    archetype: "bruiser",
+    release_patch: "1.4.0",
+    resource: "Mana",
+    lore: "Vashka — CINDERMAW, a diving bruiser. Gap-closes with a burning charge, then trades relentlessly with sticky slows and self-sustain. Balanced stats around the sentinel baseline. Authored purely as DATA.",
+    tags: ["bruiser", "ember"],
+)

@@ -1,0 +1,13 @@
+// Dragonscale Heart — LEGENDARY tank. A furnace that will not die.
+ItemSpec(
+    name: "Dragonscale Heart",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        hp: 350,
+        mr: 55,
+    ),
+    passive: Some("Regenerate 2% max health per second when out of combat."),
+    build_from: ["spectre-cowl", "giants-girdle"],
+    tags: ["legendary", "tank", "mr", "hp"],
+)

@@ -1,0 +1,53 @@
+// Zeryth — the UMBRAL FANG, a burst assassin. (Umbral faction)
+//
+// A blade of living shadow that folds the distance to its mark, pins them mid-
+// scream, and finishes in a collapse of darkness. High mobility and damage,
+// little armor to spare. Pure DATA against the closed DSL.
+ChampionSpec(
+    name: "Zeryth",
+    base: BaseStats(
+        hp: 570,
+        ad: 62,
+        armor: 25,
+        attack_speed: 1.0,
+        move_speed: 12.0,     // tied for the fastest of the roster
+        range: 6.0,           // melee
+    ),
+    abilities: [
+        // Shadowlunge: dash gap-close onto the target with an impact hit.
+        AbilitySpec(
+            name: "Shadowlunge",
+            cooldown: 170,
+            cost: Some(50),
+            targeting: Skillshot,
+            range: 20.0,
+            effects: [
+                Dash(distance: 20.0),
+                Damage(amount: 92, scaling: Some(AttackDamage(ratio: 0.95))),
+            ],
+        ),
+        // Fangstrike: single-target burst with a short stun.
+        AbilitySpec(
+            name: "Fangstrike",
+            cooldown: 150,
+            cost: Some(55),
+            targeting: Target,
+            range: 8.0,
+            effects: [
+                Damage(amount: 82, scaling: Some(AttackDamage(ratio: 0.85))),
+                Stun(duration: 28),
+            ],
+        ),
+        // Umbral Collapse: execute-tier area finisher after the setup.
+        AbilitySpec(
+            name: "Umbral Collapse",
+            cooldown: 330,
+            cost: Some(90),
+            targeting: Area,
+            range: 10.0,
+            effects: [
+                Damage(amount: 130, scaling: Some(AttackDamage(ratio: 1.05))),
+            ],
+        ),
+    ],
+)

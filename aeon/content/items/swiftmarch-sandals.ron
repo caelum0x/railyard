@@ -1,0 +1,12 @@
+// Swiftmarch Sandals — EPIC boots.
+ItemSpec(
+    name: "Swiftmarch Sandals",
+    cost: 900,
+    tier: Epic,
+    stats: Stats(
+        move_speed: 50.0,
+    ),
+    passive: Some("+7% bonus move speed; reduces slow duration by 25%."),
+    build_from: ["wayfarer-boots"],
+    tags: ["boots", "mobility", "utility"],
+)

@@ -1,0 +1,17 @@
+// Jungle monster stat scaling over match time. Base stats in each monster file are
+// the values at first spawn; these step functions strengthen camps as the game goes
+// on so late clears stay rewarding. Applied uniformly to both sides (deterministic).
+// Referenced by every MonsterSpec via `scaling`.
+MonsterScaling(
+    map: "riftline_crucible",
+    interval_seconds: 90,
+    max_steps: 20,           // caps at 30:00 after first spawn
+
+    // Flat growth per step, by monster role.
+    growth: [
+        (role: "BuffBoss",       hp_per_step: 45, ad_per_step: 3, gold_per_step: 2, xp_per_step: 4),
+        (role: "CampLarge",      hp_per_step: 30, ad_per_step: 2, gold_per_step: 1, xp_per_step: 3),
+        (role: "CampSmall",      hp_per_step: 8,  ad_per_step: 1, gold_per_step: 0, xp_per_step: 1),
+        (role: "RiverObjective", hp_per_step: 12, ad_per_step: 0, gold_per_step: 0, xp_per_step: 1),
+    ],
+)

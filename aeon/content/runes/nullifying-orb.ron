@@ -1,0 +1,7 @@
+// Nullifying Orb — Sorcery / Tier1.
+RuneSpec(
+    name: "Nullifying Orb",
+    tree: Sorcery,
+    tier: Tier1,
+    effect: "Dropping to low health grants a magic-damage shield.",
+)

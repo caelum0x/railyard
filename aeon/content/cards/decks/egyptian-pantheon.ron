@@ -1,0 +1,2 @@
+// Preset deck 04 — Egyptian Pantheon.
+DeckDef(name: "Egyptian Pantheon", cards: ["ra-radiant-dawn","anubis-warden-of-scales","horus-skyfall-talon","isis-mother-of-magic","set-lord-of-chaos","bastet-claws-of-the-hunt","medusa","artemis"])

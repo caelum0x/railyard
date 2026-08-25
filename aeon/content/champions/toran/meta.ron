@@ -1,0 +1,14 @@
+// Narrative + release metadata for Toran.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "toran",
+    display_name: "Toran",
+    title: "",
+    faction: "Ember",
+    archetype: "mage",
+    release_patch: "1.4.0",
+    resource: "Mana",
+    lore: "Toran — the SLAGWARDEN, a frontline tank. Soaks damage, anchors fights with a heavy stun, and cools himself with a forge-fed self-heal. Low offense, immense durability. Pure DATA — no champion-specific Rust behind it.",
+    tags: ["mage", "ember"],
+)

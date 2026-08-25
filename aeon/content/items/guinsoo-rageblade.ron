@@ -1,0 +1,14 @@
+// Guinsoo Rageblade — LEGENDARY AD. Fury that compounds.
+ItemSpec(
+    name: "Guinsoo Rageblade",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ad: 30,
+        ap: 30,
+        attack_speed: 0.25,
+    ),
+    passive: Some("Attacks stack attack speed; every third attack applies on-hit twice."),
+    build_from: ["kindled-blade", "stinger-coil"],
+    tags: ["legendary", "ad", "ap", "onhit", "attack-speed"],
+)

@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "korrathil",
+    champion: "Korrathil",
+    archetype: "bruiser",
+    faction: "Umbral",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 35492,
+            blake3: "e2d37b1e787e4ed4604f4817ccce085249d4f0994a705e9b1160ebc378c9fb08",
+        ),
+    },
+)

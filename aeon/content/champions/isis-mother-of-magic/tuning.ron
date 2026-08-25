@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Isis.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/isis-mother-of-magic.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "isis-mother-of-magic",
+    display_name: "Isis",
+    abilities: [
+        AbilityTuning(
+            name: "Healing Ankh",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 120, cost: Some(60), damage: None, ad_ratio: None, heal: Some(160), cc: None),
+                Rank(rank: 2, cooldown: 114, cost: Some(65), damage: None, ad_ratio: None, heal: Some(200), cc: None),
+                Rank(rank: 3, cooldown: 108, cost: Some(70), damage: None, ad_ratio: None, heal: Some(240), cc: None),
+                Rank(rank: 4, cooldown: 102, cost: Some(74), damage: None, ad_ratio: None, heal: Some(280), cc: None),
+                Rank(rank: 5, cooldown: 96, cost: Some(79), damage: None, ad_ratio: None, heal: Some(320), cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Binding Spell",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 60, cost: Some(50), damage: Some(45), ad_ratio: Some(0.3), heal: None, cc: Some(("Stun", 12))),
+                Rank(rank: 2, cooldown: 57, cost: Some(54), damage: Some(58), ad_ratio: Some(0.35), heal: None, cc: Some(("Stun", 14))),
+                Rank(rank: 3, cooldown: 54, cost: Some(58), damage: Some(72), ad_ratio: Some(0.4), heal: None, cc: Some(("Stun", 16))),
+                Rank(rank: 4, cooldown: 51, cost: Some(62), damage: Some(86), ad_ratio: Some(0.45), heal: None, cc: Some(("Stun", 17))),
+                Rank(rank: 5, cooldown: 48, cost: Some(66), damage: Some(99), ad_ratio: Some(0.5), heal: None, cc: Some(("Stun", 19))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Sorrow's Veil",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 50, cost: Some(40), damage: Some(35), ad_ratio: Some(0.2), heal: None, cc: Some(("Slow", 20))),
+                Rank(rank: 2, cooldown: 48, cost: Some(43), damage: Some(46), ad_ratio: Some(0.25), heal: None, cc: Some(("Slow", 23))),
+                Rank(rank: 3, cooldown: 45, cost: Some(46), damage: Some(56), ad_ratio: Some(0.3), heal: None, cc: Some(("Slow", 26))),
+                Rank(rank: 4, cooldown: 42, cost: Some(50), damage: Some(66), ad_ratio: Some(0.35), heal: None, cc: Some(("Slow", 29))),
+                Rank(rank: 5, cooldown: 40, cost: Some(53), damage: Some(77), ad_ratio: Some(0.4), heal: None, cc: Some(("Slow", 32))),
+            ],
+        ),
+    ],
+)

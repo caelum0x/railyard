@@ -1,0 +1,14 @@
+// Narrative + release metadata for Vanguard.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "vanguard",
+    display_name: "Vanguard",
+    title: "",
+    faction: "Roman",
+    archetype: "bruiser",
+    release_patch: "1.2.0",
+    resource: "Mana",
+    lore: "Vanguard — a BRUISER with a gap-closing DASH + STRIKE. Tanky and durable. Its signature ability dashes onto a target, strikes for AD-scaled damage, and briefly stuns — a classic engage. Demonstrates a multi-effect, targeted ability plus a self-heal, all as pure DSL data.",
+    tags: ["bruiser", "roman"],
+)

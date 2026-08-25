@@ -1,0 +1,13 @@
+// Everfrost Scepter — LEGENDARY AP. A staff of sudden winter.
+ItemSpec(
+    name: "Everfrost Scepter",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ap: 70,
+        hp: 250,
+    ),
+    passive: Some("Active: fire a cone that roots enemies hit (30s cooldown)."),
+    build_from: ["glacial-buckler", "great-rod", "minor-tome"],
+    tags: ["legendary", "ap", "cc", "utility"],
+)

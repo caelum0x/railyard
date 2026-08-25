@@ -1,0 +1,14 @@
+// Narrative + release metadata for Mosscloak.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "mosscloak",
+    display_name: "Mosscloak",
+    title: "",
+    faction: "Verdant",
+    archetype: "bruiser",
+    release_patch: "1.6.0",
+    resource: "None",
+    lore: "Mosscloak — a frontline TANK. Soaks damage, roots a single threat, and regrows his own bark. Built to hold a line, not to close a kill. Pure DSL data over the closed vocabulary.",
+    tags: ["bruiser", "verdant"],
+)

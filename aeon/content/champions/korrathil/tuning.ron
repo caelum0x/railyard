@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Korrathil.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/korrathil.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "korrathil",
+    display_name: "Korrathil",
+    abilities: [
+        AbilityTuning(
+            name: "Rift Charge",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 210, cost: Some(55), damage: Some(60), ad_ratio: Some(0.6), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 200, cost: Some(59), damage: Some(78), ad_ratio: Some(0.65), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 189, cost: Some(64), damage: Some(96), ad_ratio: Some(0.7), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 178, cost: Some(68), damage: Some(114), ad_ratio: Some(0.75), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 168, cost: Some(73), damage: Some(132), ad_ratio: Some(0.8), heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Devour",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 150, cost: Some(45), damage: Some(58), ad_ratio: Some(0.7), heal: None, cc: Some(("Slow", 60))),
+                Rank(rank: 2, cooldown: 142, cost: Some(49), damage: Some(75), ad_ratio: Some(0.75), heal: None, cc: Some(("Slow", 69))),
+                Rank(rank: 3, cooldown: 135, cost: Some(52), damage: Some(93), ad_ratio: Some(0.8), heal: None, cc: Some(("Slow", 78))),
+                Rank(rank: 4, cooldown: 128, cost: Some(56), damage: Some(110), ad_ratio: Some(0.85), heal: None, cc: Some(("Slow", 87))),
+                Rank(rank: 5, cooldown: 120, cost: Some(59), damage: Some(128), ad_ratio: Some(0.9), heal: None, cc: Some(("Slow", 96))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Gorge",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 260, cost: Some(50), damage: None, ad_ratio: None, heal: Some(90), cc: None),
+                Rank(rank: 2, cooldown: 247, cost: Some(54), damage: None, ad_ratio: None, heal: Some(112), cc: None),
+                Rank(rank: 3, cooldown: 234, cost: Some(58), damage: None, ad_ratio: None, heal: Some(135), cc: None),
+                Rank(rank: 4, cooldown: 221, cost: Some(62), damage: None, ad_ratio: None, heal: Some(158), cc: None),
+                Rank(rank: 5, cooldown: 208, cost: Some(66), damage: None, ad_ratio: None, heal: Some(180), cc: None),
+            ],
+        ),
+    ],
+)

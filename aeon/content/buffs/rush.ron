@@ -1,0 +1,10 @@
+// War Rush — Mobility buff. Maps to closed vocab.
+BuffSpec(
+    id: "rush",
+    name: "War Rush",
+    category: Mobility,
+    vocab_ref: Some("BuffMoveSpeed"),
+    fields: ["bonus_percent", "duration"],
+    stacking: Strongest,
+    description: "Large decaying move speed granted on entering combat.",
+)

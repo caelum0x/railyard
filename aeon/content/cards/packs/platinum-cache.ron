@@ -1,0 +1,20 @@
+// content/cards/packs/platinum-cache.ron
+// Premium gem pack for players chasing top-tier cards.
+CardPack(
+    id: "platinum-cache",
+    name: "Platinum Cache",
+    description: "A premium cache with a strong legendary chance.",
+    category: "premium",
+    card_count: 10,
+    cost: PackCost(currency: "gems", amount: 350),
+    one_time: false,
+    guaranteed_floor: Some("epic"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 340),
+        RarityOdd(rarity: "uncommon",  weight: 300),
+        RarityOdd(rarity: "rare",      weight: 230),
+        RarityOdd(rarity: "epic",      weight: 100),
+        RarityOdd(rarity: "legendary", weight: 27),
+        RarityOdd(rarity: "mythic",    weight: 3),
+    ],
+)

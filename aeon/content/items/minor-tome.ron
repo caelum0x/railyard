@@ -1,0 +1,12 @@
+// Minor Tome — BASIC AP.
+ItemSpec(
+    name: "Minor Tome",
+    cost: 435,
+    tier: Basic,
+    stats: Stats(
+        ap: 20,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "ap"],
+)

@@ -1,0 +1,27 @@
+// Bogwallow — a solo large monster camp (the "gromp"-style toad). High HP, big
+// single-target hits, and a passive poison retaliation that punishes low-sustain
+// clears. No buff, but strong xp. Camp in camp-bogwallow.ron.
+MonsterSpec(
+    id: "bogwallow",
+    display_name: "Bogwallow",
+    role: "CampLarge",
+    camp: "camp_bogwallow",
+
+    stats: NeutralStats(
+        hp: 1600,
+        armor: 14,
+        magic_resist: 14,
+        attack_damage: 85,
+        attack_speed: 0.5,
+        attack_range: 1.4,
+        move_speed: 0.0,
+    ),
+
+    // Retaliation: attackers take a small poison tick when they strike it.
+    thorns: (poison_per_hit: 6, poison_duration_seconds: 2),
+
+    scaling: "monster_scaling",
+
+    grants_buff: "none",
+    bounty: (gold_local: 80, gold_shared: 0, xp: 130),
+)

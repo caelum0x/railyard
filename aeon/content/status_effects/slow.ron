@@ -1,0 +1,11 @@
+// Slow — SoftCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "slow",
+    name: "Slow",
+    category: SoftCC,
+    vocab_ref: Some("DebuffSlow"),
+    fields: ["percent", "duration"],
+    cleansable: true,
+    stacking: Strongest,
+    description: "Reduces movement speed by a percentage for the duration.",
+)

@@ -1,0 +1,7 @@
+// Bone Plating — Resolve / Tier2.
+RuneSpec(
+    name: "Bone Plating",
+    tree: Resolve,
+    tier: Tier2,
+    effect: "After taking champion damage, the next several sources of damage are reduced.",
+)

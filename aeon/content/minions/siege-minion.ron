@@ -1,0 +1,37 @@
+// Riftling Batterer — the siege minion. A heavy, slow, long-ranged unit that
+// deals bonus damage to structures. Arrives every Nth wave (see wave-composition)
+// and again more frequently once an inhibitor falls. High HP and gold value make
+// it a key last-hit target. Base stats at 0:00; growth via minion-scaling.ron.
+MinionSpec(
+    id: "siege_minion",
+    display_name: "Riftling Batterer",
+    class: "Siege",
+    count_per_wave: 1,        // one per siege wave
+    collision_radius: 0.7,
+
+    base: MinionStats(
+        hp: 800,
+        ad: 40,
+        armor: 0,
+        magic_resist: 0,
+        attack_speed: 0.7,
+        move_speed: 11.5,
+        attack_range: 8.5,     // long range
+        attack_type: Physical,
+    ),
+
+    // Siege minions hit structures harder than they hit units.
+    structure_damage_multiplier: 2.0,
+
+    bounty: (gold_last_hit: 60, gold_shared: 0, xp: 92),
+
+    aggro_priority: [
+        "EnemyStructure",
+        "EnemyMinionAttackingAlly",
+        "NearestEnemyMinion",
+        "NearestEnemyChampion",
+    ],
+
+    ai: "minion_ai_behavior",
+    scaling: "minion_scaling",
+)

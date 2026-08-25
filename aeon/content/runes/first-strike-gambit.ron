@@ -1,0 +1,7 @@
+// First Strike Gambit — Precision / Keystone.
+RuneSpec(
+    name: "First Strike Gambit",
+    tree: Precision,
+    tier: Keystone,
+    effect: "Your first damage to a champion deals bonus true damage and grants gold; refreshes every few seconds out of combat.",
+)

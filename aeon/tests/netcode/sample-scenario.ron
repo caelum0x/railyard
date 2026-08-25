@@ -1,0 +1,31 @@
+// tests/netcode/sample-scenario.ron
+//
+// SAMPLE netcode scenario. Drives a server + predicting client through a lossy link and
+// asserts no desync after reconciliation.
+(
+    name: "lossy_link_no_desync",
+    seed: 1337,
+    ticks: 600,                     // 20s at 30 tick/s
+    // Network profile applied to client<->server packets.
+    link: (
+        latency_ms:      80,
+        jitter_ms:       25,
+        loss_pct:        5.0,
+        reorder_pct:     2.0,
+        rollback_window: 8,         // max ticks the client may re-simulate
+    ),
+    roster: [
+        (slot: 0, champion: "achilles", team: 0, controller: Client),
+        (slot: 1, champion: "artemis",  team: 1, controller: Bot),
+    ],
+    inputs: [
+        (tick: 15,  slot: 0, action: MoveTo(x: 3.0, y: 1.0)),
+        (tick: 60,  slot: 0, action: CastAbility(slot: "Q", target_slot: 1)),
+        (tick: 130, slot: 0, action: CastAbility(slot: "W")),
+    ],
+    assert: (
+        no_desync:            true,   // client hash == server hash every reconciled tick
+        max_rollback_ticks:   8,      // never exceed the window
+        inputs_applied_once:  true,
+    ),
+)

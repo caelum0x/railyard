@@ -1,0 +1,2 @@
+// Preset deck 07 — Verdant Grove.
+DeckDef(name: "Verdant Grove", cards: ["mosscloak","gorehoof","sporeveil","thornquill","petalsong","freyja","athena","artemis"])

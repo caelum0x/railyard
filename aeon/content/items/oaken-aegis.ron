@@ -1,0 +1,12 @@
+// Oaken Aegis — STARTER tank. Bark that remembers every storm.
+ItemSpec(
+    name: "Oaken Aegis",
+    cost: 450,
+    tier: Starter,
+    stats: Stats(
+        hp: 110,
+    ),
+    passive: Some("Regenerate 5 health per second while out of combat."),
+    build_from: [],
+    tags: ["starter", "tank", "sustain"],
+)

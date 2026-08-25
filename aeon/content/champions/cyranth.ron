@@ -1,0 +1,35 @@
+// Cyranth — a MARKSMAN.
+//
+// High sustained auto DPS, a hard-hitting skillshot, and a single-target slow
+// to kite. Authored purely as DATA against the closed DSL.
+ChampionSpec(
+    name: "Cyranth",
+    base: BaseStats(
+        hp: 585,
+        ad: 63,
+        armor: 24,
+        attack_speed: 1.15,   // fast auto-attacker
+        move_speed: 11.5,
+        range: 20.0,
+    ),
+    abilities: [
+        // Empowered line shot, scales hard with AD.
+        AbilitySpec(
+            name: "Squall Volley",
+            cooldown: 90,
+            cost: Some(45),
+            targeting: Skillshot,
+            range: 22.0,
+            effects: [ Damage(amount: 90, scaling: Some(AttackDamage(ratio: 1.1))) ],
+        ),
+        // Self-peel: point-and-click slow with light damage.
+        AbilitySpec(
+            name: "Sleetbind Shot",
+            cooldown: 150,
+            cost: Some(50),
+            targeting: Target,
+            range: 20.0,
+            effects: [ Damage(amount: 50, scaling: Some(AttackDamage(ratio: 0.5))), Slow(duration: 75) ],
+        ),
+    ],
+)

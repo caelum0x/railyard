@@ -1,0 +1,2 @@
+// Preset deck 09 — Mythic All-Stars.
+DeckDef(name: "Mythic All-Stars", cards: ["zeus","thor","ra-radiant-dawn","odin","achilles","tyr","medusa","hades"])

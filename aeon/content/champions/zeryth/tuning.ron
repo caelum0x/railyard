@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Zeryth.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/zeryth.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "zeryth",
+    display_name: "Zeryth",
+    abilities: [
+        AbilityTuning(
+            name: "Shadowlunge",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 170, cost: Some(50), damage: Some(92), ad_ratio: Some(0.95), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 162, cost: Some(54), damage: Some(120), ad_ratio: Some(1.0), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 153, cost: Some(58), damage: Some(147), ad_ratio: Some(1.05), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 144, cost: Some(62), damage: Some(175), ad_ratio: Some(1.1), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 136, cost: Some(66), damage: Some(202), ad_ratio: Some(1.15), heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Fangstrike",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 150, cost: Some(55), damage: Some(82), ad_ratio: Some(0.85), heal: None, cc: Some(("Stun", 28))),
+                Rank(rank: 2, cooldown: 142, cost: Some(59), damage: Some(107), ad_ratio: Some(0.9), heal: None, cc: Some(("Stun", 32))),
+                Rank(rank: 3, cooldown: 135, cost: Some(64), damage: Some(131), ad_ratio: Some(0.95), heal: None, cc: Some(("Stun", 36))),
+                Rank(rank: 4, cooldown: 128, cost: Some(68), damage: Some(156), ad_ratio: Some(1.0), heal: None, cc: Some(("Stun", 41))),
+                Rank(rank: 5, cooldown: 120, cost: Some(73), damage: Some(180), ad_ratio: Some(1.05), heal: None, cc: Some(("Stun", 45))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Umbral Collapse",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 330, cost: Some(90), damage: Some(130), ad_ratio: Some(1.05), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 314, cost: Some(97), damage: Some(169), ad_ratio: Some(1.1), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 297, cost: Some(104), damage: Some(208), ad_ratio: Some(1.15), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 280, cost: Some(112), damage: Some(247), ad_ratio: Some(1.2), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 264, cost: Some(119), damage: Some(286), ad_ratio: Some(1.25), heal: None, cc: None),
+            ],
+        ),
+    ],
+)

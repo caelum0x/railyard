@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Nyxralla.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "nyxralla",
+    display_name: "Nyxralla",
+    rarity: "Legendary",
+    elixir_cost: 7,
+    archetype: "mage",
+    faction: "Tide",
+    card_stats: CardStats(
+        hitpoints: 585,
+        attack_damage: 47,
+        attack_speed: 0.9,
+        armor: 21,
+        range: 22.0,
+        approx_dps: 42.3,
+    ),
+    deploy_power: 458,
+    collectible: true,
+)

@@ -1,0 +1,13 @@
+// Quicksilver Treads — EPIC boots.
+ItemSpec(
+    name: "Quicksilver Treads",
+    cost: 1250,
+    tier: Epic,
+    stats: Stats(
+        mr: 25,
+        move_speed: 45.0,
+    ),
+    passive: Some("+30% tenacity and slow resistance."),
+    build_from: ["wayfarer-boots", "null-mantle"],
+    tags: ["boots", "mr", "tenacity"],
+)

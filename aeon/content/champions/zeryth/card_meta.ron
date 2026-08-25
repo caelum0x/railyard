@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Zeryth.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "zeryth",
+    display_name: "Zeryth",
+    rarity: "Legendary",
+    elixir_cost: 7,
+    archetype: "assassin",
+    faction: "Umbral",
+    card_stats: CardStats(
+        hitpoints: 570,
+        attack_damage: 62,
+        attack_speed: 1.0,
+        armor: 25,
+        range: 6.0,
+        approx_dps: 62.0,
+    ),
+    deploy_power: 374,
+    collectible: true,
+)

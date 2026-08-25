@@ -1,0 +1,62 @@
+[package]
+name = "aeonrift-ascendancy"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96.1"
+publish = false
+description = "Aeonrift: Ascendancy — a deterministic, headless lane card-battler reusing the shared AEONRIFT champion roster on top of the sim combat core (migrated from moba/cards + moba/cards-client)."
+
+[lib]
+# Package is branded `aeonrift-ascendancy`; the library is imported as `cards` so
+# the migrated rules + client call-sites (`use cards::...`) stay unchanged.
+name = "cards"
+crate-type = ["lib", "cdylib"]
+path = "src/lib.rs"
+
+# Scripted bot-vs-bot match runner: the deterministic green/red gate for the battler.
+# `cargo run -p aeonrift-ascendancy --bin cardmatch -- --seed 42`
+[[bin]]
+name = "cardmatch"
+path = "src/bin/cardmatch.rs"
+
+# The Bevy touch client (migrated from moba/cards-client). Gated behind the `client`
+# feature so the default workspace build stays fast + green; the client pulls Bevy,
+# which compiles slowly. Build it with:
+#   cargo run -p aeonrift-ascendancy --features client --bin cards-client
+[[bin]]
+name = "cards-client"
+path = "src/bin/cards-client.rs"
+required-features = ["client"]
+
+[features]
+default = []
+# Enables the Bevy view over the deterministic rules core.
+client = ["dep:bevy"]
+
+[dependencies]
+# Reuse, do not reinvent: the deterministic combat core and the champion DSL/roster.
+aeonrift-sim-core = { path = "../../engine/sim-core" }
+aeonrift-ability-dsl = { path = "../../engine/ability-dsl" }
+
+# RON is the franchise content format (rarities, packs, preset decks under
+# content/cards). Same crates the champion DSL uses, so no new format is introduced.
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
+
+# Bevy for the cross-platform 2D touch client (optional — see the `client` feature).
+bevy = { version = "0.19", default-features = true, optional = true }
+
+# ---------------------------------------------------------------------------
+# Android packaging metadata, read by `cargo-apk` / `cargo ndk` (see README).
+# ---------------------------------------------------------------------------
+[package.metadata.android]
+package = "com.aeonrift.ascendancy"
+apk_name = "AeonriftAscendancy"
+build_targets = ["aarch64-linux-android", "armv7-linux-androideabi"]
+
+[package.metadata.android.sdk]
+min_sdk_version = 23
+target_sdk_version = 34
+
+[package.metadata.android.application]
+label = "Aeonrift: Ascendancy"

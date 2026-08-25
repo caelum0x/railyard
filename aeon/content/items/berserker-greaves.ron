@@ -1,0 +1,13 @@
+// Berserker Greaves — EPIC boots. For those who close the distance fast.
+ItemSpec(
+    name: "Berserker Greaves",
+    cost: 1100,
+    tier: Epic,
+    stats: Stats(
+        attack_speed: 0.35,
+        move_speed: 45.0,
+    ),
+    passive: None,
+    build_from: ["wayfarer-boots", "swift-dagger"],
+    tags: ["boots", "attack-speed"],
+)

@@ -1,0 +1,81 @@
+// Voice-line manifest for Xelphine: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "xelphine",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.xelphine.select",
+            kind: "Selected",
+            audio: "audio/vo/xelphine/select.ogg",
+            text: "Xelphine answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.xelphine.move_a",
+            kind: "Move",
+            audio: "audio/vo/xelphine/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.xelphine.move_b",
+            kind: "Move",
+            audio: "audio/vo/xelphine/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.xelphine.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/xelphine/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.xelphine.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/xelphine/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.xelphine.ability_q",
+            kind: "Ability: Eclipse Bloom",
+            audio: "audio/vo/xelphine/ability_q.ogg",
+            text: "Eclipse Bloom!",
+        ),
+        VoiceLine(
+            id: "vo.xelphine.ability_w",
+            kind: "Ability: Umbral Lance",
+            audio: "audio/vo/xelphine/ability_w.ogg",
+            text: "Umbral Lance!",
+        ),
+        VoiceLine(
+            id: "vo.xelphine.ability_r",
+            kind: "Ability: Nightfall",
+            audio: "audio/vo/xelphine/ability_r.ogg",
+            text: "Nightfall!",
+        ),
+        VoiceLine(
+            id: "vo.xelphine.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/xelphine/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.xelphine.joke",
+            kind: "Joke",
+            audio: "audio/vo/xelphine/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.xelphine.low_health",
+            kind: "Low health",
+            audio: "audio/vo/xelphine/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.xelphine.victory",
+            kind: "Victory",
+            audio: "audio/vo/xelphine/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

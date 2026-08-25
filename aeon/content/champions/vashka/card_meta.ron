@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Vashka.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "vashka",
+    display_name: "Vashka",
+    rarity: "Epic",
+    elixir_cost: 6,
+    archetype: "bruiser",
+    faction: "Ember",
+    card_stats: CardStats(
+        hitpoints: 690,
+        attack_damage: 62,
+        attack_speed: 0.95,
+        armor: 34,
+        range: 8.0,
+        approx_dps: 58.9,
+    ),
+    deploy_power: 302,
+    collectible: true,
+)

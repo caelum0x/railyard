@@ -1,0 +1,35 @@
+// content/minions/wave.ron
+//
+// The minion wave profile: cadence + the composition of one wave per lane, per
+// team. The rules layer (src/rules/waves.rs) reads this and spawns the listed
+// minions on both teams every `interval` ticks starting at `first_spawn`.
+//
+// Stats are in sim units (30 Hz tick). attack_speed is attacks/second, compiled
+// to an integer tick period; move_speed/range are world units.
+WaveProfile(
+    first_spawn: 30,
+    interval: 300,
+    minions: [
+        MinionDef(
+            kind: "melee",
+            stats: UnitStats(hp: 180, ad: 12, armor: 10, range: 2.5, attack_speed: 1.0),
+            move_speed: 8.0,
+            bounty: 20,
+            count: 3,
+        ),
+        MinionDef(
+            kind: "caster",
+            stats: UnitStats(hp: 100, ad: 22, armor: 0, range: 9.0, attack_speed: 1.0),
+            move_speed: 8.0,
+            bounty: 16,
+            count: 3,
+        ),
+        MinionDef(
+            kind: "siege",
+            stats: UnitStats(hp: 320, ad: 40, armor: 15, range: 11.0, attack_speed: 0.7),
+            move_speed: 7.0,
+            bounty: 40,
+            count: 1,
+        ),
+    ],
+)

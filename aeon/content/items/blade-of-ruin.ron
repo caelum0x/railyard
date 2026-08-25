@@ -1,0 +1,12 @@
+// Blade of Ruin — LEGENDARY AD. A relic forged for endless war.
+ItemSpec(
+    name: "Blade of Ruin",
+    cost: 3400,
+    tier: Legendary,
+    stats: Stats(
+        ad: 60,
+    ),
+    passive: Some("On-hit deals bonus magic damage and heals; grants stacking attack range."),
+    build_from: ["vampiric-scepter", "kindled-blade", "brute-pick"],
+    tags: ["legendary", "ad", "onhit", "lifesteal"],
+)

@@ -1,0 +1,24 @@
+// Skyfin Raptor — a small monster of the Skyfin Raptors camp. A flock of them
+// circles the Matriarch. Very low HP, fast attacks, tiny individual reward but many
+// in the camp. No buff. Camp in camp-skyfin-raptors.ron.
+MonsterSpec(
+    id: "skyfin_raptor",
+    display_name: "Skyfin Raptor",
+    role: "CampSmall",
+    camp: "camp_skyfin_raptors",
+
+    stats: NeutralStats(
+        hp: 180,
+        armor: 6,
+        magic_resist: 6,
+        attack_damage: 18,
+        attack_speed: 0.9,
+        attack_range: 3.5,      // small ranged peck
+        move_speed: 0.0,
+    ),
+
+    scaling: "monster_scaling",
+
+    grants_buff: "none",
+    bounty: (gold_local: 6, gold_shared: 0, xp: 12),
+)

@@ -1,0 +1,14 @@
+// Narrative + release metadata for Mars.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "mars",
+    display_name: "Mars",
+    title: "",
+    faction: "Roman",
+    archetype: "bruiser",
+    release_patch: "1.2.0",
+    resource: "Mana",
+    lore: "Mars — the war BRUISER. Distinct from Ares: disciplined Roman general, not raw fury.",
+    tags: ["bruiser", "roman"],
+)

@@ -1,0 +1,12 @@
+// Oblivion Orb — EPIC AP.
+ItemSpec(
+    name: "Oblivion Orb",
+    cost: 900,
+    tier: Epic,
+    stats: Stats(
+        ap: 30,
+    ),
+    passive: Some("+10 magic penetration; reduces enemy healing by 40%."),
+    build_from: ["blasting-rod"],
+    tags: ["epic", "penetration"],
+)

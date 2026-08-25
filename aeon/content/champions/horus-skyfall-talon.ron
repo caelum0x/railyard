@@ -1,0 +1,51 @@
+// Horus — a BRUISER with a diving DASH engage and sustained melee pressure.
+//
+// Durable but hits harder than a pure tank. Falcon Dive closes and stuns; Talon
+// Rend is a heavy, slowing melee strike; the War Cry sustains him in a brawl.
+ChampionSpec(
+    name: "Horus",
+    base: BaseStats(
+        hp: 720,
+        ad: 31,
+        armor: 32,
+        attack_speed: 0.9,
+        move_speed: 11.0,
+        range: 5.0,
+    ),
+    abilities: [
+        // Engage: dive from the sky onto a target, strike, and stun.
+        // Order matters: close the gap first, then land the blow.
+        AbilitySpec(
+            name: "Falcon Dive",
+            cooldown: 85,
+            cost: Some(40),
+            targeting: Target,
+            range: 16.0,
+            effects: [
+                Dash(distance: 16.0),
+                Damage(amount: 56, scaling: Some(AttackDamage(ratio: 0.45))),
+                Stun(duration: 8),
+            ],
+        ),
+        // Bread-and-butter melee: rake with talons for heavy damage and a slow.
+        AbilitySpec(
+            name: "Talon Rend",
+            cooldown: 40,
+            cost: Some(30),
+            targeting: Target,
+            range: 6.0,
+            effects: [
+                Damage(amount: 44, scaling: Some(AttackDamage(ratio: 0.4))),
+                Slow(duration: 10),
+            ],
+        ),
+        // Sustain when the fight drags on.
+        AbilitySpec(
+            name: "War Cry",
+            cooldown: 160,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 110) ],
+        ),
+    ],
+)

@@ -1,0 +1,14 @@
+// Narrative + release metadata for Isis.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "isis-mother-of-magic",
+    display_name: "Isis",
+    title: "Mother Of Magic",
+    faction: "Egyptian",
+    archetype: "mage",
+    release_patch: "1.3.0",
+    resource: "Mana",
+    lore: "Isis — a SUPPORT built on a huge self-heal and enemy lockdown. Modest damage; her value is the Healing Ankh's large restore, a Binding Spell that stuns, and Sorrow's Veil that blankets an area in a long slow. Peel and sustain, expressed purely as Heal / Stun / Slow.",
+    tags: ["mage", "egyptian"],
+)

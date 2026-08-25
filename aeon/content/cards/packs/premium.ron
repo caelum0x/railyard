@@ -1,0 +1,6 @@
+// The Premium Pack: 8 cards, at least one Epic-or-better guaranteed.
+PackDef(
+    name: "Premium Pack",
+    cards: 8,
+    guaranteed_tier: Some("Epic"),
+)

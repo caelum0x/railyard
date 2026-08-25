@@ -1,0 +1,30 @@
+// Per-level stat growth for Set (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "set-lord-of-chaos",
+    archetype: "assassin",
+    base: LevelStats(hp: 560, ad: 43, armor: 22, attack_speed: 0.95),
+    per_level: StatGrowth(hp: 78, ad: 4.0, armor: 2.4, attack_speed: 0.03),
+    levels: [
+        LevelRow(level: 1, hp: 560, ad: 43, armor: 22, attack_speed: 0.95),
+        LevelRow(level: 2, hp: 638, ad: 47, armor: 24, attack_speed: 0.98),
+        LevelRow(level: 3, hp: 716, ad: 51, armor: 27, attack_speed: 1.01),
+        LevelRow(level: 4, hp: 794, ad: 55, armor: 29, attack_speed: 1.04),
+        LevelRow(level: 5, hp: 872, ad: 59, armor: 32, attack_speed: 1.07),
+        LevelRow(level: 6, hp: 950, ad: 63, armor: 34, attack_speed: 1.1),
+        LevelRow(level: 7, hp: 1028, ad: 67, armor: 36, attack_speed: 1.13),
+        LevelRow(level: 8, hp: 1106, ad: 71, armor: 39, attack_speed: 1.16),
+        LevelRow(level: 9, hp: 1184, ad: 75, armor: 41, attack_speed: 1.19),
+        LevelRow(level: 10, hp: 1262, ad: 79, armor: 44, attack_speed: 1.22),
+        LevelRow(level: 11, hp: 1340, ad: 83, armor: 46, attack_speed: 1.25),
+        LevelRow(level: 12, hp: 1418, ad: 87, armor: 48, attack_speed: 1.28),
+        LevelRow(level: 13, hp: 1496, ad: 91, armor: 51, attack_speed: 1.31),
+        LevelRow(level: 14, hp: 1574, ad: 95, armor: 53, attack_speed: 1.34),
+        LevelRow(level: 15, hp: 1652, ad: 99, armor: 56, attack_speed: 1.37),
+        LevelRow(level: 16, hp: 1730, ad: 103, armor: 58, attack_speed: 1.4),
+        LevelRow(level: 17, hp: 1808, ad: 107, armor: 60, attack_speed: 1.43),
+        LevelRow(level: 18, hp: 1886, ad: 111, armor: 63, attack_speed: 1.46),
+    ],
+)

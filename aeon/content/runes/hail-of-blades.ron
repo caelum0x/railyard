@@ -1,0 +1,7 @@
+// Hail of Blades — Domination / Keystone.
+RuneSpec(
+    name: "Hail of Blades",
+    tree: Domination,
+    tier: Keystone,
+    effect: "Gain a burst of attack speed for your first three attacks upon entering combat with a champion.",
+)

@@ -1,0 +1,81 @@
+// Voice-line manifest for Ra: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "ra-radiant-dawn",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.ra_radiant_dawn.select",
+            kind: "Selected",
+            audio: "audio/vo/ra-radiant-dawn/select.ogg",
+            text: "Ra answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.ra_radiant_dawn.move_a",
+            kind: "Move",
+            audio: "audio/vo/ra-radiant-dawn/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.ra_radiant_dawn.move_b",
+            kind: "Move",
+            audio: "audio/vo/ra-radiant-dawn/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.ra_radiant_dawn.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/ra-radiant-dawn/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.ra_radiant_dawn.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/ra-radiant-dawn/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.ra_radiant_dawn.ability_q",
+            kind: "Ability: Sunfire Nova",
+            audio: "audio/vo/ra-radiant-dawn/ability_q.ogg",
+            text: "Sunfire Nova!",
+        ),
+        VoiceLine(
+            id: "vo.ra_radiant_dawn.ability_w",
+            kind: "Ability: Solar Lance",
+            audio: "audio/vo/ra-radiant-dawn/ability_w.ogg",
+            text: "Solar Lance!",
+        ),
+        VoiceLine(
+            id: "vo.ra_radiant_dawn.ability_r",
+            kind: "Ability: Reborn at Dawn",
+            audio: "audio/vo/ra-radiant-dawn/ability_r.ogg",
+            text: "Reborn at Dawn!",
+        ),
+        VoiceLine(
+            id: "vo.ra_radiant_dawn.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/ra-radiant-dawn/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.ra_radiant_dawn.joke",
+            kind: "Joke",
+            audio: "audio/vo/ra-radiant-dawn/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.ra_radiant_dawn.low_health",
+            kind: "Low health",
+            audio: "audio/vo/ra-radiant-dawn/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.ra_radiant_dawn.victory",
+            kind: "Victory",
+            audio: "audio/vo/ra-radiant-dawn/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

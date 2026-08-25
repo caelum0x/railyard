@@ -1,0 +1,7 @@
+// Prototype Omnistone — Inspiration / Keystone.
+RuneSpec(
+    name: "Prototype Omnistone",
+    tree: Inspiration,
+    tier: Keystone,
+    effect: "Periodically grants a random keystone effect for your next combat action.",
+)

@@ -1,0 +1,9 @@
+[package]
+name = "aeonrift-champion-gen"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96.1"
+publish = false
+
+[dependencies]
+aeonrift-ability-dsl = { path = "../../engine/ability-dsl" }

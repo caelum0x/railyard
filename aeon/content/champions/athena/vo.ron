@@ -1,0 +1,81 @@
+// Voice-line manifest for Athena: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "athena",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.athena.select",
+            kind: "Selected",
+            audio: "audio/vo/athena/select.ogg",
+            text: "Athena answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.athena.move_a",
+            kind: "Move",
+            audio: "audio/vo/athena/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.athena.move_b",
+            kind: "Move",
+            audio: "audio/vo/athena/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.athena.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/athena/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.athena.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/athena/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.athena.ability_q",
+            kind: "Ability: Aegis of Wisdom",
+            audio: "audio/vo/athena/ability_q.ogg",
+            text: "Aegis of Wisdom!",
+        ),
+        VoiceLine(
+            id: "vo.athena.ability_w",
+            kind: "Ability: Owl's Snare",
+            audio: "audio/vo/athena/ability_w.ogg",
+            text: "Owl's Snare!",
+        ),
+        VoiceLine(
+            id: "vo.athena.ability_r",
+            kind: "Ability: Phalanx Command",
+            audio: "audio/vo/athena/ability_r.ogg",
+            text: "Phalanx Command!",
+        ),
+        VoiceLine(
+            id: "vo.athena.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/athena/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.athena.joke",
+            kind: "Joke",
+            audio: "audio/vo/athena/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.athena.low_health",
+            kind: "Low health",
+            audio: "audio/vo/athena/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.athena.victory",
+            kind: "Victory",
+            audio: "audio/vo/athena/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

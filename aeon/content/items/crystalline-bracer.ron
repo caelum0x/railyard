@@ -1,0 +1,12 @@
+// Crystalline Bracer — BASIC tank.
+ItemSpec(
+    name: "Crystalline Bracer",
+    cost: 800,
+    tier: Basic,
+    stats: Stats(
+        hp: 250,
+    ),
+    passive: Some("+100% base health regeneration."),
+    build_from: ["ruby-shard", "regrowth-charm"],
+    tags: ["basic", "hp", "sustain"],
+)

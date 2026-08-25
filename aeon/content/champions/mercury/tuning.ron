@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Mercury.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/mercury.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "mercury",
+    display_name: "Mercury",
+    abilities: [
+        AbilityTuning(
+            name: "Winged Strike",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 50, cost: Some(40), damage: Some(95), ad_ratio: Some(0.7), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 48, cost: Some(43), damage: Some(124), ad_ratio: Some(0.75), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 45, cost: Some(46), damage: Some(152), ad_ratio: Some(0.8), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 42, cost: Some(50), damage: Some(180), ad_ratio: Some(0.85), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 40, cost: Some(53), damage: Some(209), ad_ratio: Some(0.9), heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Caduceus Flurry",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 60, cost: Some(45), damage: Some(60), ad_ratio: Some(0.5), heal: None, cc: Some(("Slow", 30))),
+                Rank(rank: 2, cooldown: 57, cost: Some(49), damage: Some(78), ad_ratio: Some(0.55), heal: None, cc: Some(("Slow", 34))),
+                Rank(rank: 3, cooldown: 54, cost: Some(52), damage: Some(96), ad_ratio: Some(0.6), heal: None, cc: Some(("Slow", 39))),
+                Rank(rank: 4, cooldown: 51, cost: Some(56), damage: Some(114), ad_ratio: Some(0.65), heal: None, cc: Some(("Slow", 44))),
+                Rank(rank: 5, cooldown: 48, cost: Some(59), damage: Some(132), ad_ratio: Some(0.7), heal: None, cc: Some(("Slow", 48))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Fleet Escape",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 40, cost: Some(25), damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 2, cooldown: 38, cost: Some(27), damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 3, cooldown: 36, cost: Some(29), damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 4, cooldown: 34, cost: Some(31), damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 5, cooldown: 32, cost: Some(33), damage: None, ad_ratio: None, heal: None, cc: None),
+            ],
+        ),
+    ],
+)

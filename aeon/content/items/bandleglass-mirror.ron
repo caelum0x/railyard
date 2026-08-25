@@ -1,0 +1,12 @@
+// Bandleglass Mirror — EPIC support.
+ItemSpec(
+    name: "Bandleglass Mirror",
+    cost: 950,
+    tier: Epic,
+    stats: Stats(
+        ap: 20,
+    ),
+    passive: Some("+10 ability haste; +50% base mana regen."),
+    build_from: ["faerie-charm", "minor-tome"],
+    tags: ["epic", "haste", "ap"],
+)

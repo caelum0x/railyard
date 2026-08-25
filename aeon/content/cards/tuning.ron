@@ -1,0 +1,15 @@
+// Card-only economy tuning for Aeonrift: Ascendancy.
+//
+// The champion roster (content/champions) carries ONLY combat data; everything that
+// turns a champion into a *card* (its elixir cost band) is tuned here. `power_divisor`
+// converts a champion's raw power score into an elixir cost; `min_cost`/`max_cost`
+// clamp it to the Clash-style 1..=10 band.
+//
+// NOTE: these mirror the compiled-in defaults in src/cards/card.rs so the default
+// build needs no file IO to price a card; `load_card_tuning` lets tools/tests read
+// the same numbers from data.
+CardTuning(
+    power_divisor: 300,
+    min_cost: 1,
+    max_cost: 10,
+)

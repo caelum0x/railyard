@@ -1,0 +1,12 @@
+// Harrowing Crescent — EPIC support.
+ItemSpec(
+    name: "Harrowing Crescent",
+    cost: 1050,
+    tier: Epic,
+    stats: Stats(
+        ap: 25,
+    ),
+    passive: Some("Grants gold-per-second and periodic burst damage on attacks."),
+    build_from: ["minor-tome", "almsgivers-coin"],
+    tags: ["epic", "ap", "gold"],
+)

@@ -1,0 +1,14 @@
+// Narrative + release metadata for Gorehoof.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "gorehoof",
+    display_name: "Gorehoof",
+    title: "",
+    faction: "Verdant",
+    archetype: "bruiser",
+    release_patch: "1.6.0",
+    resource: "None",
+    lore: "Gorehoof — a diving BRUISER. Charges in, staggers the target on impact, trades blows, and drinks from bloodroot to stay in the brawl. Authored entirely as DSL data.",
+    tags: ["bruiser", "verdant"],
+)

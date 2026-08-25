@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Sentinel.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "sentinel",
+    display_name: "Sentinel",
+    rarity: "Common",
+    elixir_cost: 3,
+    archetype: "marksman",
+    faction: "Umbral",
+    card_stats: CardStats(
+        hitpoints: 620,
+        attack_damage: 55,
+        attack_speed: 1.0,
+        armor: 30,
+        range: 8.0,
+        approx_dps: 55.0,
+    ),
+    deploy_power: 184,
+    collectible: true,
+)

@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "mercury",
+    champion: "Mercury",
+    archetype: "assassin",
+    faction: "Roman",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 16016,
+            blake3: "cbb45509f9be882046a9dec58bc68d3111a20fcbc31365808375ea546f7c090a",
+        ),
+    },
+)

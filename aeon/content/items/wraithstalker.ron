@@ -1,0 +1,12 @@
+// Wraithstalker — LEGENDARY AD. Death that never rests.
+ItemSpec(
+    name: "Wraithstalker",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        ad: 55,
+    ),
+    passive: Some("+25 ability haste; +12 lethality; refunds cooldown on takedown."),
+    build_from: ["caulfields-warhammer", "serrated-dirk"],
+    tags: ["legendary", "ad", "haste", "lethality"],
+)

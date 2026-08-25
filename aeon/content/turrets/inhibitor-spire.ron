@@ -1,0 +1,26 @@
+// Inhibitor Warding Spire — the third turret tier, guarding the Rift Conduit.
+// Highest lane-turret HP and damage; gated behind the Inner Spire. Falling here
+// exposes the inhibitor. Placements in riftline-crucible.ron.
+TurretSpec(
+    id: "inhibitor_spire",
+    display_name: "Inhibitor Warding Spire",
+    tier: "Inhibitor",
+
+    stats: TurretStats(
+        hp: 5800,
+        armor: 65,
+        magic_resist: 65,
+        attack_damage: 185,
+        attack_speed: 0.83,
+        attack_range: 15.0,
+    ),
+
+    unlock: (requires_destroyed: "inner_spire", scope: "SameLane"),
+
+    heat_ramp: (max_stacks: 3, bonus_per_stack_percent: 40, decay_seconds: 4),
+
+    bounty: (gold_local: 250, gold_global: 150),
+
+    targeting:  "spire_targeting",
+    projectile: "spire_projectile",
+)

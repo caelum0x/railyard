@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Vulcan.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "vulcan",
+    display_name: "Vulcan",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "tank",
+    faction: "Roman",
+    card_stats: CardStats(
+        hitpoints: 860,
+        attack_damage: 42,
+        attack_speed: 0.8,
+        armor: 40,
+        range: 5.0,
+        approx_dps: 33.6,
+    ),
+    deploy_power: 264,
+    collectible: true,
+)

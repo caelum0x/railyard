@@ -1,0 +1,13 @@
+// Noonquiver — EPIC AD.
+ItemSpec(
+    name: "Noonquiver",
+    cost: 1450,
+    tier: Epic,
+    stats: Stats(
+        ad: 15,
+        attack_speed: 0.15,
+    ),
+    passive: Some("+20% critical strike chance."),
+    build_from: ["long-blade", "razor-fan"],
+    tags: ["epic", "attack-speed", "crit"],
+)

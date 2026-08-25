@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Bastet.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/bastet-claws-of-the-hunt.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "bastet-claws-of-the-hunt",
+    display_name: "Bastet",
+    abilities: [
+        AbilityTuning(
+            name: "Pounce",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 60, cost: Some(30), damage: Some(60), ad_ratio: Some(0.5), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 57, cost: Some(32), damage: Some(78), ad_ratio: Some(0.55), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 54, cost: Some(35), damage: Some(96), ad_ratio: Some(0.6), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 51, cost: Some(37), damage: Some(114), ad_ratio: Some(0.65), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 48, cost: Some(40), damage: Some(132), ad_ratio: Some(0.7), heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Rending Claws",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 30, cost: Some(25), damage: Some(56), ad_ratio: Some(0.55), heal: None, cc: Some(("Slow", 8))),
+                Rank(rank: 2, cooldown: 28, cost: Some(27), damage: Some(73), ad_ratio: Some(0.6), heal: None, cc: Some(("Slow", 9))),
+                Rank(rank: 3, cooldown: 27, cost: Some(29), damage: Some(90), ad_ratio: Some(0.65), heal: None, cc: Some(("Slow", 10))),
+                Rank(rank: 4, cooldown: 26, cost: Some(31), damage: Some(106), ad_ratio: Some(0.7), heal: None, cc: Some(("Slow", 12))),
+                Rank(rank: 5, cooldown: 24, cost: Some(33), damage: Some(123), ad_ratio: Some(0.75), heal: None, cc: Some(("Slow", 13))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Feral Frenzy",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 150, cost: None, damage: None, ad_ratio: None, heal: Some(90), cc: None),
+                Rank(rank: 2, cooldown: 142, cost: None, damage: None, ad_ratio: None, heal: Some(112), cc: None),
+                Rank(rank: 3, cooldown: 135, cost: None, damage: None, ad_ratio: None, heal: Some(135), cc: None),
+                Rank(rank: 4, cooldown: 128, cost: None, damage: None, ad_ratio: None, heal: Some(158), cc: None),
+                Rank(rank: 5, cooldown: 120, cost: None, damage: None, ad_ratio: None, heal: Some(180), cc: None),
+            ],
+        ),
+    ],
+)

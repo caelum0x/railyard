@@ -1,0 +1,13 @@
+// Black Cleaver Relic — LEGENDARY AD. It splits plate like kindling.
+ItemSpec(
+    name: "Black Cleaver Relic",
+    cost: 3100,
+    tier: Legendary,
+    stats: Stats(
+        ad: 40,
+        hp: 300,
+    ),
+    passive: Some("Damaging a champion shreds their armor by up to 30%."),
+    build_from: ["phage-heart", "caulfields-warhammer", "long-blade"],
+    tags: ["legendary", "ad", "hp", "haste", "penetration"],
+)

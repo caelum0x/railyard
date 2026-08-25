@@ -1,0 +1,11 @@
+// Poison — Damage status effect. Maps to closed vocab.
+StatusEffect(
+    id: "poison",
+    name: "Poison",
+    category: Damage,
+    vocab_ref: Some("Damage"),
+    fields: ["amount", "damage_type", "tag"],
+    cleansable: false,
+    stacking: Stronger,
+    description: "Stacking damage over time that intensifies with each application.",
+)

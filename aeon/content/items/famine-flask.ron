@@ -1,0 +1,13 @@
+// Famine Flask — STARTER AP. Hunger given a vessel.
+ItemSpec(
+    name: "Famine Flask",
+    cost: 500,
+    tier: Starter,
+    stats: Stats(
+        ap: 12,
+        hp: 90,
+    ),
+    passive: Some("Attacks and abilities siphon 10 health from enemy champions over 3s."),
+    build_from: [],
+    tags: ["starter", "ap", "sustain"],
+)

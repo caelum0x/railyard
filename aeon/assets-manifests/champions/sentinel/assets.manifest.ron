@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "sentinel",
+    champion: "Sentinel",
+    archetype: "marksman",
+    faction: "Umbral",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 17820,
+            blake3: "8408b4d2a6bdbaf452f5b3e4d4bc25228742c1ccf82f0d57d4a421f7fe8faadc",
+        ),
+    },
+)

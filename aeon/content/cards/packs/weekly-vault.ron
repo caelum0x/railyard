@@ -1,0 +1,21 @@
+// content/cards/packs/weekly-vault.ron
+// Free weekly pack; larger and richer than the daily drop, with an epic floor.
+CardPack(
+    id: "weekly-vault",
+    name: "Weekly Vault",
+    description: "A generous free pack unlocked once per week.",
+    category: "recurring",
+    card_count: 8,
+    cost: PackCost(currency: "gold", amount: 0),
+    one_time: false,
+    cadence: Some("weekly"),
+    guaranteed_floor: Some("epic"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 470),
+        RarityOdd(rarity: "uncommon",  weight: 300),
+        RarityOdd(rarity: "rare",      weight: 170),
+        RarityOdd(rarity: "epic",      weight: 50),
+        RarityOdd(rarity: "legendary", weight: 9),
+        RarityOdd(rarity: "mythic",    weight: 1),
+    ],
+)

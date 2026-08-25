@@ -1,0 +1,30 @@
+// Per-level stat growth for Cyranth (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "cyranth",
+    archetype: "marksman",
+    base: LevelStats(hp: 585, ad: 63, armor: 24, attack_speed: 1.15),
+    per_level: StatGrowth(hp: 74, ad: 3.8, armor: 2.6, attack_speed: 0.035),
+    levels: [
+        LevelRow(level: 1, hp: 585, ad: 63, armor: 24, attack_speed: 1.15),
+        LevelRow(level: 2, hp: 659, ad: 67, armor: 27, attack_speed: 1.185),
+        LevelRow(level: 3, hp: 733, ad: 71, armor: 29, attack_speed: 1.22),
+        LevelRow(level: 4, hp: 807, ad: 74, armor: 32, attack_speed: 1.255),
+        LevelRow(level: 5, hp: 881, ad: 78, armor: 34, attack_speed: 1.29),
+        LevelRow(level: 6, hp: 955, ad: 82, armor: 37, attack_speed: 1.325),
+        LevelRow(level: 7, hp: 1029, ad: 86, armor: 40, attack_speed: 1.36),
+        LevelRow(level: 8, hp: 1103, ad: 90, armor: 42, attack_speed: 1.395),
+        LevelRow(level: 9, hp: 1177, ad: 93, armor: 45, attack_speed: 1.43),
+        LevelRow(level: 10, hp: 1251, ad: 97, armor: 47, attack_speed: 1.465),
+        LevelRow(level: 11, hp: 1325, ad: 101, armor: 50, attack_speed: 1.5),
+        LevelRow(level: 12, hp: 1399, ad: 105, armor: 53, attack_speed: 1.535),
+        LevelRow(level: 13, hp: 1473, ad: 109, armor: 55, attack_speed: 1.57),
+        LevelRow(level: 14, hp: 1547, ad: 112, armor: 58, attack_speed: 1.605),
+        LevelRow(level: 15, hp: 1621, ad: 116, armor: 60, attack_speed: 1.64),
+        LevelRow(level: 16, hp: 1695, ad: 120, armor: 63, attack_speed: 1.675),
+        LevelRow(level: 17, hp: 1769, ad: 124, armor: 66, attack_speed: 1.71),
+        LevelRow(level: 18, hp: 1843, ad: 128, armor: 68, attack_speed: 1.745),
+    ],
+)

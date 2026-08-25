@@ -1,0 +1,12 @@
+// Wayfarer Boots — STARTER boots. Well-worn leather that never blisters.
+ItemSpec(
+    name: "Wayfarer Boots",
+    cost: 300,
+    tier: Starter,
+    stats: Stats(
+        move_speed: 25.0,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["starter", "boots", "mobility"],
+)

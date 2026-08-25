@@ -1,0 +1,13 @@
+// Ashen camp — the solo buff camp holding the Ashen Sentinel. Grants the Ashen
+// Brand buff to the killer. Placement + respawn timing in jungle-layout-riftline.ron.
+CampSpec(
+    id: "camp_ashen",
+    display_name: "Ashen Warden",
+    kind: "BuffCamp",
+    members: [
+        (monster: "ashen_sentinel", count: 1),
+    ],
+    grants_buff: "ashen_brand",     // -> content/monsters/jungle-buffs.ron
+    leash_radius: 10.0,
+    // Total reward is the sum of member bounties; buff goes to the killing champion.
+)

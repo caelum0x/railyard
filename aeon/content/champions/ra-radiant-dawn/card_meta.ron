@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Ra.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "ra-radiant-dawn",
+    display_name: "Ra",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "mage",
+    faction: "Egyptian",
+    card_stats: CardStats(
+        hitpoints: 480,
+        attack_damage: 30,
+        attack_speed: 0.75,
+        armor: 18,
+        range: 7.0,
+        approx_dps: 22.5,
+    ),
+    deploy_power: 263,
+    collectible: true,
+)

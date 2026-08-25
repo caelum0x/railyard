@@ -1,0 +1,14 @@
+// Narrative + release metadata for Xelphine.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "xelphine",
+    display_name: "Xelphine",
+    title: "",
+    faction: "Umbral",
+    archetype: "mage",
+    release_patch: "1.7.0",
+    resource: "Mana",
+    lore: "Xelphine — the ECLIPSE SEER, a burst mage. (Umbral faction) She reads the moment the light dies and pours that darkness into a single devastating rotation. Fragile and long-ranged, she blooms shadow at her feet, lances distant prey, and calls a total nightfall to erase what remains. DATA.",
+    tags: ["mage", "umbral"],
+)

@@ -1,0 +1,7 @@
+// Aftershock — Resolve / Keystone.
+RuneSpec(
+    name: "Aftershock",
+    tree: Resolve,
+    tier: Keystone,
+    effect: "After immobilizing a champion, gain a burst of resistances then explode for magic damage.",
+)

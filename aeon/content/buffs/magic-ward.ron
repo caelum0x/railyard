@@ -1,0 +1,10 @@
+// Magic Ward — Defensive buff. Maps to closed vocab.
+BuffSpec(
+    id: "magic_ward",
+    name: "Magic Ward",
+    category: Defensive,
+    vocab_ref: Some("BuffDamageReduction"),
+    fields: ["percentage", "damage_type"],
+    stacking: Strongest,
+    description: "Reduces incoming magic damage by a percentage.",
+)

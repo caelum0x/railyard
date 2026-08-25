@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Gorehoof.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "gorehoof",
+    display_name: "Gorehoof",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "bruiser",
+    faction: "Verdant",
+    card_stats: CardStats(
+        hitpoints: 640,
+        attack_damage: 62,
+        attack_speed: 1.0,
+        armor: 32,
+        range: 8.0,
+        approx_dps: 62.0,
+    ),
+    deploy_power: 285,
+    collectible: true,
+)

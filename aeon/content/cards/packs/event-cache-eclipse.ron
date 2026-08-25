@@ -1,0 +1,23 @@
+// content/cards/packs/event-cache-eclipse.ron
+// Limited-time event pack for the "Eclipse" event. Bought with event tickets and
+// biased to the Umbral pool to match the event theme.
+CardPack(
+    id: "event-cache-eclipse",
+    name: "Eclipse Event Cache",
+    description: "A limited Eclipse-event pack of shadow-touched cards.",
+    category: "event",
+    card_count: 8,
+    cost: PackCost(currency: "tickets", amount: 40),
+    one_time: false,
+    cadence: Some("event"),
+    faction_bias: Some("Umbral"),
+    guaranteed_floor: Some("epic"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 380),
+        RarityOdd(rarity: "uncommon",  weight: 300),
+        RarityOdd(rarity: "rare",      weight: 210),
+        RarityOdd(rarity: "epic",      weight: 82),
+        RarityOdd(rarity: "legendary", weight: 24),
+        RarityOdd(rarity: "mythic",    weight: 4),
+    ],
+)

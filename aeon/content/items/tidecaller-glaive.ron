@@ -1,0 +1,13 @@
+// Tidecaller Glaive — LEGENDARY AD. The relentless pull of the deep.
+ItemSpec(
+    name: "Tidecaller Glaive",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 40,
+        attack_speed: 0.3,
+    ),
+    passive: Some("Attacks deal bonus damage based on target max health; +30% armor penetration."),
+    build_from: ["kindled-blade", "last-whisper-shard", "swift-dagger"],
+    tags: ["legendary", "ad", "onhit", "penetration"],
+)

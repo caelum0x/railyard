@@ -1,0 +1,7 @@
+// Electroshock — Domination / Keystone.
+RuneSpec(
+    name: "Electroshock",
+    tree: Domination,
+    tier: Keystone,
+    effect: "Hitting a champion with three separate attacks or abilities in 3s deals a burst of adaptive damage.",
+)

@@ -1,0 +1,13 @@
+// Abyssal Mask — LEGENDARY tank. It amplifies the dark around it.
+ItemSpec(
+    name: "Abyssal Mask",
+    cost: 2700,
+    tier: Legendary,
+    stats: Stats(
+        hp: 350,
+        mr: 55,
+    ),
+    passive: Some("Nearby enemies take 10% increased magic damage."),
+    build_from: ["spectre-cowl", "kindlegem"],
+    tags: ["legendary", "tank", "mr", "aura", "ap"],
+)

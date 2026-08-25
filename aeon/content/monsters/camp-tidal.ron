@@ -1,0 +1,12 @@
+// Tidal camp — the solo buff camp holding the Tidal Sentinel. Grants the Tidal
+// Wellspring buff to the killer. Placement + respawn in jungle-layout-riftline.ron.
+CampSpec(
+    id: "camp_tidal",
+    display_name: "Tidal Wellspring",
+    kind: "BuffCamp",
+    members: [
+        (monster: "tidal_sentinel", count: 1),
+    ],
+    grants_buff: "tidal_wellspring",
+    leash_radius: 10.0,
+)

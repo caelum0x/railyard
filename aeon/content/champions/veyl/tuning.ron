@@ -1,0 +1,35 @@
+// Per-rank ability tuning for Veyl.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/veyl.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "veyl",
+    display_name: "Veyl",
+    abilities: [
+        AbilityTuning(
+            name: "Undertow Lunge",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 150, cost: Some(40), damage: Some(150), ad_ratio: Some(1.1), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 142, cost: Some(43), damage: Some(195), ad_ratio: Some(1.15), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 135, cost: Some(46), damage: Some(240), ad_ratio: Some(1.2), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 128, cost: Some(50), damage: Some(285), ad_ratio: Some(1.25), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 120, cost: Some(53), damage: Some(330), ad_ratio: Some(1.3), heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Drowning Grip",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 210, cost: Some(60), damage: Some(120), ad_ratio: Some(0.9), heal: None, cc: Some(("Stun", 48))),
+                Rank(rank: 2, cooldown: 200, cost: Some(65), damage: Some(156), ad_ratio: Some(0.95), heal: None, cc: Some(("Stun", 55))),
+                Rank(rank: 3, cooldown: 189, cost: Some(70), damage: Some(192), ad_ratio: Some(1.0), heal: None, cc: Some(("Stun", 62))),
+                Rank(rank: 4, cooldown: 178, cost: Some(74), damage: Some(228), ad_ratio: Some(1.05), heal: None, cc: Some(("Stun", 70))),
+                Rank(rank: 5, cooldown: 168, cost: Some(79), damage: Some(264), ad_ratio: Some(1.1), heal: None, cc: Some(("Stun", 77))),
+            ],
+        ),
+    ],
+)

@@ -1,0 +1,17 @@
+// Card rarity table for Aeonrift: Ascendancy.
+//
+// A card's rarity is derived DETERMINISTICALLY from its elixir cost (which is itself
+// a pure function of the champion's power — see games/aeonrift-ascendancy/src/cards/card.rs).
+// The cost band a card falls into decides its tier; `weight` is the tier's relative
+// draw weight when opening a pack (higher weight => more common). Weights need not
+// sum to 100; the pack opener normalises them.
+//
+// Loaded by `cards::cards::rarity::load_rarity_table`.
+RarityTable(
+    tiers: [
+        RarityTier(name: "Common",    weight: 60, min_cost: 1, max_cost: 3),
+        RarityTier(name: "Rare",      weight: 25, min_cost: 4, max_cost: 5),
+        RarityTier(name: "Epic",      weight: 12, min_cost: 6, max_cost: 7),
+        RarityTier(name: "Legendary", weight: 3,  min_cost: 8, max_cost: 10),
+    ],
+)

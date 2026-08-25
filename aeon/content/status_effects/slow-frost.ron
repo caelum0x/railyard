@@ -1,0 +1,11 @@
+// Frostbite — SoftCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "slow_frost",
+    name: "Frostbite",
+    category: SoftCC,
+    vocab_ref: Some("DebuffSlow"),
+    fields: ["percent", "duration"],
+    cleansable: true,
+    stacking: Strongest,
+    description: "A stacking frost slow that deepens with repeated hits.",
+)

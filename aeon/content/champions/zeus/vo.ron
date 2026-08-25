@@ -1,0 +1,81 @@
+// Voice-line manifest for Zeus: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "zeus",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.zeus.select",
+            kind: "Selected",
+            audio: "audio/vo/zeus/select.ogg",
+            text: "Zeus answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.zeus.move_a",
+            kind: "Move",
+            audio: "audio/vo/zeus/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.zeus.move_b",
+            kind: "Move",
+            audio: "audio/vo/zeus/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.zeus.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/zeus/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.zeus.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/zeus/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.zeus.ability_q",
+            kind: "Ability: Thunderbolt",
+            audio: "audio/vo/zeus/ability_q.ogg",
+            text: "Thunderbolt!",
+        ),
+        VoiceLine(
+            id: "vo.zeus.ability_w",
+            kind: "Ability: Storm's Wrath",
+            audio: "audio/vo/zeus/ability_w.ogg",
+            text: "Storm's Wrath!",
+        ),
+        VoiceLine(
+            id: "vo.zeus.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/zeus/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.zeus.joke",
+            kind: "Joke",
+            audio: "audio/vo/zeus/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.zeus.low_health",
+            kind: "Low health",
+            audio: "audio/vo/zeus/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.zeus.victory",
+            kind: "Victory",
+            audio: "audio/vo/zeus/victory.ogg",
+            text: "The field is ours.",
+        ),
+        VoiceLine(
+            id: "vo.zeus.death",
+            kind: "Death",
+            audio: "audio/vo/zeus/death.ogg",
+            text: "Not... the end.",
+        ),
+    ],
+)

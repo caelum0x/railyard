@@ -1,0 +1,14 @@
+// Narrative + release metadata for Ysmera.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "ysmera",
+    display_name: "Ysmera",
+    title: "",
+    faction: "Ember",
+    archetype: "mage",
+    release_patch: "1.4.0",
+    resource: "Mana",
+    lore: "Ysmera — the PYRE-ORACLE, a burst mage. Fragile but explosive: area detonations and a long-range lance that erase squishies in a single rotation. Low HP, high impact. Pure DATA.",
+    tags: ["mage", "ember"],
+)

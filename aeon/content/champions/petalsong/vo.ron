@@ -1,0 +1,81 @@
+// Voice-line manifest for Petalsong: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "petalsong",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.petalsong.select",
+            kind: "Selected",
+            audio: "audio/vo/petalsong/select.ogg",
+            text: "Petalsong answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.petalsong.move_a",
+            kind: "Move",
+            audio: "audio/vo/petalsong/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.petalsong.move_b",
+            kind: "Move",
+            audio: "audio/vo/petalsong/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.petalsong.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/petalsong/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.petalsong.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/petalsong/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.petalsong.ability_q",
+            kind: "Ability: Vinebind",
+            audio: "audio/vo/petalsong/ability_q.ogg",
+            text: "Vinebind!",
+        ),
+        VoiceLine(
+            id: "vo.petalsong.ability_w",
+            kind: "Ability: Petal Storm",
+            audio: "audio/vo/petalsong/ability_w.ogg",
+            text: "Petal Storm!",
+        ),
+        VoiceLine(
+            id: "vo.petalsong.ability_r",
+            kind: "Ability: Mending Verse",
+            audio: "audio/vo/petalsong/ability_r.ogg",
+            text: "Mending Verse!",
+        ),
+        VoiceLine(
+            id: "vo.petalsong.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/petalsong/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.petalsong.joke",
+            kind: "Joke",
+            audio: "audio/vo/petalsong/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.petalsong.low_health",
+            kind: "Low health",
+            audio: "audio/vo/petalsong/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.petalsong.victory",
+            kind: "Victory",
+            audio: "audio/vo/petalsong/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

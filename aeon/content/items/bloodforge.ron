@@ -1,0 +1,2 @@
+// content/items/bloodforge.ron — offensive item: raw attack damage + a little HP.
+Item(name: "Bloodforge", cost: 1300, bonus_hp: 150, bonus_ad: 45, bonus_armor: 0)

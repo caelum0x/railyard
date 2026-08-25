@@ -1,0 +1,13 @@
+// Devourer's Cleaver — LEGENDARY AD. It carves and it drinks.
+ItemSpec(
+    name: "Devourer's Cleaver",
+    cost: 3200,
+    tier: Legendary,
+    stats: Stats(
+        ad: 40,
+        attack_speed: 0.25,
+    ),
+    passive: Some("On-hit deals 8% of target current health as physical damage; +10% life steal."),
+    build_from: ["vampiric-scepter", "stinger-coil", "long-blade"],
+    tags: ["legendary", "ad", "onhit", "lifesteal"],
+)

@@ -1,0 +1,7 @@
+// Mend — summoner spell.
+SummonerSpell(
+    name: "Mend",
+    cooldown: 240,
+    effect: "Restore health to yourself and a nearby ally and grant a brief burst of move speed.",
+    tags: ["heal", "support"],
+)

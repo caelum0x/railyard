@@ -1,0 +1,13 @@
+// Titanic Bulwark — LEGENDARY tank. A mountain that swings back.
+ItemSpec(
+    name: "Titanic Bulwark",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ad: 20,
+        hp: 500,
+    ),
+    passive: Some("Attacks deal bonus physical damage based on max health and cleave nearby foes."),
+    build_from: ["giants-girdle", "crystalline-bracer"],
+    tags: ["legendary", "tank", "hp", "ad"],
+)

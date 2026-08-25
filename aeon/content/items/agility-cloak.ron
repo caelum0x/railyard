@@ -1,0 +1,10 @@
+// Cloak of Agility — BASIC AD.
+ItemSpec(
+    name: "Cloak of Agility",
+    cost: 600,
+    tier: Basic,
+    stats: Stats(),
+    passive: Some("+15% critical strike chance."),
+    build_from: [],
+    tags: ["basic", "crit"],
+)

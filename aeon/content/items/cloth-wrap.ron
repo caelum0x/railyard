@@ -1,0 +1,12 @@
+// Cloth Wrap — BASIC tank.
+ItemSpec(
+    name: "Cloth Wrap",
+    cost: 300,
+    tier: Basic,
+    stats: Stats(
+        armor: 15,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "armor"],
+)

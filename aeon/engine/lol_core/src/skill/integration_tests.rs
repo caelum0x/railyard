@@ -1,0 +1,631 @@
+#![cfg(test)]
+
+//! Integration tests for the skill pipeline, migrated from root tests/skill_integration.rs.
+
+use std::collections::BTreeMap;
+use std::time::Duration;
+
+use bevy::prelude::*;
+use lol_base::hash_key::HashKey;
+use lol_base::spell::{DataSpell, Spell, ValuesEffect};
+use lol_base::spell_calc::{CalculationPartEffectValue, CalculationSpell, CalculationType};
+
+use crate::action::PluginAction;
+use crate::action::damage::{
+    ActionDamage, ActionDamageEffect, DamageShape, TargetDamage, TargetFilter,
+};
+use crate::base::ability_resource::{AbilityResource, AbilityResourceType};
+use crate::base::level::Level;
+use crate::cooldown::PluginCooldown;
+use crate::damage::{DamageType, PluginDamage};
+use crate::life::{Health, PluginLife};
+use crate::movement::PluginMovement;
+use crate::skill::{
+    CommandSkillLevelUp, CommandSkillStart, CoolDown, EventSkillCast, PluginSkill, Skill,
+    SkillCastFailureReason, SkillCastLog, SkillCastResult, SkillCooldownMode, SkillOf, SkillPoints,
+    SkillRecastWindow, SkillSlot, Skills,
+};
+use crate::team::Team;
+
+const TEST_FPS: f32 = 30.0;
+const SPELL_KEY: u32 = 0x1001;
+const DAMAGE_AMOUNT_KEY: &str = "damage_amount";
+const EPSILON: f32 = 1e-4;
+
+fn spell_handle(key: u32) -> Handle<Spell> {
+    Handle::from(HashKey::<Spell>::from(key))
+}
+
+#[derive(Component)]
+struct TestObserverSkill;
+
+#[derive(Component)]
+struct TestDamageSkill;
+
+#[derive(Resource, Default, Debug)]
+struct ObserverStages(Vec<u8>);
+
+#[derive(Default)]
+struct PluginTestObserverSkill;
+
+impl Plugin for PluginTestObserverSkill {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<ObserverStages>();
+        app.add_observer(on_test_observer_skill_cast);
+        app.add_observer(on_test_damage_skill_cast);
+    }
+}
+
+fn on_test_observer_skill_cast(
+    trigger: On<EventSkillCast>,
+    mut commands: Commands,
+    mut stages: ResMut<ObserverStages>,
+    q_skill: Query<(&Skill, Option<&SkillRecastWindow>, &CoolDown), With<TestObserverSkill>>,
+) {
+    let Ok((skill, recast, cooldown)) = q_skill.get(trigger.skill_entity) else {
+        return;
+    };
+    if skill.slot != SkillSlot::Q {
+        return;
+    }
+
+    let stage = recast.map(|value| value.stage).unwrap_or(1);
+    stages.0.push(stage);
+
+    if stage >= 3 {
+        commands
+            .entity(trigger.skill_entity)
+            .remove::<SkillRecastWindow>();
+        commands.entity(trigger.skill_entity).insert((CoolDown {
+            duration: cooldown.duration,
+            timer: Some(Timer::from_seconds(cooldown.duration, TimerMode::Once)),
+        },));
+    } else {
+        commands
+            .entity(trigger.skill_entity)
+            .insert(SkillRecastWindow::new(stage + 1, 3, 4.0));
+    }
+}
+
+fn on_test_damage_skill_cast(
+    trigger: On<EventSkillCast>,
+    mut commands: Commands,
+    q_skill: Query<&Skill, With<TestDamageSkill>>,
+) {
+    if q_skill.get(trigger.skill_entity).is_err() {
+        return;
+    }
+
+    commands.trigger(ActionDamage {
+        entity: trigger.entity,
+        skill: spell_handle(SPELL_KEY),
+        effects: vec![ActionDamageEffect {
+            shape: DamageShape::Circle { radius: 100.0 },
+            damage_list: vec![TargetDamage {
+                filter: TargetFilter::All,
+                amount: DAMAGE_AMOUNT_KEY.to_string(),
+                damage_type: DamageType::Physical,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+    });
+}
+
+struct SkillHarness {
+    app: App,
+    caster: Entity,
+    enemy: Entity,
+}
+
+impl SkillHarness {
+    fn new() -> Self {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(AssetPlugin::default());
+        app.add_plugins(PluginAction);
+        app.add_plugins(PluginCooldown);
+        app.add_plugins(PluginDamage);
+        app.add_plugins(PluginLife);
+        app.add_plugins(PluginMovement);
+        app.add_plugins(PluginSkill);
+        app.add_plugins(PluginTestObserverSkill);
+        app.init_asset::<Spell>();
+        app.insert_resource(Time::<Fixed>::from_hz(TEST_FPS as f64));
+
+        let caster = app
+            .world_mut()
+            .spawn((
+                Team::Order,
+                Transform::default(),
+                Level::default(),
+                SkillPoints(1),
+                Skills::default(),
+                make_mana(100.0),
+            ))
+            .id();
+        let enemy = app
+            .world_mut()
+            .spawn((
+                Team::Chaos,
+                Transform::from_xyz(50.0, 0.0, 0.0),
+                Health::new(1000.0),
+            ))
+            .id();
+
+        Self { app, caster, enemy }
+    }
+
+    fn register_spell(&mut self, mana_cost: f32, effect_amounts: Vec<f32>) -> &mut Self {
+        use lol_base::spell_calc::CalculationPart;
+
+        let mut calculations = BTreeMap::new();
+        calculations.insert(
+            DAMAGE_AMOUNT_KEY.to_string(),
+            CalculationType::CalculationSpell(CalculationSpell {
+                formula_parts: Some(vec![CalculationPart::CalculationPartEffectValue(
+                    CalculationPartEffectValue {
+                        effect_index: Some(1),
+                    },
+                )]),
+                multiplier: None,
+                precision: None,
+            }),
+        );
+
+        let effect_values = ValuesEffect {
+            values: Some(effect_amounts),
+        };
+
+        self.app.world_mut().resource_mut::<Assets<Spell>>().insert(
+            spell_handle(SPELL_KEY).id(),
+            Spell {
+                spell_data: Some(DataSpell {
+                    calculations: Some(calculations),
+                    effect_amounts: Some(vec![effect_values]),
+                    mana: Some(vec![mana_cost; 6]),
+                    ..Default::default()
+                }),
+            },
+        );
+        self
+    }
+
+    fn add_skill(&mut self, skill: Skill, cooldown_duration: f32, extra: impl Bundle) -> Entity {
+        let mut timer = Timer::from_seconds(cooldown_duration, TimerMode::Once);
+        timer.tick(Duration::from_secs_f32(cooldown_duration));
+
+        let skill_entity = self
+            .app
+            .world_mut()
+            .spawn((
+                SkillOf(self.caster),
+                skill,
+                CoolDown {
+                    duration: cooldown_duration,
+                    timer: Some(timer),
+                },
+                extra,
+            ))
+            .id();
+
+        self.app
+            .world_mut()
+            .get_mut::<Skills>(self.caster)
+            .expect("caster should have skills")
+            .push(skill_entity);
+
+        skill_entity
+    }
+
+    fn cast_skill(&mut self, index: usize, point: Vec2) -> &mut Self {
+        self.app.world_mut().trigger(CommandSkillStart {
+            entity: self.caster,
+            index,
+            point,
+        });
+        self.app.update();
+        self
+    }
+
+    fn level_up_skill(&mut self, index: usize) -> &mut Self {
+        self.app.world_mut().trigger(CommandSkillLevelUp {
+            entity: self.caster,
+            index,
+        });
+        self.app.update();
+        self
+    }
+
+    fn advance_time(&mut self, seconds: f32) -> &mut Self {
+        let ticks = (seconds * TEST_FPS).ceil() as u32;
+        for _ in 0..ticks {
+            let mut time = self.app.world_mut().resource_mut::<Time<Fixed>>();
+            time.advance_by(Duration::from_secs_f64(1.0 / TEST_FPS as f64));
+            drop(time);
+            self.app.world_mut().run_schedule(FixedUpdate);
+        }
+        self
+    }
+
+    fn mana(&self) -> f32 {
+        self.app
+            .world()
+            .get::<AbilityResource>(self.caster)
+            .expect("mana should exist")
+            .value
+    }
+
+    fn health(&self, entity: Entity) -> f32 {
+        self.app
+            .world()
+            .get::<Health>(entity)
+            .expect("health should exist")
+            .value
+    }
+
+    fn skill_entity(&self, index: usize) -> Entity {
+        self.app.world().get::<Skills>(self.caster).unwrap()[index]
+    }
+}
+
+fn make_mana(value: f32) -> AbilityResource {
+    AbilityResource {
+        ar_type: AbilityResourceType::Mana,
+        value,
+        max: 100.0,
+        base: 0.0,
+        per_level: 0.0,
+        base_static_regen: 0.0,
+        regen_per_level: 0.0,
+    }
+}
+
+#[test]
+fn skill_level_up_still_respects_basic_rules() {
+    let mut harness = SkillHarness::new();
+    harness
+        .app
+        .world_mut()
+        .entity_mut(harness.caster)
+        .insert(Level {
+            value: 5,
+            experience: 0,
+            experience_to_next_level: 100,
+        });
+    harness.add_skill(Skill::new(SkillSlot::Q, spell_handle(SPELL_KEY)), 5.0, ());
+    harness.add_skill(Skill::new(SkillSlot::W, spell_handle(SPELL_KEY)), 5.0, ());
+    harness.add_skill(Skill::new(SkillSlot::E, spell_handle(SPELL_KEY)), 5.0, ());
+    harness.add_skill(Skill::new(SkillSlot::R, spell_handle(SPELL_KEY)), 5.0, ());
+
+    harness.level_up_skill(3);
+
+    let skill_entity = harness.skill_entity(3);
+    assert_eq!(
+        harness
+            .app
+            .world()
+            .get::<Skill>(skill_entity)
+            .unwrap()
+            .level,
+        0
+    );
+    assert_eq!(
+        harness
+            .app
+            .world()
+            .get::<SkillPoints>(harness.caster)
+            .unwrap()
+            .0,
+        1
+    );
+}
+
+#[test]
+fn observer_skill_cast_spends_mana_starts_cooldown_and_applies_damage() {
+    let mut harness = SkillHarness::new();
+    harness.register_spell(30.0, vec![40.0; 6]);
+
+    harness.add_skill(
+        Skill::new(SkillSlot::Q, spell_handle(SPELL_KEY)).with_level(1),
+        3.0,
+        TestDamageSkill,
+    );
+
+    harness.cast_skill(0, Vec2::new(50.0, 0.0));
+
+    assert!((harness.mana() - 70.0).abs() < EPSILON);
+    assert!((harness.health(harness.enemy) - 960.0).abs() < EPSILON);
+
+    let cooldown_state = harness
+        .app
+        .world()
+        .get::<CoolDown>(harness.skill_entity(0))
+        .unwrap();
+    assert!(
+        !cooldown_state
+            .timer
+            .as_ref()
+            .map_or(true, |t| t.is_finished())
+    );
+
+    let log = harness.app.world().resource::<SkillCastLog>();
+    assert!(matches!(
+        log.0.last().unwrap().result,
+        SkillCastResult::Started
+    ));
+}
+
+#[test]
+fn observer_skill_can_drive_recast_state_and_manual_cooldown() {
+    let mut harness = SkillHarness::new();
+    harness.register_spell(20.0, vec![0.0; 6]);
+    harness.add_skill(
+        Skill::new(SkillSlot::Q, spell_handle(SPELL_KEY))
+            .with_level(1)
+            .with_cooldown_mode(SkillCooldownMode::Manual),
+        6.0,
+        TestObserverSkill,
+    );
+
+    harness
+        .cast_skill(0, Vec2::new(50.0, 0.0))
+        .cast_skill(0, Vec2::new(50.0, 0.0))
+        .cast_skill(0, Vec2::new(50.0, 0.0));
+
+    let stages = &harness.app.world().resource::<ObserverStages>().0;
+    assert_eq!(stages.as_slice(), &[1, 2, 3]);
+
+    let skill_entity = harness.skill_entity(0);
+    assert!(
+        harness
+            .app
+            .world()
+            .get::<SkillRecastWindow>(skill_entity)
+            .is_none()
+    );
+    assert!(
+        !harness
+            .app
+            .world()
+            .get::<CoolDown>(skill_entity)
+            .unwrap()
+            .timer
+            .as_ref()
+            .map_or(true, |t| t.is_finished())
+    );
+}
+
+#[test]
+fn skill_recast_window_expires_in_fixed_update() {
+    let mut harness = SkillHarness::new();
+    harness.register_spell(20.0, vec![0.0; 6]);
+    harness.add_skill(
+        Skill::new(SkillSlot::Q, spell_handle(SPELL_KEY))
+            .with_level(1)
+            .with_cooldown_mode(SkillCooldownMode::Manual),
+        6.0,
+        TestObserverSkill,
+    );
+
+    harness
+        .cast_skill(0, Vec2::new(50.0, 0.0))
+        .advance_time(4.1);
+
+    let skill_entity = harness.skill_entity(0);
+    assert!(
+        harness
+            .app
+            .world()
+            .get::<SkillRecastWindow>(skill_entity)
+            .is_none()
+    );
+
+    harness.cast_skill(0, Vec2::new(50.0, 0.0));
+    let stages = &harness.app.world().resource::<ObserverStages>().0;
+    assert_eq!(stages.as_slice(), &[1, 1]);
+}
+
+#[test]
+fn insufficient_mana_is_recorded_without_starting_cooldown() {
+    let mut harness = SkillHarness::new();
+    harness
+        .app
+        .world_mut()
+        .entity_mut(harness.caster)
+        .insert(make_mana(10.0));
+    harness.register_spell(30.0, vec![40.0; 6]);
+    harness.add_skill(
+        Skill::new(SkillSlot::Q, spell_handle(SPELL_KEY)).with_level(1),
+        3.0,
+        TestDamageSkill,
+    );
+
+    harness.cast_skill(0, Vec2::new(50.0, 0.0));
+
+    assert!((harness.mana() - 10.0).abs() < EPSILON);
+    assert!(
+        harness
+            .app
+            .world()
+            .get::<CoolDown>(harness.skill_entity(0))
+            .unwrap()
+            .timer
+            .as_ref()
+            .map_or(true, |t| t.is_finished())
+    );
+    assert!(matches!(
+        harness
+            .app
+            .world()
+            .resource::<SkillCastLog>()
+            .0
+            .last()
+            .unwrap()
+            .result,
+        SkillCastResult::Failed(SkillCastFailureReason::InsufficientAbilityResource)
+    ));
+}
+
+#[test]
+fn test_no_cooldown_resource_mode() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(AssetPlugin::default());
+    app.add_plugins(PluginAction);
+    app.add_plugins(PluginCooldown);
+    app.add_plugins(PluginDamage);
+    app.add_plugins(PluginLife);
+    app.add_plugins(PluginMovement);
+
+    // 注入 NoCooldown 资源，初始为 true
+    app.insert_resource(crate::skill::NoCooldown(true));
+
+    app.add_plugins(PluginSkill);
+    app.init_asset::<Spell>();
+
+    let caster = app
+        .world_mut()
+        .spawn((
+            Team::Order,
+            Transform::default(),
+            Level::default(),
+            SkillPoints(1),
+            Skills::default(),
+            make_mana(100.0),
+        ))
+        .id();
+
+    // 默认创建 Skill 并加入 CoolDown 组件
+    let mut timer = Timer::from_seconds(3.0, TimerMode::Once);
+    timer.tick(Duration::from_secs_f32(3.0));
+
+    let skill_entity = app
+        .world_mut()
+        .spawn((
+            SkillOf(caster),
+            Skill::new(SkillSlot::Q, spell_handle(SPELL_KEY)).with_level(1),
+            CoolDown {
+                duration: 3.0,
+                timer: Some(timer),
+            },
+        ))
+        .id();
+
+    app.world_mut()
+        .get_mut::<Skills>(caster)
+        .unwrap()
+        .push(skill_entity);
+
+    app.update();
+
+    // 验证新加入的技能已经被设为 timer 为 None
+    let cd = app.world().get::<CoolDown>(skill_entity).unwrap();
+    assert!(cd.timer.is_none());
+}
+
+#[test]
+fn test_god_mode_mechanics() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(AssetPlugin::default());
+    app.add_plugins(PluginAction);
+    app.add_plugins(PluginCooldown);
+    app.add_plugins(PluginDamage);
+    app.add_plugins(PluginLife);
+    app.add_plugins(PluginMovement);
+
+    // 启用 GodMode
+    app.insert_resource(crate::skill::GodMode(true));
+    app.add_plugins(PluginSkill);
+    app.init_asset::<Spell>();
+
+    let caster = app
+        .world_mut()
+        .spawn((
+            crate::entities::champion::Champion,
+            Team::Order,
+            Transform::default(),
+            Level::default(),
+            SkillPoints(1),
+            Skills::default(),
+            Health::new(100.0),
+            AbilityResource {
+                value: 10.0,
+                max: 100.0,
+                ..default()
+            },
+        ))
+        .id();
+
+    let spell_object = Spell {
+        spell_data: Some(lol_base::spell::DataSpell {
+            mana: Some(vec![30.0; 6]), // 1级需要30蓝
+            ..default()
+        }),
+    };
+    let spell_handle = app
+        .world_mut()
+        .resource_mut::<Assets<Spell>>()
+        .add(spell_object);
+
+    let skill_entity = app
+        .world_mut()
+        .spawn((
+            SkillOf(caster),
+            Skill::new(SkillSlot::Q, spell_handle).with_level(1),
+            CoolDown {
+                duration: 3.0,
+                timer: None,
+            },
+        ))
+        .id();
+
+    app.world_mut()
+        .get_mut::<Skills>(caster)
+        .unwrap()
+        .push(skill_entity);
+
+    // 运行 apply_god_mode 应该把蓝回满，并加上免伤 Buff
+    app.update();
+
+    let health = app.world().get::<Health>(caster).unwrap();
+    let ar = app.world().get::<AbilityResource>(caster).unwrap();
+    assert_eq!(health.value, 100.0);
+    assert_eq!(ar.value, 100.0); // 应该被回满到 max (100.0)
+    assert!(
+        app.world()
+            .get::<crate::buffs::damage_reduction::BuffDamageReduction>(caster)
+            .is_some()
+    );
+    assert_eq!(app.world().get::<Level>(caster).unwrap().value, 6);
+    assert_eq!(app.world().get::<SkillPoints>(caster).unwrap().0, 6);
+
+    // 即使我们把蓝消耗到 10，我们依然可以释放消耗 30 蓝的技能
+    app.world_mut()
+        .get_mut::<AbilityResource>(caster)
+        .unwrap()
+        .value = 10.0;
+    app.world_mut().trigger(CommandSkillStart {
+        entity: caster,
+        index: 0,
+        point: Vec2::ZERO,
+    });
+    app.update();
+
+    // 验证技能释放成功且不扣蓝 (但在这一帧 apply_god_mode 运行后它也会重新回满)
+    let log = app.world().resource::<SkillCastLog>();
+    assert!(matches!(
+        log.0.last().unwrap().result,
+        SkillCastResult::Started
+    ));
+
+    // 测试动态关闭上帝模式
+    app.world_mut().resource_mut::<crate::skill::GodMode>().0 = false;
+    app.update();
+    assert!(
+        app.world()
+            .get::<crate::buffs::damage_reduction::BuffDamageReduction>(caster)
+            .is_none()
+    );
+}

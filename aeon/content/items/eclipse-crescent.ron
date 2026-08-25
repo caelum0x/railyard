@@ -1,0 +1,12 @@
+// Eclipse Crescent — LEGENDARY AD. Twin strikes under a darkened sun.
+ItemSpec(
+    name: "Eclipse Crescent",
+    cost: 3100,
+    tier: Legendary,
+    stats: Stats(
+        ad: 55,
+    ),
+    passive: Some("+12 lethality; two hits on a champion deal bonus max-health damage and grant a shield."),
+    build_from: ["serrated-dirk", "long-blade", "long-blade"],
+    tags: ["legendary", "ad", "lethality", "shield"],
+)

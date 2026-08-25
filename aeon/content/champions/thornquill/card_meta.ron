@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Thornquill.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "thornquill",
+    display_name: "Thornquill",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "marksman",
+    faction: "Verdant",
+    card_stats: CardStats(
+        hitpoints: 540,
+        attack_damage: 60,
+        attack_speed: 1.15,
+        armor: 20,
+        range: 16.0,
+        approx_dps: 69.0,
+    ),
+    deploy_power: 262,
+    collectible: true,
+)

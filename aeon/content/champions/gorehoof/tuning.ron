@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Gorehoof.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/gorehoof.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "gorehoof",
+    display_name: "Gorehoof",
+    abilities: [
+        AbilityTuning(
+            name: "Rampart Charge",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 300, cost: None, damage: Some(60), ad_ratio: Some(0.5), heal: None, cc: Some(("Stun", 30))),
+                Rank(rank: 2, cooldown: 285, cost: None, damage: Some(78), ad_ratio: Some(0.55), heal: None, cc: Some(("Stun", 34))),
+                Rank(rank: 3, cooldown: 270, cost: None, damage: Some(96), ad_ratio: Some(0.6), heal: None, cc: Some(("Stun", 39))),
+                Rank(rank: 4, cooldown: 255, cost: None, damage: Some(114), ad_ratio: Some(0.65), heal: None, cc: Some(("Stun", 44))),
+                Rank(rank: 5, cooldown: 240, cost: None, damage: Some(132), ad_ratio: Some(0.7), heal: None, cc: Some(("Stun", 48))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Gore Toss",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 120, cost: None, damage: Some(45), ad_ratio: Some(0.8), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 114, cost: None, damage: Some(58), ad_ratio: Some(0.85), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 108, cost: None, damage: Some(72), ad_ratio: Some(0.9), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 102, cost: None, damage: Some(86), ad_ratio: Some(0.95), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 96, cost: None, damage: Some(99), ad_ratio: Some(1.0), heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Bloodroot",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 160, cost: None, damage: None, ad_ratio: None, heal: Some(85), cc: None),
+                Rank(rank: 2, cooldown: 152, cost: None, damage: None, ad_ratio: None, heal: Some(106), cc: None),
+                Rank(rank: 3, cooldown: 144, cost: None, damage: None, ad_ratio: None, heal: Some(128), cc: None),
+                Rank(rank: 4, cooldown: 136, cost: None, damage: None, ad_ratio: None, heal: Some(149), cc: None),
+                Rank(rank: 5, cooldown: 128, cost: None, damage: None, ad_ratio: None, heal: Some(170), cc: None),
+            ],
+        ),
+    ],
+)

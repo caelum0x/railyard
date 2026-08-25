@@ -1,0 +1,12 @@
+// Short Blade — BASIC AD.
+ItemSpec(
+    name: "Short Blade",
+    cost: 300,
+    tier: Basic,
+    stats: Stats(
+        ad: 8,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "ad"],
+)

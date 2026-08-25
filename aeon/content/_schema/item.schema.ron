@@ -1,0 +1,35 @@
+// content/_schema/item.schema.ron
+//
+// Shape of an item spec at content/items/<slug>.ron. A content-lint validates each
+// item file against this shape. `stats` keys are the closed stat surface; `tier` is
+// one of the enumerated tiers; `build_from` entries must be existing item slugs
+// (files in content/items/) so the linter can verify a closed, acyclic build graph.
+//
+// Field types are hints; "enum:<group>" means one of the listed variants.
+(
+    name: "String        // in-game display name (original IP only)",
+    cost: "u32           // total gold cost",
+    tier: "enum: Starter | Basic | Epic | Legendary",
+
+    // Closed stat surface — only these keys are valid. All optional; omit if zero.
+    stats: (
+        ad:           "f32?   // bonus attack damage",
+        ap:           "f32?   // bonus ability power",
+        hp:           "f32?   // bonus health",
+        armor:        "f32?   // bonus armor",
+        mr:           "f32?   // bonus magic resist",
+        attack_speed: "f32?   // bonus attack speed (fractional, e.g. 0.40 = +40%)",
+        move_speed:   "f32?   // bonus flat move speed",
+    ),
+
+    // Optional unique/on-hit behaviour as free text. Numeric effects a champion can
+    // actually trigger must resolve to the closed vocabulary in vocabulary.ron.
+    passive: "Option<String>   // Some(\"...\") | None",
+
+    // Component graph: each entry is the slug of another content/items/<slug>.ron.
+    // Must be acyclic; the linter rejects unknown slugs and cycles.
+    build_from: ["String   // item slug"],
+
+    // Free-form classification (category, tier, role, keyword) for filtering/UI.
+    tags: ["String"],
+)

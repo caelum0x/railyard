@@ -1,0 +1,12 @@
+// Aether Tears — BASIC support.
+ItemSpec(
+    name: "Aether Tears",
+    cost: 850,
+    tier: Basic,
+    stats: Stats(
+        ap: 15,
+    ),
+    passive: Some("+400 max mana; grows as you spend mana."),
+    build_from: ["faerie-charm", "aether-crystal"],
+    tags: ["basic", "mana"],
+)

@@ -1,0 +1,81 @@
+// Voice-line manifest for Loki: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "loki",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.loki.select",
+            kind: "Selected",
+            audio: "audio/vo/loki/select.ogg",
+            text: "Loki answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.loki.move_a",
+            kind: "Move",
+            audio: "audio/vo/loki/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.loki.move_b",
+            kind: "Move",
+            audio: "audio/vo/loki/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.loki.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/loki/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.loki.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/loki/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.loki.ability_q",
+            kind: "Ability: Shadow Step",
+            audio: "audio/vo/loki/ability_q.ogg",
+            text: "Shadow Step!",
+        ),
+        VoiceLine(
+            id: "vo.loki.ability_w",
+            kind: "Ability: Serpent's Venom",
+            audio: "audio/vo/loki/ability_w.ogg",
+            text: "Serpent's Venom!",
+        ),
+        VoiceLine(
+            id: "vo.loki.ability_r",
+            kind: "Ability: Vanishing Trick",
+            audio: "audio/vo/loki/ability_r.ogg",
+            text: "Vanishing Trick!",
+        ),
+        VoiceLine(
+            id: "vo.loki.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/loki/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.loki.joke",
+            kind: "Joke",
+            audio: "audio/vo/loki/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.loki.low_health",
+            kind: "Low health",
+            audio: "audio/vo/loki/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.loki.victory",
+            kind: "Victory",
+            audio: "audio/vo/loki/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

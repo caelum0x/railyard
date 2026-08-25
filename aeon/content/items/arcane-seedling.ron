@@ -1,0 +1,12 @@
+// Arcane Seedling — STARTER AP. A sprout of raw aether.
+ItemSpec(
+    name: "Arcane Seedling",
+    cost: 400,
+    tier: Starter,
+    stats: Stats(
+        ap: 15,
+    ),
+    passive: Some("Restores 5 mana on kill or assist; grants +25 max mana."),
+    build_from: [],
+    tags: ["starter", "ap", "mage"],
+)

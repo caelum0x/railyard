@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "athena",
+    champion: "Athena",
+    archetype: "support",
+    faction: "Greek",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 27776,
+            blake3: "f8c47dd7d2fd8343b6af65afcbbe710620d7c892bb0a422b1c7dd117ca6ffd9f",
+        ),
+    },
+)
