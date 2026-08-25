@@ -62,8 +62,9 @@ fn nearest_lane(battle: &Battle, x: f32) -> usize {
         .unwrap_or(0)
 }
 
-/// Turn a `DeployError` from the core into a short, user-facing message.
-fn error_message(err: DeployError) -> String {
+/// Turn a `DeployError` from the core into a short, user-facing message. Shared with
+/// the keyboard/action deploy path in [`super::actions`].
+pub(crate) fn error_message(err: DeployError) -> String {
     match err {
         DeployError::NotEnoughElixir { have, need } => {
             format!("Not enough elixir ({have}/{need})")
