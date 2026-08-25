@@ -12,6 +12,7 @@
 //! - [`transport`] — async [`MintTransport`] + [`UpstreamTransport`] traits + DTOs.
 //! - [`identity`] — [`AgentIdentity`] / [`BudgetPolicy`] / async [`BudgetRepo`].
 //! - [`receipt`] — [`MintReceipt`] view + async [`ReceiptStore`] system-of-record.
+//! - [`hold_store`] — async [`HoldStore`] port + [`Clock`] for the orphaned-hold reaper.
 //! - [`envelope`] — the success/error API envelope.
 //!
 //! The real transport clients live in `abacus-mint-client` / `abacus-upstream`;
@@ -21,6 +22,7 @@ pub mod decision;
 pub mod envelope;
 pub mod error;
 pub mod estimate;
+pub mod hold_store;
 pub mod identity;
 pub mod ids;
 pub mod money;
@@ -30,6 +32,7 @@ pub mod transport;
 pub use decision::EnforcementDecision;
 pub use error::AbacusError;
 pub use estimate::CostEstimate;
+pub use hold_store::{Clock, HoldRecord, HoldStore, ManualClock, SystemClock};
 pub use identity::{AgentIdentity, BudgetPolicy, BudgetRepo, FundingPath};
 pub use ids::{AccountId, AgentId, Ait1Address, BudgetId, RunId};
 pub use money::{Micros, MICROS_PER_USD};
