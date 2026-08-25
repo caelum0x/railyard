@@ -163,6 +163,106 @@ async fn mint_is_idempotent_per_deposit_ref() {
 }
 
 #[tokio::test]
+async fn mint_retry_with_different_caller_idem_key_replays_cleanly() {
+    // A legitimate retry reuses the same deposit_ref/amount/target but supplies a
+    // FRESH caller idem_key (a common client pattern where the idempotency key is
+    // minted per HTTP attempt). Because deposit_ref is the authoritative dedupe
+    // key, this must replay cleanly — NOT return IdempotencyConflict.
+    let ramp = FakeRamp::new().with_confirmed_deposit("d1", 500, Asset::Usd);
+    let rl = reserve_ledger(ramp, FakeKycGate::new(KycTier::None, i64::MAX));
+    let to = account(&rl, AccountKind::User).await;
+
+    let first = rl
+        .mint(MintRequest {
+            to: to.clone(),
+            amount_micros: 500,
+            deposit_ref: "d1".into(),
+            idem_key: "attempt-1".into(),
+        })
+        .await
+        .unwrap();
+    assert!(!first.idempotent_replay);
+
+    let replay = rl
+        .mint(MintRequest {
+            to: to.clone(),
+            amount_micros: 500,
+            deposit_ref: "d1".into(),
+            idem_key: "attempt-2-fresh-key".into(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        replay.idempotent_replay,
+        "a retry with a fresh caller idem_key must replay, not conflict"
+    );
+    assert_eq!(replay.reserve_after_micros, first.reserve_after_micros);
+
+    // Credited EXACTLY once despite the differing caller idem_key.
+    assert_eq!(
+        rl.store().get_balance(&to).await.unwrap().available_micros,
+        Micros::new(500)
+    );
+    assert_eq!(rl.store().reserve_micros_snapshot(), Micros::new(500));
+}
+
+#[tokio::test]
+async fn redeem_retry_with_different_caller_idem_key_replays_cleanly() {
+    // The off-ramp mirror of the mint case: retrying redeem with the same
+    // payout_ref but a fresh caller idem_key must replay the burn (no double-burn)
+    // and re-send the payout exactly once, per redeem()'s documented contract.
+    let ramp = FakeRamp::new().with_confirmed_deposit("d1", 1_000, Asset::Usd);
+    let kyc = FakeKycGate::new(KycTier::Verified, i64::MAX);
+    let rl = reserve_ledger(ramp, kyc);
+    let acc = account(&rl, AccountKind::User).await;
+    rl.mint(mint_req(&acc, 1_000, "d1")).await.unwrap();
+
+    let first = rl
+        .redeem(RedeemRequest {
+            from: acc.clone(),
+            amount_micros: 400,
+            payout_ref: "p1".into(),
+            kyc_tier: KycTier::Verified,
+            payout_dest: PayoutDest::Stripe {
+                account: "acct_ext_1".into(),
+            },
+            idem_key: "attempt-1".into(),
+        })
+        .await
+        .unwrap();
+    assert!(!first.idempotent_replay);
+    assert_eq!(first.payout.status, PayoutStatus::Paid);
+
+    let replay = rl
+        .redeem(RedeemRequest {
+            from: acc.clone(),
+            amount_micros: 400,
+            payout_ref: "p1".into(),
+            kyc_tier: KycTier::Verified,
+            payout_dest: PayoutDest::Stripe {
+                account: "acct_ext_1".into(),
+            },
+            idem_key: "attempt-2-fresh-key".into(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        replay.idempotent_replay,
+        "a retry with a fresh caller idem_key must replay the burn, not conflict"
+    );
+
+    // Burned exactly once; exactly one payout of 400.
+    assert_eq!(
+        rl.store().get_balance(&acc).await.unwrap().available_micros,
+        Micros::new(600)
+    );
+    assert_eq!(rl.store().reserve_micros_snapshot(), Micros::new(600));
+    let payouts = rl.ramp().payouts();
+    assert_eq!(payouts.len(), 1);
+    assert_eq!(payouts[0].amount_micros, Micros::new(400));
+}
+
+#[tokio::test]
 async fn redeem_burns_and_decrements_reserve_records_one_payout() {
     let ramp = FakeRamp::new().with_confirmed_deposit("d1", 1_000, Asset::Usd);
     let kyc = FakeKycGate::new(KycTier::Verified, 500);

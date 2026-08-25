@@ -71,12 +71,17 @@ impl<S: LedgerStore, R: Ramp, K: KycGate> ReserveLedger<S, R, K> {
         // 2. Key idempotency on the deposit_ref so a deposit mints exactly once
         //    regardless of how many times the mint is retried.
         let idem_key = format!("mint:{}", req.deposit_ref);
+        // NOTE: the caller-supplied `req.idem_key` is deliberately NOT folded into
+        // the op_hash. The authoritative dedupe key is `mint:{deposit_ref}`, so a
+        // legitimate retry that reuses the same deposit_ref but supplies a fresh
+        // per-attempt caller idem_key must replay cleanly instead of tripping
+        // IdempotencyConflict. Real conflicts (a different to/amount reusing the
+        // same deposit_ref) still mismatch on those fields.
         let hash = op_hash(&json!({
             "op": "mint",
             "to": req.to.as_str(),
             "amount": amount.get(),
             "deposit_ref": req.deposit_ref,
-            "idem_key": req.idem_key,
         }));
 
         // 3. Atomic mint: credit + reserve rise in lockstep.
@@ -125,12 +130,17 @@ impl<S: LedgerStore, R: Ramp, K: KycGate> ReserveLedger<S, R, K> {
 
         // 2. Atomic burn: available + reserve fall in lockstep.
         let idem_key = format!("redeem:{}", req.payout_ref);
+        // NOTE: as in mint(), the caller-supplied `req.idem_key` is deliberately
+        // NOT folded into the op_hash. The authoritative dedupe key is
+        // `redeem:{payout_ref}`, so retrying with the same payout_ref but a fresh
+        // caller idem_key replays the burn (no double-burn) instead of tripping
+        // IdempotencyConflict. A different from/amount reusing the same payout_ref
+        // still mismatches on those fields.
         let hash = op_hash(&json!({
             "op": "redeem",
             "from": req.from.as_str(),
             "amount": amount.get(),
             "payout_ref": req.payout_ref,
-            "idem_key": req.idem_key,
         }));
         let out = self
             .store
