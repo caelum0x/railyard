@@ -1,0 +1,32 @@
+[package]
+name = "game-economy-mint-client"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+# The REAL HTTP transport to a live mint-server. Implements the same
+# `game_economy_core::MintTransport` seam the FakeMint does, so a game storefront
+# can settle actual card-pack / cosmetic / battle-pass purchases over HTTP.
+#
+# Ported in shape from `apps/abacus`'s abacus-mint-client:
+#   - `x-api-key` auth from config/env,
+#   - bare-`i64` `amount_micros`,
+#   - the `{success:true,data}` / `{success:false,error:{code,message}}` envelope,
+#   - HTTP status + stable error code -> typed `GameError` mapping.
+# It only needs the direct-holds path (create / capture / release) the fixed-price
+# storefront uses; a `transfer` convenience is provided for symmetry with
+# `POST /v1/transfers` but is not part of the store's hot path.
+
+[dependencies]
+game-economy-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+blake3 = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+# The mock mint-server used by the tests is a tiny hand-rolled tokio TCP stub
+# (no new crates), so the suite runs fully offline and never hits a live Mint.
+tokio = { workspace = true }
+game-economy-testkit = { workspace = true }
