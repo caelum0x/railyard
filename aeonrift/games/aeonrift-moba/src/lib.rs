@@ -31,6 +31,19 @@ pub mod modes;
 pub mod rules;
 pub mod server;
 
+/// Real-UDP netcode via lightyear (Bevy 0.19), behind the `netcode` feature. The
+/// default build keeps the in-process predict/reconcile spine ([`server`] +
+/// [`client`]); enabling `netcode` adds the lightyear UDP transport around the
+/// same untouched `sim` kernel. See [`netcode`] for the spine<->lightyear mapping.
+#[cfg(feature = "netcode")]
+pub mod netcode;
+
+/// Client-side, NON-authoritative navmesh visualization via `vleue_navigator`
+/// (Bevy 0.19), behind the `client` feature. Never feeds the deterministic sim —
+/// the authoritative pathing is `aeonrift-pathfinding` (see [`rules::lanes`]).
+#[cfg(feature = "client")]
+pub mod clientnav;
+
 pub use client::Client;
 pub use game::{Match, Phase};
 pub use server::Server;

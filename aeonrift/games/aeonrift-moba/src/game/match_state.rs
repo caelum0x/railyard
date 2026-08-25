@@ -10,6 +10,7 @@
 //! iteration is over id-sorted vecs, so `Match::new(mode, seed)` + the same input
 //! sequence yields a byte-identical trajectory and [`Match::fingerprint`].
 
+use aeonrift_pathfinding::NavGrid;
 use sim::{state_hash, EntityId, Input, Vec2, World};
 
 use crate::champions;
@@ -33,6 +34,10 @@ pub struct Match {
     pub world: World,
     pub registry: Registry,
     pub map: MapData,
+    /// Deterministic navigation grid over the map, used to route minion/lane
+    /// movement around obstacles. Built obstacle-free from the map bounds, so it
+    /// reduces to a direct straight-line follow unless a mode bakes in blockers.
+    pub nav: NavGrid,
     pub structures: StructureStats,
     pub waves: WaveProfile,
     pub neutrals: NeutralCatalog,
@@ -101,10 +106,16 @@ impl Match {
         jungle::spawn(&mut world, &mut registry, &mut next_id, &map, &neutrals);
         objectives::spawn(&mut world, &mut registry, &mut next_id, &map, &neutrals);
 
+        // Deterministic nav grid over the play-plane. Kept obstacle-free here so
+        // routing reduces to the direct target (unchanged behaviour); a mode/map
+        // can bake blockers into it later to make units path around terrain.
+        let nav = NavGrid::new(map.bounds, 2.0);
+
         Ok(Match {
             world,
             registry,
             map,
+            nav,
             structures,
             waves,
             neutrals,
@@ -143,7 +154,12 @@ impl Match {
 
         // 2. Assemble this tick's inputs: players, then minion AI, then bot AI.
         let mut inputs: Vec<Input> = player_inputs.to_vec();
-        inputs.extend(lanes::steer_minions(&self.map, &mut self.registry, &self.world));
+        inputs.extend(lanes::steer_minions(
+            &self.map,
+            &self.nav,
+            &mut self.registry,
+            &self.world,
+        ));
         for &bid in &self.bot_ids {
             if let Some(c) = self.world.champion(bid) {
                 if c.alive {

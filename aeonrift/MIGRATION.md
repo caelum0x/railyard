@@ -5,6 +5,58 @@ in this skeleton. This is the reconciliation map; the skeleton compiles today an
 the real code migrates in per row. Each destination crate's `src/lib.rs` carries the
 same pointer as a `// MIGRATE:` doc line.
 
+## INTEGRATION — real netcode + deterministic pathfinding (2026-08-26)
+
+The deferred **M1.5** step is graduated: the cloned crates are now actually wired,
+not just planned. All three land WITHOUT disturbing the default build — the
+Bevy-0.19 deps (lightyear, vleue) live behind feature flags so
+`cargo +1.96.1 build --workspace` (default features) never pulls them into the
+Bevy-0.20-dev engine world.
+
+### Netcode — lightyear 0.29 real UDP (`aeonrift-moba` `netcode` feature)
+`games/aeonrift-moba/src/netcode/` wraps the untouched `sim` kernel in a real
+lightyear server + client over **UDP** (`NetcodeServer`/`ServerUdpIo`,
+`NetcodeClient`/`UdpIo`). The in-process predict/reconcile spine
+(`server::Server` / `client::Client`) stays the DEFAULT (feature off) so
+`no_desync` and the whole default build stay green. Spine → lightyear mapping:
+
+| aeonrift spine (`sim::net`)     | lightyear 0.29                          |
+|---------------------------------|------------------------------------------|
+| `StampedInput` (inputs-only)    | `MoveInput` native input (`input_native`)|
+| `Client::predict` / `reconcile` | `PredictionTarget` + rollback            |
+| `sim::state_hash`               | `ChecksumPlugin` + `SimChecksum` resource|
+| fixed `DT` tick                 | `FixedUpdate` at `sim::TICK_HZ`          |
+| `effect_tick` input delay       | lightyear input-delay config             |
+
+- Build: `cargo +1.96.1 build -p aeonrift-moba --features netcode` ✅
+- Run (real UDP loopback, 2 procs):
+  `cargo +1.96.1 run -p aeonrift-moba --features netcode --bin moba-netcode -- server|client`
+- Test: `cargo +1.96.1 test -p aeonrift-moba --features netcode --test netcode_udp` —
+  spins a server + client as two in-process apps over **real UDP loopback**, drives a
+  move, and asserts the client connects, receives replication, and converges toward the
+  server's authoritative `sim::step` position. ✅ PASSES.
+
+### Pathfinding — deterministic engine crate (`aeonrift-pathfinding`, Bevy-free)
+`engine/pathfinding` is now a real, Bevy-free, integer flow-field / grid nav layer
+(`NavGrid`, `FlowField`, supercover `line_clear`, `route`). It is AUTHORITATIVE and
+determinism-safe (integer BFS; `f32` only at the world↔cell boundary). Wired into
+`rules::lanes::steer_minions` via a `Match.nav: NavGrid`: move targets now route
+through the grid. On an obstacle-free map `route` returns the direct target, so
+existing content behaves byte-for-byte identically (no regression); baking blockers
+into the grid makes units path around them — all still through `sim::Input`.
+- Tests: `aeonrift-pathfinding` unit tests (6) + `aeonrift-moba` `tests/pathfinding.rs`
+  (3, deterministic routing-around-obstacle gate). ✅
+
+### Client navmesh — vleue_navigator 0.16 (`aeonrift-moba` `client` feature)
+`games/aeonrift-moba/src/clientnav.rs` uses vleue's Polyanya any-angle navmesh
+(`VleueNavigatorPlugin`, `NavMesh::from_edge_and_obstacles`, `navmesh.path`) for
+CLIENT-SIDE path preview / visualization ONLY — it never feeds the deterministic
+sim. Gated behind `client` (Bevy 0.19).
+- Build: `cargo +1.96.1 build -p aeonrift-moba --features client` ✅
+
+> `engine/net` remains a stub by design: per the integration mandate the netcode
+> landed as a feature on the game crate (`aeonrift-moba`), not in `engine/net`.
+
 ## CONSOLIDATION — everything is now on `master` (2026-08-26)
 
 All previously-scattered franchise work has been merged onto **`master`**. There is no
