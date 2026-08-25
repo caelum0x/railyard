@@ -148,11 +148,21 @@ impl SettlementCoordinator {
         }
 
         if saga.hold_state == StepState::Committed {
-            let hold_id = saga.hold_id.clone().ok_or_else(|| {
-                LedgerlineError::Storage("hold release reached without a hold id".into())
-            })?;
-            let key = step_key(&saga.request_id, saga.attempt, StepKey::HoldRelease);
-            self.ops.release_hold(&hold_id, event, &key).await?;
+            // A hold that was ever captured is terminal on Mint: capture consumed
+            // the escrow, so `reverse_revenue` above (the reverse transfer) is the
+            // whole compensation and already returned the funds to the customer.
+            // Releasing such a hold is a *distinct* close of a terminal hold, which
+            // Mint answers with `HoldNotFound` — so we must NOT attempt it. Only an
+            // uncaptured hold (capture never committed) still holds escrow and must
+            // be released to net to zero.
+            let was_captured = saga.capture_state != StepState::Pending;
+            if !was_captured {
+                let hold_id = saga.hold_id.clone().ok_or_else(|| {
+                    LedgerlineError::Storage("hold release reached without a hold id".into())
+                })?;
+                let key = step_key(&saga.request_id, saga.attempt, StepKey::HoldRelease);
+                self.ops.release_hold(&hold_id, event, &key).await?;
+            }
             saga.hold_state = StepState::Compensated;
             saga.updated_at = self.clock.now();
             self.outbox.upsert(saga).await?;
@@ -439,17 +449,28 @@ mod tests {
             idem_key: &str,
         ) -> Result<(), LedgerlineError> {
             let mut state = self.state.lock().expect("lock");
+            // Idempotent replay of *this* release (same idem_key) is a no-op,
+            // exactly like the real Mint returning the cached outcome.
             if state.applied.contains_key(idem_key) {
                 return Ok(());
             }
             if FakeMint::should_fail(&state, Op::ReleaseHold, idem_key) {
                 return Err(LedgerlineError::Mint("injected release failure".into()));
             }
-            // Releasing only returns escrow for an uncaptured, unreleased hold.
-            if !state.captured_holds.contains(hold_id) && !state.released_holds.contains(hold_id) {
-                state.credit(&event.customer_account, event.revenue_micros);
-                state.released_holds.insert(hold_id.to_string());
+            // Real Mint semantics (mint-ledger release_hold / mint-store
+            // commit_hold_release): a hold is Open only until it reaches a
+            // terminal state. A *distinct* close (fresh idem_key) of a hold that
+            // was ever captured — or already released — is `HoldNotFound`, not a
+            // silent no-op. Ledgerline has no dedicated HoldNotFound variant, so
+            // the real client surfaces this as `LedgerlineError::Mint`.
+            if state.captured_holds.contains(hold_id) || state.released_holds.contains(hold_id) {
+                return Err(LedgerlineError::Mint(
+                    "HoldNotFound: cannot release a terminal (captured or released) hold".into(),
+                ));
             }
+            // Open hold: free the escrow back to the customer and close it.
+            state.credit(&event.customer_account, event.revenue_micros);
+            state.released_holds.insert(hold_id.to_string());
             state.applied.insert(
                 idem_key.to_string(),
                 Applied {
@@ -623,6 +644,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn captured_hold_compensates_via_reverse_revenue_not_release() {
+        // The flagship scenario: hold + capture commit, then COGS fails. The
+        // captured hold is terminal on Mint, so compensation MUST reverse the
+        // revenue (the reverse transfer) and MUST NOT release the hold — releasing
+        // a terminal hold is a distinct close that Mint answers with HoldNotFound.
+        // The saga must reach `Compensated`, never wedge in `Compensating`.
+        let mint = FakeMint::fail(&[Op::TransferCogs]);
+        let outbox = Arc::new(MemoryOutbox::new());
+        let coordinator = coordinator(mint.clone(), outbox.clone());
+        let event = event();
+
+        assert!(coordinator.settle(&event).await.is_err());
+
+        // reverse_revenue ran; release_hold did NOT (captured hold is terminal).
+        assert_eq!(
+            mint.effective_calls(Op::ReverseRevenue),
+            1,
+            "reverse_revenue is the compensation for a captured hold"
+        );
+        assert_eq!(
+            mint.effective_calls(Op::ReleaseHold),
+            0,
+            "a captured hold must never be released"
+        );
+        assert_fully_compensated(&mint, &event);
+
+        let saga = outbox
+            .load(&event.request_id)
+            .await
+            .expect("load")
+            .expect("saga");
+        assert_eq!(
+            saga.state,
+            SagaState::Compensated,
+            "saga must fully compensate, not wedge in Compensating"
+        );
+        assert_eq!(saga.hold_state, StepState::Compensated);
+        assert_eq!(saga.capture_state, StepState::Compensated);
+
+        // Re-running after compensation converges (fresh attempt) and never wedges.
+        mint.clear_failures();
+        let refs = coordinator.settle(&event).await.expect("retry settles");
+        assert!(refs.cogs_sequence.is_some());
+        assert_settled_once(&mint, &event);
+    }
+
+    #[tokio::test]
     async fn retry_after_compensation_settles_exactly_once() {
         let mint = FakeMint::fail(&[Op::TransferCogs]);
         let outbox = Arc::new(MemoryOutbox::new());
@@ -641,9 +709,15 @@ mod tests {
 
         // Idempotency of the *money*: net balances show a single settlement even
         // though attempt 1's hold+capture were created and then reversed. Attempt
-        // 1 fully compensated (one release, one revenue reversal); attempt 2 is
-        // the only one whose COGS transfer ever committed.
-        assert_eq!(mint.effective_calls(Op::ReleaseHold), 1);
+        // 1's hold was captured, so its ONLY correct compensation is the revenue
+        // reversal — the captured hold is terminal on Mint and is never released
+        // (releasing it would be a distinct close of a terminal hold => HoldNotFound).
+        // Attempt 2 is the only one whose COGS transfer ever committed.
+        assert_eq!(
+            mint.effective_calls(Op::ReleaseHold),
+            0,
+            "a captured hold is terminal and must not be released"
+        );
         assert_eq!(mint.effective_calls(Op::ReverseRevenue), 1);
         assert_eq!(mint.effective_calls(Op::TransferCogs), 1);
 
