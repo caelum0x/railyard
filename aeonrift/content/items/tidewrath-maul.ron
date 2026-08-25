@@ -1,0 +1,13 @@
+// Tidewrath Maul — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Tidewrath Maul",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 50,
+        hp: 300,
+    ),
+    passive: Some("Dashes and knockups deal bonus magic based on max health."),
+    build_from: ["oathkeeper-banner", "radiant-warplate", "hallowed-thread"],
+    tags: ["legendary", "ad", "hp", "bruiser"],
+)

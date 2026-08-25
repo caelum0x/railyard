@@ -1,0 +1,7 @@
+// Exhaust Veil — summoner spell.
+SummonerSpell(
+    name: "Exhaust Veil",
+    cooldown: 210,
+    effect: "Slow a target champion and reduce the damage they deal for a short duration.",
+    tags: ["utility", "peel"],
+)

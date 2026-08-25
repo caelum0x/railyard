@@ -1,0 +1,7 @@
+// Grasp of the Ancient — Resolve / Keystone.
+RuneSpec(
+    name: "Grasp of the Ancient",
+    tree: Resolve,
+    tier: Keystone,
+    effect: "Periodically, your next attack in combat deals bonus magic, heals you, and grows your maximum health.",
+)

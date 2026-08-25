@@ -1,0 +1,20 @@
+// content/cards/packs/mythril-cache.ron
+// A premium standard cache with improved odds.
+CardPack(
+    id: "mythril-cache",
+    name: "Mythril Cache",
+    description: "A premium standard cache with improved odds.",
+    category: "standard",
+    card_count: 10,
+    cost: PackCost(currency: "gems", amount: 320),
+    one_time: false,
+    guaranteed_floor: Some("rare"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 600),
+        RarityOdd(rarity: "uncommon",  weight: 280),
+        RarityOdd(rarity: "rare",      weight: 100),
+        RarityOdd(rarity: "epic",      weight: 17),
+        RarityOdd(rarity: "legendary", weight: 3),
+        RarityOdd(rarity: "mythic",    weight: 0),
+    ],
+)

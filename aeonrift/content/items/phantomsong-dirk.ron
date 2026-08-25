@@ -1,0 +1,12 @@
+// Phantomsong Dirk — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Phantomsong Dirk",
+    cost: 1250,
+    tier: Epic,
+    stats: Stats(
+        ad: 20,
+    ),
+    passive: Some("Lethality and energized basic attacks."),
+    build_from: ["cloth-wrap", "serrated-dirk"],
+    tags: ["epic", "ad", "lethality"],
+)

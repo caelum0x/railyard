@@ -1,0 +1,12 @@
+// Emberfont Orb — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Emberfont Orb",
+    cost: 1150,
+    tier: Epic,
+    stats: Stats(
+        ap: 35,
+    ),
+    passive: Some("Restores mana on takedown."),
+    build_from: ["runic-chip", "shadow-cloak"],
+    tags: ["epic", "ap", "mana"],
+)

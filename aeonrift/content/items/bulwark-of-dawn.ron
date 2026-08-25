@@ -1,0 +1,13 @@
+// Bulwark of Dawn — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Bulwark of Dawn",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        hp: 400,
+        mr: 40,
+    ),
+    passive: Some("Blocks a portion of the first hit from each enemy."),
+    build_from: ["warden-fang-jungle", "gale-runners", "arcane-seedling"],
+    tags: ["legendary", "hp", "mr", "tank"],
+)

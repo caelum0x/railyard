@@ -1,0 +1,12 @@
+// Ravenous Warhydra — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Ravenous Warhydra",
+    cost: 3400,
+    tier: Legendary,
+    stats: Stats(
+        ad: 65,
+    ),
+    passive: Some("Abilities and attacks cleave nearby foes; heals from the splash."),
+    build_from: ["forbidden-idol", "emberpiercer", "umbral-splinter"],
+    tags: ["legendary", "ad", "aoe", "lifesteal", "bruiser"],
+)

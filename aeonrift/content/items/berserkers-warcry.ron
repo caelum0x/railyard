@@ -1,0 +1,13 @@
+// Berserker's Warcry — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Berserker's Warcry",
+    cost: 1200,
+    tier: Epic,
+    stats: Stats(
+        ad: 25,
+        attack_speed: 0.18,
+    ),
+    passive: None,
+    build_from: ["tithe-shard", "vanguard-fang"],
+    tags: ["epic", "ad", "attack-speed", "bruiser"],
+)

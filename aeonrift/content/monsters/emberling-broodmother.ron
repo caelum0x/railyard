@@ -1,0 +1,24 @@
+// Emberling Broodmother — the large monster of the Emberlings camp. Leads two
+// hatchlings; grants the bulk of the camp's gold and xp. No buff. Camp grouping in
+// camp-emberlings.ron; placement in the map jungle list.
+MonsterSpec(
+    id: "emberling_broodmother",
+    display_name: "Emberling Broodmother",
+    role: "CampLarge",
+    camp: "camp_emberlings",
+
+    stats: NeutralStats(
+        hp: 1350,
+        armor: 14,
+        magic_resist: 20,
+        attack_damage: 62,
+        attack_speed: 0.6,
+        attack_range: 2.0,
+        move_speed: 0.0,
+    ),
+
+    scaling: "monster_scaling",
+
+    grants_buff: "none",
+    bounty: (gold_local: 58, gold_shared: 0, xp: 92),
+)

@@ -1,0 +1,13 @@
+// Verdant Sovereign — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Verdant Sovereign",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        ap: 60,
+        hp: 250,
+    ),
+    passive: Some("Periodically overgrows the ground, healing allies who stand in it."),
+    build_from: ["spectre-cowl", "kindled-blade", "fiendish-codex"],
+    tags: ["legendary", "ap", "hp", "heal-shield", "aura", "support"],
+)

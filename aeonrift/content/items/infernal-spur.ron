@@ -1,0 +1,13 @@
+// Infernal Spur — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Infernal Spur",
+    cost: 1150,
+    tier: Epic,
+    stats: Stats(
+        hp: 180,
+        ap: 25,
+    ),
+    passive: Some("Deals burn damage to nearby foes."),
+    build_from: ["minor-tome", "tithe-shard"],
+    tags: ["epic", "hp", "ap", "dot", "aura"],
+)

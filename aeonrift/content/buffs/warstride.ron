@@ -1,0 +1,10 @@
+// Warstride — Mobility buff. Maps to closed vocab.
+BuffSpec(
+    id: "warstride",
+    name: "Warstride",
+    category: Mobility,
+    vocab_ref: Some("BuffMoveSpeed"),
+    fields: ["bonus_percent", "duration"],
+    stacking: Longest,
+    description: "Sustained movement speed while advancing on foes.",
+)

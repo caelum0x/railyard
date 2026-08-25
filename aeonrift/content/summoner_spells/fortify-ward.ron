@@ -1,0 +1,7 @@
+// Fortify Ward — summoner spell.
+SummonerSpell(
+    name: "Fortify Ward",
+    cooldown: 240,
+    effect: "Empower nearby structures and grant a bonus shield to a targeted allied structure.",
+    tags: ["utility", "defense"],
+)

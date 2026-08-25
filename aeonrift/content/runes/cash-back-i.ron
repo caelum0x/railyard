@@ -1,0 +1,7 @@
+// Cash Back — Inspiration / Tier1.
+RuneSpec(
+    name: "Cash Back",
+    tree: Inspiration,
+    tier: Tier1,
+    effect: "Recover a fraction of gold spent on components as usable currency.",
+)

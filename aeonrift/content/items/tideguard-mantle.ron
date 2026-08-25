@@ -1,0 +1,13 @@
+// Tideguard Mantle — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Tideguard Mantle",
+    cost: 1100,
+    tier: Epic,
+    stats: Stats(
+        hp: 200,
+        mr: 30,
+    ),
+    passive: None,
+    build_from: ["shadow-cloak", "iron-vest"],
+    tags: ["epic", "hp", "mr", "tank"],
+)

@@ -1,0 +1,2 @@
+// Preset deck 24 — Skyshot Volley.
+DeckDef(name: "Skyshot Volley", cards: ["artemis","ullr","bellona","cyranth","thornquill","quorvane","kaeza","medusa"])

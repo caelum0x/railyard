@@ -1,0 +1,7 @@
+// Relentless Appetite — Domination / Tier3.
+RuneSpec(
+    name: "Relentless Appetite",
+    tree: Domination,
+    tier: Tier3,
+    effect: "Takedowns grant a stacking burst of adaptive force that decays out of combat.",
+)

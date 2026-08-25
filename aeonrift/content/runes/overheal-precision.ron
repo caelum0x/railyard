@@ -1,0 +1,7 @@
+// Overheal — Precision / Tier1.
+RuneSpec(
+    name: "Overheal",
+    tree: Precision,
+    tier: Tier1,
+    effect: "Excess healing is stored as a temporary shield.",
+)

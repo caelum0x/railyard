@@ -1,0 +1,21 @@
+// content/cards/packs/egyptian-dynasty-vault.ron
+// Cards of Duat biased to the Egyptian pool.
+CardPack(
+    id: "egyptian-dynasty-vault",
+    name: "Egyptian Dynasty Vault",
+    description: "Cards of Duat biased to the Egyptian pool.",
+    category: "mythology",
+    card_count: 9,
+    cost: PackCost(currency: "shards", amount: 3200),
+    one_time: false,
+    guaranteed_floor: Some("epic"),
+    faction_bias: Some("Egyptian"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 380),
+        RarityOdd(rarity: "uncommon",  weight: 300),
+        RarityOdd(rarity: "rare",      weight: 200),
+        RarityOdd(rarity: "epic",      weight: 80),
+        RarityOdd(rarity: "legendary", weight: 32),
+        RarityOdd(rarity: "mythic",    weight: 8),
+    ],
+)

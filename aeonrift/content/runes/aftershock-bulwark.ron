@@ -1,0 +1,7 @@
+// Aftershock Bulwark — Resolve / Keystone.
+RuneSpec(
+    name: "Aftershock Bulwark",
+    tree: Resolve,
+    tier: Keystone,
+    effect: "Immobilizing an enemy grants a burst of resistances, then releases a damaging shockwave.",
+)

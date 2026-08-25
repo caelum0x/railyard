@@ -1,0 +1,7 @@
+// Predator — Domination / Keystone.
+RuneSpec(
+    name: "Predator",
+    tree: Domination,
+    tier: Keystone,
+    effect: "Enchant your boots to charge a large burst of move speed, and your next attack deals heavy bonus damage.",
+)

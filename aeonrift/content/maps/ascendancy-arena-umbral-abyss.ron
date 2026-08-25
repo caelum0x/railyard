@@ -1,0 +1,40 @@
+// Umbral Abyss — an Ascendancy card arena (games/aeonrift-ascendancy). Ascendancy is
+// a deterministic lane-battler: two players push units down a fixed number of lanes
+// toward the opponent's Ascendant. Arenas define lane count, board length, spawn
+// tiles, hazard tiles and the passive that skews play. Umbral-faction themed.
+ArenaSpec(
+    id: "ascendancy_umbral_abyss",
+    display_name: "Umbral Abyss",
+    faction_theme: "Umbral",
+    game: "aeonrift_ascendancy",
+
+    board: (
+        lanes: 3,
+        length: 9,
+        lane_names: ["Dusk", "Eclipse", "Void"],
+    ),
+
+    ascendants: [
+        (player: "A", pos: (lane: 1, tile: 0), start_hp: 30),
+        (player: "B", pos: (lane: 1, tile: 8), start_hp: 30),
+    ],
+
+    deploy_tiles: [
+        (player: "A", tiles: [(lane: 0, tile: 0), (lane: 1, tile: 0), (lane: 2, tile: 0)]),
+        (player: "B", tiles: [(lane: 0, tile: 8), (lane: 1, tile: 8), (lane: 2, tile: 8)]),
+    ],
+
+    hazards: [
+        (id: "void_rift", tile: (lane: 1, tile: 4), effect: "DrainPassing", magnitude: 2, note: "Center Eclipse tile drains a unit that ends a step on it."),
+        (id: "void_rift", tile: (lane: 0, tile: 4), effect: "DrainPassing", magnitude: 1),
+        (id: "void_rift", tile: (lane: 2, tile: 4), effect: "DrainPassing", magnitude: 1),
+    ],
+
+    passive: (
+        id: "gathering_dark",
+        desc: "Each turn a unit survives in shadow, it gains +1 attack (the dark gathers). Reset on death.",
+        stacks_max: 5,
+    ),
+
+    resolution_order: ["Hazards", "PlayerA_Advance", "PlayerB_Advance", "Combat", "Deaths"],
+)

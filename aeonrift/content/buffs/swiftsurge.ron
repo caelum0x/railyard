@@ -1,0 +1,10 @@
+// Swiftsurge — Mobility buff. Maps to closed vocab.
+BuffSpec(
+    id: "swiftsurge",
+    name: "Swiftsurge",
+    category: Mobility,
+    vocab_ref: Some("BuffMoveSpeed"),
+    fields: ["bonus_percent", "duration"],
+    stacking: Strongest,
+    description: "A short, powerful burst of movement speed.",
+)

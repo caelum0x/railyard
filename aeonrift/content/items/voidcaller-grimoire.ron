@@ -1,0 +1,12 @@
+// Voidcaller Grimoire — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Voidcaller Grimoire",
+    cost: 3400,
+    tier: Legendary,
+    stats: Stats(
+        ap: 90,
+    ),
+    passive: Some("Abilities against low-health foes execute for bonus true damage."),
+    build_from: ["sheen-facet", "moonlit-scepter", "aether-crystal"],
+    tags: ["legendary", "ap", "burst"],
+)

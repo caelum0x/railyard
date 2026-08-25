@@ -1,0 +1,12 @@
+// Obsidian Warmog — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Obsidian Warmog",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        hp: 600,
+    ),
+    passive: Some("Rapidly regenerates health out of combat."),
+    build_from: ["emberclaw-jungle", "astral-conduit", "aether-tears"],
+    tags: ["legendary", "hp", "tank", "sustain"],
+)

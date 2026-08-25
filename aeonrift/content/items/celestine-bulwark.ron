@@ -1,0 +1,13 @@
+// Celestine Bulwark — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Celestine Bulwark",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        hp: 400,
+        mr: 45,
+    ),
+    passive: Some("Reduces magic damage from area effects."),
+    build_from: ["oathkeeper-banner", "silentveil-mantle", "gale-feather"],
+    tags: ["legendary", "hp", "mr", "tank"],
+)

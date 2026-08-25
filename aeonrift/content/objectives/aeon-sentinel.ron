@@ -1,0 +1,34 @@
+// Aeon Sentinel — a mid-game epic objective that patrols the Sunder Hollow between
+// the Rift Vanguard and The Sunderer windows. On death it grants the killing team the
+// Aeon Ward, a temporary team-wide shield-on-recall. Original IP.
+ObjectiveSpec(
+    id: "aeon_sentinel",
+    display_name: "Aeon Sentinel",
+    class: "EpicMonster",
+    pit: "sunder_hollow",
+
+    spawn_gate: (earliest_minute: 14, despawn_minute: 20),
+
+    stats: NeutralStats(
+        hp: 7200,
+        armor: 45,
+        magic_resist: 45,
+        attack_damage: 175,
+        attack_speed: 0.5,
+        attack_range: 4.0,
+        move_speed: 0.0,
+    ),
+
+    weakpoint: (id: "aeon_core", bonus_damage_percent: 10, expose_interval_seconds: 8),
+
+    scaling: (hp_per_minute: 200, ad_per_minute: 5, start_minute: 14),
+
+    reward: (
+        buff: "aeon_ward",
+        scope: "KillingTeam",
+        permanent: false,
+        stacking: false,
+    ),
+
+    bounty: (gold_local: 90, gold_global: 45, xp: 240),
+)

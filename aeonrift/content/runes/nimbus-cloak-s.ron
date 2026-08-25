@@ -1,0 +1,7 @@
+// Nimbus Cloak — Sorcery / Tier1.
+RuneSpec(
+    name: "Nimbus Cloak",
+    tree: Sorcery,
+    tier: Tier1,
+    effect: "Casting a summoner spell grants a brief burst of move speed.",
+)

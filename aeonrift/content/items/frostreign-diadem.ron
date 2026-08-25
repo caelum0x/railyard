@@ -1,0 +1,12 @@
+// Frostreign Diadem — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Frostreign Diadem",
+    cost: 3200,
+    tier: Legendary,
+    stats: Stats(
+        ap: 80,
+    ),
+    passive: Some("Slowing a foe deals bonus magic and roots at max slow."),
+    build_from: ["arclight-channeler", "emberglow-catalyst", "blasting-rod"],
+    tags: ["legendary", "ap", "slow", "cc"],
+)

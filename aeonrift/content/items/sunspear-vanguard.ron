@@ -1,0 +1,13 @@
+// Sunspear Vanguard — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Sunspear Vanguard",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        hp: 350,
+        ad: 35,
+    ),
+    passive: Some("Dashing toward an enemy grants a shield and bonus damage."),
+    build_from: ["kindlespark", "dreadnought-plating", "long-blade"],
+    tags: ["legendary", "hp", "ad", "shield", "bruiser"],
+)

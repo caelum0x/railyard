@@ -1,0 +1,13 @@
+// Emberclaw Warblade — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Emberclaw Warblade",
+    cost: 1300,
+    tier: Epic,
+    stats: Stats(
+        ad: 28,
+        attack_speed: 0.12,
+    ),
+    passive: None,
+    build_from: ["shadow-cloak", "verdant-seed"],
+    tags: ["epic", "ad", "attack-speed", "bruiser"],
+)

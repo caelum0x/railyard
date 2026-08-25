@@ -1,0 +1,11 @@
+// Blight — Damage status effect. Maps to closed vocab.
+StatusEffect(
+    id: "toxin-blight",
+    name: "Blight",
+    category: Damage,
+    vocab_ref: Some("Damage"),
+    fields: ["amount", "damage_type", "tag"],
+    cleansable: false,
+    stacking: Stronger,
+    description: "Corrosive magic damage over time from blight stacks.",
+)

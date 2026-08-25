@@ -1,0 +1,20 @@
+// content/cards/packs/seasonal-solstice-cache.ron
+// Limited seasonal cache for the Solstice event.
+CardPack(
+    id: "seasonal-solstice-cache",
+    name: "Solstice Cache",
+    description: "Limited seasonal cache for the Solstice event.",
+    category: "event",
+    card_count: 8,
+    cost: PackCost(currency: "tickets", amount: 120),
+    one_time: false,
+    guaranteed_floor: Some("rare"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 380),
+        RarityOdd(rarity: "uncommon",  weight: 300),
+        RarityOdd(rarity: "rare",      weight: 200),
+        RarityOdd(rarity: "epic",      weight: 80),
+        RarityOdd(rarity: "legendary", weight: 32),
+        RarityOdd(rarity: "mythic",    weight: 8),
+    ],
+)

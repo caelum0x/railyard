@@ -1,0 +1,35 @@
+// Riftling Outrider — the cavalry minion. A fast melee flanker that spawns in the first
+// wave after a Wyrm is slain, charging ahead of the melee line to pressure the lane.
+// Higher move speed and HP than a standard melee, shorter range. Base stats at 0:00;
+// growth via minion-scaling.ron.
+MinionSpec(
+    id: "cavalry_minion",
+    display_name: "Riftling Outrider",
+    class: "Melee",
+    count_per_wave: 2,
+    collision_radius: 0.5,
+
+    base: MinionStats(
+        hp: 520,
+        ad: 13,
+        armor: 2,
+        magic_resist: 0,
+        attack_speed: 1.0,
+        move_speed: 15.0,      // charges ahead of the line
+        attack_range: 1.1,
+        attack_type: Physical,
+    ),
+
+    bounty: (gold_last_hit: 22, gold_shared: 0, xp: 66),
+
+    aggro_priority: [
+        "EnemyMinionAttackingAlly",
+        "EnemyChampionAttackingAlly",
+        "NearestEnemyMinion",
+        "EnemyStructure",
+        "NearestEnemyChampion",
+    ],
+
+    ai: "minion_ai_behavior",
+    scaling: "minion_scaling",
+)

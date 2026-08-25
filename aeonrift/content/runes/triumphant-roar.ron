@@ -1,0 +1,7 @@
+// Triumphant Roar — Precision / Tier1.
+RuneSpec(
+    name: "Triumphant Roar",
+    tree: Precision,
+    tier: Tier1,
+    effect: "Takedowns restore health and grant nearby allies a smaller heal.",
+)

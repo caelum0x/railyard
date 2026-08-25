@@ -1,0 +1,31 @@
+// Verdantwyrm — an elemental Wyrm neutral objective. Spawns in the Wyrm Pit. Slaying
+// it grants the killing team a stacking Verdant Boon (bonus health regeneration and
+// heal/shield power). Verdant faction themed. Part of the Wyrm rotation in wyrm-pit.ron.
+ObjectiveSpec(
+    id: "verdantwyrm",
+    display_name: "Verdantwyrm",
+    class: "ElementalWyrm",
+    element: "Verdant",
+    pit: "wyrm_pit",
+
+    stats: NeutralStats(
+        hp: 3800,
+        armor: 30,
+        magic_resist: 30,
+        attack_damage: 95,
+        attack_speed: 0.5,
+        attack_range: 3.0,
+        move_speed: 0.0,
+    ),
+
+    scaling: (hp_per_minute: 250, ad_per_minute: 5, start_minute: 5),
+
+    reward: (
+        buff: "verdant_boon",
+        scope: "KillingTeam",
+        permanent: true,
+        stacking: true,
+    ),
+
+    bounty: (gold_local: 25, gold_global: 25, xp: 200),
+)

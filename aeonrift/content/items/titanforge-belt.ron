@@ -1,0 +1,12 @@
+// Titanforge Belt — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Titanforge Belt",
+    cost: 1150,
+    tier: Epic,
+    stats: Stats(
+        hp: 300,
+    ),
+    passive: Some("Bonus damage scaling with max health."),
+    build_from: ["stoneheart-core", "gilded-coin"],
+    tags: ["epic", "hp", "tank"],
+)

@@ -1,0 +1,13 @@
+// Bladestorm Sovereign — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Bladestorm Sovereign",
+    cost: 3400,
+    tier: Legendary,
+    stats: Stats(
+        ad: 50,
+        attack_speed: 0.25,
+    ),
+    passive: Some("Attacks spin off blades that damage nearby foes."),
+    build_from: ["shadowstep-greaves", "lumenward-icon", "emberdust-vial"],
+    tags: ["legendary", "ad", "attack-speed", "aoe"],
+)

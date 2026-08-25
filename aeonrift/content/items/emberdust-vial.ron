@@ -1,0 +1,12 @@
+// Emberdust Vial — BASIC. A pinch of glowing ash.
+ItemSpec(
+    name: "Emberdust Vial",
+    cost: 300,
+    tier: Basic,
+    stats: Stats(
+        ap: 15,
+    ),
+    passive: Some("+40 max mana."),
+    build_from: [],
+    tags: ["basic", "ap", "mana"],
+)

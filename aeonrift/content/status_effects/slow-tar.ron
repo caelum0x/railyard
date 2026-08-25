@@ -1,0 +1,11 @@
+// Tar — SoftCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "slow-tar",
+    name: "Tar",
+    category: SoftCC,
+    vocab_ref: Some("DebuffSlow"),
+    fields: ["percent", "duration"],
+    cleansable: true,
+    stacking: Strongest,
+    description: "A thick, clinging slow that resists cleansing partially.",
+)

@@ -1,0 +1,12 @@
+// Tidal Pearl — BASIC. Pulled from the deep.
+ItemSpec(
+    name: "Tidal Pearl",
+    cost: 350,
+    tier: Basic,
+    stats: Stats(
+        ap: 18,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "ap"],
+)

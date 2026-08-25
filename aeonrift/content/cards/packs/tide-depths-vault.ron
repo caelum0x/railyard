@@ -1,0 +1,21 @@
+// content/cards/packs/tide-depths-vault.ron
+// Tide-faction premium vault from the abyssal pool.
+CardPack(
+    id: "tide-depths-vault",
+    name: "Tide Depths Vault",
+    description: "Tide-faction cards from the abyssal pool.",
+    category: "faction",
+    card_count: 9,
+    cost: PackCost(currency: "shards", amount: 2800),
+    one_time: false,
+    guaranteed_floor: Some("epic"),
+    faction_bias: Some("Tide"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 380),
+        RarityOdd(rarity: "uncommon",  weight: 300),
+        RarityOdd(rarity: "rare",      weight: 200),
+        RarityOdd(rarity: "epic",      weight: 80),
+        RarityOdd(rarity: "legendary", weight: 32),
+        RarityOdd(rarity: "mythic",    weight: 8),
+    ],
+)

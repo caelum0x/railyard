@@ -1,0 +1,12 @@
+// Frostbite Orb — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Frostbite Orb",
+    cost: 1250,
+    tier: Epic,
+    stats: Stats(
+        ap: 40,
+    ),
+    passive: Some("Damaging abilities briefly slow."),
+    build_from: ["wardens-stone", "long-blade"],
+    tags: ["epic", "ap", "slow"],
+)

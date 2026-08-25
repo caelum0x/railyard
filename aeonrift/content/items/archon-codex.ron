@@ -1,0 +1,12 @@
+// Archon Codex — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Archon Codex",
+    cost: 3400,
+    tier: Legendary,
+    stats: Stats(
+        ap: 95,
+    ),
+    passive: Some("Ultimate abilities deal bonus damage and cool down faster."),
+    build_from: ["glacial-buckler", "groveheart-idol", "caulfields-hammer"],
+    tags: ["legendary", "ap", "haste", "burst"],
+)

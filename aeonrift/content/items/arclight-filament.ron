@@ -1,0 +1,12 @@
+// Arclight Filament — BASIC. Threaded with light.
+ItemSpec(
+    name: "Arclight Filament",
+    cost: 300,
+    tier: Basic,
+    stats: Stats(
+        ap: 13,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "ap"],
+)

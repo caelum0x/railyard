@@ -1,0 +1,2 @@
+// Preset deck 16 — Sands of Duat.
+DeckDef(name: "Sands of Duat", cards: ["ra-radiant-dawn","anubis-warden-of-scales","horus-skyfall-talon","isis-mother-of-magic","set-lord-of-chaos","bastet-claws-of-the-hunt","medusa","zeus"])

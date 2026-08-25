@@ -1,0 +1,7 @@
+// Axiom Arcanist — Sorcery / Keystone.
+RuneSpec(
+    name: "Axiom Arcanist",
+    tree: Sorcery,
+    tier: Keystone,
+    effect: "Your ultimate deals bonus damage; takedowns shortly after casting it refund part of its cooldown.",
+)

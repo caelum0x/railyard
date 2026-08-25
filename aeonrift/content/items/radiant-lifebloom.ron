@@ -1,0 +1,13 @@
+// Radiant Lifebloom — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Radiant Lifebloom",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        ap: 50,
+        hp: 200,
+    ),
+    passive: Some("Heals and shields you place also cleanse a slow."),
+    build_from: ["gale-runners", "frostbite-orb", "agility-cloak"],
+    tags: ["legendary", "ap", "hp", "heal-shield", "cleanse", "support"],
+)

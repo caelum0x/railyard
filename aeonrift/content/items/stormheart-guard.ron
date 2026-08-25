@@ -1,0 +1,13 @@
+// Stormheart Guard — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Stormheart Guard",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        hp: 400,
+        armor: 50,
+    ),
+    passive: Some("Immobilizing a foe releases a stunning shockwave."),
+    build_from: ["warden-mail", "arclight-channeler", "faerie-charm"],
+    tags: ["legendary", "hp", "armor", "tank", "cc"],
+)

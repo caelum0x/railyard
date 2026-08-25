@@ -1,0 +1,7 @@
+// Unflinching — Resolve / Tier3.
+RuneSpec(
+    name: "Unflinching",
+    tree: Resolve,
+    tier: Tier3,
+    effect: "Casting a summoner spell grants tenacity and slow resistance.",
+)

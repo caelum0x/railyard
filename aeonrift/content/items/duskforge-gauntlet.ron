@@ -1,0 +1,13 @@
+// Duskforge Gauntlet — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Duskforge Gauntlet",
+    cost: 1200,
+    tier: Epic,
+    stats: Stats(
+        ad: 25,
+        hp: 150,
+    ),
+    passive: None,
+    build_from: ["frostglass-vial", "hextech-alternator"],
+    tags: ["epic", "ad", "hp", "bruiser"],
+)

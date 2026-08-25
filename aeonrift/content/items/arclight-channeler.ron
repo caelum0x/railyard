@@ -1,0 +1,12 @@
+// Arclight Channeler — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Arclight Channeler",
+    cost: 1250,
+    tier: Epic,
+    stats: Stats(
+        ap: 40,
+    ),
+    passive: Some("Chained abilities crackle for bonus magic."),
+    build_from: ["vanguard-fang", "iron-vest"],
+    tags: ["epic", "ap"],
+)

@@ -1,0 +1,7 @@
+// Glacial Augment — Inspiration / Keystone.
+RuneSpec(
+    name: "Glacial Augment",
+    tree: Inspiration,
+    tier: Keystone,
+    effect: "Immobilizing or slowing a champion with an item or ability roots them in a field of frost.",
+)

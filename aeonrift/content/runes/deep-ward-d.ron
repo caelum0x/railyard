@@ -1,0 +1,7 @@
+// Deep Ward — Domination / Tier2.
+RuneSpec(
+    name: "Deep Ward",
+    tree: Domination,
+    tier: Tier2,
+    effect: "Wards you place in the enemy jungle last longer and are harder to spot.",
+)

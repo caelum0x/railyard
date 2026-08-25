@@ -1,0 +1,12 @@
+// Shadowstep Greaves — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Shadowstep Greaves",
+    cost: 1100,
+    tier: Epic,
+    stats: Stats(
+        move_speed: 45.0,
+    ),
+    passive: Some("Ghosting through units for a moment after abilities."),
+    build_from: ["stoneheart-core", "wardens-stone"],
+    tags: ["epic", "boots", "mobility"],
+)

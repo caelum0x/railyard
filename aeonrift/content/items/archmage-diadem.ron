@@ -1,0 +1,12 @@
+// Archmage Diadem — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Archmage Diadem",
+    cost: 3500,
+    tier: Legendary,
+    stats: Stats(
+        ap: 100,
+    ),
+    passive: Some("Grants ability haste and bonus magic penetration."),
+    build_from: ["warden-mail", "tideguard-mantle", "scryers-lens"],
+    tags: ["legendary", "ap", "haste", "penetration"],
+)
