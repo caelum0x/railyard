@@ -1,0 +1,26 @@
+[package]
+name = "lol_particle"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+# `riot-assets` re-enables the Riot `.scb` static-mesh loader
+# (`league_file`/`league_to_lol`). OFF by default — see `src/loaders.rs`. Backing
+# crates are intentionally NOT workspace members; particles use ORIGINAL glTF meshes.
+riot-assets = []
+
+[dependencies]
+bevy.workspace = true
+clap.workspace = true
+league_utils.workspace = true
+lol_base.workspace = true
+lol_base_render.workspace = true
+lol_core.workspace = true
+lol_render.workspace = true
+lol_rpc.workspace = true
+lol_server.workspace = true
+rand.workspace = true
+ron.workspace = true
+serde.workspace = true
+serde_json.workspace = true
