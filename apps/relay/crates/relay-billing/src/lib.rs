@@ -18,9 +18,12 @@
 //!   provider list-price [`catalog`] that seeds it (integer micro-USD per token),
 //!   so each model is billed at its own rate with a conservative default
 //!   fallback — never one flat rate for every model.
+//! * [`catalog_config`] — the operator-supplied, validated file overlay that
+//!   adds/overrides per-model prices at startup without recompiling.
 
 pub mod backend;
 pub mod catalog;
+pub mod catalog_config;
 pub mod domain;
 pub mod error;
 pub mod ledger;
@@ -33,6 +36,10 @@ pub mod usage;
 // Flat re-exports for ergonomic downstream `use relay_billing::...`.
 pub use backend::BillingLedger;
 pub use catalog::price_table as catalog_price_table;
+pub use catalog_config::{
+    load_from_path as load_price_catalog, CatalogConfigError, ModelEntry, PriceCatalogConfig,
+    PriceRow,
+};
 pub use domain::{AccountId, ChatMessage, JobId, KeyId, ModelId, Role, OPENROUTER_PREFIX};
 pub use error::{BillingError, ProviderError, RelayError, Result};
 pub use ledger::{cost_micros, Ledger, Reservation};

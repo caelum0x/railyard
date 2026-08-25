@@ -84,11 +84,28 @@ pub async fn build_axum_router(
         // billed at its own accurate per-token micro-USD rate. Any model not in
         // the catalog falls back to the conservative safe default — never one flat
         // rate for every model.
+        //
+        // Operators can point `RELAY_PRICE_CATALOG_PATH` at a JSON file to
+        // add/override per-model prices (and the default) without recompiling; it
+        // is overlaid on the embedded catalog and validated at startup, so a
+        // malformed file fails closed rather than mispricing a money path. When
+        // unset, the embedded catalog is used unchanged (backward-compatible).
         // NOTE: `relay-hedge` is a separate workspace crate and is NOT wired into
         // the request path yet (no dependent crate); integrating it is out of scope.
-        let prices = Arc::new(relay_billing::catalog_price_table(
-            crate::billing::default_model_price(),
-        ));
+        let default_price = crate::billing::default_model_price();
+        let price_table = match std::env::var("RELAY_PRICE_CATALOG_PATH")
+            .ok()
+            .map(|path| path.trim().to_string())
+            .filter(|path| !path.is_empty())
+        {
+            Some(path) => relay_billing::load_price_catalog(&path, default_price).map_err(|e| {
+                billing_config_error(format!(
+                    "failed to load RELAY_PRICE_CATALOG_PATH '{path}': {e}"
+                ))
+            })?,
+            None => relay_billing::catalog_price_table(default_price),
+        };
+        let prices = Arc::new(price_table);
         let payee = std::env::var("RELAY_AITP_PAYEE")
             .ok()
             .map(|value| value.trim().to_string())
