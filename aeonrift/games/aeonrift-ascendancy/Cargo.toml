@@ -30,8 +30,10 @@ required-features = ["client"]
 
 [features]
 default = []
-# Enables the Bevy view over the deterministic rules core.
-client = ["dep:bevy"]
+# Enables the Bevy view over the deterministic rules core. Also pulls the
+# leafwing-input-manager 0.21 (Bevy 0.19) action-input layer for keyboard/touch
+# card selection, deploy, and shop verbs (see `client::actions`).
+client = ["dep:bevy", "dep:leafwing-input-manager"]
 
 [dependencies]
 # Reuse, do not reinvent: the deterministic combat core and the champion DSL/roster.
@@ -45,6 +47,12 @@ ron = "0.12"
 
 # Bevy for the cross-platform 2D touch client (optional — see the `client` feature).
 bevy = { version = "0.19", default-features = true, optional = true }
+
+# Action-based input mapping (Bevy 0.19). Maps keyboard (and on-screen/touch) input
+# to the card game's `CardAction` verbs (SelectCard1..4 / DeployToLane / OpenShop),
+# read as an `ActionState` in the client VIEW. 0.21 targets Bevy ^0.19 exactly, so
+# it coexists with the engine world exactly like the client's Bevy already does.
+leafwing-input-manager = { version = "0.21", optional = true }
 
 # ---------------------------------------------------------------------------
 # Android packaging metadata, read by `cargo-apk` / `cargo ndk` (see README).

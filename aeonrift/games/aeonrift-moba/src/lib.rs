@@ -49,6 +49,17 @@ pub mod clientnav;
 /// never authoritative. See [`debug_ui`] for the plugin + panel.
 #[cfg(feature = "client")]
 pub mod debug_ui;
+/// Action-based input VIEW via `leafwing-input-manager` (Bevy 0.19), behind the
+/// `client` feature. Maps keyboard/mouse/touch to `MobaAction` verbs and emits
+/// deterministic `sim::Input` intents; the authoritative sim stays untouched.
+#[cfg(feature = "client")]
+pub mod clientinput;
+
+/// Client-side ability UX (cooldowns / charges / mana pool), behind the `client`
+/// feature. A Bevy-0.19-native stand-in for `leafwing_abilities` (whose published
+/// versions only target Bevy 0.18-rc and older); see the module docs for why.
+#[cfg(feature = "client")]
+pub mod clientability;
 
 pub use client::Client;
 pub use game::{Match, Phase};
