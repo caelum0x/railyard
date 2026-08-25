@@ -130,6 +130,43 @@ impl MintError {
             MintError::DepositAmountMismatch => "deposit_amount_mismatch",
         }
     }
+
+    /// Reconstruct a [`MintError`] from its stable code string — the exact
+    /// inverse of [`MintError::code`]. Returns `None` for an unknown code (e.g.
+    /// the transport-only `bad_request`/`unauthorized`/`internal` codes the HTTP
+    /// layer adds, which are not domain errors). This is the seam a Mint client
+    /// SDK uses to map an on-the-wire `error.code` back onto the typed enum.
+    pub fn from_code(code: &str) -> Option<MintError> {
+        let err = match code {
+            "insufficient_funds" => MintError::InsufficientFunds,
+            "idempotency_conflict" => MintError::IdempotencyConflict,
+            "overflow" => MintError::Overflow,
+            "bad_address" => MintError::BadAddress,
+            "account_not_found" => MintError::AccountNotFound,
+            "invalid_amount" => MintError::InvalidAmount,
+            "bad_account_id" => MintError::BadAccountId,
+            "hold_not_found" => MintError::HoldNotFound,
+            "capture_exceeds_hold" => MintError::CaptureExceedsHold,
+            "receipt_rebuild_mismatch" => MintError::ReceiptRebuildMismatch,
+            "nonce_replayed" => MintError::NonceReplayed,
+            "authorization_expired" => MintError::AuthorizationExpired,
+            "signature_invalid" => MintError::SignatureInvalid,
+            "allowance_exceeded" => MintError::AllowanceExceeded,
+            "account_frozen" => MintError::AccountFrozen,
+            "allowance_not_found" => MintError::AllowanceNotFound,
+            "stream_not_found" => MintError::StreamNotFound,
+            "stream_closed" => MintError::StreamClosed,
+            "stream_seq_regressed" => MintError::StreamSeqRegressed,
+            "stream_cap_exceeded" => MintError::StreamCapExceeded,
+            "reserve_insufficient" => MintError::ReserveInsufficient,
+            "kyc_required" => MintError::KycRequired,
+            "payout_limit" => MintError::PayoutLimitExceeded,
+            "deposit_not_confirmed" => MintError::DepositNotConfirmed,
+            "deposit_amount_mismatch" => MintError::DepositAmountMismatch,
+            _ => return None,
+        };
+        Some(err)
+    }
 }
 
 #[cfg(test)]
@@ -172,5 +209,55 @@ mod tests {
             assert_eq!(err.code(), code);
             assert_eq!(err.to_string(), code);
         }
+    }
+
+    /// Every stable code round-trips through `code()` → `from_code()` back to
+    /// the same variant. This doubles as an exhaustiveness guard: a new variant
+    /// added to `code()` but forgotten in `from_code()` fails here.
+    #[test]
+    fn from_code_is_inverse_of_code() {
+        let all = [
+            MintError::InsufficientFunds,
+            MintError::IdempotencyConflict,
+            MintError::Overflow,
+            MintError::BadAddress,
+            MintError::AccountNotFound,
+            MintError::InvalidAmount,
+            MintError::BadAccountId,
+            MintError::HoldNotFound,
+            MintError::CaptureExceedsHold,
+            MintError::ReceiptRebuildMismatch,
+            MintError::NonceReplayed,
+            MintError::AuthorizationExpired,
+            MintError::SignatureInvalid,
+            MintError::AllowanceExceeded,
+            MintError::AccountFrozen,
+            MintError::AllowanceNotFound,
+            MintError::StreamNotFound,
+            MintError::StreamClosed,
+            MintError::StreamSeqRegressed,
+            MintError::StreamCapExceeded,
+            MintError::ReserveInsufficient,
+            MintError::KycRequired,
+            MintError::PayoutLimitExceeded,
+            MintError::DepositNotConfirmed,
+            MintError::DepositAmountMismatch,
+        ];
+        for err in all {
+            assert_eq!(MintError::from_code(err.code()), Some(err));
+        }
+    }
+
+    #[test]
+    fn from_code_rejects_unknown_and_transport_only_codes() {
+        // Transport-layer codes the HTTP surface adds are not domain errors.
+        assert_eq!(MintError::from_code("bad_request"), None);
+        assert_eq!(MintError::from_code("unauthorized"), None);
+        assert_eq!(MintError::from_code("internal"), None);
+        // Outright garbage / empty.
+        assert_eq!(MintError::from_code(""), None);
+        assert_eq!(MintError::from_code("not_a_real_code"), None);
+        // Case-sensitive: the wire code is always lowercase snake_case.
+        assert_eq!(MintError::from_code("Insufficient_Funds"), None);
     }
 }
