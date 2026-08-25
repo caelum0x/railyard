@@ -56,6 +56,16 @@ impl Micros {
         Micros::zero().checked_sub(self)
     }
 
+    /// Checked scaling by an integer `factor` (e.g. a per-unit `rate` times a
+    /// `units` count, as in stream settlement's `units * rate`). Returns
+    /// [`MintError::Overflow`] instead of wrapping.
+    pub fn checked_mul(self, factor: i64) -> Result<Micros, MintError> {
+        self.0
+            .checked_mul(factor)
+            .map(Micros)
+            .ok_or(MintError::Overflow)
+    }
+
     /// `true` iff strictly greater than zero.
     pub const fn is_positive(self) -> bool {
         self.0 > 0
@@ -147,6 +157,27 @@ mod tests {
         let b = Micros::new(20_000_000); // $20.00
         assert_eq!(a.checked_add(b), Ok(Micros::new(22_990_000)));
         assert_eq!(b.checked_sub(a), Ok(Micros::new(17_010_000)));
+    }
+
+    #[test]
+    fn checked_mul_scales_rate_by_units() {
+        let rate = Micros::new(2_990_000); // $2.99 per unit
+        assert_eq!(rate.checked_mul(3), Ok(Micros::new(8_970_000))); // $8.97
+        assert_eq!(rate.checked_mul(0), Ok(Micros::zero()));
+        assert_eq!(rate.checked_mul(1), Ok(rate));
+        // Signed factors negate: a -1 factor is exact integer negation.
+        assert_eq!(rate.checked_mul(-2), Ok(Micros::new(-5_980_000)));
+    }
+
+    #[test]
+    fn checked_mul_overflow_is_reported_not_wrapped() {
+        let max = Micros::new(i64::MAX);
+        assert_eq!(max.checked_mul(2), Err(MintError::Overflow));
+        // i64::MIN * -1 overflows (no positive counterpart in two's complement).
+        assert_eq!(
+            Micros::new(i64::MIN).checked_mul(-1),
+            Err(MintError::Overflow)
+        );
     }
 
     #[test]
