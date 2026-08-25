@@ -20,6 +20,7 @@
 //! `MinimalPlugins`, stepping the match without a window and printing the result —
 //! used to smoke-test the client-over-core seam where no display is available.
 
+pub mod actions;
 pub mod game;
 pub mod hud;
 pub mod input;
@@ -31,6 +32,7 @@ use bevy::app::AppExit;
 use bevy::prelude::*;
 
 use crate::match_hash;
+use actions::CardInputPlugin;
 use game::{new_battle, Battle, RunOptions, Selection, StatusMessage};
 use tick::{step_once, TICK_HZ};
 
@@ -85,6 +87,9 @@ fn run_windowed(options: RunOptions) {
         .insert_resource(options)
         .init_resource::<Selection>()
         .init_resource::<StatusMessage>()
+        // Action-based input VIEW (leafwing-input-manager): keyboard/touch card
+        // verbs alongside the existing pointer flow. Deterministic core untouched.
+        .add_plugins(CardInputPlugin)
         .add_systems(Startup, hud::setup)
         .add_systems(FixedUpdate, tick::advance_match)
         .add_systems(
