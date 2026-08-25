@@ -1,0 +1,17 @@
+[package]
+name = "game-economy-testkit"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+# An in-memory Mint that mirrors the REAL ledger semantics the game store relies
+# on: hold reserves available->held, capture is terminal-once and settles to a
+# payee, releasing a captured (or otherwise terminal) hold is `hold_not_found`,
+# and any op replayed under the same idem_key is a no-op returning the original
+# outcome (a different body under the same key is an idempotency conflict). Ported
+# in spirit from `abacus-testkit::LedgerFakeMint` + `mint-store`'s memory store.
+
+[dependencies]
+game-economy-core = { workspace = true }
+async-trait = { workspace = true }
+blake3 = { workspace = true }

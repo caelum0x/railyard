@@ -1,0 +1,39 @@
+# apps/game-economy — a GAME storefront that settles card packs, cosmetics/skins
+# and a battle-pass on Railyard's Mint rail.
+#
+# This is its OWN standalone cargo workspace, mirroring `apps/mint`, `apps/abacus`
+# and `apps/vend`, so building it never pulls the game crates into any other app's
+# build graph.
+#
+# HARD RULE (identical to Abacus): the game store is a REAL Mint consumer. Every
+# purchase is a success-only, receipted hold -> capture through an injectable
+# `MintTransport` seam (real HTTP client in prod, faithful FakeMint in tests).
+# The store NEVER reimplements the ledger — it reuses Mint's hold/capture/release
+# semantics exactly (hold reserves, capture settles terminal-once, release frees).
+#
+# Build/test from here ONLY:  cd apps/game-economy && cargo test
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# --- shared serde / domain deps ---
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+async-trait = "0.1.89"
+
+# --- content addressing (same hash Mint uses for receipts/merkle) ---
+blake3 = "1.8.5"
+
+# --- async runtime (tests) ---
+tokio = { version = "1.52.3", features = ["full"] }
+
+# --- internal path deps (the game-economy crate graph) ---
+game-economy-core = { path = "crates/game-economy-core" }
+game-economy-testkit = { path = "crates/game-economy-testkit" }

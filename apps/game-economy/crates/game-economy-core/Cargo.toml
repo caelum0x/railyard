@@ -1,0 +1,22 @@
+[package]
+name = "game-economy-core"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+# The game-side domain: typed catalog (packs/cosmetics/pass), the Mint transport
+# seam, the success-only purchase state machine, deterministic pack opening, and
+# the player entitlement/inventory model. No HTTP, no ledger — pure domain.
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+# Dev-dependency cycle (core <- testkit <- core) is permitted by Cargo and keeps
+# the FakeMint next to the domain it verifies (mirrors the abacus testkit layout).
+game-economy-testkit = { workspace = true }
+tokio = { workspace = true }
