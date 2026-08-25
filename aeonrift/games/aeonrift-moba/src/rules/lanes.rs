@@ -6,6 +6,7 @@
 //! exact same deterministic systems as champions. Iteration is over the registry in
 //! id order, so the emitted input order is stable.
 
+use aeonrift_pathfinding::NavGrid;
 use sim::{EntityId, Input, Vec2, World};
 
 use super::map::MapData;
@@ -50,7 +51,18 @@ pub fn nearest_enemy(
 /// Emit a move command for every living minion: hold-and-attack if an enemy is in
 /// its own attack range, approach an aggroed enemy, else march the lane. Advances
 /// each minion's waypoint cursor in `registry`.
-pub fn steer_minions(map: &MapData, registry: &mut Registry, world: &World) -> Vec<Input> {
+///
+/// Movement targets are routed through the deterministic [`NavGrid`]: on an
+/// obstacle-free map the route is the direct target (identical to a straight-line
+/// follow), but any blocked cells (e.g. terrain / temporary walls baked into the
+/// grid) make minions path around them — all still through `sim::Input`, so the
+/// authoritative sim stays the single source of truth.
+pub fn steer_minions(
+    map: &MapData,
+    nav: &NavGrid,
+    registry: &mut Registry,
+    world: &World,
+) -> Vec<Input> {
     // Collect minion ids in id order first, then process (so we can mutate registry
     // waypoint cursors while reading the world immutably).
     let minion_ids: Vec<EntityId> = registry
@@ -75,14 +87,15 @@ pub fn steer_minions(map: &MapData, registry: &mut Registry, world: &World) -> V
             if edist <= range {
                 inputs.push(Input::move_to(id, pos)); // hold to auto-attack
             } else {
-                inputs.push(Input::move_to(id, epos)); // approach
+                // Approach the enemy, routing around any grid obstacles.
+                inputs.push(Input::move_to(id, aeonrift_pathfinding::route(nav, pos, epos)));
             }
             continue;
         }
 
-        // Otherwise march the lane path.
+        // Otherwise march the lane path (routed through the nav grid).
         if let Some(target) = advance_lane(map, registry, id, pos) {
-            inputs.push(Input::move_to(id, target));
+            inputs.push(Input::move_to(id, aeonrift_pathfinding::route(nav, pos, target)));
         }
     }
     inputs
