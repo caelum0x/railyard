@@ -44,6 +44,12 @@ pub mod netcode;
 #[cfg(feature = "client")]
 pub mod clientnav;
 
+/// Client-side debug/HUD overlay via `bevy_egui` (Bevy 0.19), behind the `client`
+/// feature. Immediate-mode panels for match telemetry; purely presentational and
+/// never authoritative. See [`debug_ui`] for the plugin + panel.
+#[cfg(feature = "client")]
+pub mod debug_ui;
+
 pub use client::Client;
 pub use game::{Match, Phase};
 pub use server::Server;

@@ -24,9 +24,11 @@ default = []
 # (lightyear 0.29 + Bevy 0.19). Pulls the Bevy-0.19 world; kept OFF by default so
 # `cargo build --workspace` never drags it into the Bevy-0.20-dev engine build.
 netcode = ["dep:bevy", "dep:lightyear", "dep:lightyear_deterministic_replication"]
-# Client-side navmesh visualization (vleue_navigator 0.16 + Bevy 0.19), NON-
-# authoritative. Also OFF by default for the same Bevy-version isolation reason.
-client = ["dep:bevy", "dep:vleue_navigator"]
+# Client-side rendering deps (Bevy 0.19), NON-authoritative and OFF by default for
+# the same Bevy-version isolation reason:
+#   - vleue_navigator 0.16 : any-angle navmesh visualization,
+#   - bevy_egui 0.42       : immediate-mode debug/HUD overlay (see `debug_ui`).
+client = ["dep:bevy", "dep:vleue_navigator", "dep:bevy_egui"]
 
 [dependencies]
 # The deterministic sim core (imported as `sim`): World, step, combat, projectiles,
@@ -72,3 +74,6 @@ lightyear = { version = "0.29", default-features = false, features = [
 lightyear_deterministic_replication = { version = "0.29", optional = true }
 # Client-side navmesh (Polyanya any-angle) for visualization only — never authoritative.
 vleue_navigator = { version = "0.16", optional = true }
+# Immediate-mode debug/HUD overlay (Bevy 0.19). Default features give the egui
+# render + bevy_ui integration; used only under the `client` feature.
+bevy_egui = { version = "0.42", optional = true }
