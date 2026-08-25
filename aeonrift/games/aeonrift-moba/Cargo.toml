@@ -28,7 +28,11 @@ netcode = ["dep:bevy", "dep:lightyear", "dep:lightyear_deterministic_replication
 # the same Bevy-version isolation reason:
 #   - vleue_navigator 0.16 : any-angle navmesh visualization,
 #   - bevy_egui 0.42       : immediate-mode debug/HUD overlay (see `debug_ui`).
-client = ["dep:bevy", "dep:vleue_navigator", "dep:bevy_egui"]
+# Client-side navmesh visualization (vleue_navigator 0.16 + Bevy 0.19), NON-
+# authoritative. Also OFF by default for the same Bevy-version isolation reason.
+# Also enables the leafwing-input-manager 0.21 (Bevy 0.19) action-input VIEW layer
+# (`clientinput`) + the client-side cooldown/pool ability UX (`clientability`).
+client = ["dep:bevy", "dep:vleue_navigator", "dep:bevy_egui", "dep:leafwing-input-manager"]
 
 [dependencies]
 # The deterministic sim core (imported as `sim`): World, step, combat, projectiles,
@@ -77,3 +81,9 @@ vleue_navigator = { version = "0.16", optional = true }
 # Immediate-mode debug/HUD overlay (Bevy 0.19). Default features give the egui
 # render + bevy_ui integration; used only under the `client` feature.
 bevy_egui = { version = "0.42", optional = true }
+# Action-based input mapping (Bevy 0.19). Turns raw keyboard/mouse/touch into the
+# game's `MobaAction` verbs (Move / CastQ-R / Recall / Shop / Ping) read as
+# `ActionState` in the client VIEW; the deterministic sim stays authoritative.
+# leafwing-input-manager 0.21 targets Bevy ^0.19 exactly, so it coexists with the
+# 0.20-dev engine world like lightyear / vleue already do — hence the `client` gate.
+leafwing-input-manager = { version = "0.21", optional = true }
