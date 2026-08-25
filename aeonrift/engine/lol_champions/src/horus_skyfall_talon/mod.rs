@@ -1,0 +1,166 @@
+//! Horus — auto-ported from the Aeonrift min-ECS DSL onto `lol_core`
+//! via the proven translation map. DSL source:
+//! `aeonrift/content/champions/`. One Bevy `Plugin`; Q/W/E/R observers
+//! compose closed-vocabulary `lol_core` actions/buffs. Asset-free.
+
+#[cfg(test)]
+mod tests;
+
+use bevy::prelude::*;
+use lol_base::animation_names::{ANIM_SPELL1, ANIM_SPELL2, ANIM_SPELL3};
+use lol_base::render_cmd::CommandAnimationPlay;
+use lol_core::action::damage::{
+    ActionDamage, ActionDamageEffect, DamageShape, TargetDamage, TargetFilter,
+};
+use lol_core::action::dash::{ActionDash, DashMoveType};
+use lol_core::action::displace::{
+    ActionDisplace, DisplaceEffect, DisplaceMotion, DisplaceTargetSelection,
+};
+use lol_core::base::buff::BuffOf;
+use lol_core::buffs::common_buffs::BuffSelfHeal;
+use lol_core::damage::DamageType;
+use lol_core::entities::champion::Champion;
+use lol_core::skill::{EventSkillCast, Skill, SkillSlot};
+
+#[derive(Default)]
+pub struct PluginHorus;
+
+impl Plugin for PluginHorus {
+    fn build(&self, app: &mut App) {
+        app.add_observer(on_horus_skyfall_talon_q);
+        app.add_observer(on_horus_skyfall_talon_w);
+        app.add_observer(on_horus_skyfall_talon_e);
+    }
+}
+
+#[derive(Component, Reflect, Default)]
+#[require(Champion, Name = Name::new("Horus"))]
+#[reflect(Component)]
+pub struct Horus;
+
+fn on_horus_skyfall_talon_q(
+    trigger: On<EventSkillCast>,
+    mut commands: Commands,
+    q_champ: Query<(), With<Horus>>,
+    q_skill: Query<&Skill>,
+) {
+    let entity = trigger.event_target();
+    if q_champ.get(entity).is_err() {
+        return;
+    }
+    let Ok(skill) = q_skill.get(trigger.skill_entity) else {
+        return;
+    };
+    if !matches!(skill.slot, SkillSlot::Q) {
+        return;
+    }
+    let skill_spell = skill.spell.clone();
+    let point = trigger.point;
+    commands.trigger(CommandAnimationPlay {
+        entity,
+        hash: ANIM_SPELL1.to_string(),
+        repeat: false,
+        duration: None,
+    });
+    commands.trigger(ActionDash {
+        entity,
+        point,
+        move_type: DashMoveType::Pointer { max: 480.0 },
+        speed: 1400.0,
+    });
+    commands.trigger(ActionDamage {
+        entity,
+        skill: skill_spell,
+        effects: vec![ActionDamageEffect {
+            shape: DamageShape::Nearest { max_distance: 480.0 },
+            damage_list: vec![TargetDamage {
+                filter: TargetFilter::All,
+                amount: "q_damage".to_string(),
+                damage_type: DamageType::Physical,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+    });
+    commands.trigger(ActionDisplace {
+        entity,
+        targets: DisplaceTargetSelection::Nearest { range: 480.0 },
+        motion: DisplaceMotion::None,
+        effects: vec![DisplaceEffect::Stun { duration: 0.8 }],
+        cone_hit_policy: None,
+    });
+}
+
+fn on_horus_skyfall_talon_w(
+    trigger: On<EventSkillCast>,
+    mut commands: Commands,
+    q_champ: Query<(), With<Horus>>,
+    q_skill: Query<&Skill>,
+) {
+    let entity = trigger.event_target();
+    if q_champ.get(entity).is_err() {
+        return;
+    }
+    let Ok(skill) = q_skill.get(trigger.skill_entity) else {
+        return;
+    };
+    if !matches!(skill.slot, SkillSlot::W) {
+        return;
+    }
+    let skill_spell = skill.spell.clone();
+    commands.trigger(CommandAnimationPlay {
+        entity,
+        hash: ANIM_SPELL2.to_string(),
+        repeat: false,
+        duration: None,
+    });
+    commands.trigger(ActionDamage {
+        entity,
+        skill: skill_spell,
+        effects: vec![ActionDamageEffect {
+            shape: DamageShape::Nearest { max_distance: 180.0 },
+            damage_list: vec![TargetDamage {
+                filter: TargetFilter::All,
+                amount: "w_damage".to_string(),
+                damage_type: DamageType::Physical,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+    });
+    commands.trigger(ActionDisplace {
+        entity,
+        targets: DisplaceTargetSelection::Nearest { range: 180.0 },
+        motion: DisplaceMotion::None,
+        effects: vec![DisplaceEffect::Slow { percent: 0.3, duration: 1.0 }],
+        cone_hit_policy: None,
+    });
+}
+
+fn on_horus_skyfall_talon_e(
+    trigger: On<EventSkillCast>,
+    mut commands: Commands,
+    q_champ: Query<(), With<Horus>>,
+    q_skill: Query<&Skill>,
+) {
+    let entity = trigger.event_target();
+    if q_champ.get(entity).is_err() {
+        return;
+    }
+    let Ok(skill) = q_skill.get(trigger.skill_entity) else {
+        return;
+    };
+    if !matches!(skill.slot, SkillSlot::E) {
+        return;
+    }
+    commands.trigger(CommandAnimationPlay {
+        entity,
+        hash: ANIM_SPELL3.to_string(),
+        repeat: false,
+        duration: None,
+    });
+    commands
+        .entity(entity)
+        .with_related::<BuffOf>(BuffSelfHeal::new(110.0));
+}
+
