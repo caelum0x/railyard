@@ -1,0 +1,10 @@
+// Fortify — Defensive buff. Maps to closed vocab.
+BuffSpec(
+    id: "fortify",
+    name: "Fortify",
+    category: Defensive,
+    vocab_ref: Some("BuffResist"),
+    fields: ["armor", "magic_resist", "duration"],
+    stacking: Strongest,
+    description: "Grants bonus armor and magic resist for the duration.",
+)

@@ -1,0 +1,45 @@
+// Achilles — BRUISER. The near-invincible hero of Troy: hurls himself onto a foe
+// with a stunning spear, cleaves everything around him, and shrugs off wounds in a
+// burst of immortal rage.
+ChampionSpec(
+    name: "Achilles",
+    base: BaseStats(
+        hp: 760,
+        ad: 40,
+        armor: 33,
+        attack_speed: 0.9,
+        move_speed: 10.0,
+        range: 5.0,
+    ),
+    abilities: [
+        AbilitySpec(
+            name: "Spear of Peleus",
+            cooldown: 85,
+            cost: Some(45),
+            targeting: Target,
+            range: 13.0,
+            effects: [
+                Dash(distance: 13.0),
+                Damage(amount: 46, scaling: Some(AttackDamage(ratio: 0.35))),
+                Stun(duration: 8),
+            ],
+        ),
+        AbilitySpec(
+            name: "Myrmidon Cleave",
+            cooldown: 45,
+            cost: Some(30),
+            targeting: Area,
+            range: 7.0,
+            effects: [
+                Damage(amount: 44, scaling: Some(AttackDamage(ratio: 0.35))),
+            ],
+        ),
+        AbilitySpec(
+            name: "Immortal Rage",
+            cooldown: 160,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 80) ],
+        ),
+    ],
+)

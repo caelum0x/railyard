@@ -1,0 +1,51 @@
+// Ysmera — the PYRE-ORACLE, a burst mage.
+//
+// Fragile but explosive: area detonations and a long-range lance that erase
+// squishies in a single rotation. Low HP, high impact. Pure DATA.
+ChampionSpec(
+    name: "Ysmera",
+    base: BaseStats(
+        hp: 540,
+        ad: 46,
+        armor: 20,
+        attack_speed: 0.9,
+        move_speed: 11.0,
+        range: 22.0,
+    ),
+    abilities: [
+        // Pyre Bloom: area burst around the aim point.
+        AbilitySpec(
+            name: "Pyre Bloom",
+            cooldown: 180,
+            cost: Some(65),
+            targeting: Area,
+            range: 20.0,
+            effects: [
+                Damage(amount: 120, scaling: Some(AttackDamage(ratio: 0.7))),
+            ],
+        ),
+        // Ember Lance: long skillshot with a slow rider.
+        AbilitySpec(
+            name: "Ember Lance",
+            cooldown: 120,
+            cost: Some(45),
+            targeting: Skillshot,
+            range: 30.0,
+            effects: [
+                Damage(amount: 95, scaling: Some(AttackDamage(ratio: 0.6))),
+                Slow(duration: 75),
+            ],
+        ),
+        // Kilnburst: high-damage area ultimate.
+        AbilitySpec(
+            name: "Kilnburst",
+            cooldown: 360,
+            cost: Some(100),
+            targeting: Area,
+            range: 24.0,
+            effects: [
+                Damage(amount: 170, scaling: Some(AttackDamage(ratio: 0.9))),
+            ],
+        ),
+    ],
+)

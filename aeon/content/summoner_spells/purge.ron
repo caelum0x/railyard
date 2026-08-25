@@ -1,0 +1,7 @@
+// Purge — summoner spell.
+SummonerSpell(
+    name: "Purge",
+    cooldown: 210,
+    effect: "Remove all disabling and immobilizing effects and grant slow immunity briefly.",
+    tags: ["cleanse", "utility"],
+)

@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Quorvane.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/quorvane.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "quorvane",
+    display_name: "Quorvane",
+    abilities: [
+        AbilityTuning(
+            name: "Umbral Bolt",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 90, cost: Some(40), damage: Some(70), ad_ratio: Some(1.0), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 86, cost: Some(43), damage: Some(91), ad_ratio: Some(1.05), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 81, cost: Some(46), damage: Some(112), ad_ratio: Some(1.1), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 76, cost: Some(50), damage: Some(133), ad_ratio: Some(1.15), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 72, cost: Some(53), damage: Some(154), ad_ratio: Some(1.2), heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Shadowslip",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 150, cost: Some(35), damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 2, cooldown: 142, cost: Some(38), damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 3, cooldown: 135, cost: Some(41), damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 4, cooldown: 128, cost: Some(43), damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 5, cooldown: 120, cost: Some(46), damage: None, ad_ratio: None, heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Nightpiercer",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 300, cost: Some(80), damage: Some(130), ad_ratio: Some(1.0), heal: None, cc: Some(("Slow", 60))),
+                Rank(rank: 2, cooldown: 285, cost: Some(86), damage: Some(169), ad_ratio: Some(1.05), heal: None, cc: Some(("Slow", 69))),
+                Rank(rank: 3, cooldown: 270, cost: Some(93), damage: Some(208), ad_ratio: Some(1.1), heal: None, cc: Some(("Slow", 78))),
+                Rank(rank: 4, cooldown: 255, cost: Some(99), damage: Some(247), ad_ratio: Some(1.15), heal: None, cc: Some(("Slow", 87))),
+                Rank(rank: 5, cooldown: 240, cost: Some(106), damage: Some(286), ad_ratio: Some(1.2), heal: None, cc: Some(("Slow", 96))),
+            ],
+        ),
+    ],
+)

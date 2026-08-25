@@ -1,0 +1,37 @@
+// Medusa — MARKSMAN (petrify). Fast, long-range auto-attacker whose gaze turns a
+// target to stone (a long stun), backed by a venom shot that slows on impact.
+ChampionSpec(
+    name: "Medusa",
+    base: BaseStats(
+        hp: 600,
+        ad: 62,
+        armor: 24,
+        attack_speed: 1.15,
+        move_speed: 9.5,
+        range: 9.0,
+    ),
+    abilities: [
+        AbilitySpec(
+            name: "Petrifying Gaze",
+            cooldown: 60,
+            cost: Some(70),
+            targeting: Skillshot,
+            range: 22.0,
+            effects: [
+                Damage(amount: 70, scaling: Some(AttackDamage(ratio: 0.5))),
+                Stun(duration: 16),
+            ],
+        ),
+        AbilitySpec(
+            name: "Venom Volley",
+            cooldown: 40,
+            cost: Some(40),
+            targeting: Skillshot,
+            range: 16.0,
+            effects: [
+                Damage(amount: 60, scaling: Some(AttackDamage(ratio: 0.6))),
+                Slow(duration: 24),
+            ],
+        ),
+    ],
+)

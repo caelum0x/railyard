@@ -1,0 +1,7 @@
+// Riftstep — summoner spell.
+SummonerSpell(
+    name: "Riftstep",
+    cooldown: 300,
+    effect: "Channel to teleport to an allied structure, minion, or ward across the map.",
+    tags: ["mobility", "macro"],
+)

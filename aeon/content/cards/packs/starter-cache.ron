@@ -1,0 +1,22 @@
+// content/cards/packs/starter-cache.ron
+// One-time onboarding pack. Cheap, common-heavy, but guarantees a rare so new
+// players leave the tutorial with at least one build-around card.
+CardPack(
+    id: "starter-cache",
+    name: "Starter Cache",
+    description: "A welcome bundle to seed your first deck.",
+    category: "onboarding",
+    card_count: 5,
+    cost: PackCost(currency: "gold", amount: 0),
+    one_time: true,
+    // Guarantees at least this rarity somewhere in the pull.
+    guaranteed_floor: Some("rare"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 640),
+        RarityOdd(rarity: "uncommon",  weight: 260),
+        RarityOdd(rarity: "rare",      weight: 90),
+        RarityOdd(rarity: "epic",      weight: 10),
+        RarityOdd(rarity: "legendary", weight: 0),
+        RarityOdd(rarity: "mythic",    weight: 0),
+    ],
+)

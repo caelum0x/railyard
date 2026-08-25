@@ -1,0 +1,14 @@
+// Narrative + release metadata for Petalsong.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "petalsong",
+    display_name: "Petalsong",
+    title: "",
+    faction: "Verdant",
+    archetype: "support",
+    release_patch: "1.6.0",
+    resource: "Mana",
+    lore: "Petalsong — a disruptor SUPPORT. Locks down a key target, smothers a group with clinging vines, and sings her own wounds shut. Peels and sustains rather than bursts. Pure DSL data.",
+    tags: ["support", "verdant"],
+)

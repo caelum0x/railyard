@@ -1,0 +1,43 @@
+// Brackmoor — a frontline TANK.
+//
+// Beefy frame, a hard point-and-click freeze, self-sustain, and a slowing
+// shockwave to peel for allies. Pure DATA against the closed DSL.
+ChampionSpec(
+    name: "Brackmoor",
+    base: BaseStats(
+        hp: 640,
+        ad: 52,
+        armor: 36,
+        attack_speed: 0.85,   // slow, heavy swings
+        move_speed: 10.0,
+        range: 5.0,           // melee
+    ),
+    abilities: [
+        // Hard lockdown to open a fight.
+        AbilitySpec(
+            name: "Glacial Anchor",
+            cooldown: 240,
+            cost: Some(60),
+            targeting: Target,
+            range: 6.0,
+            effects: [ Stun(duration: 45), Damage(amount: 70, scaling: Some(AttackDamage(ratio: 0.4))) ],
+        ),
+        // Self-sustain to hold the line.
+        AbilitySpec(
+            name: "Rimeguard",
+            cooldown: 180,
+            cost: Some(50),
+            targeting: SelfCast,
+            effects: [ Heal(amount: 85) ],
+        ),
+        // AoE peel: chip damage plus a long slow.
+        AbilitySpec(
+            name: "Permafrost Wake",
+            cooldown: 210,
+            cost: Some(55),
+            targeting: Area,
+            range: 9.0,
+            effects: [ Damage(amount: 60, scaling: Some(AttackDamage(ratio: 0.3))), Slow(duration: 90) ],
+        ),
+    ],
+)

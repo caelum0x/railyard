@@ -1,0 +1,7 @@
+// Cut Down — Precision / Tier3.
+RuneSpec(
+    name: "Cut Down",
+    tree: Precision,
+    tier: Tier3,
+    effect: "Deal increased damage to champions with more maximum health than you.",
+)

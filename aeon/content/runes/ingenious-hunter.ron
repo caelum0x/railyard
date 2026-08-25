@@ -1,0 +1,7 @@
+// Ingenious Hunter — Domination / Tier3.
+RuneSpec(
+    name: "Ingenious Hunter",
+    tree: Domination,
+    tier: Tier3,
+    effect: "Unique champion takedowns grant increasing item ability haste.",
+)

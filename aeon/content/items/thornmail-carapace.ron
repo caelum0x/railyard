@@ -1,0 +1,13 @@
+// Thornmail Carapace — LEGENDARY tank. Every blow returned with interest.
+ItemSpec(
+    name: "Thornmail Carapace",
+    cost: 2700,
+    tier: Legendary,
+    stats: Stats(
+        hp: 300,
+        armor: 60,
+    ),
+    passive: Some("Reflects magic damage on being hit; applies 40% healing reduction."),
+    build_from: ["warden-mail", "bami-cinder"],
+    tags: ["legendary", "tank", "armor", "antiheal"],
+)

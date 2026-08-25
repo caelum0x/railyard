@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Bastet.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "bastet-claws-of-the-hunt",
+    display_name: "Bastet",
+    rarity: "Rare",
+    elixir_cost: 4,
+    archetype: "assassin",
+    faction: "Egyptian",
+    card_stats: CardStats(
+        hitpoints: 560,
+        attack_damage: 41,
+        attack_speed: 0.85,
+        armor: 20,
+        range: 9.0,
+        approx_dps: 34.9,
+    ),
+    deploy_power: 233,
+    collectible: true,
+)

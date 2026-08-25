@@ -1,0 +1,12 @@
+[package]
+name = "league_loader"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+league_property.workspace = true
+league_utils.workspace = true
+thiserror.workspace = true
+zstd = "0.13.3"
+nom.workspace = true
+bitflags.workspace = true

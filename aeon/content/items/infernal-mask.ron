@@ -1,0 +1,13 @@
+// Infernal Mask — LEGENDARY AP. A grin of living flame.
+ItemSpec(
+    name: "Infernal Mask",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        ap: 70,
+        hp: 250,
+    ),
+    passive: Some("Deal 1.5% of target max health as magic damage per second nearby."),
+    build_from: ["bami-cinder", "blasting-rod", "minor-tome"],
+    tags: ["legendary", "ap", "hp", "dot"],
+)

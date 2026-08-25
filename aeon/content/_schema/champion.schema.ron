@@ -1,0 +1,28 @@
+// content/_schema/champion.schema.ron
+//
+// Shape of a champion spec.ron. A content-lint validates each
+// content/champions/<name>/spec.ron against this shape AND against vocabulary.ron
+// (every referenced action/shape/effect/buff/damage_type must be in the closed set).
+//
+// Field types are given as hints; "enum:<group>" means "one of vocabulary.ron.<group>".
+(
+    id:          "String        // stable snake_case id, matches directory name",
+    display_name:"String        // in-game name (original IP only)",
+    title:       "String        // subtitle/epithet",
+    lore_tag:    "String        // one-line theme; free text",
+
+    // Base combat stats surface (numbers live in tuning.ron; here only structure).
+    resource:    "enum: Mana | Energy | None",
+
+    abilities: [
+        // One entry per slot; see ability.schema.ron for the full ability shape.
+        "Ability   // slot Passive/Q/W/E/R, see ability.schema.ron",
+    ],
+
+    // Logical assets this champion needs; resolved via assets.manifest.ron to the
+    // content-addressed asset store (never binaries in git). See MOBA-ARCHITECTURE §3.
+    assets_manifest: "String   // relative path to assets.manifest.ron",
+
+    // Balance gate: deterministic duel scenarios, see duel_tests.ron.
+    duel_tests: "String        // relative path to duel_tests.ron",
+)

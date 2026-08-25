@@ -1,0 +1,21 @@
+[package]
+name = "aeonrift-sim-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96.1"
+publish = false
+description = "Deterministic, headless, engine-agnostic MOBA simulation core (migrated from moba/sim)."
+
+# The package is branded `aeonrift-sim-core`; the library is imported as `sim` so
+# the migrated combat/DSL/battler call-sites (`use sim::...`) stay unchanged.
+[lib]
+name = "sim"
+path = "src/lib.rs"
+
+# Deterministic CLI harness: `cargo run -p aeonrift-sim-core --bin simrun -- --seed 42 --ticks 1000 --hash`
+[[bin]]
+name = "simrun"
+path = "src/bin/simrun.rs"
+
+[dependencies]
+# Intentionally none. The sim is pure std for total determinism control.

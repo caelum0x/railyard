@@ -1,0 +1,7 @@
+// Cheap Shot — Domination / Tier1.
+RuneSpec(
+    name: "Cheap Shot",
+    tree: Domination,
+    tier: Tier1,
+    effect: "Deal bonus true damage to champions with impaired movement or actions.",
+)

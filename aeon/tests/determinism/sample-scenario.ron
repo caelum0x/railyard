@@ -1,0 +1,30 @@
+// tests/determinism/sample-scenario.ron
+//
+// SAMPLE determinism scenario. A fixed seed + input log with an expected world hash.
+// The gate replays this through engine/sim-core and asserts the hash matches, twice.
+(
+    name:  "achilles_q_stun_duel",
+    seed:  424242,
+    ticks: 300,                    // 10s at 30 tick/s
+    roster: [
+        (slot: 0, champion: "achilles", team: 0),
+        (slot: 1, champion: "artemis",  team: 1),
+    ],
+    // Deterministic input stream: (tick, slot, action).
+    inputs: [
+        (tick: 10,  slot: 0, action: MoveTo(x: 5.0,  y: 0.0)),
+        (tick: 40,  slot: 0, action: CastAbility(slot: "Q", target_slot: 1)),
+        (tick: 70,  slot: 1, action: CastAbility(slot: "Q", target_slot: 0)),
+        (tick: 120, slot: 0, action: CastAbility(slot: "W")),
+        (tick: 200, slot: 0, action: CastAbility(slot: "R")),
+    ],
+    // Expected golden hashes. PLACEHOLDER values — regenerated from a trusted run, never edited to pass.
+    expect: (
+        // Periodic checkpoints (tick -> blake3 of world state).
+        checkpoints: {
+            100: "PLACEHOLDER_hash_tick_100",
+            200: "PLACEHOLDER_hash_tick_200",
+        },
+        final_hash: "PLACEHOLDER_hash_tick_300",
+    ),
+)

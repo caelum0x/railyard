@@ -1,0 +1,10 @@
+# infra/docker/dockerignore — SCAFFOLD STUB.
+# Rename to `.dockerignore` at the build-context root when this graduates.
+target/
+**/*.rs.bk
+.git/
+docs/
+web/
+tests/
+assets/
+*.md

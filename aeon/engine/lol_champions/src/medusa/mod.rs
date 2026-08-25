@@ -1,0 +1,150 @@
+//! Medusa — MARKSMAN (Greek, petrify). Graduated from the Aeonrift min-ECS DSL
+//! onto `lol_core` (see `MAP.md`). DSL: `aeonrift/content/champions/medusa.ron`.
+//!
+//! - Q Petrifying Gaze: `ActionDamage` (`Rectangle`) + `ActionDisplace` (`Stun`)
+//! - W Venom Volley    : `ActionDamage` (`Rectangle`) + `ActionDisplace` (`Slow`)
+
+#[cfg(test)]
+mod tests;
+
+use bevy::prelude::*;
+use lol_base::animation_names::{ANIM_SPELL1, ANIM_SPELL2};
+use lol_base::render_cmd::CommandAnimationPlay;
+use lol_core::action::damage::{
+    ActionDamage, ActionDamageEffect, DamageShape, TargetDamage, TargetFilter,
+};
+use lol_core::action::displace::{
+    ActionDisplace, DisplaceEffect, DisplaceMotion, DisplaceTargetSelection,
+};
+use lol_core::damage::DamageType;
+use lol_core::entities::champion::Champion;
+use lol_core::skill::{EventSkillCast, Skill, SkillSlot};
+
+const WIDTH: f32 = 120.0;
+// Q Petrifying Gaze — Skillshot, DSL range 22, Stun 16.
+const Q_LENGTH: f32 = 660.0;
+const Q_RANGE: f32 = 660.0;
+const Q_STUN: f32 = 1.6;
+// W Venom Volley — Skillshot, DSL range 16, Slow 24.
+const W_LENGTH: f32 = 480.0;
+const W_RANGE: f32 = 480.0;
+const W_SLOW_PCT: f32 = 0.30;
+const W_SLOW_DUR: f32 = 2.4;
+
+#[derive(Default)]
+pub struct PluginMedusa;
+
+impl Plugin for PluginMedusa {
+    fn build(&self, app: &mut App) {
+        app.add_observer(on_medusa_q);
+        app.add_observer(on_medusa_w);
+    }
+}
+
+#[derive(Component, Reflect, Default)]
+#[require(Champion, Name = Name::new("Medusa"))]
+#[reflect(Component)]
+pub struct Medusa;
+
+fn on_medusa_q(
+    trigger: On<EventSkillCast>,
+    mut commands: Commands,
+    q_champ: Query<(), With<Medusa>>,
+    q_skill: Query<&Skill>,
+) {
+    let entity = trigger.event_target();
+    if q_champ.get(entity).is_err() {
+        return;
+    }
+    let Ok(skill) = q_skill.get(trigger.skill_entity) else {
+        return;
+    };
+    if !matches!(skill.slot, SkillSlot::Q) {
+        return;
+    }
+    let skill_spell = skill.spell.clone();
+    commands.trigger(CommandAnimationPlay {
+        entity,
+        hash: ANIM_SPELL1.to_string(),
+        repeat: false,
+        duration: None,
+    });
+    commands.trigger(ActionDamage {
+        entity,
+        skill: skill_spell,
+        effects: vec![ActionDamageEffect {
+            shape: DamageShape::Rectangle {
+                width: WIDTH,
+                length: Q_LENGTH,
+                start_distance: 0.0,
+            },
+            damage_list: vec![TargetDamage {
+                filter: TargetFilter::All,
+                amount: "q_damage".to_string(),
+                damage_type: DamageType::Physical,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+    });
+    commands.trigger(ActionDisplace {
+        entity,
+        targets: DisplaceTargetSelection::Nearest { range: Q_RANGE },
+        motion: DisplaceMotion::None,
+        effects: vec![DisplaceEffect::Stun { duration: Q_STUN }],
+        cone_hit_policy: None,
+    });
+}
+
+fn on_medusa_w(
+    trigger: On<EventSkillCast>,
+    mut commands: Commands,
+    q_champ: Query<(), With<Medusa>>,
+    q_skill: Query<&Skill>,
+) {
+    let entity = trigger.event_target();
+    if q_champ.get(entity).is_err() {
+        return;
+    }
+    let Ok(skill) = q_skill.get(trigger.skill_entity) else {
+        return;
+    };
+    if !matches!(skill.slot, SkillSlot::W) {
+        return;
+    }
+    let skill_spell = skill.spell.clone();
+    commands.trigger(CommandAnimationPlay {
+        entity,
+        hash: ANIM_SPELL2.to_string(),
+        repeat: false,
+        duration: None,
+    });
+    commands.trigger(ActionDamage {
+        entity,
+        skill: skill_spell,
+        effects: vec![ActionDamageEffect {
+            shape: DamageShape::Rectangle {
+                width: WIDTH,
+                length: W_LENGTH,
+                start_distance: 0.0,
+            },
+            damage_list: vec![TargetDamage {
+                filter: TargetFilter::All,
+                amount: "w_damage".to_string(),
+                damage_type: DamageType::Physical,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+    });
+    commands.trigger(ActionDisplace {
+        entity,
+        targets: DisplaceTargetSelection::Nearest { range: W_RANGE },
+        motion: DisplaceMotion::None,
+        effects: vec![DisplaceEffect::Slow {
+            percent: W_SLOW_PCT,
+            duration: W_SLOW_DUR,
+        }],
+        cone_hit_policy: None,
+    });
+}

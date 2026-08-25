@@ -1,0 +1,7 @@
+// Devour — summoner spell.
+SummonerSpell(
+    name: "Devour",
+    cooldown: 15,
+    effect: "Deal heavy true damage to a large monster or minion and gain a jungle empowerment.",
+    tags: ["jungle", "damage"],
+)

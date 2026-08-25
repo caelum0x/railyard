@@ -1,0 +1,13 @@
+// Spirit Visage Relic — LEGENDARY tank. A face that mends the bearer.
+ItemSpec(
+    name: "Spirit Visage Relic",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        hp: 450,
+        mr: 40,
+    ),
+    passive: Some("+25% healing, regeneration, and shielding received."),
+    build_from: ["spectre-cowl", "kindlegem"],
+    tags: ["legendary", "tank", "mr", "sustain"],
+)

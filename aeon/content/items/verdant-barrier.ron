@@ -1,0 +1,13 @@
+// Verdant Barrier — EPIC AP.
+ItemSpec(
+    name: "Verdant Barrier",
+    cost: 1300,
+    tier: Epic,
+    stats: Stats(
+        ap: 35,
+        mr: 20,
+    ),
+    passive: Some("Taking magic damage grants a magic shield (40s cooldown)."),
+    build_from: ["blasting-rod", "null-mantle"],
+    tags: ["epic", "ap", "mr"],
+)

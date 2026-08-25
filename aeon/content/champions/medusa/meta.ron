@@ -1,0 +1,14 @@
+// Narrative + release metadata for Medusa.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "medusa",
+    display_name: "Medusa",
+    title: "",
+    faction: "Greek",
+    archetype: "marksman",
+    release_patch: "1.0.0",
+    resource: "Mana",
+    lore: "Medusa — MARKSMAN (petrify). Fast, long-range auto-attacker whose gaze turns a target to stone (a long stun), backed by a venom shot that slows on impact.",
+    tags: ["marksman", "greek"],
+)

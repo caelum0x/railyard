@@ -1,0 +1,10 @@
+// Mend — Sustain buff. Maps to closed vocab.
+BuffSpec(
+    id: "mend",
+    name: "Mend",
+    category: Sustain,
+    vocab_ref: Some("BuffSelfHeal"),
+    fields: ["amount"],
+    stacking: Independent,
+    description: "Instantly restores a flat amount of health.",
+)

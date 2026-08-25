@@ -1,0 +1,50 @@
+// Ra — a BURST MAGE built around area SUN damage.
+//
+// Fragile like every mage, but Ra deletes clustered enemies with a wide Sunfire
+// Nova and pokes from absurd range with a piercing Solar Lance. Each dawn he is
+// reborn (a small self-heal). Authored entirely as data against the closed vocab.
+ChampionSpec(
+    name: "Ra",
+    base: BaseStats(
+        hp: 480,
+        ad: 30,
+        armor: 18,
+        attack_speed: 0.75,
+        move_speed: 9.0,
+        range: 7.0,
+    ),
+    abilities: [
+        // Signature AoE nuke: detonate the noon sun at the aim point, then leave
+        // scorched earth that slows anyone caught in it.
+        AbilitySpec(
+            name: "Sunfire Nova",
+            cooldown: 40,
+            cost: Some(70),
+            targeting: Area,
+            range: 20.0,
+            effects: [
+                Damage(amount: 104, scaling: Some(AttackDamage(ratio: 0.45))),
+                Slow(duration: 10),
+            ],
+        ),
+        // Long-range poke: a piercing beam of light that out-ranges any auto-attacker.
+        AbilitySpec(
+            name: "Solar Lance",
+            cooldown: 30,
+            cost: Some(45),
+            targeting: Skillshot,
+            range: 28.0,
+            effects: [
+                Damage(amount: 68, scaling: Some(AttackDamage(ratio: 0.35))),
+            ],
+        ),
+        // Reborn each dawn.
+        AbilitySpec(
+            name: "Reborn at Dawn",
+            cooldown: 200,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 100) ],
+        ),
+    ],
+)

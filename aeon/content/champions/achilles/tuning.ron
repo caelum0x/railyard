@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Achilles.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/achilles.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "achilles",
+    display_name: "Achilles",
+    abilities: [
+        AbilityTuning(
+            name: "Spear of Peleus",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 85, cost: Some(45), damage: Some(46), ad_ratio: Some(0.35), heal: None, cc: Some(("Stun", 8))),
+                Rank(rank: 2, cooldown: 81, cost: Some(49), damage: Some(60), ad_ratio: Some(0.4), heal: None, cc: Some(("Stun", 9))),
+                Rank(rank: 3, cooldown: 76, cost: Some(52), damage: Some(74), ad_ratio: Some(0.45), heal: None, cc: Some(("Stun", 10))),
+                Rank(rank: 4, cooldown: 72, cost: Some(56), damage: Some(87), ad_ratio: Some(0.5), heal: None, cc: Some(("Stun", 12))),
+                Rank(rank: 5, cooldown: 68, cost: Some(59), damage: Some(101), ad_ratio: Some(0.55), heal: None, cc: Some(("Stun", 13))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Myrmidon Cleave",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 45, cost: Some(30), damage: Some(44), ad_ratio: Some(0.35), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 43, cost: Some(32), damage: Some(57), ad_ratio: Some(0.4), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 40, cost: Some(35), damage: Some(70), ad_ratio: Some(0.45), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 38, cost: Some(37), damage: Some(84), ad_ratio: Some(0.5), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 36, cost: Some(40), damage: Some(97), ad_ratio: Some(0.55), heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Immortal Rage",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 160, cost: None, damage: None, ad_ratio: None, heal: Some(80), cc: None),
+                Rank(rank: 2, cooldown: 152, cost: None, damage: None, ad_ratio: None, heal: Some(100), cc: None),
+                Rank(rank: 3, cooldown: 144, cost: None, damage: None, ad_ratio: None, heal: Some(120), cc: None),
+                Rank(rank: 4, cooldown: 136, cost: None, damage: None, ad_ratio: None, heal: Some(140), cc: None),
+                Rank(rank: 5, cooldown: 128, cost: None, damage: None, ad_ratio: None, heal: Some(160), cc: None),
+            ],
+        ),
+    ],
+)

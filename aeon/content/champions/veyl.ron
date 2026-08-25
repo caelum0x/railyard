@@ -1,0 +1,35 @@
+// Veyl — an ASSASSIN.
+//
+// Gap-closing dash burst plus a lockdown execute. Squishy but mobile and
+// high-damage. Pure DATA against the closed DSL.
+ChampionSpec(
+    name: "Veyl",
+    base: BaseStats(
+        hp: 620,
+        ad: 70,
+        armor: 32,
+        attack_speed: 1.0,
+        move_speed: 12.0,     // fastest of the roster
+        range: 6.0,           // melee
+    ),
+    abilities: [
+        // Engage: dash in and strike.
+        AbilitySpec(
+            name: "Undertow Lunge",
+            cooldown: 150,
+            cost: Some(40),
+            targeting: Skillshot,
+            range: 16.0,
+            effects: [ Dash(distance: 16.0), Damage(amount: 150, scaling: Some(AttackDamage(ratio: 1.1))) ],
+        ),
+        // Lockdown finisher.
+        AbilitySpec(
+            name: "Drowning Grip",
+            cooldown: 210,
+            cost: Some(60),
+            targeting: Target,
+            range: 7.0,
+            effects: [ Stun(duration: 48), Damage(amount: 120, scaling: Some(AttackDamage(ratio: 0.9))) ],
+        ),
+    ],
+)

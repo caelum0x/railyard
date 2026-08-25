@@ -1,0 +1,12 @@
+// Sorcerer Shoes — EPIC boots. Soles etched with unraveling glyphs.
+ItemSpec(
+    name: "Sorcerer Shoes",
+    cost: 1100,
+    tier: Epic,
+    stats: Stats(
+        move_speed: 45.0,
+    ),
+    passive: Some("+18 magic penetration."),
+    build_from: ["wayfarer-boots"],
+    tags: ["boots", "penetration", "ap"],
+)

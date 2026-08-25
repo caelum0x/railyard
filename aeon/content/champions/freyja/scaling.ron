@@ -1,0 +1,30 @@
+// Per-level stat growth for Freyja (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "freyja",
+    archetype: "mage",
+    base: LevelStats(hp: 620, ad: 48, armor: 26, attack_speed: 0.85),
+    per_level: StatGrowth(hp: 70, ad: 3.0, armor: 2.2, attack_speed: 0.018),
+    levels: [
+        LevelRow(level: 1, hp: 620, ad: 48, armor: 26, attack_speed: 0.85),
+        LevelRow(level: 2, hp: 690, ad: 51, armor: 28, attack_speed: 0.868),
+        LevelRow(level: 3, hp: 760, ad: 54, armor: 30, attack_speed: 0.886),
+        LevelRow(level: 4, hp: 830, ad: 57, armor: 33, attack_speed: 0.904),
+        LevelRow(level: 5, hp: 900, ad: 60, armor: 35, attack_speed: 0.922),
+        LevelRow(level: 6, hp: 970, ad: 63, armor: 37, attack_speed: 0.94),
+        LevelRow(level: 7, hp: 1040, ad: 66, armor: 39, attack_speed: 0.958),
+        LevelRow(level: 8, hp: 1110, ad: 69, armor: 41, attack_speed: 0.976),
+        LevelRow(level: 9, hp: 1180, ad: 72, armor: 44, attack_speed: 0.994),
+        LevelRow(level: 10, hp: 1250, ad: 75, armor: 46, attack_speed: 1.012),
+        LevelRow(level: 11, hp: 1320, ad: 78, armor: 48, attack_speed: 1.03),
+        LevelRow(level: 12, hp: 1390, ad: 81, armor: 50, attack_speed: 1.048),
+        LevelRow(level: 13, hp: 1460, ad: 84, armor: 52, attack_speed: 1.066),
+        LevelRow(level: 14, hp: 1530, ad: 87, armor: 55, attack_speed: 1.084),
+        LevelRow(level: 15, hp: 1600, ad: 90, armor: 57, attack_speed: 1.102),
+        LevelRow(level: 16, hp: 1670, ad: 93, armor: 59, attack_speed: 1.12),
+        LevelRow(level: 17, hp: 1740, ad: 96, armor: 61, attack_speed: 1.138),
+        LevelRow(level: 18, hp: 1810, ad: 99, armor: 63, attack_speed: 1.156),
+    ],
+)

@@ -1,0 +1,14 @@
+// Narrative + release metadata for Nyxralla.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "nyxralla",
+    display_name: "Nyxralla",
+    title: "",
+    faction: "Tide",
+    archetype: "mage",
+    release_patch: "1.5.0",
+    resource: "Mana",
+    lore: "Nyxralla — a BURST MAGE. Fragile, long range, and detonates targets with a high-ratio lance and a slowing bloom. Everything here is DATA against the closed DSL.",
+    tags: ["mage", "tide"],
+)

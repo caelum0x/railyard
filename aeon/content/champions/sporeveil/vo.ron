@@ -1,0 +1,81 @@
+// Voice-line manifest for Sporeveil: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "sporeveil",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.sporeveil.select",
+            kind: "Selected",
+            audio: "audio/vo/sporeveil/select.ogg",
+            text: "Sporeveil answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.sporeveil.move_a",
+            kind: "Move",
+            audio: "audio/vo/sporeveil/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.sporeveil.move_b",
+            kind: "Move",
+            audio: "audio/vo/sporeveil/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.sporeveil.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/sporeveil/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.sporeveil.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/sporeveil/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.sporeveil.ability_q",
+            kind: "Ability: Spore Bloom",
+            audio: "audio/vo/sporeveil/ability_q.ogg",
+            text: "Spore Bloom!",
+        ),
+        VoiceLine(
+            id: "vo.sporeveil.ability_w",
+            kind: "Ability: Choking Pollen",
+            audio: "audio/vo/sporeveil/ability_w.ogg",
+            text: "Choking Pollen!",
+        ),
+        VoiceLine(
+            id: "vo.sporeveil.ability_r",
+            kind: "Ability: Fungal Lance",
+            audio: "audio/vo/sporeveil/ability_r.ogg",
+            text: "Fungal Lance!",
+        ),
+        VoiceLine(
+            id: "vo.sporeveil.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/sporeveil/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.sporeveil.joke",
+            kind: "Joke",
+            audio: "audio/vo/sporeveil/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.sporeveil.low_health",
+            kind: "Low health",
+            audio: "audio/vo/sporeveil/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.sporeveil.victory",
+            kind: "Victory",
+            audio: "audio/vo/sporeveil/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

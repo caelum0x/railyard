@@ -1,0 +1,13 @@
+// Hexdrinker — EPIC AD.
+ItemSpec(
+    name: "Hexdrinker",
+    cost: 1300,
+    tier: Epic,
+    stats: Stats(
+        ad: 25,
+        mr: 25,
+    ),
+    passive: Some("At low health, gain a magic shield (60s cooldown)."),
+    build_from: ["long-blade", "null-mantle"],
+    tags: ["epic", "ad", "mr"],
+)

@@ -1,0 +1,43 @@
+# infra/k8s/gameserver-deployment.yaml — SCAFFOLD STUB.
+# The authoritative match-server fleet. services/gameservers allocates instances from
+# this warm pool and scales it; a real deploy would use an Agones Fleet CRD instead of
+# a plain Deployment, but the shape (warm pool, per-instance UDP port) is the same.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gameserver-fleet
+  namespace: aeonrift
+  labels:
+    app.kubernetes.io/name: gameserver
+    app.kubernetes.io/part-of: aeonrift
+spec:
+  replicas: 5   # warm pool size; services/gameservers drives this via the autoscaler
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gameserver
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gameserver
+    spec:
+      containers:
+        - name: gameserver
+          image: registry.example/aeonrift/moba-server@sha256:PLACEHOLDER
+          ports:
+            - containerPort: 7777
+              protocol: UDP
+          env:
+            - name: TICK_RATE
+              value: "30"
+            - name: DETERMINISTIC
+              value: "true"
+          livenessProbe:
+            exec:
+              command: ["/bin/aeonrift-health"]
+          resources:
+            requests:
+              cpu: "1"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "1Gi"

@@ -1,0 +1,12 @@
+// Verdant Fang — EPIC AP. Green venom of the wilds.
+ItemSpec(
+    name: "Verdant Fang",
+    cost: 2500,
+    tier: Epic,
+    stats: Stats(
+        ap: 60,
+    ),
+    passive: Some("Deal bonus damage to monsters; abilities root-mark large monsters."),
+    build_from: ["hunters-talon", "blasting-rod"],
+    tags: ["epic", "jungle", "ap"],
+)

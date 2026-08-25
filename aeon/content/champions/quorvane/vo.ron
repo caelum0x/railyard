@@ -1,0 +1,81 @@
+// Voice-line manifest for Quorvane: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "quorvane",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.quorvane.select",
+            kind: "Selected",
+            audio: "audio/vo/quorvane/select.ogg",
+            text: "Quorvane answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.quorvane.move_a",
+            kind: "Move",
+            audio: "audio/vo/quorvane/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.quorvane.move_b",
+            kind: "Move",
+            audio: "audio/vo/quorvane/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.quorvane.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/quorvane/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.quorvane.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/quorvane/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.quorvane.ability_q",
+            kind: "Ability: Umbral Bolt",
+            audio: "audio/vo/quorvane/ability_q.ogg",
+            text: "Umbral Bolt!",
+        ),
+        VoiceLine(
+            id: "vo.quorvane.ability_w",
+            kind: "Ability: Shadowslip",
+            audio: "audio/vo/quorvane/ability_w.ogg",
+            text: "Shadowslip!",
+        ),
+        VoiceLine(
+            id: "vo.quorvane.ability_r",
+            kind: "Ability: Nightpiercer",
+            audio: "audio/vo/quorvane/ability_r.ogg",
+            text: "Nightpiercer!",
+        ),
+        VoiceLine(
+            id: "vo.quorvane.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/quorvane/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.quorvane.joke",
+            kind: "Joke",
+            audio: "audio/vo/quorvane/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.quorvane.low_health",
+            kind: "Low health",
+            audio: "audio/vo/quorvane/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.quorvane.victory",
+            kind: "Victory",
+            audio: "audio/vo/quorvane/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

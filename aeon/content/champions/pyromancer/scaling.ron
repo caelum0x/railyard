@@ -1,0 +1,30 @@
+// Per-level stat growth for Pyromancer (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "pyromancer",
+    archetype: "mage",
+    base: LevelStats(hp: 470, ad: 28, armor: 18, attack_speed: 0.7),
+    per_level: StatGrowth(hp: 70, ad: 3.0, armor: 2.2, attack_speed: 0.018),
+    levels: [
+        LevelRow(level: 1, hp: 470, ad: 28, armor: 18, attack_speed: 0.7),
+        LevelRow(level: 2, hp: 540, ad: 31, armor: 20, attack_speed: 0.718),
+        LevelRow(level: 3, hp: 610, ad: 34, armor: 22, attack_speed: 0.736),
+        LevelRow(level: 4, hp: 680, ad: 37, armor: 25, attack_speed: 0.754),
+        LevelRow(level: 5, hp: 750, ad: 40, armor: 27, attack_speed: 0.772),
+        LevelRow(level: 6, hp: 820, ad: 43, armor: 29, attack_speed: 0.79),
+        LevelRow(level: 7, hp: 890, ad: 46, armor: 31, attack_speed: 0.808),
+        LevelRow(level: 8, hp: 960, ad: 49, armor: 33, attack_speed: 0.826),
+        LevelRow(level: 9, hp: 1030, ad: 52, armor: 36, attack_speed: 0.844),
+        LevelRow(level: 10, hp: 1100, ad: 55, armor: 38, attack_speed: 0.862),
+        LevelRow(level: 11, hp: 1170, ad: 58, armor: 40, attack_speed: 0.88),
+        LevelRow(level: 12, hp: 1240, ad: 61, armor: 42, attack_speed: 0.898),
+        LevelRow(level: 13, hp: 1310, ad: 64, armor: 44, attack_speed: 0.916),
+        LevelRow(level: 14, hp: 1380, ad: 67, armor: 47, attack_speed: 0.934),
+        LevelRow(level: 15, hp: 1450, ad: 70, armor: 49, attack_speed: 0.952),
+        LevelRow(level: 16, hp: 1520, ad: 73, armor: 51, attack_speed: 0.97),
+        LevelRow(level: 17, hp: 1590, ad: 76, armor: 53, attack_speed: 0.988),
+        LevelRow(level: 18, hp: 1660, ad: 79, armor: 55, attack_speed: 1.006),
+    ],
+)

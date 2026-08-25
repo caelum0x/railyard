@@ -1,0 +1,160 @@
+// Riftline Crucible — the canonical 5v5 competitive map for Aeonrift.
+//
+// Two Aeon Cores, three lanes (Dawnpath / Riftspan / Duskpath), a central river
+// (the Sever) splitting the map into two mirrored jungle quadrants, and two
+// neutral objective pits (the Wyrm Pit on the river's south bank, the Sunder
+// Hollow on the north). Coordinates are on a 150 x 150 world grid; the Sever runs
+// along the (0,150)->(150,0) anti-diagonal. Blue team spawns bottom-left, Red team
+// spawns top-right. All structure/camp ids reference the sibling content files.
+//
+// This is DATA: geometry, placements and references only. Behaviour (targeting,
+// stats, rewards) lives in content/turrets, content/objectives, content/monsters.
+MapSpec(
+    id: "riftline_crucible",
+    display_name: "Riftline Crucible",
+    mode: "Rift5v5",
+    grid_size: Vec2(x: 150.0, y: 150.0),
+    teams: ["Blue", "Red"],
+
+    // Where each team's units and champions enter the world.
+    spawns: [
+        (team: "Blue", fountain: Vec2(x: 8.0,   y: 8.0),   facing: Vec2(x: 0.707, y: 0.707)),
+        (team: "Red",  fountain: Vec2(x: 142.0, y: 142.0), facing: Vec2(x: -0.707, y: -0.707)),
+    ],
+
+    // The nexus. Destroying the enemy Aeon Core wins the game.
+    cores: [
+        (team: "Blue", id: "aeon_core", pos: Vec2(x: 14.0,  y: 14.0)),
+        (team: "Red",  id: "aeon_core", pos: Vec2(x: 136.0, y: 136.0)),
+    ],
+
+    // Three lanes, each a polyline of waypoints minions walk from core to core.
+    // Full geometry (widths, brush, wall segments) lives in lane-geometry-riftline.ron.
+    lanes: [
+        (
+            id: "dawnpath",   // top lane: up the left wall, then across the top
+            waypoints: [
+                Vec2(x: 14.0,  y: 22.0),
+                Vec2(x: 16.0,  y: 90.0),
+                Vec2(x: 24.0,  y: 128.0),
+                Vec2(x: 60.0,  y: 136.0),
+                Vec2(x: 128.0, y: 136.0),
+            ],
+        ),
+        (
+            id: "riftspan",   // mid lane: straight diagonal core to core
+            waypoints: [
+                Vec2(x: 22.0,  y: 22.0),
+                Vec2(x: 60.0,  y: 60.0),
+                Vec2(x: 75.0,  y: 75.0),
+                Vec2(x: 90.0,  y: 90.0),
+                Vec2(x: 128.0, y: 128.0),
+            ],
+        ),
+        (
+            id: "duskpath",   // bot lane: across the bottom, then up the right wall
+            waypoints: [
+                Vec2(x: 22.0,  y: 14.0),
+                Vec2(x: 90.0,  y: 16.0),
+                Vec2(x: 126.0, y: 24.0),
+                Vec2(x: 134.0, y: 60.0),
+                Vec2(x: 136.0, y: 128.0),
+            ],
+        ),
+    ],
+
+    // Turrets. Each lane has Outer -> Inner -> Inhibitor tiers per team, plus two
+    // twin Core spires guarding the nexus. tier/def reference content/turrets/*.
+    turrets: [
+        // --- Blue Dawnpath ---
+        (team: "Blue", lane: "dawnpath", tier: "Outer",     def: "outer_spire",     pos: Vec2(x: 15.0,  y: 55.0)),
+        (team: "Blue", lane: "dawnpath", tier: "Inner",     def: "inner_spire",     pos: Vec2(x: 15.0,  y: 32.0)),
+        (team: "Blue", lane: "dawnpath", tier: "Inhibitor", def: "inhibitor_spire", pos: Vec2(x: 16.0,  y: 22.0)),
+        // --- Blue Riftspan ---
+        (team: "Blue", lane: "riftspan", tier: "Outer",     def: "outer_spire",     pos: Vec2(x: 48.0,  y: 48.0)),
+        (team: "Blue", lane: "riftspan", tier: "Inner",     def: "inner_spire",     pos: Vec2(x: 34.0,  y: 34.0)),
+        (team: "Blue", lane: "riftspan", tier: "Inhibitor", def: "inhibitor_spire", pos: Vec2(x: 24.0,  y: 24.0)),
+        // --- Blue Duskpath ---
+        (team: "Blue", lane: "duskpath", tier: "Outer",     def: "outer_spire",     pos: Vec2(x: 55.0,  y: 15.0)),
+        (team: "Blue", lane: "duskpath", tier: "Inner",     def: "inner_spire",     pos: Vec2(x: 32.0,  y: 15.0)),
+        (team: "Blue", lane: "duskpath", tier: "Inhibitor", def: "inhibitor_spire", pos: Vec2(x: 22.0,  y: 16.0)),
+        // --- Blue Core twin spires ---
+        (team: "Blue", lane: "core", tier: "Core", def: "nexus_spire", pos: Vec2(x: 11.0, y: 18.0)),
+        (team: "Blue", lane: "core", tier: "Core", def: "nexus_spire", pos: Vec2(x: 18.0, y: 11.0)),
+
+        // --- Red Dawnpath ---
+        (team: "Red", lane: "dawnpath", tier: "Outer",     def: "outer_spire",     pos: Vec2(x: 95.0,  y: 136.0)),
+        (team: "Red", lane: "dawnpath", tier: "Inner",     def: "inner_spire",     pos: Vec2(x: 118.0, y: 134.0)),
+        (team: "Red", lane: "dawnpath", tier: "Inhibitor", def: "inhibitor_spire", pos: Vec2(x: 128.0, y: 134.0)),
+        // --- Red Riftspan ---
+        (team: "Red", lane: "riftspan", tier: "Outer",     def: "outer_spire",     pos: Vec2(x: 102.0, y: 102.0)),
+        (team: "Red", lane: "riftspan", tier: "Inner",     def: "inner_spire",     pos: Vec2(x: 116.0, y: 116.0)),
+        (team: "Red", lane: "riftspan", tier: "Inhibitor", def: "inhibitor_spire", pos: Vec2(x: 126.0, y: 126.0)),
+        // --- Red Duskpath ---
+        (team: "Red", lane: "duskpath", tier: "Outer",     def: "outer_spire",     pos: Vec2(x: 136.0, y: 95.0)),
+        (team: "Red", lane: "duskpath", tier: "Inner",     def: "inner_spire",     pos: Vec2(x: 134.0, y: 118.0)),
+        (team: "Red", lane: "duskpath", tier: "Inhibitor", def: "inhibitor_spire", pos: Vec2(x: 134.0, y: 128.0)),
+        // --- Red Core twin spires ---
+        (team: "Red", lane: "core", tier: "Core", def: "nexus_spire", pos: Vec2(x: 139.0, y: 132.0)),
+        (team: "Red", lane: "core", tier: "Core", def: "nexus_spire", pos: Vec2(x: 132.0, y: 139.0)),
+    ],
+
+    // Inhibitor structures — fall after their Inhibitor spire, spawn super minions
+    // for the enemy until they respawn. def references content/turrets/inhibitor-conduit.ron.
+    inhibitors: [
+        (team: "Blue", lane: "dawnpath", def: "inhibitor_conduit", pos: Vec2(x: 14.0,  y: 20.0)),
+        (team: "Blue", lane: "riftspan", def: "inhibitor_conduit", pos: Vec2(x: 20.0,  y: 20.0)),
+        (team: "Blue", lane: "duskpath", def: "inhibitor_conduit", pos: Vec2(x: 20.0,  y: 14.0)),
+        (team: "Red",  lane: "dawnpath", def: "inhibitor_conduit", pos: Vec2(x: 130.0, y: 136.0)),
+        (team: "Red",  lane: "riftspan", def: "inhibitor_conduit", pos: Vec2(x: 130.0, y: 130.0)),
+        (team: "Red",  lane: "duskpath", def: "inhibitor_conduit", pos: Vec2(x: 136.0, y: 130.0)),
+    ],
+
+    // Neutral objective pits. Definitions live in content/objectives/*.
+    objective_pits: [
+        (
+            id: "wyrm_pit",       // south of river — elemental Wyrm rotation
+            pos: Vec2(x: 96.0, y: 54.0),
+            entrances: [Vec2(x: 88.0, y: 58.0), Vec2(x: 104.0, y: 50.0)],
+            spawns: "wyrm_pit",   // -> content/objectives/wyrm-pit.ron
+        ),
+        (
+            id: "sunder_hollow",  // north of river — the Sunderer / Rift Vanguard
+            pos: Vec2(x: 54.0, y: 96.0),
+            entrances: [Vec2(x: 46.0, y: 92.0), Vec2(x: 62.0, y: 100.0)],
+            spawns: "sunder_hollow",  // -> content/objectives/sunder-hollow.ron
+        ),
+    ],
+
+    // Jungle camps. Positions here; full stats in content/monsters/camp-*.ron.
+    // Layout is mirrored across the Sever anti-diagonal for both teams.
+    jungle: (
+        layout: "jungle_layout_riftline",  // -> content/maps/jungle-layout-riftline.ron
+        camps: [
+            // Blue-side jungle (south-west of the Sever)
+            (team_side: "Blue", camp: "camp_ashen",              pos: Vec2(x: 48.0, y: 26.0)),
+            (team_side: "Blue", camp: "camp_tidal",              pos: Vec2(x: 26.0, y: 48.0)),
+            (team_side: "Blue", camp: "camp_gloomwolves",        pos: Vec2(x: 34.0, y: 60.0)),
+            (team_side: "Blue", camp: "camp_thornhusks",         pos: Vec2(x: 30.0, y: 30.0)),
+            (team_side: "Blue", camp: "camp_skyfin_raptors",     pos: Vec2(x: 60.0, y: 34.0)),
+            (team_side: "Blue", camp: "camp_bogwallow",          pos: Vec2(x: 44.0, y: 44.0)),
+            // Red-side jungle (north-east of the Sever)
+            (team_side: "Red",  camp: "camp_ashen",              pos: Vec2(x: 102.0, y: 124.0)),
+            (team_side: "Red",  camp: "camp_tidal",              pos: Vec2(x: 124.0, y: 102.0)),
+            (team_side: "Red",  camp: "camp_gloomwolves",        pos: Vec2(x: 116.0, y: 90.0)),
+            (team_side: "Red",  camp: "camp_thornhusks",         pos: Vec2(x: 120.0, y: 120.0)),
+            (team_side: "Red",  camp: "camp_skyfin_raptors",     pos: Vec2(x: 90.0,  y: 116.0)),
+            (team_side: "Red",  camp: "camp_bogwallow",          pos: Vec2(x: 106.0, y: 106.0)),
+            // River scuttlers — contested, one per pit approach
+            (team_side: "Neutral", camp: "camp_scuttler",        pos: Vec2(x: 108.0, y: 42.0)),
+            (team_side: "Neutral", camp: "camp_scuttler",        pos: Vec2(x: 42.0,  y: 108.0)),
+        ],
+    ),
+
+    // The river dividing the map; grants a movement buff on its banks.
+    river: (
+        name: "The Sever",
+        axis: [Vec2(x: 0.0, y: 150.0), Vec2(x: 150.0, y: 0.0)],
+        bank_buff: "sever_current",  // -> content/objectives/objective-rewards.ron
+    ),
+)

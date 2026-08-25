@@ -1,0 +1,12 @@
+// Kindled Blade — EPIC AD.
+ItemSpec(
+    name: "Kindled Blade",
+    cost: 1400,
+    tier: Epic,
+    stats: Stats(
+        attack_speed: 0.25,
+    ),
+    passive: Some("Attacks deal 15 bonus magic damage on hit."),
+    build_from: ["swift-dagger", "minor-tome"],
+    tags: ["epic", "onhit"],
+)

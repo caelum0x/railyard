@@ -1,0 +1,2 @@
+// Preset deck 10 — Fantasy Vanguard.
+DeckDef(name: "Fantasy Vanguard", cards: ["toran","brackmoor","mosscloak","dregmaw","kaeza","cyranth","thornquill","quorvane"])

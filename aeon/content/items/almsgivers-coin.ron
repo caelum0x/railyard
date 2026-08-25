@@ -1,0 +1,12 @@
+// Almsgiver's Coin — STARTER support. Charity that pays dividends.
+ItemSpec(
+    name: "Almsgiver's Coin",
+    cost: 400,
+    tier: Starter,
+    stats: Stats(
+        ap: 5,
+    ),
+    passive: Some("Every 20s your next attack on a foe grants bonus gold; gold-per-second while nearby an ally."),
+    build_from: [],
+    tags: ["starter", "support", "gold"],
+)

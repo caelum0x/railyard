@@ -1,0 +1,20 @@
+// content/cards/packs/gold-cache.ron
+// Upper standard pack; epic floor makes it the workhorse of the mid game.
+CardPack(
+    id: "gold-cache",
+    name: "Gold Cache",
+    description: "A rich pack with a guaranteed epic.",
+    category: "standard",
+    card_count: 10,
+    cost: PackCost(currency: "gold", amount: 4000),
+    one_time: false,
+    guaranteed_floor: Some("epic"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 460),
+        RarityOdd(rarity: "uncommon",  weight: 320),
+        RarityOdd(rarity: "rare",      weight: 165),
+        RarityOdd(rarity: "epic",      weight: 47),
+        RarityOdd(rarity: "legendary", weight: 7),
+        RarityOdd(rarity: "mythic",    weight: 1),
+    ],
+)

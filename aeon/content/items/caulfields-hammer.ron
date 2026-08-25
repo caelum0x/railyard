@@ -1,0 +1,12 @@
+// Caulfield's Hammer — BASIC AD.
+ItemSpec(
+    name: "Caulfield's Hammer",
+    cost: 1050,
+    tier: Basic,
+    stats: Stats(
+        ad: 20,
+    ),
+    passive: Some("+15 ability haste."),
+    build_from: ["long-blade"],
+    tags: ["basic", "haste"],
+)

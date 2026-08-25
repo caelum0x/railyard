@@ -1,0 +1,12 @@
+// Archmage Verdict — LEGENDARY AP. Knowledge weaponized.
+ItemSpec(
+    name: "Archmage Verdict",
+    cost: 3200,
+    tier: Legendary,
+    stats: Stats(
+        ap: 100,
+    ),
+    passive: Some("+25 ability haste; killing a champion grants stacking ability power."),
+    build_from: ["fiendish-codex", "great-rod", "minor-tome"],
+    tags: ["legendary", "ap", "haste"],
+)

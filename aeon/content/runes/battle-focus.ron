@@ -1,0 +1,7 @@
+// Battle Focus — Precision / Tier1.
+RuneSpec(
+    name: "Battle Focus",
+    tree: Precision,
+    tier: Tier1,
+    effect: "Gain adaptive force that scales with your level.",
+)

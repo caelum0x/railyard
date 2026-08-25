@@ -1,0 +1,34 @@
+// Deterministic duel scenarios for Sentinel.
+// Lifted from the roster/duel test pattern (engine/ability-dsl/tests/
+// duel.rs): a fixed seed makes every run byte-identical, so these double
+// as regression baselines. Data only -- no Rust, no loader impact.
+DuelScenarios(
+    slug: "sentinel",
+    default_seed: 42,
+    scenarios: [
+        DuelScenario(
+            name: "sentinel_vs_pyromancer",
+            description: "Sentinel opens against the Pyromancer baseline.",
+            challenger: "sentinel.ron",
+            opponent: "pyromancer.ron",
+            seed: 42,
+            expect: Expect(outcome: Mirror, decisive: true),
+        ),
+        DuelScenario(
+            name: "sentinel_determinism",
+            description: "Same specs + seed run twice must be byte-identical.",
+            challenger: "sentinel.ron",
+            opponent: "pyromancer.ron",
+            seed: 42,
+            expect: Expect(outcome: Deterministic, hash_stable: true, decisive: true),
+        ),
+        DuelScenario(
+            name: "sentinel_order_independent",
+            description: "Swapping challenger/opponent slots keeps the same winner.",
+            challenger: "pyromancer.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: OrderIndependent, decisive: true),
+        ),
+    ],
+)

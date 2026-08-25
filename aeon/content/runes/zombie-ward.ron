@@ -1,0 +1,7 @@
+// Zombie Ward — Domination / Tier2.
+RuneSpec(
+    name: "Zombie Ward",
+    tree: Domination,
+    tier: Tier2,
+    effect: "Destroying enemy wards raises a friendly zombie ward; gain adaptive force per ward stack.",
+)

@@ -1,0 +1,42 @@
+// Lumisel — an enchanter SUPPORT.
+//
+// Two heals of different weights plus a slowing, chip-damage zone for peel.
+// Low personal damage by design. Authored as DATA against the closed DSL.
+ChampionSpec(
+    name: "Lumisel",
+    base: BaseStats(
+        hp: 600,
+        ad: 44,
+        armor: 26,
+        attack_speed: 0.9,
+        move_speed: 11.0,
+        range: 18.0,
+    ),
+    abilities: [
+        // Big cooldown, big heal.
+        AbilitySpec(
+            name: "Tidal Blessing",
+            cooldown: 120,
+            cost: Some(60),
+            targeting: SelfCast,
+            effects: [ Heal(amount: 105) ],
+        ),
+        // Zone control: slow plus light damage.
+        AbilitySpec(
+            name: "Frostwater Veil",
+            cooldown: 180,
+            cost: Some(70),
+            targeting: Area,
+            range: 11.0,
+            effects: [ Slow(duration: 90), Damage(amount: 40) ],
+        ),
+        // Low-cooldown top-up heal.
+        AbilitySpec(
+            name: "Riptide Ward",
+            cooldown: 90,
+            cost: Some(40),
+            targeting: SelfCast,
+            effects: [ Heal(amount: 50) ],
+        ),
+    ],
+)

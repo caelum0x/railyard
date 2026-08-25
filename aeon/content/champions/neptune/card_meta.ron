@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Neptune.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "neptune",
+    display_name: "Neptune",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "mage",
+    faction: "Roman",
+    card_stats: CardStats(
+        hitpoints: 560,
+        attack_damage: 36,
+        attack_speed: 0.7,
+        armor: 22,
+        range: 6.0,
+        approx_dps: 25.2,
+    ),
+    deploy_power: 279,
+    collectible: true,
+)

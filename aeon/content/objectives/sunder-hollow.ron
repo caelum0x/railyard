@@ -1,0 +1,24 @@
+// Sunder Hollow — the north-river epic pit. Hosts the Rift Vanguard early, then
+// The Sunderer from 20:00. Controls spawn timing and the swap between the two epics.
+// Referenced by riftline-crucible.ron (objective_pits) and by both epics' `pit`.
+ObjectivePit(
+    id: "sunder_hollow",
+    display_name: "Sunder Hollow",
+    map: "riftline_crucible",
+    pos: Vec2(x: 54.0, y: 96.0),
+
+    // Occupancy timeline: Rift Vanguard first, then The Sunderer takes over.
+    timeline: [
+        (from_seconds: 480,  until_seconds: 1200, occupant: "rift_vanguard"),  // 8:00 – 20:00
+        (from_seconds: 1200, until_seconds: 0,    occupant: "the_sunderer"),   // 20:00 onward (0 = no end)
+    ],
+
+    // After a kill, the pit stays empty for this long before the current-window
+    // occupant respawns.
+    respawn_seconds: 360,
+
+    contest: (
+        last_hit_secures: true,
+        steal_window_seconds: 0.0,
+    ),
+)

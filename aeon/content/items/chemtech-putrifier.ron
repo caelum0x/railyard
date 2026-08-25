@@ -1,0 +1,12 @@
+// Chemtech Putrifier — LEGENDARY support. A tonic that sours mending.
+ItemSpec(
+    name: "Chemtech Putrifier",
+    cost: 2300,
+    tier: Legendary,
+    stats: Stats(
+        ap: 55,
+    ),
+    passive: Some("+20 ability haste; damage applies 40% healing reduction."),
+    build_from: ["oblivion-orb", "bandleglass-mirror"],
+    tags: ["legendary", "support", "antiheal", "ap"],
+)

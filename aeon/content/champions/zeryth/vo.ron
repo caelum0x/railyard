@@ -1,0 +1,81 @@
+// Voice-line manifest for Zeryth: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "zeryth",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.zeryth.select",
+            kind: "Selected",
+            audio: "audio/vo/zeryth/select.ogg",
+            text: "Zeryth answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.zeryth.move_a",
+            kind: "Move",
+            audio: "audio/vo/zeryth/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.zeryth.move_b",
+            kind: "Move",
+            audio: "audio/vo/zeryth/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.zeryth.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/zeryth/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.zeryth.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/zeryth/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.zeryth.ability_q",
+            kind: "Ability: Shadowlunge",
+            audio: "audio/vo/zeryth/ability_q.ogg",
+            text: "Shadowlunge!",
+        ),
+        VoiceLine(
+            id: "vo.zeryth.ability_w",
+            kind: "Ability: Fangstrike",
+            audio: "audio/vo/zeryth/ability_w.ogg",
+            text: "Fangstrike!",
+        ),
+        VoiceLine(
+            id: "vo.zeryth.ability_r",
+            kind: "Ability: Umbral Collapse",
+            audio: "audio/vo/zeryth/ability_r.ogg",
+            text: "Umbral Collapse!",
+        ),
+        VoiceLine(
+            id: "vo.zeryth.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/zeryth/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.zeryth.joke",
+            kind: "Joke",
+            audio: "audio/vo/zeryth/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.zeryth.low_health",
+            kind: "Low health",
+            audio: "audio/vo/zeryth/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.zeryth.victory",
+            kind: "Victory",
+            audio: "audio/vo/zeryth/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

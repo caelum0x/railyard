@@ -1,0 +1,12 @@
+// Warblade — BASIC AD. The greatsword every carry covets.
+ItemSpec(
+    name: "Warblade",
+    cost: 1300,
+    tier: Basic,
+    stats: Stats(
+        ad: 40,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "ad"],
+)

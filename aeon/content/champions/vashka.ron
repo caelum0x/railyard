@@ -1,0 +1,50 @@
+// Vashka — CINDERMAW, a diving bruiser.
+//
+// Gap-closes with a burning charge, then trades relentlessly with sticky
+// slows and self-sustain. Balanced stats around the sentinel baseline.
+// Authored purely as DATA.
+ChampionSpec(
+    name: "Vashka",
+    base: BaseStats(
+        hp: 690,
+        ad: 62,
+        armor: 34,
+        attack_speed: 0.95,
+        move_speed: 11.5,
+        range: 8.0,
+    ),
+    abilities: [
+        // Furnace Charge: dash in and deal impact damage.
+        AbilitySpec(
+            name: "Furnace Charge",
+            cooldown: 210,
+            cost: Some(55),
+            targeting: Skillshot,
+            range: 26.0,
+            effects: [
+                Dash(distance: 26.0),
+                Damage(amount: 60, scaling: Some(AttackDamage(ratio: 0.6))),
+            ],
+        ),
+        // Grinding Bite: single-target burst + slow to stick.
+        AbilitySpec(
+            name: "Grinding Bite",
+            cooldown: 150,
+            cost: Some(45),
+            targeting: Target,
+            range: 9.0,
+            effects: [
+                Damage(amount: 68, scaling: Some(AttackDamage(ratio: 0.7))),
+                Slow(duration: 60),
+            ],
+        ),
+        // Reforge: self-heal after committing to a fight.
+        AbilitySpec(
+            name: "Reforge",
+            cooldown: 270,
+            cost: Some(50),
+            targeting: SelfCast,
+            effects: [ Heal(amount: 90) ],
+        ),
+    ],
+)

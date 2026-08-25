@@ -1,0 +1,38 @@
+// Tidewatch — an Ascendancy card arena (games/aeonrift-ascendancy). Tide-faction
+// themed: a wide 4-lane board where the tide shifts a lane each turn, forcing
+// tempo and repositioning. Deterministic lane-battler board definition.
+ArenaSpec(
+    id: "ascendancy_tidewatch",
+    display_name: "Tidewatch",
+    faction_theme: "Tide",
+    game: "aeonrift_ascendancy",
+
+    board: (
+        lanes: 4,
+        length: 8,
+        lane_names: ["Ebb", "Shoal", "Surge", "Flood"],
+    ),
+
+    ascendants: [
+        (player: "A", pos: (lane: 1, tile: 0), start_hp: 28),
+        (player: "B", pos: (lane: 2, tile: 7), start_hp: 28),
+    ],
+
+    deploy_tiles: [
+        (player: "A", tiles: [(lane: 0, tile: 0), (lane: 1, tile: 0), (lane: 2, tile: 0), (lane: 3, tile: 0)]),
+        (player: "B", tiles: [(lane: 0, tile: 7), (lane: 1, tile: 7), (lane: 2, tile: 7), (lane: 3, tile: 7)]),
+    ],
+
+    hazards: [
+        (id: "riptide", tile: (lane: 3, tile: 3), effect: "ShoveBack", magnitude: 1, note: "Flood lane riptide pushes passing units back one tile."),
+        (id: "riptide", tile: (lane: 0, tile: 5), effect: "ShoveBack", magnitude: 1),
+    ],
+
+    passive: (
+        id: "shifting_tide",
+        desc: "At the start of each turn, the 'high tide' rotates to the next lane; units in the high-tide lane move +1 tile that turn.",
+        stacks_max: 1,
+    ),
+
+    resolution_order: ["Passive", "Hazards", "PlayerA_Advance", "PlayerB_Advance", "Combat", "Deaths"],
+)

@@ -1,0 +1,47 @@
+// content/maps/proving_lane.ron
+//
+// A single-lane "proving grounds" map used by the MOBA rules layer and the
+// scripted match tests. Two bases (team 0 = Blue, team 1 = Red) connected by one
+// mid lane, each defended by one turret + one inhibitor, plus a shared jungle
+// camp and a neutral epic objective. All coordinates live inside the sim's
+// [-50, 50] play-plane (see sim::world::MAP_BOUNDS).
+//
+// Structure/neutral STATS are resolved by id/kind from the content catalogs:
+//   content/turrets/structures.ron   (turret / inhibitor / nexus base stats)
+//   content/objectives/neutrals.ron  (jungle camp + epic objective stats)
+// so this file is pure LAYOUT — positions, teams, and lane topology.
+MapData(
+    name: "Proving Lane",
+    bounds: 50.0,
+    bases: [
+        BaseDef(team: 0, nexus: P(x: -45.0, y: -45.0), spawn: P(x: -47.0, y: -47.0)),
+        BaseDef(team: 1, nexus: P(x:  45.0, y:  45.0), spawn: P(x:  47.0, y:  47.0)),
+    ],
+    lanes: [
+        LaneDef(
+            name: "mid",
+            // Team-0 -> team-1 direction. Blue minions walk it forward, red reversed.
+            waypoints: [
+                P(x: -43.0, y: -43.0),
+                P(x: -20.0, y: -20.0),
+                P(x:   0.0, y:   0.0),
+                P(x:  20.0, y:  20.0),
+                P(x:  43.0, y:  43.0),
+            ],
+            turrets: [
+                TurretDef(team: 0, pos: P(x: -24.0, y: -24.0), tier: 1),
+                TurretDef(team: 1, pos: P(x:  24.0, y:  24.0), tier: 1),
+            ],
+            inhibitors: [
+                InhibDef(team: 0, pos: P(x: -40.0, y: -40.0)),
+                InhibDef(team: 1, pos: P(x:  40.0, y:  40.0)),
+            ],
+        ),
+    ],
+    jungle: [
+        CampDef(id: "crimson_golem", pos: P(x: 0.0, y: -18.0)),
+    ],
+    objectives: [
+        ObjectiveDef(id: "tidewyrm", pos: P(x: 15.0, y: -15.0)),
+    ],
+)

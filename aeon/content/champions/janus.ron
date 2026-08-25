@@ -1,0 +1,43 @@
+// Janus — the two-faced portal SUPPORT. Mobility, sustain, and a gate-slam lockdown.
+ChampionSpec(
+    name: "Janus",
+    base: BaseStats(
+        hp: 760,
+        ad: 58,
+        armor: 36,
+        attack_speed: 1.1,
+        move_speed: 10.0,
+        range: 6.0,
+    ),
+    abilities: [
+        // Closing door: slam the gate shut, slowing and stunning what comes through.
+        AbilitySpec(
+            name: "Closing Door",
+            cooldown: 45,
+            cost: Some(50),
+            targeting: Skillshot,
+            range: 20.0,
+            effects: [
+                Damage(amount: 75, scaling: Some(AttackDamage(ratio: 0.4))),
+                Slow(duration: 30),
+                Stun(duration: 10),
+            ],
+        ),
+        // Gate of passage: step through a portal to reposition.
+        AbilitySpec(
+            name: "Gate of Passage",
+            cooldown: 60,
+            cost: Some(30),
+            targeting: SelfCast,
+            effects: [ Dash(distance: 15.0) ],
+        ),
+        // Threshold ward: the guardian face mends its keeper.
+        AbilitySpec(
+            name: "Threshold Ward",
+            cooldown: 130,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 120) ],
+        ),
+    ],
+)

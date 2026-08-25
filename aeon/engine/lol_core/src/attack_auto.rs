@@ -1,0 +1,213 @@
+use bevy::prelude::*;
+
+use crate::attack::{Attack, AttackState, AttackStatus, CommandAttackStart, CommandAttackStop};
+use crate::base::bounding::Bounding;
+use crate::life::{Death, EventDead};
+use crate::log::{CommandLog, EnumLogCategory};
+use crate::run::{CommandRunStart, CommandRunStop, RunTarget};
+
+/// 自动攻击最大追逐距离（超过此距离放弃追击并脱战）
+pub const MAX_ATTACK_AUTO_CHASE_DISTANCE: f32 = 1500.0;
+
+#[derive(Default)]
+pub struct PluginAttackAuto;
+
+impl Plugin for PluginAttackAuto {
+    fn build(&self, app: &mut App) {
+        app.add_observer(on_command_attack_auto_start);
+        app.add_observer(on_command_attack_auto_stop);
+        app.add_observer(on_event_dead);
+        app.add_observer(on_reset_attack_auto);
+
+        app.add_systems(FixedPreUpdate, update_attack_auto);
+    }
+}
+
+pub fn on_reset_attack_auto(
+    _trigger: On<crate::action::EventReset>,
+    mut commands: Commands,
+    q_attack_auto: Query<Entity, With<AttackAuto>>,
+) {
+    for entity in q_attack_auto.iter() {
+        commands.entity(entity).remove::<AttackAuto>();
+    }
+}
+
+#[derive(Component)]
+pub struct AttackAuto {
+    pub target: Entity,
+}
+
+#[derive(EntityEvent)]
+pub struct CommandAttackAutoStart {
+    pub entity: Entity,
+    pub target: Entity,
+}
+
+#[derive(EntityEvent)]
+pub struct CommandAttackAutoStop {
+    pub entity: Entity,
+}
+
+fn on_command_attack_auto_start(
+    trigger: On<CommandAttackAutoStart>,
+    mut commands: Commands,
+    q: Query<(&Transform, &Bounding, Option<&Attack>), Without<Death>>,
+) {
+    let entity = trigger.event_target();
+    let target = trigger.target;
+
+    let Ok((transform, bounding, Some(attack))) = q.get(entity) else {
+        commands.trigger(CommandLog {
+            entity,
+            info: "自动攻击目标失败（攻击组件不存在）".to_string(),
+            category: EnumLogCategory::AttackAuto,
+        });
+        return;
+    };
+
+    let Ok((target_transform, target_bounding, _)) = q.get(target) else {
+        commands.trigger(CommandLog {
+            entity,
+            info: "自动攻击目标失败（目标不存在或无碰撞体）".to_string(),
+            category: EnumLogCategory::AttackAuto,
+        });
+        return;
+    };
+
+    process_attack_logic(
+        &mut commands,
+        entity,
+        target,
+        transform.translation.xz(),
+        target_transform.translation.xz(),
+        bounding.radius,
+        target_bounding.radius,
+        attack.range,
+    );
+
+    commands.entity(entity).insert(AttackAuto { target });
+}
+
+fn on_command_attack_auto_stop(trigger: On<CommandAttackAutoStop>, mut commands: Commands) {
+    let entity = trigger.event_target();
+    commands.trigger(CommandLog {
+        entity,
+        info: "停止自动攻击".to_string(),
+        category: EnumLogCategory::AttackAuto,
+    });
+    commands.entity(entity).remove::<AttackAuto>();
+    commands.trigger(CommandRunStop { entity });
+    commands.trigger(CommandAttackStop { entity });
+}
+
+fn on_event_dead(
+    trigger: On<EventDead>,
+    mut commands: Commands,
+    q_attack_auto: Query<(Entity, &AttackAuto)>,
+) {
+    let dead_entity = trigger.event_target();
+    for (entity, attack_auto) in q_attack_auto.iter() {
+        if attack_auto.target == dead_entity {
+            commands.entity(entity).remove::<AttackAuto>();
+            commands.trigger(CommandRunStop { entity });
+            commands.trigger(CommandAttackStop { entity });
+        }
+    }
+}
+
+fn update_attack_auto(
+    mut commands: Commands,
+    q_attacker: Query<
+        (
+            Entity,
+            &AttackAuto,
+            &Attack,
+            Option<&AttackState>,
+            &Transform,
+            &Bounding,
+        ),
+        (Without<Death>, Changed<Transform>),
+    >,
+    q_target: Query<(&Transform, &Bounding), Without<Death>>,
+) {
+    for (entity, attack_auto, attack, attack_state, transform, bounding) in q_attacker.iter() {
+        if let Some(AttackState {
+            status: AttackStatus::Windup { .. },
+            ..
+        }) = attack_state
+        {
+            continue;
+        }
+
+        let target = attack_auto.target;
+
+        let Ok((target_transform, target_bounding)) = q_target.get(target) else {
+            // 目标不存在或已死亡，停止追逐
+            commands.entity(entity).remove::<AttackAuto>();
+            commands.trigger(CommandRunStop { entity });
+            commands.trigger(CommandAttackStop { entity });
+            continue;
+        };
+
+        process_attack_logic(
+            &mut commands,
+            entity,
+            target,
+            transform.translation.xz(),
+            target_transform.translation.xz(),
+            bounding.radius,
+            target_bounding.radius,
+            attack.range,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_attack_logic(
+    commands: &mut Commands,
+    entity: Entity,
+    target: Entity,
+    pos: Vec2,
+    target_pos: Vec2,
+    radius: f32,
+    target_radius: f32,
+    range: f32,
+) {
+    let dist_sq = pos.distance_squared(target_pos);
+    let max_chase_sq = MAX_ATTACK_AUTO_CHASE_DISTANCE * MAX_ATTACK_AUTO_CHASE_DISTANCE;
+
+    // 超出最大追逐距离，放弃追击脱战
+    if dist_sq > max_chase_sq {
+        commands.entity(entity).remove::<AttackAuto>();
+        commands.trigger(CommandRunStop { entity });
+        commands.trigger(CommandAttackStop { entity });
+        return;
+    }
+
+    let required_range = range + radius + target_radius;
+    let required_range_sq = required_range * required_range;
+
+    if dist_sq > required_range_sq {
+        commands.trigger(CommandRunStart {
+            entity,
+            target: RunTarget::Target(target),
+        });
+
+        commands.trigger(CommandLog {
+            entity,
+            info: "离开攻击范围，停止攻击并开始追逐".to_string(),
+            category: EnumLogCategory::AttackAuto,
+        });
+        commands.trigger(CommandAttackStop { entity });
+    } else {
+        commands.trigger(CommandRunStop { entity });
+
+        commands.trigger(CommandLog {
+            entity,
+            info: "进入攻击范围，开始攻击".to_string(),
+            category: EnumLogCategory::AttackAuto,
+        });
+        commands.trigger(CommandAttackStart { entity, target });
+    }
+}

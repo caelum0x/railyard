@@ -1,0 +1,81 @@
+// Voice-line manifest for Vashka: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "vashka",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.vashka.select",
+            kind: "Selected",
+            audio: "audio/vo/vashka/select.ogg",
+            text: "Vashka answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.vashka.move_a",
+            kind: "Move",
+            audio: "audio/vo/vashka/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.vashka.move_b",
+            kind: "Move",
+            audio: "audio/vo/vashka/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.vashka.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/vashka/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.vashka.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/vashka/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.vashka.ability_q",
+            kind: "Ability: Furnace Charge",
+            audio: "audio/vo/vashka/ability_q.ogg",
+            text: "Furnace Charge!",
+        ),
+        VoiceLine(
+            id: "vo.vashka.ability_w",
+            kind: "Ability: Grinding Bite",
+            audio: "audio/vo/vashka/ability_w.ogg",
+            text: "Grinding Bite!",
+        ),
+        VoiceLine(
+            id: "vo.vashka.ability_r",
+            kind: "Ability: Reforge",
+            audio: "audio/vo/vashka/ability_r.ogg",
+            text: "Reforge!",
+        ),
+        VoiceLine(
+            id: "vo.vashka.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/vashka/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.vashka.joke",
+            kind: "Joke",
+            audio: "audio/vo/vashka/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.vashka.low_health",
+            kind: "Low health",
+            audio: "audio/vo/vashka/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.vashka.victory",
+            kind: "Victory",
+            audio: "audio/vo/vashka/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

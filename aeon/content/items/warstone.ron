@@ -1,0 +1,2 @@
+// content/items/warstone.ron — bruiser item: balanced HP / AD / armor.
+Item(name: "Warstone", cost: 900, bonus_hp: 200, bonus_ad: 20, bonus_armor: 20)

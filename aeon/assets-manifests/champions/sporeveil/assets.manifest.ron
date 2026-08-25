@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "sporeveil",
+    champion: "Sporeveil",
+    archetype: "mage",
+    faction: "Verdant",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 34668,
+            blake3: "b5abcfaf0c09162569a064456cde9e3e42b4eb1d20516fd65f37d9a65addd6f9",
+        ),
+    },
+)

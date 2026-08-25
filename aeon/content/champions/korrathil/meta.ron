@@ -1,0 +1,14 @@
+// Narrative + release metadata for Korrathil.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "korrathil",
+    display_name: "Korrathil",
+    title: "",
+    faction: "Umbral",
+    archetype: "bruiser",
+    release_patch: "1.7.0",
+    resource: "Mana",
+    lore: "Korrathil — the VOIDGORGER, a diving bruiser. (Umbral faction) A ravenous thing that steps through a tear in the dark, Korrathil crashes onto prey, clamps them in place, and feeds until the wounds close on its own hide. Sticky, sustained, and hard to shake. Authored entirely as DSL data.",
+    tags: ["bruiser", "umbral"],
+)

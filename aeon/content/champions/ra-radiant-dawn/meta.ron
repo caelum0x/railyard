@@ -1,0 +1,14 @@
+// Narrative + release metadata for Ra.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "ra-radiant-dawn",
+    display_name: "Ra",
+    title: "Radiant Dawn",
+    faction: "Egyptian",
+    archetype: "mage",
+    release_patch: "1.3.0",
+    resource: "Mana",
+    lore: "Ra — a BURST MAGE built around area SUN damage. Fragile like every mage, but Ra deletes clustered enemies with a wide Sunfire Nova and pokes from absurd range with a piercing Solar Lance. Each dawn he is reborn (a small self-heal). Authored entirely as data against the closed vocab.",
+    tags: ["mage", "egyptian"],
+)

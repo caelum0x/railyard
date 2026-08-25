@@ -1,0 +1,7 @@
+// Manaflow Band — Sorcery / Tier1.
+RuneSpec(
+    name: "Manaflow Band",
+    tree: Sorcery,
+    tier: Tier1,
+    effect: "Hitting champions with abilities permanently increases your maximum mana, then restores mana over time.",
+)

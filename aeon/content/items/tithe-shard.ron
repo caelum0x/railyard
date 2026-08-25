@@ -1,0 +1,13 @@
+// Tithe Shard — STARTER AD. Every coin counted.
+ItemSpec(
+    name: "Tithe Shard",
+    cost: 450,
+    tier: Starter,
+    stats: Stats(
+        ad: 5,
+        hp: 40,
+    ),
+    passive: Some("Last-hits grant 1 bonus gold; converts to a trinket at 500 stacks."),
+    build_from: [],
+    tags: ["starter", "ad", "gold"],
+)

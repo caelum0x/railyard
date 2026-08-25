@@ -1,0 +1,50 @@
+// Odin — a BURST MAGE and battlefield commander wielding Gungnir.
+//
+// Fragile but with the longest reach on the roster: the spear that never misses
+// bursts and stuns from afar, his ravens carve an area and slow, and Valhalla's
+// Call restores him. Low HP, high skillshot damage — pure DSL data.
+ChampionSpec(
+    name: "Odin",
+    base: BaseStats(
+        hp: 500,
+        ad: 30,
+        armor: 20,
+        attack_speed: 0.75,
+        move_speed: 9.5,
+        range: 7.0,
+    ),
+    abilities: [
+        // Signature nuke: Gungnir as a very long skillshot, heavy burst + stun.
+        AbilitySpec(
+            name: "Gungnir's Flight",
+            cooldown: 40,
+            cost: Some(65),
+            targeting: Skillshot,
+            range: 30.0,
+            effects: [
+                Damage(amount: 100, scaling: Some(AttackDamage(ratio: 0.6))),
+                Stun(duration: 14),
+            ],
+        ),
+        // Ravens Huginn and Muninn: area damage that slows the survivors.
+        AbilitySpec(
+            name: "Huginn and Muninn",
+            cooldown: 70,
+            cost: Some(70),
+            targeting: Area,
+            range: 14.0,
+            effects: [
+                Damage(amount: 85, scaling: Some(AttackDamage(ratio: 0.5))),
+                Slow(duration: 18),
+            ],
+        ),
+        // Allfather's endurance: a self-heal drawn from the mead of Valhalla.
+        AbilitySpec(
+            name: "Valhalla's Call",
+            cooldown: 150,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 90) ],
+        ),
+    ],
+)

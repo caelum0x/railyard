@@ -1,0 +1,13 @@
+// Force of Nature — LEGENDARY tank. The storm answers the storm.
+ItemSpec(
+    name: "Force of Nature",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        hp: 350,
+        mr: 60,
+    ),
+    passive: Some("Taking magic damage stacks magic resist and move speed."),
+    build_from: ["shadow-cloak", "giants-girdle", "regrowth-charm"],
+    tags: ["legendary", "tank", "mr", "mobility"],
+)

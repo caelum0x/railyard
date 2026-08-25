@@ -1,0 +1,13 @@
+// Guardian Seraph — LEGENDARY AD. Death, deferred.
+ItemSpec(
+    name: "Guardian Seraph",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ad: 45,
+        armor: 40,
+    ),
+    passive: Some("Upon taking lethal damage, revive with partial health (300s cooldown)."),
+    build_from: ["warblade", "cloth-wrap", "iron-vest"],
+    tags: ["legendary", "ad", "armor", "revive"],
+)

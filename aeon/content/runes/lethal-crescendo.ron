@@ -1,0 +1,7 @@
+// Lethal Crescendo — Precision / Keystone.
+RuneSpec(
+    name: "Lethal Crescendo",
+    tree: Precision,
+    tier: Keystone,
+    effect: "Every eighth attack or ability critically applies, dealing bonus damage scaling with your critical strike chance.",
+)

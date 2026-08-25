@@ -1,0 +1,14 @@
+// Narrative + release metadata for Achilles.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "achilles",
+    display_name: "Achilles",
+    title: "",
+    faction: "Greek",
+    archetype: "bruiser",
+    release_patch: "1.0.0",
+    resource: "Mana",
+    lore: "Achilles — BRUISER. The near-invincible hero of Troy: hurls himself onto a foe with a stunning spear, cleaves everything around him, and shrugs off wounds in a burst of immortal rage.",
+    tags: ["bruiser", "greek"],
+)

@@ -1,0 +1,46 @@
+openapi: "3.0.3"
+info:
+  title: "aeonrift Replay API"
+  version: "0.0.0-scaffold"
+  description: >-
+    Planned surface for services/replay. Scaffold only — no server behind it yet.
+servers:
+  - url: "https://api.aeonrift.example/replay"
+    description: placeholder
+paths:
+  "/v1/replays":
+    post:
+      summary: "Finalize + store a match input log (from gameservers)."
+      operationId: post_v1_replays
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/replays/{match_id}":
+    get:
+      summary: "Fetch replay metadata + input-log location."
+      operationId: get_v1_replays_match_id
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/replays/{match_id}/inputs":
+    get:
+      summary: "Stream the raw input log for playback."
+      operationId: get_v1_replays_match_id_inputs
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/replays/search":
+    get:
+      summary: "Search replays by account/champion/patch."
+      operationId: get_v1_replays_search
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"

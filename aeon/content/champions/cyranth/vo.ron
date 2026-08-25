@@ -1,0 +1,81 @@
+// Voice-line manifest for Cyranth: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "cyranth",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.cyranth.select",
+            kind: "Selected",
+            audio: "audio/vo/cyranth/select.ogg",
+            text: "Cyranth answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.cyranth.move_a",
+            kind: "Move",
+            audio: "audio/vo/cyranth/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.cyranth.move_b",
+            kind: "Move",
+            audio: "audio/vo/cyranth/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.cyranth.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/cyranth/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.cyranth.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/cyranth/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.cyranth.ability_q",
+            kind: "Ability: Squall Volley",
+            audio: "audio/vo/cyranth/ability_q.ogg",
+            text: "Squall Volley!",
+        ),
+        VoiceLine(
+            id: "vo.cyranth.ability_w",
+            kind: "Ability: Sleetbind Shot",
+            audio: "audio/vo/cyranth/ability_w.ogg",
+            text: "Sleetbind Shot!",
+        ),
+        VoiceLine(
+            id: "vo.cyranth.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/cyranth/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.cyranth.joke",
+            kind: "Joke",
+            audio: "audio/vo/cyranth/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.cyranth.low_health",
+            kind: "Low health",
+            audio: "audio/vo/cyranth/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.cyranth.victory",
+            kind: "Victory",
+            audio: "audio/vo/cyranth/victory.ogg",
+            text: "The field is ours.",
+        ),
+        VoiceLine(
+            id: "vo.cyranth.death",
+            kind: "Death",
+            audio: "audio/vo/cyranth/death.ogg",
+            text: "Not... the end.",
+        ),
+    ],
+)

@@ -1,0 +1,14 @@
+// Narrative + release metadata for Loki.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "loki",
+    display_name: "Loki",
+    title: "",
+    faction: "Norse",
+    archetype: "assassin",
+    release_patch: "1.1.0",
+    resource: "Mana",
+    lore: "Loki — a trickster ASSASSIN: blink to a mark, gut them, slip away. Squishy but fast, with the highest single-hit burst on the roster. Shadow Step dashes onto a target and knifes for a huge AD ratio; a venom skillshot slows stragglers; and a vanishing self-heal buys the escape. All closed-vocab data.",
+    tags: ["assassin", "norse"],
+)

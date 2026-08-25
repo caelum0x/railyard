@@ -1,0 +1,10 @@
+// Overheal — Sustain buff. Maps to closed vocab.
+BuffSpec(
+    id: "overheal",
+    name: "Overheal",
+    category: Sustain,
+    vocab_ref: Some("BuffSelfHeal"),
+    fields: ["amount"],
+    stacking: Independent,
+    description: "Excess healing is banked as bonus health.",
+)

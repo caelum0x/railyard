@@ -1,0 +1,10 @@
+// Faerie Charm — BASIC support.
+ItemSpec(
+    name: "Faerie Charm",
+    cost: 250,
+    tier: Basic,
+    stats: Stats(),
+    passive: Some("+50% base mana regeneration."),
+    build_from: [],
+    tags: ["basic", "mana"],
+)

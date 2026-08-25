@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Isis.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "isis-mother-of-magic",
+    display_name: "Isis",
+    rarity: "Common",
+    elixir_cost: 3,
+    archetype: "mage",
+    faction: "Egyptian",
+    card_stats: CardStats(
+        hitpoints: 540,
+        attack_damage: 30,
+        attack_speed: 0.7,
+        armor: 22,
+        range: 7.0,
+        approx_dps: 21.0,
+    ),
+    deploy_power: 188,
+    collectible: true,
+)

@@ -1,0 +1,81 @@
+// Voice-line manifest for Mars: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "mars",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.mars.select",
+            kind: "Selected",
+            audio: "audio/vo/mars/select.ogg",
+            text: "Mars answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.mars.move_a",
+            kind: "Move",
+            audio: "audio/vo/mars/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.mars.move_b",
+            kind: "Move",
+            audio: "audio/vo/mars/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.mars.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/mars/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.mars.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/mars/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.mars.ability_q",
+            kind: "Ability: Spear of Conquest",
+            audio: "audio/vo/mars/ability_q.ogg",
+            text: "Spear of Conquest!",
+        ),
+        VoiceLine(
+            id: "vo.mars.ability_w",
+            kind: "Ability: Crimson March",
+            audio: "audio/vo/mars/ability_w.ogg",
+            text: "Crimson March!",
+        ),
+        VoiceLine(
+            id: "vo.mars.ability_r",
+            kind: "Ability: Battle Fury",
+            audio: "audio/vo/mars/ability_r.ogg",
+            text: "Battle Fury!",
+        ),
+        VoiceLine(
+            id: "vo.mars.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/mars/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.mars.joke",
+            kind: "Joke",
+            audio: "audio/vo/mars/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.mars.low_health",
+            kind: "Low health",
+            audio: "audio/vo/mars/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.mars.victory",
+            kind: "Victory",
+            audio: "audio/vo/mars/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

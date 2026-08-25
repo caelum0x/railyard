@@ -1,0 +1,14 @@
+// Gloomwolves camp — an Alpha leading two Pups. No buff. Aggro is shared: hitting
+// one pulls the pack. Placement + respawn in jungle-layout-riftline.ron.
+CampSpec(
+    id: "camp_gloomwolves",
+    display_name: "Gloomwolves",
+    kind: "MonsterCamp",
+    members: [
+        (monster: "gloomwolf_alpha", count: 1),
+        (monster: "gloomwolf_pup",   count: 2),
+    ],
+    grants_buff: "none",
+    shared_aggro: true,
+    leash_radius: 11.0,
+)

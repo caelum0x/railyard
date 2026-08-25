@@ -1,0 +1,34 @@
+// Deterministic duel scenarios for Bastet.
+// Lifted from the roster/duel test pattern (engine/ability-dsl/tests/
+// duel.rs): a fixed seed makes every run byte-identical, so these double
+// as regression baselines. Data only -- no Rust, no loader impact.
+DuelScenarios(
+    slug: "bastet-claws-of-the-hunt",
+    default_seed: 42,
+    scenarios: [
+        DuelScenario(
+            name: "bastet-claws-of-the-hunt_vs_sentinel",
+            description: "Bastet opens against the Sentinel baseline.",
+            challenger: "bastet-claws-of-the-hunt.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Win, winner: Some("Bastet"), decisive: true),
+        ),
+        DuelScenario(
+            name: "bastet-claws-of-the-hunt_determinism",
+            description: "Same specs + seed run twice must be byte-identical.",
+            challenger: "bastet-claws-of-the-hunt.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Deterministic, hash_stable: true, decisive: true),
+        ),
+        DuelScenario(
+            name: "bastet-claws-of-the-hunt_order_independent",
+            description: "Swapping challenger/opponent slots keeps the same winner.",
+            challenger: "sentinel.ron",
+            opponent: "bastet-claws-of-the-hunt.ron",
+            seed: 42,
+            expect: Expect(outcome: OrderIndependent, decisive: true),
+        ),
+    ],
+)

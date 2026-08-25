@@ -1,0 +1,12 @@
+// Duskblade of Shadow — LEGENDARY AD. It thrives where light does not.
+ItemSpec(
+    name: "Duskblade of Shadow",
+    cost: 3200,
+    tier: Legendary,
+    stats: Stats(
+        ad: 60,
+    ),
+    passive: Some("+18 lethality; first attack on a champion deals bonus damage; takedowns grant invisibility."),
+    build_from: ["serrated-dirk", "caulfields-warhammer"],
+    tags: ["legendary", "ad", "lethality", "assassin"],
+)

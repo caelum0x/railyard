@@ -1,0 +1,13 @@
+// Nashor's Tooth — LEGENDARY AP. A fang that never dulls.
+ItemSpec(
+    name: "Nashor's Tooth",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ap: 90,
+        attack_speed: 0.5,
+    ),
+    passive: Some("On-hit deals 15 (+20% AP) bonus magic damage."),
+    build_from: ["stinger-coil", "blasting-rod", "minor-tome"],
+    tags: ["legendary", "ap", "attack-speed", "onhit"],
+)

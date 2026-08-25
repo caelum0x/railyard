@@ -1,0 +1,13 @@
+// Crownguard Plate — LEGENDARY AP. Regalia that shields the caster.
+ItemSpec(
+    name: "Crownguard Plate",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        ap: 80,
+        armor: 50,
+    ),
+    passive: Some("Channel in combat to gain a large ability-power shield."),
+    build_from: ["glacial-buckler", "blasting-rod", "minor-tome"],
+    tags: ["legendary", "ap", "armor", "shield"],
+)

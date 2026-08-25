@@ -1,0 +1,81 @@
+// Voice-line manifest for Gorehoof: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "gorehoof",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.gorehoof.select",
+            kind: "Selected",
+            audio: "audio/vo/gorehoof/select.ogg",
+            text: "Gorehoof answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.gorehoof.move_a",
+            kind: "Move",
+            audio: "audio/vo/gorehoof/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.gorehoof.move_b",
+            kind: "Move",
+            audio: "audio/vo/gorehoof/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.gorehoof.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/gorehoof/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.gorehoof.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/gorehoof/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.gorehoof.ability_q",
+            kind: "Ability: Rampart Charge",
+            audio: "audio/vo/gorehoof/ability_q.ogg",
+            text: "Rampart Charge!",
+        ),
+        VoiceLine(
+            id: "vo.gorehoof.ability_w",
+            kind: "Ability: Gore Toss",
+            audio: "audio/vo/gorehoof/ability_w.ogg",
+            text: "Gore Toss!",
+        ),
+        VoiceLine(
+            id: "vo.gorehoof.ability_r",
+            kind: "Ability: Bloodroot",
+            audio: "audio/vo/gorehoof/ability_r.ogg",
+            text: "Bloodroot!",
+        ),
+        VoiceLine(
+            id: "vo.gorehoof.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/gorehoof/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.gorehoof.joke",
+            kind: "Joke",
+            audio: "audio/vo/gorehoof/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.gorehoof.low_health",
+            kind: "Low health",
+            audio: "audio/vo/gorehoof/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.gorehoof.victory",
+            kind: "Victory",
+            audio: "audio/vo/gorehoof/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

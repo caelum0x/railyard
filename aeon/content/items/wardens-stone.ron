@@ -1,0 +1,13 @@
+// Warden's Stone — STARTER support. A pact-marked cornerstone.
+ItemSpec(
+    name: "Warden's Stone",
+    cost: 400,
+    tier: Starter,
+    stats: Stats(
+        hp: 60,
+        armor: 5,
+    ),
+    passive: Some("Store a charge every 40s (max 3) to shield a nearby ally on your next attack."),
+    build_from: [],
+    tags: ["starter", "support", "warden"],
+)

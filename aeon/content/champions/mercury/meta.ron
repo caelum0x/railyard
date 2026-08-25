@@ -1,0 +1,14 @@
+// Narrative + release metadata for Mercury.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "mercury",
+    display_name: "Mercury",
+    title: "",
+    faction: "Roman",
+    archetype: "assassin",
+    release_patch: "1.2.0",
+    resource: "Mana",
+    lore: "Mercury — the speed ASSASSIN. Blistering move speed, dash-in burst, dash-out escape.",
+    tags: ["assassin", "roman"],
+)

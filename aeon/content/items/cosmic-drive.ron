@@ -1,0 +1,13 @@
+// Cosmic Drive — LEGENDARY AP. Momentum of the spheres.
+ItemSpec(
+    name: "Cosmic Drive",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ap: 70,
+        hp: 200,
+    ),
+    passive: Some("+25 ability haste; dealing ability damage grants bonus move speed."),
+    build_from: ["fiendish-codex", "aether-catalyst"],
+    tags: ["legendary", "ap", "haste", "mobility"],
+)

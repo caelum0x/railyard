@@ -1,0 +1,11 @@
+// Daze — HardCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "stun_brief",
+    name: "Daze",
+    category: HardCC,
+    vocab_ref: Some("DebuffStun"),
+    fields: ["duration"],
+    cleansable: true,
+    stacking: Refresh,
+    description: "A short stun applied by light impacts.",
+)

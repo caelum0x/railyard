@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Artemis.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "artemis",
+    display_name: "Artemis",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "marksman",
+    faction: "Greek",
+    card_stats: CardStats(
+        hitpoints: 560,
+        attack_damage: 45,
+        attack_speed: 1.0,
+        armor: 22,
+        range: 8.0,
+        approx_dps: 45.0,
+    ),
+    deploy_power: 283,
+    collectible: true,
+)

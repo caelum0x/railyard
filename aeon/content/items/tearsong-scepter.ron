@@ -1,0 +1,12 @@
+// Tearsong Scepter — LEGENDARY AP. Every drop a spell.
+ItemSpec(
+    name: "Tearsong Scepter",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        ap: 70,
+    ),
+    passive: Some("+25 ability haste; +600 max mana; excess mana converts to ability power."),
+    build_from: ["aether-tears", "fiendish-codex"],
+    tags: ["legendary", "ap", "mana", "haste"],
+)

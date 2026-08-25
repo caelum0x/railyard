@@ -1,0 +1,7 @@
+// Battlecry — summoner spell.
+SummonerSpell(
+    name: "Battlecry",
+    cooldown: 240,
+    effect: "Grant yourself and nearby allies bonus attack and move speed for 4s.",
+    tags: ["buff", "utility"],
+)

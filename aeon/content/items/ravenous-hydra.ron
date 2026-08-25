@@ -1,0 +1,13 @@
+// Ravening Hydra — LEGENDARY AD. Cut one, cut all.
+ItemSpec(
+    name: "Ravening Hydra",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 65,
+        hp: 150,
+    ),
+    passive: Some("Attacks and abilities cleave nearby enemies; +10% life steal."),
+    build_from: ["vampiric-scepter", "brute-pick", "long-blade"],
+    tags: ["legendary", "ad", "lifesteal", "aoe"],
+)

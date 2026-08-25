@@ -1,0 +1,81 @@
+// Voice-line manifest for Neptune: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "neptune",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.neptune.select",
+            kind: "Selected",
+            audio: "audio/vo/neptune/select.ogg",
+            text: "Neptune answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.neptune.move_a",
+            kind: "Move",
+            audio: "audio/vo/neptune/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.neptune.move_b",
+            kind: "Move",
+            audio: "audio/vo/neptune/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.neptune.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/neptune/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.neptune.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/neptune/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.neptune.ability_q",
+            kind: "Ability: Tidal Surge",
+            audio: "audio/vo/neptune/ability_q.ogg",
+            text: "Tidal Surge!",
+        ),
+        VoiceLine(
+            id: "vo.neptune.ability_w",
+            kind: "Ability: Maelstrom",
+            audio: "audio/vo/neptune/ability_w.ogg",
+            text: "Maelstrom!",
+        ),
+        VoiceLine(
+            id: "vo.neptune.ability_r",
+            kind: "Ability: Trident's Wrath",
+            audio: "audio/vo/neptune/ability_r.ogg",
+            text: "Trident's Wrath!",
+        ),
+        VoiceLine(
+            id: "vo.neptune.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/neptune/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.neptune.joke",
+            kind: "Joke",
+            audio: "audio/vo/neptune/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.neptune.low_health",
+            kind: "Low health",
+            audio: "audio/vo/neptune/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.neptune.victory",
+            kind: "Victory",
+            audio: "audio/vo/neptune/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

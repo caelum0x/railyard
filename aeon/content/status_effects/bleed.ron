@@ -1,0 +1,11 @@
+// Bleed — Damage status effect. Maps to closed vocab.
+StatusEffect(
+    id: "bleed",
+    name: "Bleed",
+    category: Damage,
+    vocab_ref: Some("Damage"),
+    fields: ["amount", "damage_type", "tag"],
+    cleansable: false,
+    stacking: Independent,
+    description: "Recurring physical damage over time (authored as repeated Damage ticks).",
+)

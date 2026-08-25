@@ -1,0 +1,7 @@
+// Taste of Blood — Domination / Tier1.
+RuneSpec(
+    name: "Taste of Blood",
+    tree: Domination,
+    tier: Tier1,
+    effect: "Heal when you damage an enemy champion, on a short cooldown.",
+)

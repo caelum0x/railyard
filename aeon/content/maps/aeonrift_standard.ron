@@ -1,0 +1,75 @@
+// content/maps/aeonrift_standard.ron
+//
+// The standard 3-lane Aeonrift arena (top / mid / bot) used by the normal and
+// ranked 5v5 modes. Two bases, three lanes each with a tier-1 + tier-2 turret and
+// an inhibitor per side, a jungle of neutral camps, and two epic objectives.
+// Layout only; stats resolve from the structure + neutral catalogs.
+MapData(
+    name: "Aeonrift Arena",
+    bounds: 50.0,
+    bases: [
+        BaseDef(team: 0, nexus: P(x: -44.0, y: -44.0), spawn: P(x: -47.0, y: -47.0)),
+        BaseDef(team: 1, nexus: P(x:  44.0, y:  44.0), spawn: P(x:  47.0, y:  47.0)),
+    ],
+    lanes: [
+        LaneDef(
+            name: "top",
+            waypoints: [
+                P(x: -44.0, y: -30.0), P(x: -44.0, y: 0.0),
+                P(x: -30.0, y: 44.0), P(x: 0.0, y: 44.0), P(x: 44.0, y: 44.0),
+            ],
+            turrets: [
+                TurretDef(team: 0, pos: P(x: -40.0, y: 0.0), tier: 1),
+                TurretDef(team: 0, pos: P(x: -42.0, y: -20.0), tier: 2),
+                TurretDef(team: 1, pos: P(x: 0.0, y: 40.0), tier: 1),
+                TurretDef(team: 1, pos: P(x: 20.0, y: 42.0), tier: 2),
+            ],
+            inhibitors: [
+                InhibDef(team: 0, pos: P(x: -43.0, y: -38.0)),
+                InhibDef(team: 1, pos: P(x: 38.0, y: 43.0)),
+            ],
+        ),
+        LaneDef(
+            name: "mid",
+            waypoints: [
+                P(x: -40.0, y: -40.0), P(x: -15.0, y: -15.0),
+                P(x: 0.0, y: 0.0), P(x: 15.0, y: 15.0), P(x: 40.0, y: 40.0),
+            ],
+            turrets: [
+                TurretDef(team: 0, pos: P(x: -22.0, y: -22.0), tier: 1),
+                TurretDef(team: 0, pos: P(x: -33.0, y: -33.0), tier: 2),
+                TurretDef(team: 1, pos: P(x: 22.0, y: 22.0), tier: 1),
+                TurretDef(team: 1, pos: P(x: 33.0, y: 33.0), tier: 2),
+            ],
+            inhibitors: [
+                InhibDef(team: 0, pos: P(x: -40.0, y: -40.0)),
+                InhibDef(team: 1, pos: P(x: 40.0, y: 40.0)),
+            ],
+        ),
+        LaneDef(
+            name: "bot",
+            waypoints: [
+                P(x: -30.0, y: -44.0), P(x: 0.0, y: -44.0),
+                P(x: 44.0, y: -30.0), P(x: 44.0, y: 0.0), P(x: 44.0, y: 44.0),
+            ],
+            turrets: [
+                TurretDef(team: 0, pos: P(x: 0.0, y: -40.0), tier: 1),
+                TurretDef(team: 0, pos: P(x: -20.0, y: -42.0), tier: 2),
+                TurretDef(team: 1, pos: P(x: 40.0, y: 0.0), tier: 1),
+                TurretDef(team: 1, pos: P(x: 42.0, y: 20.0), tier: 2),
+            ],
+            inhibitors: [
+                InhibDef(team: 0, pos: P(x: -38.0, y: -43.0)),
+                InhibDef(team: 1, pos: P(x: 43.0, y: 38.0)),
+            ],
+        ),
+    ],
+    jungle: [
+        CampDef(id: "crimson_golem", pos: P(x: -15.0, y: 5.0)),
+        CampDef(id: "crimson_golem", pos: P(x: 15.0, y: -5.0)),
+    ],
+    objectives: [
+        ObjectiveDef(id: "tidewyrm", pos: P(x: 20.0, y: -20.0)),
+        ObjectiveDef(id: "worldbreaker", pos: P(x: -20.0, y: 20.0)),
+    ],
+)

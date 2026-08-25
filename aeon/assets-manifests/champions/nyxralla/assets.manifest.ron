@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "nyxralla",
+    champion: "Nyxralla",
+    archetype: "mage",
+    faction: "Tide",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 34680,
+            blake3: "cacd94577a20d10618e4c79753c522fc840c39bff555965b28f995642607b410",
+        ),
+    },
+)

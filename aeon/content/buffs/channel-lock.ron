@@ -1,0 +1,10 @@
+// Channel Lock — Control buff. Maps to closed vocab.
+BuffSpec(
+    id: "channel_lock",
+    name: "Channel Lock",
+    category: Control,
+    vocab_ref: Some("BuffCastBlock"),
+    fields: ["duration"],
+    stacking: Longest,
+    description: "Locks the caster into a channel; not removable by cleanse.",
+)

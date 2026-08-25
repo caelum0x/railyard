@@ -1,0 +1,13 @@
+// Kingslayer Maul — LEGENDARY AD. Built to topple the mighty.
+ItemSpec(
+    name: "Kingslayer Maul",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 40,
+        hp: 350,
+    ),
+    passive: Some("Abilities deal bonus damage equal to 4% of the target's max health."),
+    build_from: ["phage-heart", "brute-pick", "giants-girdle"],
+    tags: ["legendary", "ad", "hp", "bruiser"],
+)

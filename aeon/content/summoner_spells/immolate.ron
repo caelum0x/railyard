@@ -1,0 +1,7 @@
+// Immolate — summoner spell.
+SummonerSpell(
+    name: "Immolate",
+    cooldown: 180,
+    effect: "Ignite an enemy champion, dealing true damage over 5s and reducing healing they receive.",
+    tags: ["damage", "antiheal"],
+)

@@ -1,0 +1,103 @@
+// content/_schema/vocabulary.ron
+//
+// The CLOSED vocabulary a champion spec may reference. Anything not listed here
+// is INVALID and must be rejected by content-lint. Mirrors crates/lol_core.
+//
+// This is data, not code: it enumerates the enum variants the engine actually
+// implements so specs stay inside the engine's real capabilities.
+(
+    // SkillSlot — crates/lol_core/src/skill/enums.rs
+    skill_slots: ["Passive", "Q", "W", "E", "R", "Custom"],
+
+    // SkillCooldownMode — crates/lol_core/src/skill/enums.rs
+    cooldown_modes: ["AfterCast", "Manual"],
+
+    // DamageType — crates/lol_core/src/damage.rs
+    damage_types: ["Physical", "Magic", "True"],
+
+    // Top-level actions a skill handler may trigger. Each maps 1:1 to an
+    // EntityEvent / Command in crates/lol_core/src/action + damage.
+    actions: [
+        (name: "ActionDamage",        source: "action/damage.rs",         desc: "Immediate AoE damage over one or more shaped effects."),
+        (name: "ActionDelayedDamage", source: "action/delayed_damage.rs",  desc: "Telegraphed AoE that resolves after a delay."),
+        (name: "ActionDash",          source: "action/dash.rs",            desc: "Self displacement; optional along-the-way damage via DashDamageIntent."),
+        (name: "ActionDisplace",      source: "action/displace.rs",        desc: "Move/CC enemies (pull/push) with attached effects."),
+        (name: "CommandKnockback",    source: "action/knockback.rs",       desc: "Single-target knockback/pull relative to a source."),
+        (name: "CommandDamageCreate", source: "damage.rs",                 desc: "Direct flat damage to one entity (bypasses shape/spell calc)."),
+    ],
+
+    // DamageShape — crates/lol_core/src/action/damage.rs
+    damage_shapes: [
+        (name: "Circle",    fields: ["radius"]),
+        (name: "Sector",    fields: ["radius", "angle"]),
+        (name: "Annular",   fields: ["inner_radius", "outer_radius"]),
+        (name: "Nearest",   fields: ["max_distance"]),
+        (name: "Rectangle", fields: ["width", "length", "start_distance"]),
+    ],
+
+    // TargetFilter — crates/lol_core/src/action/damage.rs
+    target_filters: ["All", "Champion", "Minion"],
+
+    // DamageModifier — crates/lol_core/src/action/damage.rs
+    damage_modifiers: [
+        (name: "None",      fields: []),
+        (name: "Isolation", fields: ["scalar_data_value"]),
+    ],
+
+    // DashMoveType — crates/lol_core/src/action/dash.rs
+    dash_move_types: [
+        (name: "Fixed",      fields: ["distance"]),
+        (name: "Pointer",    fields: ["max"]),
+        (name: "WorldPoint", fields: ["point"]),
+        (name: "Entity",     fields: ["target", "stop_radius"]),
+    ],
+
+    // ActionDisplace primitives — crates/lol_core/src/action/displace.rs
+    displace_target_selection: [
+        (name: "Cone",     fields: ["range", "angle", "direction"]),
+        (name: "Circle",   fields: ["radius", "center"]),   // center: Caster | Point(Vec2)
+        (name: "Nearest",  fields: ["range"]),
+        (name: "Explicit", fields: ["entities"]),
+    ],
+    displace_motion: [
+        (name: "PullToward", fields: ["distance", "speed"]),
+        (name: "PushAway",   fields: ["distance", "speed"]),
+        (name: "PullToPoint", fields: ["point", "distance", "speed"]),
+        (name: "None",       fields: []),
+    ],
+    displace_effects: [
+        (name: "Knockup", fields: ["duration"]),
+        (name: "Stun",    fields: ["duration"]),
+        (name: "Slow",    fields: ["percent", "duration"]),
+        (name: "Damage",  fields: ["amount", "damage_type", "tag"]),
+    ],
+
+    // CC debuffs — crates/lol_core/src/buffs/cc_debuffs.rs (all ControlTag = cleansable)
+    cc_debuffs: [
+        (name: "DebuffStun",    fields: ["duration"]),
+        (name: "DebuffSlow",    fields: ["percent", "duration"]),
+        (name: "DebuffSilence", fields: ["duration"]),
+        (name: "DebuffFear",    fields: ["duration"]),
+        (name: "DebuffKnockup", fields: ["duration"]),  // not cleansable-reducible; no MovementBlock
+    ],
+
+    // Common (non-CC) buffs — crates/lol_core/src/buffs/{common_buffs,shield_white,shield_magic,damage_reduction}.rs
+    common_buffs: [
+        (name: "BuffMoveSpeed",       fields: ["bonus_percent", "duration"]),
+        (name: "BuffSelfHeal",        fields: ["amount"]),                 // one-shot
+        (name: "BuffResist",          fields: ["armor", "magic_resist", "duration"]),
+        (name: "BuffCastBlock",       fields: ["duration"]),               // self-cast lock (not cleansable)
+        (name: "BuffShieldWhite",     fields: ["amount"]),                 // absorbs all damage
+        (name: "BuffShieldMagic",     fields: ["amount"]),                 // absorbs magic
+        (name: "BuffDamageReduction", fields: ["percentage", "damage_type"]),
+    ],
+
+    // How ability `amount` strings resolve — crates/lol_core/src/skill/helpers.rs
+    // A damage `amount` is a spell calculation key resolved by get_skill_value against
+    // the champion's Spell asset (calculations -> formula_parts). Stat ids: 0 = AP, 2 = AD.
+    amount_resolution: (
+        via: "get_skill_value(spell, amount_key, skill_level, get_stat)",
+        stat_ids: { "0": "AbilityPower (AP)", "2": "Damage (AD)" },
+        note: "amount is a key into the champion Spell's `calculations`; unknown key => None => runtime skip/panic. Keep amounts in the champion's spell data.",
+    ),
+)

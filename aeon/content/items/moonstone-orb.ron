@@ -1,0 +1,13 @@
+// Moonstone Orb — LEGENDARY support. A tide of gentle light.
+ItemSpec(
+    name: "Moonstone Orb",
+    cost: 2300,
+    tier: Legendary,
+    stats: Stats(
+        ap: 40,
+        hp: 150,
+    ),
+    passive: Some("+25 ability haste; healing or shielding chains to a second nearby ally."),
+    build_from: ["bandleglass-mirror", "kindlegem"],
+    tags: ["legendary", "support", "heal-shield", "haste"],
+)

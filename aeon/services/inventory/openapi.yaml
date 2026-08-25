@@ -1,0 +1,55 @@
+openapi: "3.0.3"
+info:
+  title: "aeonrift Inventory API"
+  version: "0.0.0-scaffold"
+  description: >-
+    Planned surface for services/inventory. Scaffold only — no server behind it yet.
+servers:
+  - url: "https://api.aeonrift.example/inventory"
+    description: placeholder
+paths:
+  "/v1/inventories/{account_id}":
+    get:
+      summary: "List everything an account owns."
+      operationId: get_v1_inventories_account_id
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/inventories/{account_id}/grants":
+    post:
+      summary: "Grant an item (from economy fulfilment)."
+      operationId: post_v1_inventories_account_id_grants
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/inventories/{account_id}/entitlements/{sku}":
+    get:
+      summary: "Check a single entitlement."
+      operationId: get_v1_inventories_account_id_entitlements_sku
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/inventories/{account_id}/loadouts":
+    post:
+      summary: "Save a champion loadout/skin selection."
+      operationId: post_v1_inventories_account_id_loadouts
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/catalog":
+    get:
+      summary: "Catalog of grantable SKUs (mirror of store catalog)."
+      operationId: get_v1_catalog
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"

@@ -1,0 +1,40 @@
+// Vanguard — a BRUISER with a gap-closing DASH + STRIKE.
+//
+// Tanky and durable. Its signature ability dashes onto a target, strikes for
+// AD-scaled damage, and briefly stuns — a classic engage. Demonstrates a
+// multi-effect, targeted ability plus a self-heal, all as pure DSL data.
+ChampionSpec(
+    name: "Vanguard",
+    base: BaseStats(
+        hp: 780,
+        ad: 48,
+        armor: 35,
+        attack_speed: 0.85,
+        move_speed: 10.0,
+        range: 5.0,
+    ),
+    abilities: [
+        // Engage: dash in (Dash moves the caster), then strike + stun the target.
+        // Effect order matters: close the gap first, then land the hit.
+        AbilitySpec(
+            name: "Shield Charge",
+            cooldown: 90,
+            cost: Some(40),
+            targeting: Target,
+            range: 14.0,
+            effects: [
+                Dash(distance: 14.0),
+                Damage(amount: 60, scaling: Some(AttackDamage(ratio: 0.4))),
+                Stun(duration: 8),
+            ],
+        ),
+        // Sustain when low.
+        AbilitySpec(
+            name: "Rally",
+            cooldown: 180,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 120) ],
+        ),
+    ],
+)

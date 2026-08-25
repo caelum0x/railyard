@@ -1,0 +1,12 @@
+// Long Blade — BASIC AD.
+ItemSpec(
+    name: "Long Blade",
+    cost: 350,
+    tier: Basic,
+    stats: Stats(
+        ad: 12,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "ad"],
+)

@@ -1,0 +1,13 @@
+// Bloodreaver — LEGENDARY AD. It drinks deep and asks for more.
+ItemSpec(
+    name: "Bloodreaver",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 55,
+        hp: 200,
+    ),
+    passive: Some("+15% life steal; overheal becomes a decaying shield."),
+    build_from: ["warblade", "vampiric-scepter", "ruby-shard"],
+    tags: ["legendary", "ad", "lifesteal"],
+)

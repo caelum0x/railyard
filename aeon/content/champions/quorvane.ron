@@ -1,0 +1,50 @@
+// Quorvane — the NIGHTGLASS HUNTER, a marksman. (Umbral faction)
+//
+// A patient stalker who fires shards of cooled void-glass from the edge of sight.
+// Long range and high fire-rate, thin defenses; slips through shadow to keep the
+// gap and pins fleeing prey with a heavy piercing round. DSL data only.
+ChampionSpec(
+    name: "Quorvane",
+    base: BaseStats(
+        hp: 560,
+        ad: 58,
+        armor: 22,
+        attack_speed: 1.15,   // fast auto-attacker
+        move_speed: 11.0,
+        range: 24.0,
+    ),
+    abilities: [
+        // Umbral Bolt: piercing skillshot, scales hard with AD.
+        AbilitySpec(
+            name: "Umbral Bolt",
+            cooldown: 90,
+            cost: Some(40),
+            targeting: Skillshot,
+            range: 28.0,
+            effects: [
+                Damage(amount: 70, scaling: Some(AttackDamage(ratio: 1.0))),
+            ],
+        ),
+        // Shadowslip: short dash to kite and reposition.
+        AbilitySpec(
+            name: "Shadowslip",
+            cooldown: 150,
+            cost: Some(35),
+            targeting: Skillshot,
+            range: 14.0,
+            effects: [ Dash(distance: 14.0) ],
+        ),
+        // Nightpiercer: heavy single-target round with a slow.
+        AbilitySpec(
+            name: "Nightpiercer",
+            cooldown: 300,
+            cost: Some(80),
+            targeting: Target,
+            range: 24.0,
+            effects: [
+                Damage(amount: 130, scaling: Some(AttackDamage(ratio: 1.0))),
+                Slow(duration: 60),
+            ],
+        ),
+    ],
+)

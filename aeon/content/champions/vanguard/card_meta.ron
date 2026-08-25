@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Vanguard.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "vanguard",
+    display_name: "Vanguard",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "bruiser",
+    faction: "Roman",
+    card_stats: CardStats(
+        hitpoints: 780,
+        attack_damage: 48,
+        attack_speed: 0.85,
+        armor: 35,
+        range: 5.0,
+        approx_dps: 40.8,
+    ),
+    deploy_power: 274,
+    collectible: true,
+)

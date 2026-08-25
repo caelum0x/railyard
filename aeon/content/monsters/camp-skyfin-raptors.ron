@@ -1,0 +1,14 @@
+// Skyfin Raptors camp — a Matriarch surrounded by a flock of four Raptors. No buff.
+// Lots of low-HP targets reward AoE clears. Placement + respawn in the layout file.
+CampSpec(
+    id: "camp_skyfin_raptors",
+    display_name: "Skyfin Raptors",
+    kind: "MonsterCamp",
+    members: [
+        (monster: "skyfin_matriarch", count: 1),
+        (monster: "skyfin_raptor",    count: 4),
+    ],
+    grants_buff: "none",
+    shared_aggro: true,
+    leash_radius: 10.0,
+)

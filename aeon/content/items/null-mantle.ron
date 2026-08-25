@@ -1,0 +1,12 @@
+// Null Mantle — BASIC tank.
+ItemSpec(
+    name: "Null Mantle",
+    cost: 450,
+    tier: Basic,
+    stats: Stats(
+        mr: 25,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "mr"],
+)

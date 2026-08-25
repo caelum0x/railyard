@@ -1,0 +1,7 @@
+// Phase Rush — Sorcery / Keystone.
+RuneSpec(
+    name: "Phase Rush",
+    tree: Sorcery,
+    tier: Keystone,
+    effect: "Hitting a champion with three attacks or abilities grants a burst of move speed and slow resistance.",
+)

@@ -1,0 +1,10 @@
+// Physical Ward — Defensive buff. Maps to closed vocab.
+BuffSpec(
+    id: "physical_ward",
+    name: "Physical Ward",
+    category: Defensive,
+    vocab_ref: Some("BuffDamageReduction"),
+    fields: ["percentage", "damage_type"],
+    stacking: Strongest,
+    description: "Reduces incoming physical damage by a percentage.",
+)

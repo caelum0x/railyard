@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Brackmoor.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/brackmoor.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "brackmoor",
+    display_name: "Brackmoor",
+    abilities: [
+        AbilityTuning(
+            name: "Glacial Anchor",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 240, cost: Some(60), damage: Some(70), ad_ratio: Some(0.4), heal: None, cc: Some(("Stun", 45))),
+                Rank(rank: 2, cooldown: 228, cost: Some(65), damage: Some(91), ad_ratio: Some(0.45), heal: None, cc: Some(("Stun", 52))),
+                Rank(rank: 3, cooldown: 216, cost: Some(70), damage: Some(112), ad_ratio: Some(0.5), heal: None, cc: Some(("Stun", 58))),
+                Rank(rank: 4, cooldown: 204, cost: Some(74), damage: Some(133), ad_ratio: Some(0.55), heal: None, cc: Some(("Stun", 65))),
+                Rank(rank: 5, cooldown: 192, cost: Some(79), damage: Some(154), ad_ratio: Some(0.6), heal: None, cc: Some(("Stun", 72))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Rimeguard",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 180, cost: Some(50), damage: None, ad_ratio: None, heal: Some(85), cc: None),
+                Rank(rank: 2, cooldown: 171, cost: Some(54), damage: None, ad_ratio: None, heal: Some(106), cc: None),
+                Rank(rank: 3, cooldown: 162, cost: Some(58), damage: None, ad_ratio: None, heal: Some(128), cc: None),
+                Rank(rank: 4, cooldown: 153, cost: Some(62), damage: None, ad_ratio: None, heal: Some(149), cc: None),
+                Rank(rank: 5, cooldown: 144, cost: Some(66), damage: None, ad_ratio: None, heal: Some(170), cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Permafrost Wake",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 210, cost: Some(55), damage: Some(60), ad_ratio: Some(0.3), heal: None, cc: Some(("Slow", 90))),
+                Rank(rank: 2, cooldown: 200, cost: Some(59), damage: Some(78), ad_ratio: Some(0.35), heal: None, cc: Some(("Slow", 103))),
+                Rank(rank: 3, cooldown: 189, cost: Some(64), damage: Some(96), ad_ratio: Some(0.4), heal: None, cc: Some(("Slow", 117))),
+                Rank(rank: 4, cooldown: 178, cost: Some(68), damage: Some(114), ad_ratio: Some(0.45), heal: None, cc: Some(("Slow", 130))),
+                Rank(rank: 5, cooldown: 168, cost: Some(73), damage: Some(132), ad_ratio: Some(0.5), heal: None, cc: Some(("Slow", 144))),
+            ],
+        ),
+    ],
+)

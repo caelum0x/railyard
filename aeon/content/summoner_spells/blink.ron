@@ -1,0 +1,7 @@
+// Blink — summoner spell.
+SummonerSpell(
+    name: "Blink",
+    cooldown: 300,
+    effect: "Teleport your champion a short distance toward the cursor.",
+    tags: ["mobility", "escape"],
+)

@@ -1,0 +1,12 @@
+// Glacial Buckler — EPIC tank.
+ItemSpec(
+    name: "Glacial Buckler",
+    cost: 900,
+    tier: Epic,
+    stats: Stats(
+        armor: 30,
+    ),
+    passive: Some("+250 max mana; +10 ability haste."),
+    build_from: ["cloth-wrap", "aether-crystal"],
+    tags: ["epic", "armor", "mana"],
+)

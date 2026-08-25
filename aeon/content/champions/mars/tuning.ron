@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Mars.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/mars.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "mars",
+    display_name: "Mars",
+    abilities: [
+        AbilityTuning(
+            name: "Spear of Conquest",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 80, cost: Some(45), damage: Some(56), ad_ratio: Some(0.4), heal: None, cc: Some(("Stun", 9))),
+                Rank(rank: 2, cooldown: 76, cost: Some(49), damage: Some(73), ad_ratio: Some(0.45), heal: None, cc: Some(("Stun", 10))),
+                Rank(rank: 3, cooldown: 72, cost: Some(52), damage: Some(90), ad_ratio: Some(0.5), heal: None, cc: Some(("Stun", 12))),
+                Rank(rank: 4, cooldown: 68, cost: Some(56), damage: Some(106), ad_ratio: Some(0.55), heal: None, cc: Some(("Stun", 13))),
+                Rank(rank: 5, cooldown: 64, cost: Some(59), damage: Some(123), ad_ratio: Some(0.6), heal: None, cc: Some(("Stun", 14))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Crimson March",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 100, cost: Some(50), damage: Some(50), ad_ratio: Some(0.3), heal: None, cc: Some(("Slow", 30))),
+                Rank(rank: 2, cooldown: 95, cost: Some(54), damage: Some(65), ad_ratio: Some(0.35), heal: None, cc: Some(("Slow", 34))),
+                Rank(rank: 3, cooldown: 90, cost: Some(58), damage: Some(80), ad_ratio: Some(0.4), heal: None, cc: Some(("Slow", 39))),
+                Rank(rank: 4, cooldown: 85, cost: Some(62), damage: Some(95), ad_ratio: Some(0.45), heal: None, cc: Some(("Slow", 44))),
+                Rank(rank: 5, cooldown: 80, cost: Some(66), damage: Some(110), ad_ratio: Some(0.5), heal: None, cc: Some(("Slow", 48))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Battle Fury",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 160, cost: None, damage: None, ad_ratio: None, heal: Some(100), cc: None),
+                Rank(rank: 2, cooldown: 152, cost: None, damage: None, ad_ratio: None, heal: Some(125), cc: None),
+                Rank(rank: 3, cooldown: 144, cost: None, damage: None, ad_ratio: None, heal: Some(150), cc: None),
+                Rank(rank: 4, cooldown: 136, cost: None, damage: None, ad_ratio: None, heal: Some(175), cc: None),
+                Rank(rank: 5, cooldown: 128, cost: None, damage: None, ad_ratio: None, heal: Some(200), cc: None),
+            ],
+        ),
+    ],
+)

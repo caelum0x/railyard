@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Petalsong.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "petalsong",
+    display_name: "Petalsong",
+    rarity: "Rare",
+    elixir_cost: 4,
+    archetype: "support",
+    faction: "Verdant",
+    card_stats: CardStats(
+        hitpoints: 620,
+        attack_damage: 42,
+        attack_speed: 0.9,
+        armor: 30,
+        range: 15.0,
+        approx_dps: 37.8,
+    ),
+    deploy_power: 235,
+    collectible: true,
+)

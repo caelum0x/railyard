@@ -1,0 +1,14 @@
+// Narrative + release metadata for Dregmaw.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "dregmaw",
+    display_name: "Dregmaw",
+    title: "",
+    faction: "Umbral",
+    archetype: "tank",
+    release_patch: "1.7.0",
+    resource: "Mana",
+    lore: "Dregmaw — the DUSKBULWARK, a frontline tank. (Umbral faction) A hollow-eyed warden fused to a slab of eclipse-iron, Dregmaw plants himself in the dark and refuses to fall. Soaks punishment, chains a threat down with an umbral grip, mends in shadow, and drags a whole line into a crawl. Low offense, immense durability. Pure DATA against the closed DSL.",
+    tags: ["tank", "umbral"],
+)

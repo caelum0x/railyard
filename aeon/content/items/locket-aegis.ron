@@ -1,0 +1,14 @@
+// Locket of the Aegis — LEGENDARY support. A charm shared with the line.
+ItemSpec(
+    name: "Locket of the Aegis",
+    cost: 2200,
+    tier: Legendary,
+    stats: Stats(
+        hp: 200,
+        armor: 30,
+        mr: 30,
+    ),
+    passive: Some("Active: shield nearby allies for 3s (90s cooldown)."),
+    build_from: ["kindlegem", "aegis-emblem"],
+    tags: ["legendary", "support", "shield", "aura"],
+)

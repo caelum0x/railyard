@@ -1,0 +1,81 @@
+// Voice-line manifest for Mosscloak: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "mosscloak",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.mosscloak.select",
+            kind: "Selected",
+            audio: "audio/vo/mosscloak/select.ogg",
+            text: "Mosscloak answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.mosscloak.move_a",
+            kind: "Move",
+            audio: "audio/vo/mosscloak/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.mosscloak.move_b",
+            kind: "Move",
+            audio: "audio/vo/mosscloak/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.mosscloak.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/mosscloak/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.mosscloak.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/mosscloak/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.mosscloak.ability_q",
+            kind: "Ability: Root Snare",
+            audio: "audio/vo/mosscloak/ability_q.ogg",
+            text: "Root Snare!",
+        ),
+        VoiceLine(
+            id: "vo.mosscloak.ability_w",
+            kind: "Ability: Barkskin",
+            audio: "audio/vo/mosscloak/ability_w.ogg",
+            text: "Barkskin!",
+        ),
+        VoiceLine(
+            id: "vo.mosscloak.ability_r",
+            kind: "Ability: Thorn Coil",
+            audio: "audio/vo/mosscloak/ability_r.ogg",
+            text: "Thorn Coil!",
+        ),
+        VoiceLine(
+            id: "vo.mosscloak.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/mosscloak/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.mosscloak.joke",
+            kind: "Joke",
+            audio: "audio/vo/mosscloak/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.mosscloak.low_health",
+            kind: "Low health",
+            audio: "audio/vo/mosscloak/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.mosscloak.victory",
+            kind: "Victory",
+            audio: "audio/vo/mosscloak/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

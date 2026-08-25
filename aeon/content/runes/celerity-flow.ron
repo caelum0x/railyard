@@ -1,0 +1,7 @@
+// Celerity — Sorcery / Tier2.
+RuneSpec(
+    name: "Celerity",
+    tree: Sorcery,
+    tier: Tier2,
+    effect: "All bonus move speed grants a proportional amount of adaptive force.",
+)

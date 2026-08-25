@@ -1,0 +1,7 @@
+// Triumphant Return — Precision / Tier1.
+RuneSpec(
+    name: "Triumphant Return",
+    tree: Precision,
+    tier: Tier1,
+    effect: "Champion takedowns restore missing health and grant bonus gold.",
+)

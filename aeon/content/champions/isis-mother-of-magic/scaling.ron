@@ -1,0 +1,30 @@
+// Per-level stat growth for Isis (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "isis-mother-of-magic",
+    archetype: "mage",
+    base: LevelStats(hp: 540, ad: 30, armor: 22, attack_speed: 0.7),
+    per_level: StatGrowth(hp: 70, ad: 3.0, armor: 2.2, attack_speed: 0.018),
+    levels: [
+        LevelRow(level: 1, hp: 540, ad: 30, armor: 22, attack_speed: 0.7),
+        LevelRow(level: 2, hp: 610, ad: 33, armor: 24, attack_speed: 0.718),
+        LevelRow(level: 3, hp: 680, ad: 36, armor: 26, attack_speed: 0.736),
+        LevelRow(level: 4, hp: 750, ad: 39, armor: 29, attack_speed: 0.754),
+        LevelRow(level: 5, hp: 820, ad: 42, armor: 31, attack_speed: 0.772),
+        LevelRow(level: 6, hp: 890, ad: 45, armor: 33, attack_speed: 0.79),
+        LevelRow(level: 7, hp: 960, ad: 48, armor: 35, attack_speed: 0.808),
+        LevelRow(level: 8, hp: 1030, ad: 51, armor: 37, attack_speed: 0.826),
+        LevelRow(level: 9, hp: 1100, ad: 54, armor: 40, attack_speed: 0.844),
+        LevelRow(level: 10, hp: 1170, ad: 57, armor: 42, attack_speed: 0.862),
+        LevelRow(level: 11, hp: 1240, ad: 60, armor: 44, attack_speed: 0.88),
+        LevelRow(level: 12, hp: 1310, ad: 63, armor: 46, attack_speed: 0.898),
+        LevelRow(level: 13, hp: 1380, ad: 66, armor: 48, attack_speed: 0.916),
+        LevelRow(level: 14, hp: 1450, ad: 69, armor: 51, attack_speed: 0.934),
+        LevelRow(level: 15, hp: 1520, ad: 72, armor: 53, attack_speed: 0.952),
+        LevelRow(level: 16, hp: 1590, ad: 75, armor: 55, attack_speed: 0.97),
+        LevelRow(level: 17, hp: 1660, ad: 78, armor: 57, attack_speed: 0.988),
+        LevelRow(level: 18, hp: 1730, ad: 81, armor: 59, attack_speed: 1.006),
+    ],
+)

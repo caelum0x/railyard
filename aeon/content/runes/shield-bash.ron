@@ -1,0 +1,7 @@
+// Shield Bash — Resolve / Tier1.
+RuneSpec(
+    name: "Shield Bash",
+    tree: Resolve,
+    tier: Tier1,
+    effect: "While shielded, your next attack deals bonus adaptive damage and grants resistances.",
+)

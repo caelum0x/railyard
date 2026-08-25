@@ -1,0 +1,14 @@
+// Narrative + release metadata for Horus.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "horus-skyfall-talon",
+    display_name: "Horus",
+    title: "Skyfall Talon",
+    faction: "Egyptian",
+    archetype: "bruiser",
+    release_patch: "1.3.0",
+    resource: "Mana",
+    lore: "Horus — a BRUISER with a diving DASH engage and sustained melee pressure. Durable but hits harder than a pure tank. Falcon Dive closes and stuns; Talon Rend is a heavy, slowing melee strike; the War Cry sustains him in a brawl.",
+    tags: ["bruiser", "egyptian"],
+)

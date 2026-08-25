@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Cyranth.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "cyranth",
+    display_name: "Cyranth",
+    rarity: "Epic",
+    elixir_cost: 6,
+    archetype: "marksman",
+    faction: "Tide",
+    card_stats: CardStats(
+        hitpoints: 585,
+        attack_damage: 63,
+        attack_speed: 1.15,
+        armor: 24,
+        range: 20.0,
+        approx_dps: 72.4,
+    ),
+    deploy_power: 322,
+    collectible: true,
+)

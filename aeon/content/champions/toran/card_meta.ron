@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Toran.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "toran",
+    display_name: "Toran",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "mage",
+    faction: "Ember",
+    card_stats: CardStats(
+        hitpoints: 690,
+        attack_damage: 44,
+        attack_speed: 0.85,
+        armor: 36,
+        range: 8.0,
+        approx_dps: 37.4,
+    ),
+    deploy_power: 297,
+    collectible: true,
+)

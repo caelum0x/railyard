@@ -1,0 +1,31 @@
+// Frostwyrm — an elemental Wyrm neutral objective. Spawns in the Wyrm Pit. Slaying
+// it grants the killing team a stacking Frost Boon (bonus resistances / slow on hit).
+// Tide/Frost faction themed. Part of the Wyrm rotation in wyrm-pit.ron.
+ObjectiveSpec(
+    id: "frostwyrm",
+    display_name: "Frostwyrm",
+    class: "ElementalWyrm",
+    element: "Frost",
+    pit: "wyrm_pit",
+
+    stats: NeutralStats(
+        hp: 3800,
+        armor: 30,
+        magic_resist: 30,
+        attack_damage: 95,
+        attack_speed: 0.5,
+        attack_range: 3.0,
+        move_speed: 0.0,
+    ),
+
+    scaling: (hp_per_minute: 250, ad_per_minute: 5, start_minute: 5),
+
+    reward: (
+        buff: "frost_boon",
+        scope: "KillingTeam",
+        permanent: true,
+        stacking: true,
+    ),
+
+    bounty: (gold_local: 25, gold_global: 25, xp: 200),
+)

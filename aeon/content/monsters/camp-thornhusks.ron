@@ -1,0 +1,17 @@
+// Thornhusks camp — a stone camp: one Elder plus two Shards. The Elder spawns an
+// extra Shard on death (see thornhusk-elder.ron). No buff. High armor rewards
+// sustained clears. Placement + respawn in jungle-layout-riftline.ron.
+CampSpec(
+    id: "camp_thornhusks",
+    display_name: "Thornhusks",
+    kind: "MonsterCamp",
+    members: [
+        (monster: "thornhusk_elder", count: 1),
+        (monster: "thornhusk_shard", count: 2),
+    ],
+    grants_buff: "none",
+    shared_aggro: true,
+    leash_radius: 10.0,
+    // Split mechanic: the Elder's on_death_spawn adds one more Shard when it dies.
+    split_on_large_death: true,
+)

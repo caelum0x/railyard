@@ -1,0 +1,13 @@
+// Deadman's Plate — LEGENDARY tank. It gathers dread with every step.
+ItemSpec(
+    name: "Deadman's Plate",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        hp: 300,
+        armor: 45,
+    ),
+    passive: Some("Build momentum while moving; next attack slows and deals bonus damage."),
+    build_from: ["warden-mail", "giants-girdle"],
+    tags: ["legendary", "tank", "armor", "hp", "mobility"],
+)

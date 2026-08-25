@@ -1,0 +1,13 @@
+// Frostweaver Orb — LEGENDARY AP. Winter follows your incantations.
+ItemSpec(
+    name: "Frostweaver Orb",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        ap: 80,
+        hp: 250,
+    ),
+    passive: Some("Dealing ability damage slows the target by 30% for 1s."),
+    build_from: ["glacial-buckler", "blasting-rod", "minor-tome"],
+    tags: ["legendary", "ap", "slow", "utility"],
+)

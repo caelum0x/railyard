@@ -1,0 +1,7 @@
+// Legend: Alacrity — Precision / Tier2.
+RuneSpec(
+    name: "Legend: Alacrity",
+    tree: Precision,
+    tier: Tier2,
+    effect: "Takedowns grant permanent stacking attack speed, up to a cap.",
+)

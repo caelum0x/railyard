@@ -1,0 +1,12 @@
+// Stormsurge Crystal — LEGENDARY AP. A held breath before the strike.
+ItemSpec(
+    name: "Stormsurge Crystal",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        ap: 90,
+    ),
+    passive: Some("+15 magic penetration; burst a foe on tick for a lightning strike."),
+    build_from: ["hextech-alternator", "great-rod"],
+    tags: ["legendary", "ap", "burst", "penetration"],
+)

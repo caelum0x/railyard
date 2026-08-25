@@ -1,0 +1,26 @@
+// Sentinel — a plain AUTO-ATTACKER.
+//
+// No burst, no crowd control: just reliable, hard-hitting basic attacks and a
+// modest self-heal. The baseline every other champion is measured against. This
+// whole champion is DATA — there is zero champion-specific Rust code behind it.
+ChampionSpec(
+    name: "Sentinel",
+    base: BaseStats(
+        hp: 620,
+        ad: 55,
+        armor: 30,
+        attack_speed: 1.0,   // 1 attack / second -> 30-tick period
+        move_speed: 11.0,
+        range: 8.0,
+    ),
+    abilities: [
+        // Self-sustain: only cast when below 60% HP (see duel AI).
+        AbilitySpec(
+            name: "Second Wind",
+            cooldown: 150,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 90) ],
+        ),
+    ],
+)

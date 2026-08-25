@@ -1,0 +1,24 @@
+// Aeon Core — the nexus. Each team has one; destroying the enemy's Core ends the
+// game. It is only attackable once both flanking Nexus Spires are down. It cannot
+// attack, but slowly regenerates while both spires still stand to punish a stalled
+// push. Placements (one per team) in riftline-crucible.ron.
+StructureSpec(
+    id: "aeon_core",
+    display_name: "Aeon Core",
+    kind: "Nexus",
+
+    stats: StructureStats(
+        hp: 5500,
+        armor: 0,
+        magic_resist: 0,
+    ),
+
+    // Both twin Nexus Spires guarding it must fall first.
+    unlock: (requires_destroyed: "nexus_spire", scope: "BothTwins"),
+
+    // Regenerates only while at least one guarding spire still stands.
+    conditional_regen: (hp_per_second: 12, condition: "AnyGuardingSpireAlive"),
+
+    // Destroying the enemy Core is the win condition.
+    on_destroyed: "EndGameVictoryForAttacker",
+)

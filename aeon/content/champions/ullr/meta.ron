@@ -1,0 +1,14 @@
+// Narrative + release metadata for Ullr.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "ullr",
+    display_name: "Ullr",
+    title: "",
+    faction: "Norse",
+    archetype: "marksman",
+    release_patch: "1.1.0",
+    resource: "Mana",
+    lore: "Ullr — a MARKSMAN: the god of the bow, the hunt, and the winter frost. Long auto-attack range and high attack speed are his bread and butter; his abilities pile on a frost skillshot that slows, a raining volley over an area, and a bone-skate reposition dash. Sustained ranged damage as pure DSL data.",
+    tags: ["marksman", "norse"],
+)

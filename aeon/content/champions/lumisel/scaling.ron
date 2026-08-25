@@ -1,0 +1,30 @@
+// Per-level stat growth for Lumisel (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "lumisel",
+    archetype: "support",
+    base: LevelStats(hp: 600, ad: 44, armor: 26, attack_speed: 0.9),
+    per_level: StatGrowth(hp: 82, ad: 2.6, armor: 3.0, attack_speed: 0.02),
+    levels: [
+        LevelRow(level: 1, hp: 600, ad: 44, armor: 26, attack_speed: 0.9),
+        LevelRow(level: 2, hp: 682, ad: 47, armor: 29, attack_speed: 0.92),
+        LevelRow(level: 3, hp: 764, ad: 49, armor: 32, attack_speed: 0.94),
+        LevelRow(level: 4, hp: 846, ad: 52, armor: 35, attack_speed: 0.96),
+        LevelRow(level: 5, hp: 928, ad: 54, armor: 38, attack_speed: 0.98),
+        LevelRow(level: 6, hp: 1010, ad: 57, armor: 41, attack_speed: 1.0),
+        LevelRow(level: 7, hp: 1092, ad: 60, armor: 44, attack_speed: 1.02),
+        LevelRow(level: 8, hp: 1174, ad: 62, armor: 47, attack_speed: 1.04),
+        LevelRow(level: 9, hp: 1256, ad: 65, armor: 50, attack_speed: 1.06),
+        LevelRow(level: 10, hp: 1338, ad: 67, armor: 53, attack_speed: 1.08),
+        LevelRow(level: 11, hp: 1420, ad: 70, armor: 56, attack_speed: 1.1),
+        LevelRow(level: 12, hp: 1502, ad: 73, armor: 59, attack_speed: 1.12),
+        LevelRow(level: 13, hp: 1584, ad: 75, armor: 62, attack_speed: 1.14),
+        LevelRow(level: 14, hp: 1666, ad: 78, armor: 65, attack_speed: 1.16),
+        LevelRow(level: 15, hp: 1748, ad: 80, armor: 68, attack_speed: 1.18),
+        LevelRow(level: 16, hp: 1830, ad: 83, armor: 71, attack_speed: 1.2),
+        LevelRow(level: 17, hp: 1912, ad: 86, armor: 74, attack_speed: 1.22),
+        LevelRow(level: 18, hp: 1994, ad: 88, armor: 77, attack_speed: 1.24),
+    ],
+)

@@ -1,0 +1,14 @@
+// Narrative + release metadata for Hades.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "hades",
+    display_name: "Hades",
+    title: "",
+    faction: "Greek",
+    archetype: "tank",
+    release_patch: "1.0.0",
+    resource: "Mana",
+    lore: "Hades — TANK / void controller. Lord of the Underworld: durable, drags a foe in with a stun, blankets the ground in soul-fire that damages and slows, and feeds on the dead to sustain.",
+    tags: ["tank", "greek"],
+)

@@ -1,0 +1,34 @@
+// Deterministic duel scenarios for Thornquill.
+// Lifted from the roster/duel test pattern (engine/ability-dsl/tests/
+// duel.rs): a fixed seed makes every run byte-identical, so these double
+// as regression baselines. Data only -- no Rust, no loader impact.
+DuelScenarios(
+    slug: "thornquill",
+    default_seed: 42,
+    scenarios: [
+        DuelScenario(
+            name: "thornquill_vs_sentinel",
+            description: "Thornquill opens against the Sentinel baseline.",
+            challenger: "thornquill.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Win, winner: Some("Thornquill"), decisive: true),
+        ),
+        DuelScenario(
+            name: "thornquill_determinism",
+            description: "Same specs + seed run twice must be byte-identical.",
+            challenger: "thornquill.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Deterministic, hash_stable: true, decisive: true),
+        ),
+        DuelScenario(
+            name: "thornquill_order_independent",
+            description: "Swapping challenger/opponent slots keeps the same winner.",
+            challenger: "sentinel.ron",
+            opponent: "thornquill.ron",
+            seed: 42,
+            expect: Expect(outcome: OrderIndependent, decisive: true),
+        ),
+    ],
+)

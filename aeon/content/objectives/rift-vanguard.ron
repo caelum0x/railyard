@@ -1,0 +1,37 @@
+// Rift Vanguard — the early-game epic objective (the "herald"-style monster, but
+// original IP). Spawns in the Sunder Hollow before The Sunderer. On death it drops
+// the Vanguard Sigil, which a champion can deploy to summon a charging Vanguard Wisp
+// that rams enemy structures, dealing heavy plating/turret damage to help take towers.
+ObjectiveSpec(
+    id: "rift_vanguard",
+    display_name: "Rift Vanguard",
+    class: "EpicMonster",
+    pit: "sunder_hollow",
+
+    // Early-game window; despawns / is replaced by The Sunderer at 20:00.
+    spawn_gate: (earliest_minute: 8, despawn_minute: 20),
+
+    stats: NeutralStats(
+        hp: 6000,
+        armor: 40,
+        magic_resist: 40,
+        attack_damage: 160,
+        attack_speed: 0.5,
+        attack_range: 4.0,
+        move_speed: 0.0,
+    ),
+
+    // Its "weak eye" mechanic: a periodically-exposed crystal that takes bonus damage.
+    weakpoint: (id: "vanguard_eye", bonus_damage_percent: 12, expose_interval_seconds: 6),
+
+    scaling: (hp_per_minute: 180, ad_per_minute: 4, start_minute: 8),
+
+    // Drops a deployable sigil rather than a passive team buff.
+    reward: (
+        drop: "vanguard_sigil",   // -> content/objectives/objective-rewards.ron
+        scope: "KillingChampion",
+        permanent: false,
+    ),
+
+    bounty: (gold_local: 100, gold_global: 40, xp: 250),
+)

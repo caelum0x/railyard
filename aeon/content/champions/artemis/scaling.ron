@@ -1,0 +1,30 @@
+// Per-level stat growth for Artemis (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "artemis",
+    archetype: "marksman",
+    base: LevelStats(hp: 560, ad: 45, armor: 22, attack_speed: 1.0),
+    per_level: StatGrowth(hp: 74, ad: 3.8, armor: 2.6, attack_speed: 0.035),
+    levels: [
+        LevelRow(level: 1, hp: 560, ad: 45, armor: 22, attack_speed: 1.0),
+        LevelRow(level: 2, hp: 634, ad: 49, armor: 25, attack_speed: 1.035),
+        LevelRow(level: 3, hp: 708, ad: 53, armor: 27, attack_speed: 1.07),
+        LevelRow(level: 4, hp: 782, ad: 56, armor: 30, attack_speed: 1.105),
+        LevelRow(level: 5, hp: 856, ad: 60, armor: 32, attack_speed: 1.14),
+        LevelRow(level: 6, hp: 930, ad: 64, armor: 35, attack_speed: 1.175),
+        LevelRow(level: 7, hp: 1004, ad: 68, armor: 38, attack_speed: 1.21),
+        LevelRow(level: 8, hp: 1078, ad: 72, armor: 40, attack_speed: 1.245),
+        LevelRow(level: 9, hp: 1152, ad: 75, armor: 43, attack_speed: 1.28),
+        LevelRow(level: 10, hp: 1226, ad: 79, armor: 45, attack_speed: 1.315),
+        LevelRow(level: 11, hp: 1300, ad: 83, armor: 48, attack_speed: 1.35),
+        LevelRow(level: 12, hp: 1374, ad: 87, armor: 51, attack_speed: 1.385),
+        LevelRow(level: 13, hp: 1448, ad: 91, armor: 53, attack_speed: 1.42),
+        LevelRow(level: 14, hp: 1522, ad: 94, armor: 56, attack_speed: 1.455),
+        LevelRow(level: 15, hp: 1596, ad: 98, armor: 58, attack_speed: 1.49),
+        LevelRow(level: 16, hp: 1670, ad: 102, armor: 61, attack_speed: 1.525),
+        LevelRow(level: 17, hp: 1744, ad: 106, armor: 64, attack_speed: 1.56),
+        LevelRow(level: 18, hp: 1818, ad: 110, armor: 66, attack_speed: 1.595),
+    ],
+)

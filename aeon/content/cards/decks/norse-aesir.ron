@@ -1,0 +1,2 @@
+// Preset deck 02 — Norse Aesir.
+DeckDef(name: "Norse Aesir", cards: ["tyr","thor","odin","loki","freyja","ullr","vanguard","sentinel"])

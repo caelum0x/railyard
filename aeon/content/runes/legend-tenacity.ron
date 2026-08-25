@@ -1,0 +1,7 @@
+// Legend: Tenacity — Precision / Tier2.
+RuneSpec(
+    name: "Legend: Tenacity",
+    tree: Precision,
+    tier: Tier2,
+    effect: "Takedowns grant permanent stacking tenacity, up to a cap.",
+)

@@ -1,0 +1,22 @@
+// content/cards/packs/arcane-reliquary.ron
+// Themed pack weighted toward mage/spell cards. Uses the shards currency.
+CardPack(
+    id: "arcane-reliquary",
+    name: "Arcane Reliquary",
+    description: "A vault of spellcraft favoring the arcane.",
+    category: "themed",
+    card_count: 8,
+    cost: PackCost(currency: "shards", amount: 2500),
+    one_time: false,
+    guaranteed_floor: Some("rare"),
+    // Optional pool bias: pulls prefer cards tagged with this archetype.
+    pool_bias: Some("mage"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 480),
+        RarityOdd(rarity: "uncommon",  weight: 300),
+        RarityOdd(rarity: "rare",      weight: 160),
+        RarityOdd(rarity: "epic",      weight: 50),
+        RarityOdd(rarity: "legendary", weight: 9),
+        RarityOdd(rarity: "mythic",    weight: 1),
+    ],
+)

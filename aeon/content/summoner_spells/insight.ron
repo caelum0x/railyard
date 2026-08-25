@@ -1,0 +1,7 @@
+// Insight — summoner spell.
+SummonerSpell(
+    name: "Insight",
+    cooldown: 240,
+    effect: "Restore a large amount of mana to yourself and a nearby ally over a few seconds.",
+    tags: ["mana", "support"],
+)

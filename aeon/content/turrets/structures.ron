@@ -1,0 +1,21 @@
+// content/turrets/structures.ron
+//
+// Base combat stats for the destructible structures (turrets, inhibitors, and the
+// nexus). The rules layer (src/rules/{turrets,inhibitors,nexus}.rs) builds these
+// as stationary sim champions, so they fight through the SAME deterministic combat
+// core as everything else — turrets auto-attack; inhibitors/nexus have ad:0 and
+// range:0.0 so they never attack, only take damage.
+//
+// A map may override this whole block (see MapData.structures) — e.g. the sandbox
+// test map uses tiny HP so a scripted siege terminates quickly.
+StructureStats(
+    turret:    UnitStats(hp: 1200, ad: 150, armor: 40, range: 14.0, attack_speed: 0.83),
+    inhibitor: UnitStats(hp: 1000, ad: 0,   armor: 40, range: 0.0,  attack_speed: 1.0),
+    nexus:     UnitStats(hp: 2000, ad: 0,   armor: 40, range: 0.0,  attack_speed: 1.0),
+    // While a nexus is still protected (its lane turrets + inhibitors alive) it is
+    // given this near-infinite armor so incoming damage is mitigated to ~0. When
+    // the last protector falls, the rules layer swaps it back to the base armor
+    // above, exposing the nexus. This reuses the sim's real armor formula rather
+    // than bolting on a bespoke shield type.
+    nexus_shield_armor: 100000,
+)

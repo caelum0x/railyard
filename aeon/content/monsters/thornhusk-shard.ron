@@ -1,0 +1,24 @@
+// Thornhusk Shard — the small monster of the Thornhusks camp. Several form the camp
+// alongside the Elder, and one more spawns when the Elder is slain. Brittle, quick
+// to clear, minor reward. No buff. Camp in camp-thornhusks.ron.
+MonsterSpec(
+    id: "thornhusk_shard",
+    display_name: "Thornhusk Shard",
+    role: "CampSmall",
+    camp: "camp_thornhusks",
+
+    stats: NeutralStats(
+        hp: 250,
+        armor: 14,
+        magic_resist: 8,
+        attack_damage: 22,
+        attack_speed: 0.6,
+        attack_range: 1.0,
+        move_speed: 0.0,
+    ),
+
+    scaling: "monster_scaling",
+
+    grants_buff: "none",
+    bounty: (gold_local: 8, gold_shared: 0, xp: 15),
+)

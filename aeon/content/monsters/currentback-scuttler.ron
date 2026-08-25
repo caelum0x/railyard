@@ -1,0 +1,31 @@
+// Currentback Scuttler — the neutral river crab (the "scuttle"-style objective).
+// Passive and fast-fleeing rather than aggressive; whichever team slays it gains a
+// warding vision zone and the Sever Current speed pad on that river approach. Two
+// spawn, one per pit approach. Camp in camp-scuttler.ron; reward via river buff.
+MonsterSpec(
+    id: "currentback_scuttler",
+    display_name: "Currentback Scuttler",
+    role: "RiverObjective",
+    camp: "camp_scuttler",
+
+    stats: NeutralStats(
+        hp: 500,
+        armor: 0,
+        magic_resist: 0,
+        attack_damage: 0,       // does not fight back
+        attack_speed: 0.0,
+        attack_range: 0.0,
+        move_speed: 8.0,        // flees when attacked
+    ),
+
+    // Flees from attackers; a shell that briefly reduces incoming damage.
+    behavior: (flees: true, shell_damage_reduction_percent: 40, shell_duration_seconds: 3),
+
+    scaling: "monster_scaling",
+
+    // On death, leaves a vision + speed zone tied to the Sever current buff.
+    on_death_zone: (buff: "sever_current", radius: 10.0, duration_seconds: 90, grants_vision: true),
+
+    grants_buff: "none",
+    bounty: (gold_local: 12, gold_shared: 0, xp: 25),
+)

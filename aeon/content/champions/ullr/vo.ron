@@ -1,0 +1,81 @@
+// Voice-line manifest for Ullr: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "ullr",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.ullr.select",
+            kind: "Selected",
+            audio: "audio/vo/ullr/select.ogg",
+            text: "Ullr answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.ullr.move_a",
+            kind: "Move",
+            audio: "audio/vo/ullr/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.ullr.move_b",
+            kind: "Move",
+            audio: "audio/vo/ullr/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.ullr.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/ullr/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.ullr.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/ullr/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.ullr.ability_q",
+            kind: "Ability: Frostpiercer",
+            audio: "audio/vo/ullr/ability_q.ogg",
+            text: "Frostpiercer!",
+        ),
+        VoiceLine(
+            id: "vo.ullr.ability_w",
+            kind: "Ability: Volley of the Hunt",
+            audio: "audio/vo/ullr/ability_w.ogg",
+            text: "Volley of the Hunt!",
+        ),
+        VoiceLine(
+            id: "vo.ullr.ability_r",
+            kind: "Ability: Bone Skates",
+            audio: "audio/vo/ullr/ability_r.ogg",
+            text: "Bone Skates!",
+        ),
+        VoiceLine(
+            id: "vo.ullr.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/ullr/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.ullr.joke",
+            kind: "Joke",
+            audio: "audio/vo/ullr/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.ullr.low_health",
+            kind: "Low health",
+            audio: "audio/vo/ullr/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.ullr.victory",
+            kind: "Victory",
+            audio: "audio/vo/ullr/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

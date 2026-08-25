@@ -1,0 +1,12 @@
+// Regrowth Charm — BASIC tank.
+ItemSpec(
+    name: "Regrowth Charm",
+    cost: 450,
+    tier: Basic,
+    stats: Stats(
+        hp: 0,
+    ),
+    passive: Some("+150% base health regeneration."),
+    build_from: [],
+    tags: ["basic", "sustain"],
+)

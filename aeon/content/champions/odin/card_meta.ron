@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Odin.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "odin",
+    display_name: "Odin",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "mage",
+    faction: "Norse",
+    card_stats: CardStats(
+        hitpoints: 500,
+        attack_damage: 30,
+        attack_speed: 0.75,
+        armor: 20,
+        range: 7.0,
+        approx_dps: 22.5,
+    ),
+    deploy_power: 260,
+    collectible: true,
+)

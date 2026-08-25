@@ -1,0 +1,27 @@
+// tests/golden/sample-golden.ron
+//
+// SAMPLE golden replay descriptor. Points at a recorded input log and the expected outcome.
+// Regenerated only from a reviewed run, in the same change that alters behavior.
+(
+    name:       "duel_achilles_vs_artemis_v1",
+    patch:      "2026.08.0",
+    seed:       9001,
+    roster: [
+        (slot: 0, champion: "achilles", team: 0),
+        (slot: 1, champion: "artemis",  team: 1),
+    ],
+    // Compact deterministic input log (path relative to this file). A replay is a few KB.
+    input_log:  "logs/duel_achilles_vs_artemis_v1.inputs.ron",
+    ticks:      900,
+    expect: (
+        winner:       0,                          // team 0 (Achilles)
+        final_hash:   "PLACEHOLDER_final_world_hash",
+        // Ordered digest of key events; drift here is a behavioral change.
+        event_digest: "PLACEHOLDER_event_digest_blake3",
+        events: [
+            (tick: 240, kind: "AbilityResolved", who: 0, slot: "Q"),
+            (tick: 470, kind: "Kill",            who: 0, victim: 1),
+            (tick: 900, kind: "MatchEnd",        winner: 0),
+        ],
+    ),
+)

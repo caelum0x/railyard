@@ -1,0 +1,13 @@
+// Stormrender — LEGENDARY AD. Bottled thunder loosed on each strike.
+ItemSpec(
+    name: "Stormrender",
+    cost: 3100,
+    tier: Legendary,
+    stats: Stats(
+        ad: 45,
+        attack_speed: 0.4,
+    ),
+    passive: Some("Every third attack chains lightning to up to 4 nearby enemies."),
+    build_from: ["kindled-blade", "razor-fan", "swift-dagger"],
+    tags: ["legendary", "ad", "attack-speed", "onhit"],
+)

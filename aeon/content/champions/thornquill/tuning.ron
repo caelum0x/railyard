@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Thornquill.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/thornquill.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "thornquill",
+    display_name: "Thornquill",
+    abilities: [
+        AbilityTuning(
+            name: "Barbed Volley",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 90, cost: Some(50), damage: Some(55), ad_ratio: Some(1.0), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 86, cost: Some(54), damage: Some(72), ad_ratio: Some(1.05), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 81, cost: Some(58), damage: Some(88), ad_ratio: Some(1.1), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 76, cost: Some(62), damage: Some(104), ad_ratio: Some(1.15), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 72, cost: Some(66), damage: Some(121), ad_ratio: Some(1.2), heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Piercing Quill",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 120, cost: Some(45), damage: Some(40), ad_ratio: Some(0.6), heal: None, cc: Some(("Slow", 60))),
+                Rank(rank: 2, cooldown: 114, cost: Some(49), damage: Some(52), ad_ratio: Some(0.65), heal: None, cc: Some(("Slow", 69))),
+                Rank(rank: 3, cooldown: 108, cost: Some(52), damage: Some(64), ad_ratio: Some(0.7), heal: None, cc: Some(("Slow", 78))),
+                Rank(rank: 4, cooldown: 102, cost: Some(56), damage: Some(76), ad_ratio: Some(0.75), heal: None, cc: Some(("Slow", 87))),
+                Rank(rank: 5, cooldown: 96, cost: Some(59), damage: Some(88), ad_ratio: Some(0.8), heal: None, cc: Some(("Slow", 96))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Rootspring",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 180, cost: None, damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 2, cooldown: 171, cost: None, damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 3, cooldown: 162, cost: None, damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 4, cooldown: 153, cost: None, damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 5, cooldown: 144, cost: None, damage: None, ad_ratio: None, heal: None, cc: None),
+            ],
+        ),
+    ],
+)

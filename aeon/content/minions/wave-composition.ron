@@ -1,0 +1,36 @@
+// Wave composition & spawn cadence for Riftline Crucible. Defines what each lane
+// wave contains and when siege/super waves arrive. Deterministic: identical timers
+// for both teams so lane state is symmetric (Law 3). Minion defs referenced by id.
+WaveComposition(
+    map: "riftline_crucible",
+    first_wave_seconds: 65,      // first wave reaches lane at ~1:05
+    wave_interval_seconds: 30,   // a new wave every 30s per lane
+    lanes: ["dawnpath", "riftspan", "duskpath"],
+
+    // Standard (non-siege) wave: melee lead + caster back line.
+    standard_wave: [
+        (minion: "melee_minion",  count: 3),
+        (minion: "caster_minion", count: 3),
+    ],
+
+    // Siege wave: adds a Batterer. Occurs every 3rd wave before 15:00...
+    siege_wave: [
+        (minion: "melee_minion",  count: 3),
+        (minion: "caster_minion", count: 3),
+        (minion: "siege_minion",  count: 1),
+    ],
+
+    // Siege cadence tightens as the game goes on.
+    siege_cadence: [
+        (from_seconds: 0,    every_nth_wave: 3),   // 1 in 3 waves
+        (from_seconds: 900,  every_nth_wave: 2),   // from 15:00, 1 in 2
+        (from_seconds: 1500, every_nth_wave: 1),   // from 25:00, every wave sieges
+    ],
+
+    // When a team's Rift Conduit is down, that lane's waves gain a Colossus and an
+    // extra Batterer until the conduit respawns (see inhibitor-conduit.ron).
+    inhibitor_broken_bonus: [
+        (minion: "super_minion", count: 1),
+        (minion: "siege_minion", count: 1),
+    ],
+)

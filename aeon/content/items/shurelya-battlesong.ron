@@ -1,0 +1,13 @@
+// Shurelya's Battlesong — LEGENDARY support. A hymn that quickens the march.
+ItemSpec(
+    name: "Shurelya's Battlesong",
+    cost: 2300,
+    tier: Legendary,
+    stats: Stats(
+        ap: 40,
+        hp: 200,
+    ),
+    passive: Some("+20 ability haste; active grants nearby allies a burst of move speed (75s cooldown)."),
+    build_from: ["bandleglass-mirror", "kindlegem"],
+    tags: ["legendary", "support", "utility", "haste"],
+)

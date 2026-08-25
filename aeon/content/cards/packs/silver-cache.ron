@@ -1,0 +1,20 @@
+// content/cards/packs/silver-cache.ron
+// Mid-tier standard pack with a rare floor.
+CardPack(
+    id: "silver-cache",
+    name: "Silver Cache",
+    description: "A dependable pack with a guaranteed rare.",
+    category: "standard",
+    card_count: 8,
+    cost: PackCost(currency: "gold", amount: 1500),
+    one_time: false,
+    guaranteed_floor: Some("rare"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 540),
+        RarityOdd(rarity: "uncommon",  weight: 300),
+        RarityOdd(rarity: "rare",      weight: 130),
+        RarityOdd(rarity: "epic",      weight: 27),
+        RarityOdd(rarity: "legendary", weight: 3),
+        RarityOdd(rarity: "mythic",    weight: 0),
+    ],
+)

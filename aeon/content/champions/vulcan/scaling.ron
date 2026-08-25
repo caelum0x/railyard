@@ -1,0 +1,30 @@
+// Per-level stat growth for Vulcan (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "vulcan",
+    archetype: "tank",
+    base: LevelStats(hp: 860, ad: 42, armor: 40, attack_speed: 0.8),
+    per_level: StatGrowth(hp: 105, ad: 3.0, armor: 4.2, attack_speed: 0.02),
+    levels: [
+        LevelRow(level: 1, hp: 860, ad: 42, armor: 40, attack_speed: 0.8),
+        LevelRow(level: 2, hp: 965, ad: 45, armor: 44, attack_speed: 0.82),
+        LevelRow(level: 3, hp: 1070, ad: 48, armor: 48, attack_speed: 0.84),
+        LevelRow(level: 4, hp: 1175, ad: 51, armor: 53, attack_speed: 0.86),
+        LevelRow(level: 5, hp: 1280, ad: 54, armor: 57, attack_speed: 0.88),
+        LevelRow(level: 6, hp: 1385, ad: 57, armor: 61, attack_speed: 0.9),
+        LevelRow(level: 7, hp: 1490, ad: 60, armor: 65, attack_speed: 0.92),
+        LevelRow(level: 8, hp: 1595, ad: 63, armor: 69, attack_speed: 0.94),
+        LevelRow(level: 9, hp: 1700, ad: 66, armor: 74, attack_speed: 0.96),
+        LevelRow(level: 10, hp: 1805, ad: 69, armor: 78, attack_speed: 0.98),
+        LevelRow(level: 11, hp: 1910, ad: 72, armor: 82, attack_speed: 1.0),
+        LevelRow(level: 12, hp: 2015, ad: 75, armor: 86, attack_speed: 1.02),
+        LevelRow(level: 13, hp: 2120, ad: 78, armor: 90, attack_speed: 1.04),
+        LevelRow(level: 14, hp: 2225, ad: 81, armor: 95, attack_speed: 1.06),
+        LevelRow(level: 15, hp: 2330, ad: 84, armor: 99, attack_speed: 1.08),
+        LevelRow(level: 16, hp: 2435, ad: 87, armor: 103, attack_speed: 1.1),
+        LevelRow(level: 17, hp: 2540, ad: 90, armor: 107, attack_speed: 1.12),
+        LevelRow(level: 18, hp: 2645, ad: 93, armor: 111, attack_speed: 1.14),
+    ],
+)

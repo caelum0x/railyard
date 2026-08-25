@@ -1,0 +1,30 @@
+// Per-level stat growth for Sentinel (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "sentinel",
+    archetype: "marksman",
+    base: LevelStats(hp: 620, ad: 55, armor: 30, attack_speed: 1.0),
+    per_level: StatGrowth(hp: 74, ad: 3.8, armor: 2.6, attack_speed: 0.035),
+    levels: [
+        LevelRow(level: 1, hp: 620, ad: 55, armor: 30, attack_speed: 1.0),
+        LevelRow(level: 2, hp: 694, ad: 59, armor: 33, attack_speed: 1.035),
+        LevelRow(level: 3, hp: 768, ad: 63, armor: 35, attack_speed: 1.07),
+        LevelRow(level: 4, hp: 842, ad: 66, armor: 38, attack_speed: 1.105),
+        LevelRow(level: 5, hp: 916, ad: 70, armor: 40, attack_speed: 1.14),
+        LevelRow(level: 6, hp: 990, ad: 74, armor: 43, attack_speed: 1.175),
+        LevelRow(level: 7, hp: 1064, ad: 78, armor: 46, attack_speed: 1.21),
+        LevelRow(level: 8, hp: 1138, ad: 82, armor: 48, attack_speed: 1.245),
+        LevelRow(level: 9, hp: 1212, ad: 85, armor: 51, attack_speed: 1.28),
+        LevelRow(level: 10, hp: 1286, ad: 89, armor: 53, attack_speed: 1.315),
+        LevelRow(level: 11, hp: 1360, ad: 93, armor: 56, attack_speed: 1.35),
+        LevelRow(level: 12, hp: 1434, ad: 97, armor: 59, attack_speed: 1.385),
+        LevelRow(level: 13, hp: 1508, ad: 101, armor: 61, attack_speed: 1.42),
+        LevelRow(level: 14, hp: 1582, ad: 104, armor: 64, attack_speed: 1.455),
+        LevelRow(level: 15, hp: 1656, ad: 108, armor: 66, attack_speed: 1.49),
+        LevelRow(level: 16, hp: 1730, ad: 112, armor: 69, attack_speed: 1.525),
+        LevelRow(level: 17, hp: 1804, ad: 116, armor: 72, attack_speed: 1.56),
+        LevelRow(level: 18, hp: 1878, ad: 120, armor: 74, attack_speed: 1.595),
+    ],
+)

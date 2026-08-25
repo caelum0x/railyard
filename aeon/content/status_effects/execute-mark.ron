@@ -1,0 +1,11 @@
+// Cull Mark — Damage status effect. Maps to closed vocab.
+StatusEffect(
+    id: "execute_mark",
+    name: "Cull Mark",
+    category: Damage,
+    vocab_ref: Some("Damage"),
+    fields: ["amount", "damage_type", "tag"],
+    cleansable: false,
+    stacking: Refresh,
+    description: "Marks a low-health target for a burst of bonus true damage.",
+)

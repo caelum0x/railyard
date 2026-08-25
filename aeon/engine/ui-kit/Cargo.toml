@@ -1,0 +1,8 @@
+[package]
+name = "aeonrift-ui-kit"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96.1"
+publish = false
+
+[dependencies]

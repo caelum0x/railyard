@@ -1,0 +1,14 @@
+// Narrative + release metadata for Vulcan.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "vulcan",
+    display_name: "Vulcan",
+    title: "",
+    faction: "Roman",
+    archetype: "tank",
+    release_patch: "1.2.0",
+    resource: "Mana",
+    lore: "Vulcan — the forge TANK / zoner. Durable frontline that controls space with molten ground.",
+    tags: ["tank", "roman"],
+)

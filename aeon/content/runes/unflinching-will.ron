@@ -1,0 +1,7 @@
+// Unflinching — Resolve / Tier3.
+RuneSpec(
+    name: "Unflinching",
+    tree: Resolve,
+    tier: Tier3,
+    effect: "Gain tenacity and slow resistance, increased while at low health.",
+)

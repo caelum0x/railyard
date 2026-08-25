@@ -1,0 +1,13 @@
+// Phage Heart — EPIC AD.
+ItemSpec(
+    name: "Phage Heart",
+    cost: 1100,
+    tier: Epic,
+    stats: Stats(
+        ad: 15,
+        hp: 150,
+    ),
+    passive: Some("Damaging an enemy grants 20 move speed for 2s."),
+    build_from: ["ruby-shard", "long-blade"],
+    tags: ["epic", "ad", "hp"],
+)

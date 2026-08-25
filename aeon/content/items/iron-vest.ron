@@ -1,0 +1,12 @@
+// Iron Vest — BASIC tank.
+ItemSpec(
+    name: "Iron Vest",
+    cost: 800,
+    tier: Basic,
+    stats: Stats(
+        armor: 40,
+    ),
+    passive: None,
+    build_from: ["cloth-wrap"],
+    tags: ["basic", "armor"],
+)

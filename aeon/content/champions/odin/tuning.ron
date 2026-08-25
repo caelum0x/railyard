@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Odin.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/odin.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "odin",
+    display_name: "Odin",
+    abilities: [
+        AbilityTuning(
+            name: "Gungnir's Flight",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 40, cost: Some(65), damage: Some(100), ad_ratio: Some(0.6), heal: None, cc: Some(("Stun", 14))),
+                Rank(rank: 2, cooldown: 38, cost: Some(70), damage: Some(130), ad_ratio: Some(0.65), heal: None, cc: Some(("Stun", 16))),
+                Rank(rank: 3, cooldown: 36, cost: Some(75), damage: Some(160), ad_ratio: Some(0.7), heal: None, cc: Some(("Stun", 18))),
+                Rank(rank: 4, cooldown: 34, cost: Some(81), damage: Some(190), ad_ratio: Some(0.75), heal: None, cc: Some(("Stun", 20))),
+                Rank(rank: 5, cooldown: 32, cost: Some(86), damage: Some(220), ad_ratio: Some(0.8), heal: None, cc: Some(("Stun", 22))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Huginn and Muninn",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 70, cost: Some(70), damage: Some(85), ad_ratio: Some(0.5), heal: None, cc: Some(("Slow", 18))),
+                Rank(rank: 2, cooldown: 66, cost: Some(76), damage: Some(110), ad_ratio: Some(0.55), heal: None, cc: Some(("Slow", 21))),
+                Rank(rank: 3, cooldown: 63, cost: Some(81), damage: Some(136), ad_ratio: Some(0.6), heal: None, cc: Some(("Slow", 23))),
+                Rank(rank: 4, cooldown: 60, cost: Some(87), damage: Some(162), ad_ratio: Some(0.65), heal: None, cc: Some(("Slow", 26))),
+                Rank(rank: 5, cooldown: 56, cost: Some(92), damage: Some(187), ad_ratio: Some(0.7), heal: None, cc: Some(("Slow", 29))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Valhalla's Call",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 150, cost: None, damage: None, ad_ratio: None, heal: Some(90), cc: None),
+                Rank(rank: 2, cooldown: 142, cost: None, damage: None, ad_ratio: None, heal: Some(112), cc: None),
+                Rank(rank: 3, cooldown: 135, cost: None, damage: None, ad_ratio: None, heal: Some(135), cc: None),
+                Rank(rank: 4, cooldown: 128, cost: None, damage: None, ad_ratio: None, heal: Some(158), cc: None),
+                Rank(rank: 5, cooldown: 120, cost: None, damage: None, ad_ratio: None, heal: Some(180), cc: None),
+            ],
+        ),
+    ],
+)

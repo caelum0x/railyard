@@ -1,0 +1,12 @@
+// Mindspike Rod — LEGENDARY AP. Thought made edge.
+ItemSpec(
+    name: "Mindspike Rod",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ap: 75,
+    ),
+    passive: Some("After an ability, your next attack deals bonus magic damage scaling with mana."),
+    build_from: ["sheen-prism", "blasting-rod"],
+    tags: ["legendary", "ap", "spellblade"],
+)

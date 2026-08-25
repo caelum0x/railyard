@@ -1,0 +1,10 @@
+// Forbidden Idol — EPIC support.
+ItemSpec(
+    name: "Forbidden Idol",
+    cost: 800,
+    tier: Epic,
+    stats: Stats(),
+    passive: Some("+8% heal and shield power; +50% base mana regen."),
+    build_from: ["faerie-charm"],
+    tags: ["epic", "heal-shield"],
+)

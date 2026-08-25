@@ -1,0 +1,14 @@
+// Narrative + release metadata for Sporeveil.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "sporeveil",
+    display_name: "Sporeveil",
+    title: "",
+    faction: "Verdant",
+    archetype: "mage",
+    release_patch: "1.6.0",
+    resource: "Mana",
+    lore: "Sporeveil — a BURST MAGE. Fragile, ranged, and explosive: detonate a spore bloom for heavy AoE burst, smother a zone in pollen, and snipe stragglers. Pure DSL data.",
+    tags: ["mage", "verdant"],
+)

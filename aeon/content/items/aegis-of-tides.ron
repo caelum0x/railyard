@@ -1,0 +1,14 @@
+// Aegis of Tides — LEGENDARY AP. A bulwark of curling water.
+ItemSpec(
+    name: "Aegis of Tides",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        ap: 65,
+        hp: 200,
+        mr: 30,
+    ),
+    passive: Some("Taking damage below 30% health grants a large shield (90s cooldown)."),
+    build_from: ["verdant-barrier", "great-rod"],
+    tags: ["legendary", "ap", "mr", "shield"],
+)

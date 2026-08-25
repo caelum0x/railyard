@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Veyl.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "veyl",
+    display_name: "Veyl",
+    rarity: "Legendary",
+    elixir_cost: 7,
+    archetype: "assassin",
+    faction: "Tide",
+    card_stats: CardStats(
+        hitpoints: 620,
+        attack_damage: 70,
+        attack_speed: 1.0,
+        armor: 32,
+        range: 6.0,
+        approx_dps: 70.0,
+    ),
+    deploy_power: 424,
+    collectible: true,
+)

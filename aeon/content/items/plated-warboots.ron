@@ -1,0 +1,13 @@
+// Plated Warboots — EPIC boots.
+ItemSpec(
+    name: "Plated Warboots",
+    cost: 1200,
+    tier: Epic,
+    stats: Stats(
+        armor: 20,
+        move_speed: 45.0,
+    ),
+    passive: Some("Reduces incoming basic-attack damage by 12%."),
+    build_from: ["wayfarer-boots", "cloth-wrap"],
+    tags: ["boots", "armor", "tank"],
+)

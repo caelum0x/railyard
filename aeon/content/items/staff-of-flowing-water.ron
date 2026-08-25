@@ -1,0 +1,12 @@
+// Staff of Flowing Water — LEGENDARY support. A current that carries strength.
+ItemSpec(
+    name: "Staff of Flowing Water",
+    cost: 2200,
+    tier: Legendary,
+    stats: Stats(
+        ap: 40,
+    ),
+    passive: Some("+15 ability haste; healing or shielding grants allies ability power and haste."),
+    build_from: ["forbidden-idol", "bandleglass-mirror"],
+    tags: ["legendary", "support", "heal-shield", "haste"],
+)

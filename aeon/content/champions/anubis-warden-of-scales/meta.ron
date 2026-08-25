@@ -1,0 +1,14 @@
+// Narrative + release metadata for Anubis.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "anubis-warden-of-scales",
+    display_name: "Anubis",
+    title: "Warden Of Scales",
+    faction: "Egyptian",
+    archetype: "mage",
+    release_patch: "1.3.0",
+    resource: "Mana",
+    lore: "Anubis — a TANK / CONTROLLER who locks enemies down for his team. High HP and armor, low damage. His Mummy's Grasp is a hard point-and-click stun, and the Weight of Judgment presses a whole area into a slow. Embalming Rite keeps him standing. All crowd control, all data.",
+    tags: ["mage", "egyptian"],
+)

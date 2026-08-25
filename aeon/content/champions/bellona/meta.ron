@@ -1,0 +1,14 @@
+// Narrative + release metadata for Bellona.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "bellona",
+    display_name: "Bellona",
+    title: "",
+    faction: "Roman",
+    archetype: "bruiser",
+    release_patch: "1.2.0",
+    resource: "Mana",
+    lore: "Bellona — the weapon-master MARKSMAN. Fast, long-range auto-attacks plus a pinning volley.",
+    tags: ["bruiser", "roman"],
+)

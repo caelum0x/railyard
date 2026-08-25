@@ -1,0 +1,34 @@
+// Deterministic duel scenarios for Nerreth.
+// Lifted from the roster/duel test pattern (engine/ability-dsl/tests/
+// duel.rs): a fixed seed makes every run byte-identical, so these double
+// as regression baselines. Data only -- no Rust, no loader impact.
+DuelScenarios(
+    slug: "nerreth",
+    default_seed: 42,
+    scenarios: [
+        DuelScenario(
+            name: "nerreth_vs_sentinel",
+            description: "Nerreth opens against the Sentinel baseline.",
+            challenger: "nerreth.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Win, winner: Some("Nerreth"), decisive: true),
+        ),
+        DuelScenario(
+            name: "nerreth_determinism",
+            description: "Same specs + seed run twice must be byte-identical.",
+            challenger: "nerreth.ron",
+            opponent: "sentinel.ron",
+            seed: 42,
+            expect: Expect(outcome: Deterministic, hash_stable: true, decisive: true),
+        ),
+        DuelScenario(
+            name: "nerreth_order_independent",
+            description: "Swapping challenger/opponent slots keeps the same winner.",
+            challenger: "sentinel.ron",
+            opponent: "nerreth.ron",
+            seed: 42,
+            expect: Expect(outcome: OrderIndependent, decisive: true),
+        ),
+    ],
+)

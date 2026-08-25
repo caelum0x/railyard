@@ -1,0 +1,7 @@
+// Font of Life — Resolve / Tier1.
+RuneSpec(
+    name: "Font of Life",
+    tree: Resolve,
+    tier: Tier1,
+    effect: "Impairing an enemy marks them; allies who attack the marked target heal.",
+)

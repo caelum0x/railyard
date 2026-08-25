@@ -1,0 +1,38 @@
+// Verdant Hollow — an Ascendancy card arena (games/aeonrift-ascendancy). Verdant-
+// faction themed: a compact 2-lane duel board with regrowth tiles that heal units
+// standing on them, rewarding entrenchment and value trades. Deterministic board.
+ArenaSpec(
+    id: "ascendancy_verdant_hollow",
+    display_name: "Verdant Hollow",
+    faction_theme: "Verdant",
+    game: "aeonrift_ascendancy",
+
+    board: (
+        lanes: 2,
+        length: 7,
+        lane_names: ["Bramble", "Bloom"],
+    ),
+
+    ascendants: [
+        (player: "A", pos: (lane: 0, tile: 0), start_hp: 34),
+        (player: "B", pos: (lane: 1, tile: 6), start_hp: 34),
+    ],
+
+    deploy_tiles: [
+        (player: "A", tiles: [(lane: 0, tile: 0), (lane: 1, tile: 0)]),
+        (player: "B", tiles: [(lane: 0, tile: 6), (lane: 1, tile: 6)]),
+    ],
+
+    hazards: [
+        (id: "regrowth", tile: (lane: 0, tile: 3), effect: "HealResting", magnitude: 2, note: "Bramble mid-tile heals a unit that ends its turn resting here."),
+        (id: "regrowth", tile: (lane: 1, tile: 3), effect: "HealResting", magnitude: 2),
+    ],
+
+    passive: (
+        id: "deep_roots",
+        desc: "A unit that stays on the same tile for a full turn gains +1 armor (roots deepen), up to +3.",
+        stacks_max: 3,
+    ),
+
+    resolution_order: ["Hazards", "PlayerA_Advance", "PlayerB_Advance", "Combat", "Deaths", "Passive"],
+)

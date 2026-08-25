@@ -1,0 +1,45 @@
+openapi: "3.0.3"
+info:
+  title: "aeonrift Telemetry API"
+  version: "0.0.0-scaffold"
+  description: >-
+    Planned surface for services/telemetry. Scaffold only — no server behind it yet.
+servers:
+  - url: "https://api.aeonrift.example/telemetry"
+    description: placeholder
+paths:
+  "/v1/events":
+    post:
+      summary: "Ingest a batch of typed telemetry events."
+      operationId: post_v1_events
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/schemas/{event}":
+    get:
+      summary: "Fetch the registered schema for an event type."
+      operationId: get_v1_schemas_event
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+    post:
+      summary: "Register/evolve an event schema (additive only)."
+      operationId: post_v1_schemas_event
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/streams/{topic}/health":
+    get:
+      summary: "Ingest lag + drop-rate for a topic."
+      operationId: get_v1_streams_topic_health
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"

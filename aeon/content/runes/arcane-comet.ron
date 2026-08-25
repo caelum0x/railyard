@@ -1,0 +1,7 @@
+// Arcane Comet — Sorcery / Keystone.
+RuneSpec(
+    name: "Arcane Comet",
+    tree: Sorcery,
+    tier: Keystone,
+    effect: "Damaging a champion with an ability hurls a comet at their location for bonus adaptive damage.",
+)

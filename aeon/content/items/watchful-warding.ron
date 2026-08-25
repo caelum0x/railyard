@@ -1,0 +1,13 @@
+// Watchful Warding — BASIC support.
+ItemSpec(
+    name: "Watchful Warding",
+    cost: 500,
+    tier: Basic,
+    stats: Stats(
+        ap: 5,
+        hp: 30,
+    ),
+    passive: Some("Charges into a control ward when upgraded."),
+    build_from: [],
+    tags: ["basic", "support"],
+)

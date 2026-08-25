@@ -1,0 +1,21 @@
+// content/_schema/rune.schema.ron
+//
+// Shape of a rune spec at content/runes/<slug>.ron. A content-lint validates each
+// rune file against this shape. `tree` and `tier` are closed enums; `effect` is the
+// rules text. Runes are organized into five trees; each tree has one Keystone row and
+// three minor rows (Tier1..Tier3).
+//
+// Field types are hints; "enum:<group>" means one of the listed variants.
+(
+    name: "String        // in-game display name (original IP only)",
+
+    // The five rune trees.
+    tree: "enum: Precision | Domination | Sorcery | Resolve | Inspiration",
+
+    // Row within the tree. Keystones are the top-row anchor runes; Tier1..Tier3 are
+    // the minor rows beneath them.
+    tier: "enum: Keystone | Tier1 | Tier2 | Tier3",
+
+    // Rules text describing the rune's effect.
+    effect: "String",
+)

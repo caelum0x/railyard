@@ -1,0 +1,7 @@
+// Cosmic Insight — Inspiration / Tier3.
+RuneSpec(
+    name: "Cosmic Insight",
+    tree: Inspiration,
+    tier: Tier3,
+    effect: "Gain summoner-spell haste and item haste.",
+)

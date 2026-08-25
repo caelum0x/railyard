@@ -1,0 +1,47 @@
+// Sporeveil — a BURST MAGE.
+//
+// Fragile, ranged, and explosive: detonate a spore bloom for heavy AoE burst,
+// smother a zone in pollen, and snipe stragglers. Pure DSL data.
+ChampionSpec(
+    name: "Sporeveil",
+    base: BaseStats(
+        hp: 580,
+        ad: 48,
+        armor: 24,
+        attack_speed: 0.85,
+        move_speed: 11.0,
+        range: 20.0,
+    ),
+    abilities: [
+        // Signature nuke: big AoE burst around the aim point.
+        AbilitySpec(
+            name: "Spore Bloom",
+            cooldown: 210,
+            cost: Some(80),
+            targeting: Area,
+            range: 20.0,
+            effects: [ Damage(amount: 175, scaling: Some(AttackDamage(ratio: 0.6))) ],
+        ),
+        // Zone control: pollen cloud that damages and slows.
+        AbilitySpec(
+            name: "Choking Pollen",
+            cooldown: 150,
+            cost: Some(60),
+            targeting: Area,
+            range: 18.0,
+            effects: [
+                Damage(amount: 55, scaling: None),
+                Slow(duration: 75),
+            ],
+        ),
+        // Poke / finisher skillshot.
+        AbilitySpec(
+            name: "Fungal Lance",
+            cooldown: 90,
+            cost: Some(40),
+            targeting: Skillshot,
+            range: 24.0,
+            effects: [ Damage(amount: 90, scaling: Some(AttackDamage(ratio: 0.7))) ],
+        ),
+    ],
+)

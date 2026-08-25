@@ -1,0 +1,54 @@
+openapi: "3.0.3"
+info:
+  title: "aeonrift Gameservers (Orchestrator) API"
+  version: "0.0.0-scaffold"
+  description: >-
+    Planned surface for services/gameservers. Scaffold only — no server behind it yet.
+servers:
+  - url: "https://api.aeonrift.example/gameservers"
+    description: placeholder
+paths:
+  "/v1/allocations":
+    post:
+      summary: "Allocate a match server for a confirmed lobby."
+      operationId: post_v1_allocations
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/allocations/{id}":
+    get:
+      summary: "Fetch connection info + server state."
+      operationId: get_v1_allocations_id
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+    delete:
+      summary: "Force-release an allocation (match ended/aborted)."
+      operationId: delete_v1_allocations_id
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/fleet/{region}":
+    get:
+      summary: "Fleet capacity, warm pool size, and utilization."
+      operationId: get_v1_fleet_region
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/fleet/{region}/drain":
+    post:
+      summary: "Cordon + drain a region for a deploy."
+      operationId: post_v1_fleet_region_drain
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"

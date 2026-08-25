@@ -1,0 +1,51 @@
+// Loki — a trickster ASSASSIN: blink to a mark, gut them, slip away.
+//
+// Squishy but fast, with the highest single-hit burst on the roster. Shadow Step
+// dashes onto a target and knifes for a huge AD ratio; a venom skillshot slows
+// stragglers; and a vanishing self-heal buys the escape. All closed-vocab data.
+ChampionSpec(
+    name: "Loki",
+    base: BaseStats(
+        hp: 520,
+        ad: 54,
+        armor: 22,
+        attack_speed: 1.0,
+        move_speed: 12.0,
+        range: 5.0,
+    ),
+    abilities: [
+        // Assassinate: dash to the target, then a heavy AD-scaled backstab + slow.
+        AbilitySpec(
+            name: "Shadow Step",
+            cooldown: 45,
+            cost: Some(50),
+            targeting: Target,
+            range: 16.0,
+            effects: [
+                Dash(distance: 16.0),
+                Damage(amount: 80, scaling: Some(AttackDamage(ratio: 0.5))),
+                Slow(duration: 10),
+            ],
+        ),
+        // Serpent's venom: a skillshot poke that damages and slows the first hit.
+        AbilitySpec(
+            name: "Serpent's Venom",
+            cooldown: 30,
+            cost: Some(35),
+            targeting: Skillshot,
+            range: 20.0,
+            effects: [
+                Damage(amount: 55, scaling: Some(AttackDamage(ratio: 0.4))),
+                Slow(duration: 16),
+            ],
+        ),
+        // Vanishing trick: shapeshift and recover before slipping into the dark.
+        AbilitySpec(
+            name: "Vanishing Trick",
+            cooldown: 120,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 70) ],
+        ),
+    ],
+)

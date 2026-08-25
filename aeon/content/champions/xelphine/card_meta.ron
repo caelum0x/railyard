@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Xelphine.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "xelphine",
+    display_name: "Xelphine",
+    rarity: "Legendary",
+    elixir_cost: 7,
+    archetype: "mage",
+    faction: "Umbral",
+    card_stats: CardStats(
+        hitpoints: 555,
+        attack_damage: 47,
+        attack_speed: 0.9,
+        armor: 21,
+        range: 22.0,
+        approx_dps: 42.3,
+    ),
+    deploy_power: 399,
+    collectible: true,
+)

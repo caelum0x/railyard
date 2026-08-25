@@ -1,0 +1,45 @@
+// content/cards/tuning/elixir_curve.ron
+//
+// Card-only tuning: the ELIXIR CURVE. In Aeonrift: Ascendancy's card mode, every
+// deployable card has an elixir cost paid from a regenerating pool. This file is the
+// single source of truth for:
+//   * the pool + regeneration rate,
+//   * the canonical cost bracket each card slots into (by rarity/role), and
+//   * the "double/triple elixir" late-game acceleration.
+//
+// Numbers are card-mode only; they never touch the MOBA ChampionSpec stats in
+// content/champions/*.ron.
+ElixirCurve(
+    // The shared pool both players draw from.
+    pool: ElixirPool(
+        max: 10,
+        start: 5,
+        // Seconds of real time to regenerate ONE elixir at each phase.
+        regen_seconds_normal: 2.8,
+        regen_seconds_double: 1.4,
+        regen_seconds_triple: 0.93,
+    ),
+
+    // When the accelerated phases kick in, measured in seconds from match start.
+    phases: [
+        Phase(id: "single", starts_at_s: 0),
+        Phase(id: "double", starts_at_s: 120),
+        Phase(id: "triple", starts_at_s: 180),
+    ],
+
+    // Canonical cost brackets. Card designers pick a bracket, not a raw number, so
+    // the economy stays legible. `cost` is elixir; `cycle_weight` biases how often a
+    // card of this bracket is expected to be cycled in a well-built deck.
+    brackets: [
+        CostBracket(id: "cheap",     cost: 2, cycle_weight: 40, typical_rarity: "common"),
+        CostBracket(id: "light",     cost: 3, cycle_weight: 30, typical_rarity: "uncommon"),
+        CostBracket(id: "standard",  cost: 4, cycle_weight: 18, typical_rarity: "rare"),
+        CostBracket(id: "heavy",     cost: 5, cycle_weight: 8,  typical_rarity: "epic"),
+        CostBracket(id: "champion",  cost: 6, cycle_weight: 3,  typical_rarity: "legendary"),
+        CostBracket(id: "colossal",  cost: 8, cycle_weight: 1,  typical_rarity: "mythic"),
+    ],
+
+    // Deck-building guardrail enforced by the deck validator: the mean elixir cost of
+    // a legal 8-card preset deck must fall inside this window.
+    deck_average: DeckAverageWindow(min: 3.0, max: 4.6, ideal: 3.8),
+)

@@ -1,0 +1,11 @@
+// Drag Slow — SoftCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "displace_slow",
+    name: "Drag Slow",
+    category: SoftCC,
+    vocab_ref: Some("Slow"),
+    fields: ["percent", "duration"],
+    cleansable: true,
+    stacking: Strongest,
+    description: "Slow applied as a displace effect after being pulled or pushed.",
+)

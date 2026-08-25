@@ -1,0 +1,14 @@
+// Narrative + release metadata for Bastet.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "bastet-claws-of-the-hunt",
+    display_name: "Bastet",
+    title: "Claws Of The Hunt",
+    faction: "Egyptian",
+    archetype: "assassin",
+    release_patch: "1.3.0",
+    resource: "Mana",
+    lore: "Bastet — a MARKSMAN / auto-attacker: high attack speed, long range, feline mobility. Damage comes from fast basics; her kit sets them up. Pounce repositions with a short dash, Rending Claws hits hard and slows so she can kite, and Feral Frenzy (nine lives) restores her when cornered.",
+    tags: ["assassin", "egyptian"],
+)

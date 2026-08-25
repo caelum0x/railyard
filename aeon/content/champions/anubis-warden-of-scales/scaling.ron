@@ -1,0 +1,30 @@
+// Per-level stat growth for Anubis (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "anubis-warden-of-scales",
+    archetype: "mage",
+    base: LevelStats(hp: 760, ad: 41, armor: 38, attack_speed: 0.8),
+    per_level: StatGrowth(hp: 70, ad: 3.0, armor: 2.2, attack_speed: 0.018),
+    levels: [
+        LevelRow(level: 1, hp: 760, ad: 41, armor: 38, attack_speed: 0.8),
+        LevelRow(level: 2, hp: 830, ad: 44, armor: 40, attack_speed: 0.818),
+        LevelRow(level: 3, hp: 900, ad: 47, armor: 42, attack_speed: 0.836),
+        LevelRow(level: 4, hp: 970, ad: 50, armor: 45, attack_speed: 0.854),
+        LevelRow(level: 5, hp: 1040, ad: 53, armor: 47, attack_speed: 0.872),
+        LevelRow(level: 6, hp: 1110, ad: 56, armor: 49, attack_speed: 0.89),
+        LevelRow(level: 7, hp: 1180, ad: 59, armor: 51, attack_speed: 0.908),
+        LevelRow(level: 8, hp: 1250, ad: 62, armor: 53, attack_speed: 0.926),
+        LevelRow(level: 9, hp: 1320, ad: 65, armor: 56, attack_speed: 0.944),
+        LevelRow(level: 10, hp: 1390, ad: 68, armor: 58, attack_speed: 0.962),
+        LevelRow(level: 11, hp: 1460, ad: 71, armor: 60, attack_speed: 0.98),
+        LevelRow(level: 12, hp: 1530, ad: 74, armor: 62, attack_speed: 0.998),
+        LevelRow(level: 13, hp: 1600, ad: 77, armor: 64, attack_speed: 1.016),
+        LevelRow(level: 14, hp: 1670, ad: 80, armor: 67, attack_speed: 1.034),
+        LevelRow(level: 15, hp: 1740, ad: 83, armor: 69, attack_speed: 1.052),
+        LevelRow(level: 16, hp: 1810, ad: 86, armor: 71, attack_speed: 1.07),
+        LevelRow(level: 17, hp: 1880, ad: 89, armor: 73, attack_speed: 1.088),
+        LevelRow(level: 18, hp: 1950, ad: 92, armor: 75, attack_speed: 1.106),
+    ],
+)

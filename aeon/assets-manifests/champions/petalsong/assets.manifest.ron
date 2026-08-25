@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "petalsong",
+    champion: "Petalsong",
+    archetype: "support",
+    faction: "Verdant",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 27764,
+            blake3: "a06d5efbd16266df7174b1e1cfb784f6d0f450bc7edc0df67772d3ddbdf5690e",
+        ),
+    },
+)

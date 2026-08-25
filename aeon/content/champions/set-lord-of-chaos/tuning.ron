@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Set.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/set-lord-of-chaos.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "set-lord-of-chaos",
+    display_name: "Set",
+    abilities: [
+        AbilityTuning(
+            name: "Desert Ambush",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 40, cost: Some(30), damage: Some(76), ad_ratio: Some(0.5), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 38, cost: Some(32), damage: Some(99), ad_ratio: Some(0.55), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 36, cost: Some(35), damage: Some(122), ad_ratio: Some(0.6), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 34, cost: Some(37), damage: Some(144), ad_ratio: Some(0.65), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 32, cost: Some(40), damage: Some(167), ad_ratio: Some(0.7), heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Sandstorm",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 60, cost: Some(45), damage: Some(58), ad_ratio: Some(0.35), heal: None, cc: Some(("Slow", 14))),
+                Rank(rank: 2, cooldown: 57, cost: Some(49), damage: Some(75), ad_ratio: Some(0.4), heal: None, cc: Some(("Slow", 16))),
+                Rank(rank: 3, cooldown: 54, cost: Some(52), damage: Some(93), ad_ratio: Some(0.45), heal: None, cc: Some(("Slow", 18))),
+                Rank(rank: 4, cooldown: 51, cost: Some(56), damage: Some(110), ad_ratio: Some(0.5), heal: None, cc: Some(("Slow", 20))),
+                Rank(rank: 5, cooldown: 48, cost: Some(59), damage: Some(128), ad_ratio: Some(0.55), heal: None, cc: Some(("Slow", 22))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Chaos Step",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 100, cost: None, damage: None, ad_ratio: None, heal: Some(60), cc: None),
+                Rank(rank: 2, cooldown: 95, cost: None, damage: None, ad_ratio: None, heal: Some(75), cc: None),
+                Rank(rank: 3, cooldown: 90, cost: None, damage: None, ad_ratio: None, heal: Some(90), cc: None),
+                Rank(rank: 4, cooldown: 85, cost: None, damage: None, ad_ratio: None, heal: Some(105), cc: None),
+                Rank(rank: 5, cooldown: 80, cost: None, damage: None, ad_ratio: None, heal: Some(120), cc: None),
+            ],
+        ),
+    ],
+)

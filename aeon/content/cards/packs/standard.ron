@@ -1,0 +1,9 @@
+// The Standard Pack: 5 cards, at least one Rare-or-better guaranteed.
+//
+// Opening a pack is deterministic given a seed (see src/cards/pack.rs): each slot
+// rolls a rarity tier by weight, then a card of that tier is chosen from the pool.
+PackDef(
+    name: "Standard Pack",
+    cards: 5,
+    guaranteed_tier: Some("Rare"),
+)

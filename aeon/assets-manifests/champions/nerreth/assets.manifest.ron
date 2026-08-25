@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "nerreth",
+    champion: "Nerreth",
+    archetype: "bruiser",
+    faction: "Ember",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 35508,
+            blake3: "84f233d7a7bb657d5de43c4f08d80f5ee6632e7176f6c1910052f9d149a6532c",
+        ),
+    },
+)

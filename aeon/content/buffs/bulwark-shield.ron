@@ -1,0 +1,10 @@
+// Bulwark — Shield buff. Maps to closed vocab.
+BuffSpec(
+    id: "bulwark_shield",
+    name: "Bulwark",
+    category: Shield,
+    vocab_ref: Some("BuffShieldWhite"),
+    fields: ["amount"],
+    stacking: Strongest,
+    description: "A large shield that grows near enemy champions.",
+)

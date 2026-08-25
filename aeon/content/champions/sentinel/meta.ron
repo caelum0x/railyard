@@ -1,0 +1,14 @@
+// Narrative + release metadata for Sentinel.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "sentinel",
+    display_name: "Sentinel",
+    title: "",
+    faction: "Umbral",
+    archetype: "marksman",
+    release_patch: "1.7.0",
+    resource: "None",
+    lore: "Sentinel — a plain AUTO-ATTACKER. No burst, no crowd control: just reliable, hard-hitting basic attacks and a modest self-heal. The baseline every other champion is measured against. This whole champion is DATA — there is zero champion-specific Rust code behind it.",
+    tags: ["marksman", "umbral"],
+)

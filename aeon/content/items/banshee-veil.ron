@@ -1,0 +1,13 @@
+// Banshee Veil — LEGENDARY AP. A hush that swallows spells.
+ItemSpec(
+    name: "Banshee Veil",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ap: 80,
+        mr: 45,
+    ),
+    passive: Some("Gain a spell shield that blocks the next enemy ability (40s cooldown)."),
+    build_from: ["verdant-barrier", "blasting-rod"],
+    tags: ["legendary", "ap", "mr", "spellshield"],
+)

@@ -1,0 +1,12 @@
+// Spectral Lantern — STARTER support. Its flame burns for the fallen.
+ItemSpec(
+    name: "Spectral Lantern",
+    cost: 400,
+    tier: Starter,
+    stats: Stats(
+        ap: 8,
+    ),
+    passive: Some("Grants a free ward charge every 90s; reveals nearby traps."),
+    build_from: [],
+    tags: ["starter", "support", "vision"],
+)

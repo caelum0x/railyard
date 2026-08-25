@@ -1,0 +1,10 @@
+// Stasis — Control buff. Maps to closed vocab.
+BuffSpec(
+    id: "stasis",
+    name: "Stasis",
+    category: Control,
+    vocab_ref: Some("BuffCastBlock"),
+    fields: ["duration"],
+    stacking: Longest,
+    description: "The caster becomes untargetable and invulnerable but cannot act.",
+)

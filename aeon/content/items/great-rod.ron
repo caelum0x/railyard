@@ -1,0 +1,12 @@
+// Great Rod — BASIC AP. A conduit of unreasonable size.
+ItemSpec(
+    name: "Great Rod",
+    cost: 1250,
+    tier: Basic,
+    stats: Stats(
+        ap: 65,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "ap"],
+)

@@ -1,0 +1,14 @@
+// Narrative + release metadata for Cyranth.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "cyranth",
+    display_name: "Cyranth",
+    title: "",
+    faction: "Tide",
+    archetype: "marksman",
+    release_patch: "1.5.0",
+    resource: "Mana",
+    lore: "Cyranth — a MARKSMAN. High sustained auto DPS, a hard-hitting skillshot, and a single-target slow to kite. Authored purely as DATA against the closed DSL.",
+    tags: ["marksman", "tide"],
+)

@@ -1,0 +1,13 @@
+// Sunfire Aegis — LEGENDARY tank. A star chained to your chest.
+ItemSpec(
+    name: "Sunfire Aegis",
+    cost: 2700,
+    tier: Legendary,
+    stats: Stats(
+        hp: 450,
+        armor: 30,
+    ),
+    passive: Some("Burn nearby enemies for 15 (+1% max health) magic damage per second."),
+    build_from: ["bami-cinder", "iron-vest"],
+    tags: ["legendary", "tank", "hp", "aura", "dot"],
+)

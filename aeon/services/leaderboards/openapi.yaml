@@ -1,0 +1,46 @@
+openapi: "3.0.3"
+info:
+  title: "aeonrift Leaderboards & Ranked API"
+  version: "0.0.0-scaffold"
+  description: >-
+    Planned surface for services/leaderboards. Scaffold only — no server behind it yet.
+servers:
+  - url: "https://api.aeonrift.example/leaderboards"
+    description: placeholder
+paths:
+  "/v1/results":
+    post:
+      summary: "Ingest a finished match result (updates MMR)."
+      operationId: post_v1_results
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/ladders/{season}/{queue}":
+    get:
+      summary: "Paginated ranked ladder."
+      operationId: get_v1_ladders_season_queue
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/ranks/{account_id}":
+    get:
+      summary: "Current rank/tier/LP + MMR."
+      operationId: get_v1_ranks_account_id
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/seasons/{id}/reset":
+    post:
+      summary: "Apply a seasonal soft reset."
+      operationId: post_v1_seasons_id_reset
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"

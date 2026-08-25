@@ -1,0 +1,54 @@
+openapi: "3.0.3"
+info:
+  title: "aeonrift Matchmaking API"
+  version: "0.0.0-scaffold"
+  description: >-
+    Planned surface for services/matchmaking. Scaffold only — no server behind it yet.
+servers:
+  - url: "https://api.aeonrift.example/matchmaking"
+    description: placeholder
+paths:
+  "/v1/tickets":
+    post:
+      summary: "Enqueue a matchmaking ticket (party, roles, region)."
+      operationId: post_v1_tickets
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/tickets/{id}":
+    delete:
+      summary: "Cancel a queued ticket."
+      operationId: delete_v1_tickets_id
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+    get:
+      summary: "Poll ticket state (queued/found/ready-check)."
+      operationId: get_v1_tickets_id
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/matches/{id}/ready":
+    post:
+      summary: "Accept the ready-check for a proposed match."
+      operationId: post_v1_matches_id_ready
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/queues/{region}/stats":
+    get:
+      summary: "Current queue depth + estimated wait per role."
+      operationId: get_v1_queues_region_stats
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"

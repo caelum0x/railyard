@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "brackmoor",
+    champion: "Brackmoor",
+    archetype: "bruiser",
+    faction: "Tide",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 35504,
+            blake3: "fa39dc61a30acac37ee6c7f130f428230323f64997953fc35471f3e85d60d1d7",
+        ),
+    },
+)

@@ -1,0 +1,7 @@
+// Aegis Barrier — summoner spell.
+SummonerSpell(
+    name: "Aegis Barrier",
+    cooldown: 180,
+    effect: "Shield yourself from a burst of incoming damage for 2s.",
+    tags: ["shield", "defensive"],
+)

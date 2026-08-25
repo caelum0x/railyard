@@ -1,0 +1,13 @@
+// Randuin's Omen — LEGENDARY tank. A drum that heralds the end.
+ItemSpec(
+    name: "Randuin's Omen",
+    cost: 2700,
+    tier: Legendary,
+    stats: Stats(
+        hp: 350,
+        armor: 55,
+    ),
+    passive: Some("Reduces damage from critical strikes by 30%; active slows nearby enemies."),
+    build_from: ["warden-mail", "giants-girdle"],
+    tags: ["legendary", "tank", "armor", "anticrit"],
+)

@@ -1,0 +1,55 @@
+openapi: "3.0.3"
+info:
+  title: "aeonrift LiveOps API"
+  version: "0.0.0-scaffold"
+  description: >-
+    Planned surface for services/liveops. Scaffold only — no server behind it yet.
+servers:
+  - url: "https://api.aeonrift.example/liveops"
+    description: placeholder
+paths:
+  "/v1/flags":
+    get:
+      summary: "Fetch the active flag/config bundle for a client build."
+      operationId: get_v1_flags
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/flags/{key}":
+    put:
+      summary: "Set/override a flag (audited, versioned)."
+      operationId: put_v1_flags_key
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/campaigns":
+    post:
+      summary: "Schedule a liveops event window."
+      operationId: post_v1_campaigns
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/campaigns/active":
+    get:
+      summary: "Currently active event windows."
+      operationId: get_v1_campaigns_active
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/rollbacks/{version}":
+    post:
+      summary: "Roll the config bundle back to a version."
+      operationId: post_v1_rollbacks_version
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"

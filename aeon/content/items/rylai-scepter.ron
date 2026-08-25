@@ -1,0 +1,13 @@
+// Rylai's Scepter — LEGENDARY AP. A chill that clings.
+ItemSpec(
+    name: "Rylai's Scepter",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        ap: 75,
+        hp: 400,
+    ),
+    passive: Some("Ability damage slows the target by 30% for 1s."),
+    build_from: ["giants-girdle", "great-rod"],
+    tags: ["legendary", "ap", "hp", "slow"],
+)

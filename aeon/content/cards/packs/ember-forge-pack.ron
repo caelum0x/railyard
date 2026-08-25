@@ -1,0 +1,21 @@
+// content/cards/packs/ember-forge-pack.ron
+// Faction pack biased to the Ember roster (toran, vashka, ysmera, kaeza, nerreth...).
+CardPack(
+    id: "ember-forge-pack",
+    name: "Ember Forge Pack",
+    description: "Molten cards drawn from the Ember faction pool.",
+    category: "faction",
+    card_count: 8,
+    cost: PackCost(currency: "gold", amount: 3000),
+    one_time: false,
+    guaranteed_floor: Some("rare"),
+    faction_bias: Some("Ember"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 500),
+        RarityOdd(rarity: "uncommon",  weight: 300),
+        RarityOdd(rarity: "rare",      weight: 150),
+        RarityOdd(rarity: "epic",      weight: 42),
+        RarityOdd(rarity: "legendary", weight: 7),
+        RarityOdd(rarity: "mythic",    weight: 1),
+    ],
+)

@@ -1,0 +1,10 @@
+// Stoneform — Defensive buff. Maps to closed vocab.
+BuffSpec(
+    id: "stoneform",
+    name: "Stoneform",
+    category: Defensive,
+    vocab_ref: Some("BuffResist"),
+    fields: ["armor", "magic_resist", "duration"],
+    stacking: Strongest,
+    description: "Heavy armor and magic resist at the cost of reduced move speed.",
+)

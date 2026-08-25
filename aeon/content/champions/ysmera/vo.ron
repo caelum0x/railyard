@@ -1,0 +1,81 @@
+// Voice-line manifest for Ysmera: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "ysmera",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.ysmera.select",
+            kind: "Selected",
+            audio: "audio/vo/ysmera/select.ogg",
+            text: "Ysmera answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.ysmera.move_a",
+            kind: "Move",
+            audio: "audio/vo/ysmera/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.ysmera.move_b",
+            kind: "Move",
+            audio: "audio/vo/ysmera/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.ysmera.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/ysmera/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.ysmera.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/ysmera/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.ysmera.ability_q",
+            kind: "Ability: Pyre Bloom",
+            audio: "audio/vo/ysmera/ability_q.ogg",
+            text: "Pyre Bloom!",
+        ),
+        VoiceLine(
+            id: "vo.ysmera.ability_w",
+            kind: "Ability: Ember Lance",
+            audio: "audio/vo/ysmera/ability_w.ogg",
+            text: "Ember Lance!",
+        ),
+        VoiceLine(
+            id: "vo.ysmera.ability_r",
+            kind: "Ability: Kilnburst",
+            audio: "audio/vo/ysmera/ability_r.ogg",
+            text: "Kilnburst!",
+        ),
+        VoiceLine(
+            id: "vo.ysmera.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/ysmera/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.ysmera.joke",
+            kind: "Joke",
+            audio: "audio/vo/ysmera/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.ysmera.low_health",
+            kind: "Low health",
+            audio: "audio/vo/ysmera/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.ysmera.victory",
+            kind: "Victory",
+            audio: "audio/vo/ysmera/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

@@ -1,0 +1,12 @@
+// Caulfield's Warhammer — EPIC AD.
+ItemSpec(
+    name: "Caulfield's Warhammer",
+    cost: 1100,
+    tier: Epic,
+    stats: Stats(
+        ad: 25,
+    ),
+    passive: Some("+10 lethality; +15 ability haste."),
+    build_from: ["caulfields-hammer"],
+    tags: ["epic", "lethality", "haste"],
+)

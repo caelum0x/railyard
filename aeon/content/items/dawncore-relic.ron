@@ -1,0 +1,12 @@
+// Dawncore Relic — LEGENDARY support. A wellspring at first light.
+ItemSpec(
+    name: "Dawncore Relic",
+    cost: 2500,
+    tier: Legendary,
+    stats: Stats(
+        ap: 45,
+    ),
+    passive: Some("Converts mana regeneration into heal-and-shield power and ability haste."),
+    build_from: ["aether-tears", "forbidden-idol"],
+    tags: ["legendary", "support", "mana", "heal-shield"],
+)

@@ -1,0 +1,10 @@
+// Hexward — Shield buff. Maps to closed vocab.
+BuffSpec(
+    id: "hexward_shield",
+    name: "Hexward",
+    category: Shield,
+    vocab_ref: Some("BuffShieldMagic"),
+    fields: ["amount"],
+    stacking: Strongest,
+    description: "A magic shield that scales with your ability power.",
+)

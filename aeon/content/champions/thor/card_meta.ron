@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Thor.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "thor",
+    display_name: "Thor",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "bruiser",
+    faction: "Norse",
+    card_stats: CardStats(
+        hitpoints: 760,
+        attack_damage: 40,
+        attack_speed: 0.9,
+        armor: 34,
+        range: 5.0,
+        approx_dps: 36.0,
+    ),
+    deploy_power: 269,
+    collectible: true,
+)

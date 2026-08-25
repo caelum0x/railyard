@@ -1,0 +1,10 @@
+// Hardening — Defensive buff. Maps to closed vocab.
+BuffSpec(
+    id: "hardening",
+    name: "Hardening",
+    category: Defensive,
+    vocab_ref: Some("BuffResist"),
+    fields: ["armor", "magic_resist", "duration"],
+    stacking: Strongest,
+    description: "Escalating resistances that ramp while in combat.",
+)

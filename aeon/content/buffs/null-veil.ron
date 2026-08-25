@@ -1,0 +1,10 @@
+// Null Veil — Shield buff. Maps to closed vocab.
+BuffSpec(
+    id: "null_veil",
+    name: "Null Veil",
+    category: Shield,
+    vocab_ref: Some("BuffShieldMagic"),
+    fields: ["amount"],
+    stacking: Independent,
+    description: "A magic-only barrier granted when low on health.",
+)

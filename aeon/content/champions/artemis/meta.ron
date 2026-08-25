@@ -1,0 +1,14 @@
+// Narrative + release metadata for Artemis.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "artemis",
+    display_name: "Artemis",
+    title: "",
+    faction: "Greek",
+    archetype: "marksman",
+    release_patch: "1.0.0",
+    resource: "Mana",
+    lore: "Artemis — ASSASSIN. Goddess of the hunt: leaps in with a crescent strike for heavy burst, marks fleeing prey with a slowing arrow, and looses a killing volley of moonlight on anyone nearby.",
+    tags: ["marksman", "greek"],
+)

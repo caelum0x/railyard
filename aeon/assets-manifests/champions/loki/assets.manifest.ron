@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "loki",
+    champion: "Loki",
+    archetype: "assassin",
+    faction: "Norse",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 16000,
+            blake3: "430491427e807e86838cb40ad2f34ae2065dd3dc3078c6d18cd46f6032f2bdfb",
+        ),
+    },
+)

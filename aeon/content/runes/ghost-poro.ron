@@ -1,0 +1,7 @@
+// Ghost Poro — Domination / Tier2.
+RuneSpec(
+    name: "Ghost Poro",
+    tree: Domination,
+    tier: Tier2,
+    effect: "Expired wards leave a scouting poro; gain adaptive force per stack.",
+)

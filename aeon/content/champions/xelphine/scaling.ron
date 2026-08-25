@@ -1,0 +1,30 @@
+// Per-level stat growth for Xelphine (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "xelphine",
+    archetype: "mage",
+    base: LevelStats(hp: 555, ad: 47, armor: 21, attack_speed: 0.9),
+    per_level: StatGrowth(hp: 70, ad: 3.0, armor: 2.2, attack_speed: 0.018),
+    levels: [
+        LevelRow(level: 1, hp: 555, ad: 47, armor: 21, attack_speed: 0.9),
+        LevelRow(level: 2, hp: 625, ad: 50, armor: 23, attack_speed: 0.918),
+        LevelRow(level: 3, hp: 695, ad: 53, armor: 25, attack_speed: 0.936),
+        LevelRow(level: 4, hp: 765, ad: 56, armor: 28, attack_speed: 0.954),
+        LevelRow(level: 5, hp: 835, ad: 59, armor: 30, attack_speed: 0.972),
+        LevelRow(level: 6, hp: 905, ad: 62, armor: 32, attack_speed: 0.99),
+        LevelRow(level: 7, hp: 975, ad: 65, armor: 34, attack_speed: 1.008),
+        LevelRow(level: 8, hp: 1045, ad: 68, armor: 36, attack_speed: 1.026),
+        LevelRow(level: 9, hp: 1115, ad: 71, armor: 39, attack_speed: 1.044),
+        LevelRow(level: 10, hp: 1185, ad: 74, armor: 41, attack_speed: 1.062),
+        LevelRow(level: 11, hp: 1255, ad: 77, armor: 43, attack_speed: 1.08),
+        LevelRow(level: 12, hp: 1325, ad: 80, armor: 45, attack_speed: 1.098),
+        LevelRow(level: 13, hp: 1395, ad: 83, armor: 47, attack_speed: 1.116),
+        LevelRow(level: 14, hp: 1465, ad: 86, armor: 50, attack_speed: 1.134),
+        LevelRow(level: 15, hp: 1535, ad: 89, armor: 52, attack_speed: 1.152),
+        LevelRow(level: 16, hp: 1605, ad: 92, armor: 54, attack_speed: 1.17),
+        LevelRow(level: 17, hp: 1675, ad: 95, armor: 56, attack_speed: 1.188),
+        LevelRow(level: 18, hp: 1745, ad: 98, armor: 58, attack_speed: 1.206),
+    ],
+)

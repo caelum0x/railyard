@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "lumisel",
+    champion: "Lumisel",
+    archetype: "support",
+    faction: "Tide",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 27772,
+            blake3: "ff6222c4c09acd64dced281a294b060dd303af2f832cde036924d44bf2761a46",
+        ),
+    },
+)

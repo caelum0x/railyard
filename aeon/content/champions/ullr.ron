@@ -1,0 +1,50 @@
+// Ullr — a MARKSMAN: the god of the bow, the hunt, and the winter frost.
+//
+// Long auto-attack range and high attack speed are his bread and butter; his
+// abilities pile on a frost skillshot that slows, a raining volley over an area,
+// and a bone-skate reposition dash. Sustained ranged damage as pure DSL data.
+ChampionSpec(
+    name: "Ullr",
+    base: BaseStats(
+        hp: 540,
+        ad: 60,
+        armor: 22,
+        attack_speed: 1.3,
+        move_speed: 10.5,
+        range: 11.0,
+    ),
+    abilities: [
+        // Frostpiercer: a skillshot arrow that damages and slows the first hit.
+        AbilitySpec(
+            name: "Frostpiercer",
+            cooldown: 40,
+            cost: Some(40),
+            targeting: Skillshot,
+            range: 26.0,
+            effects: [
+                Damage(amount: 70, scaling: Some(AttackDamage(ratio: 0.6))),
+                Slow(duration: 20),
+            ],
+        ),
+        // Volley of the Hunt: a rain of arrows over an area for heavy AD damage.
+        AbilitySpec(
+            name: "Volley of the Hunt",
+            cooldown: 60,
+            cost: Some(50),
+            targeting: Area,
+            range: 18.0,
+            effects: [
+                Damage(amount: 80, scaling: Some(AttackDamage(ratio: 0.7))),
+            ],
+        ),
+        // Bone Skates: a skillshot-aimed dash to reposition or escape.
+        AbilitySpec(
+            name: "Bone Skates",
+            cooldown: 100,
+            cost: Some(30),
+            targeting: Skillshot,
+            range: 12.0,
+            effects: [ Dash(distance: 12.0) ],
+        ),
+    ],
+)

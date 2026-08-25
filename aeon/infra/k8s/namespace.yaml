@@ -1,0 +1,8 @@
+# infra/k8s/namespace.yaml — SCAFFOLD STUB.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aeonrift
+  labels:
+    app.kubernetes.io/part-of: aeonrift
+    environment: dev

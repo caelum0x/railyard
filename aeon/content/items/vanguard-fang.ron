@@ -1,0 +1,13 @@
+// Vanguard Fang — STARTER AD. A duelist's first blade.
+ItemSpec(
+    name: "Vanguard Fang",
+    cost: 450,
+    tier: Starter,
+    stats: Stats(
+        ad: 8,
+        hp: 80,
+    ),
+    passive: Some("Basic attacks restore 3 health on hit."),
+    build_from: [],
+    tags: ["starter", "ad", "fighter"],
+)

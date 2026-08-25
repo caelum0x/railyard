@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Vulcan.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/vulcan.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "vulcan",
+    display_name: "Vulcan",
+    abilities: [
+        AbilityTuning(
+            name: "Molten Anvil",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 70, cost: Some(50), damage: Some(55), ad_ratio: Some(0.3), heal: None, cc: Some(("Slow", 45))),
+                Rank(rank: 2, cooldown: 66, cost: Some(54), damage: Some(72), ad_ratio: Some(0.35), heal: None, cc: Some(("Slow", 52))),
+                Rank(rank: 3, cooldown: 63, cost: Some(58), damage: Some(88), ad_ratio: Some(0.4), heal: None, cc: Some(("Slow", 58))),
+                Rank(rank: 4, cooldown: 60, cost: Some(62), damage: Some(104), ad_ratio: Some(0.45), heal: None, cc: Some(("Slow", 65))),
+                Rank(rank: 5, cooldown: 56, cost: Some(66), damage: Some(121), ad_ratio: Some(0.5), heal: None, cc: Some(("Slow", 72))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Cinder Chains",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 110, cost: Some(40), damage: Some(40), ad_ratio: Some(0.2), heal: None, cc: Some(("Stun", 10))),
+                Rank(rank: 2, cooldown: 104, cost: Some(43), damage: Some(52), ad_ratio: Some(0.25), heal: None, cc: Some(("Stun", 12))),
+                Rank(rank: 3, cooldown: 99, cost: Some(46), damage: Some(64), ad_ratio: Some(0.3), heal: None, cc: Some(("Stun", 13))),
+                Rank(rank: 4, cooldown: 94, cost: Some(50), damage: Some(76), ad_ratio: Some(0.35), heal: None, cc: Some(("Stun", 14))),
+                Rank(rank: 5, cooldown: 88, cost: Some(53), damage: Some(88), ad_ratio: Some(0.4), heal: None, cc: Some(("Stun", 16))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Forge Ward",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 150, cost: None, damage: None, ad_ratio: None, heal: Some(130), cc: None),
+                Rank(rank: 2, cooldown: 142, cost: None, damage: None, ad_ratio: None, heal: Some(162), cc: None),
+                Rank(rank: 3, cooldown: 135, cost: None, damage: None, ad_ratio: None, heal: Some(195), cc: None),
+                Rank(rank: 4, cooldown: 128, cost: None, damage: None, ad_ratio: None, heal: Some(228), cc: None),
+                Rank(rank: 5, cooldown: 120, cost: None, damage: None, ad_ratio: None, heal: Some(260), cc: None),
+            ],
+        ),
+    ],
+)

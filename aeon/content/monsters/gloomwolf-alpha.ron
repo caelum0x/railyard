@@ -1,0 +1,24 @@
+// Gloomwolf Alpha — the large monster of the Gloomwolves camp. Leads two pups;
+// grants the bulk of the camp's gold and xp. No buff. Camp grouping in
+// camp-gloomwolves.ron; placement in the map jungle list.
+MonsterSpec(
+    id: "gloomwolf_alpha",
+    display_name: "Gloomwolf Alpha",
+    role: "CampLarge",
+    camp: "camp_gloomwolves",
+
+    stats: NeutralStats(
+        hp: 1300,
+        armor: 12,
+        magic_resist: 12,
+        attack_damage: 70,
+        attack_speed: 0.7,
+        attack_range: 1.2,
+        move_speed: 0.0,
+    ),
+
+    scaling: "monster_scaling",
+
+    grants_buff: "none",
+    bounty: (gold_local: 55, gold_shared: 0, xp: 90),
+)

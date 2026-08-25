@@ -1,0 +1,10 @@
+// Phantom Step — Mobility buff. Maps to closed vocab.
+BuffSpec(
+    id: "phantom_step",
+    name: "Phantom Step",
+    category: Mobility,
+    vocab_ref: Some("BuffMoveSpeed"),
+    fields: ["bonus_percent", "duration"],
+    stacking: Strongest,
+    description: "Move speed with unit ghosting while active.",
+)

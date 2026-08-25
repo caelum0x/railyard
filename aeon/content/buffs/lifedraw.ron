@@ -1,0 +1,10 @@
+// Lifedraw — Sustain buff. Maps to closed vocab.
+BuffSpec(
+    id: "lifedraw",
+    name: "Lifedraw",
+    category: Sustain,
+    vocab_ref: Some("BuffSelfHeal"),
+    fields: ["amount"],
+    stacking: Independent,
+    description: "Heals the caster for a portion of damage dealt.",
+)

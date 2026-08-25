@@ -1,0 +1,32 @@
+// content/cards/tuning/pack_economy.ron
+//
+// Card-only tuning: the PACK ECONOMY. Defines the currencies packs are bought with,
+// duplicate-overflow conversion (dupes past a card's max become shards using the
+// rarity dust_value in rarities.ron), and the daily/weekly earn caps that bound
+// free-to-play acquisition. Referenced by every pack in content/cards/packs/*.ron
+// via its `cost.currency`. Pack-open economy only.
+PackEconomy(
+    currencies: [
+        Currency(id: "gold",     name: "Gold",        soft: true,  premium: false),
+        Currency(id: "shards",   name: "Ascendancy Shards", soft: true, premium: false),
+        Currency(id: "gems",     name: "Riftgems",    soft: false, premium: true),
+        Currency(id: "tickets",  name: "Event Tickets", soft: true, premium: false),
+    ],
+
+    // When a card is already at max level, extra copies auto-convert to shards at
+    // this fraction of the rarity dust_value.
+    duplicate_overflow: DuplicateOverflow(
+        to_currency: "shards",
+        fraction_of_dust_value: 1.0,
+    ),
+
+    // Free-to-play acquisition guardrails.
+    earn_caps: EarnCaps(
+        daily_gold: 1200,
+        daily_shards: 400,
+        weekly_free_packs: 3,
+    ),
+
+    // First-purchase-of-the-day discount on the daily drop, in percent.
+    daily_first_open_discount_pct: 25,
+)

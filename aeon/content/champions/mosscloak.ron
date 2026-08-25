@@ -1,0 +1,46 @@
+// Mosscloak — a frontline TANK.
+//
+// Soaks damage, roots a single threat, and regrows his own bark. Built to hold
+// a line, not to close a kill. Pure DSL data over the closed vocabulary.
+ChampionSpec(
+    name: "Mosscloak",
+    base: BaseStats(
+        hp: 690,
+        ad: 48,
+        armor: 38,
+        attack_speed: 0.9,
+        move_speed: 10.5,
+        range: 8.0,
+    ),
+    abilities: [
+        // Hard single-target lockdown to peel for allies.
+        AbilitySpec(
+            name: "Root Snare",
+            cooldown: 240,
+            cost: None,
+            targeting: Target,
+            range: 9.0,
+            effects: [ Stun(duration: 45), Damage(amount: 40, scaling: Some(AttackDamage(ratio: 0.3))) ],
+        ),
+        // Self-sustain: regrow bark when low.
+        AbilitySpec(
+            name: "Barkskin",
+            cooldown: 180,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 110) ],
+        ),
+        // AoE thorns: chip and cripple everything nearby.
+        AbilitySpec(
+            name: "Thorn Coil",
+            cooldown: 210,
+            cost: None,
+            targeting: Area,
+            range: 9.0,
+            effects: [
+                Damage(amount: 55, scaling: Some(AttackDamage(ratio: 0.4))),
+                Slow(duration: 60),
+            ],
+        ),
+    ],
+)

@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Mosscloak.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/mosscloak.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "mosscloak",
+    display_name: "Mosscloak",
+    abilities: [
+        AbilityTuning(
+            name: "Root Snare",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 240, cost: None, damage: Some(40), ad_ratio: Some(0.3), heal: None, cc: Some(("Stun", 45))),
+                Rank(rank: 2, cooldown: 228, cost: None, damage: Some(52), ad_ratio: Some(0.35), heal: None, cc: Some(("Stun", 52))),
+                Rank(rank: 3, cooldown: 216, cost: None, damage: Some(64), ad_ratio: Some(0.4), heal: None, cc: Some(("Stun", 58))),
+                Rank(rank: 4, cooldown: 204, cost: None, damage: Some(76), ad_ratio: Some(0.45), heal: None, cc: Some(("Stun", 65))),
+                Rank(rank: 5, cooldown: 192, cost: None, damage: Some(88), ad_ratio: Some(0.5), heal: None, cc: Some(("Stun", 72))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Barkskin",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 180, cost: None, damage: None, ad_ratio: None, heal: Some(110), cc: None),
+                Rank(rank: 2, cooldown: 171, cost: None, damage: None, ad_ratio: None, heal: Some(138), cc: None),
+                Rank(rank: 3, cooldown: 162, cost: None, damage: None, ad_ratio: None, heal: Some(165), cc: None),
+                Rank(rank: 4, cooldown: 153, cost: None, damage: None, ad_ratio: None, heal: Some(192), cc: None),
+                Rank(rank: 5, cooldown: 144, cost: None, damage: None, ad_ratio: None, heal: Some(220), cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Thorn Coil",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 210, cost: None, damage: Some(55), ad_ratio: Some(0.4), heal: None, cc: Some(("Slow", 60))),
+                Rank(rank: 2, cooldown: 200, cost: None, damage: Some(72), ad_ratio: Some(0.45), heal: None, cc: Some(("Slow", 69))),
+                Rank(rank: 3, cooldown: 189, cost: None, damage: Some(88), ad_ratio: Some(0.5), heal: None, cc: Some(("Slow", 78))),
+                Rank(rank: 4, cooldown: 178, cost: None, damage: Some(104), ad_ratio: Some(0.55), heal: None, cc: Some(("Slow", 87))),
+                Rank(rank: 5, cooldown: 168, cost: None, damage: Some(121), ad_ratio: Some(0.6), heal: None, cc: Some(("Slow", 96))),
+            ],
+        ),
+    ],
+)

@@ -1,0 +1,13 @@
+// Hollow Radiance — LEGENDARY tank. A cold light that scours.
+ItemSpec(
+    name: "Hollow Radiance",
+    cost: 2700,
+    tier: Legendary,
+    stats: Stats(
+        hp: 400,
+        mr: 40,
+    ),
+    passive: Some("Burn nearby enemies for magic damage per second."),
+    build_from: ["bami-cinder", "shadow-cloak"],
+    tags: ["legendary", "tank", "mr", "aura", "dot"],
+)

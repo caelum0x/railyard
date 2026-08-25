@@ -1,0 +1,81 @@
+// Voice-line manifest for Odin: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "odin",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.odin.select",
+            kind: "Selected",
+            audio: "audio/vo/odin/select.ogg",
+            text: "Odin answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.odin.move_a",
+            kind: "Move",
+            audio: "audio/vo/odin/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.odin.move_b",
+            kind: "Move",
+            audio: "audio/vo/odin/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.odin.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/odin/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.odin.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/odin/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.odin.ability_q",
+            kind: "Ability: Gungnir's Flight",
+            audio: "audio/vo/odin/ability_q.ogg",
+            text: "Gungnir's Flight!",
+        ),
+        VoiceLine(
+            id: "vo.odin.ability_w",
+            kind: "Ability: Huginn and Muninn",
+            audio: "audio/vo/odin/ability_w.ogg",
+            text: "Huginn and Muninn!",
+        ),
+        VoiceLine(
+            id: "vo.odin.ability_r",
+            kind: "Ability: Valhalla's Call",
+            audio: "audio/vo/odin/ability_r.ogg",
+            text: "Valhalla's Call!",
+        ),
+        VoiceLine(
+            id: "vo.odin.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/odin/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.odin.joke",
+            kind: "Joke",
+            audio: "audio/vo/odin/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.odin.low_health",
+            kind: "Low health",
+            audio: "audio/vo/odin/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.odin.victory",
+            kind: "Victory",
+            audio: "audio/vo/odin/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

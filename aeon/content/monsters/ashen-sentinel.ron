@@ -1,0 +1,25 @@
+// Ashen Sentinel — the "red buff" jungle boss. A smouldering stone warden; slaying
+// it grants the killer the Ashen Brand buff (a burning, slowing on-hit effect plus
+// health regen). Solo camp, tanky, hits hard. Buff defined in jungle-buffs.ron;
+// camp membership and placement in camp-ashen.ron / the map.
+MonsterSpec(
+    id: "ashen_sentinel",
+    display_name: "Ashen Sentinel",
+    role: "BuffBoss",
+    camp: "camp_ashen",
+
+    stats: NeutralStats(
+        hp: 1900,
+        armor: 20,
+        magic_resist: 20,
+        attack_damage: 95,
+        attack_speed: 0.6,
+        attack_range: 1.5,
+        move_speed: 0.0,        // stationary; leashes to camp
+    ),
+
+    scaling: "monster_scaling", // -> content/monsters/monster-scaling.ron
+
+    grants_buff: "ashen_brand", // -> content/monsters/jungle-buffs.ron
+    bounty: (gold_local: 90, gold_shared: 0, xp: 200),
+)

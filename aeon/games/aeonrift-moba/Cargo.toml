@@ -1,0 +1,28 @@
+[package]
+name = "aeonrift-moba"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96.1"
+publish = false
+description = "The AEONRIFT MOBA game: authoritative server + predicting client on the deterministic sim core (migrated from moba/server + moba/client, M0/M1 netcode spine)."
+
+[[bin]]
+name = "moba-server"
+path = "src/bin/moba-server.rs"
+
+[dependencies]
+# The deterministic sim core (imported as `sim`): World, step, combat, projectiles,
+# state-hash. Every MOBA entity (champion, minion, turret, inhibitor, nexus, jungle
+# monster, objective) is a `sim::Champion`, so they all fight through ONE combat core.
+aeonrift-sim-core = { path = "../../engine/sim-core" }
+# The champion ability DSL. Its lib is named `champions`, so it imports as the
+# extern crate `champions`; this crate's own `champions` module reaches it via the
+# leading-`::` extern path (`::champions::...`). The dependency key is left as the
+# real package name so the repo knowledge-graph's Cargo extractor records a true
+# crate->crate edge (a renamed key would create a phantom crate node).
+aeonrift-ability-dsl = { path = "../../engine/ability-dsl" }
+# Content is authored as RON (same as champions/abilities). The rules layer loads
+# maps, wave profiles, structure/neutral catalogs, and items from content/ with the
+# same closed-vocabulary, deny-unknown-fields discipline as the champion DSL.
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"

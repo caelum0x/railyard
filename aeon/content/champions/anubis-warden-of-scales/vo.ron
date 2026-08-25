@@ -1,0 +1,81 @@
+// Voice-line manifest for Anubis: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "anubis-warden-of-scales",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.anubis_warden_of_scales.select",
+            kind: "Selected",
+            audio: "audio/vo/anubis-warden-of-scales/select.ogg",
+            text: "Anubis answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.anubis_warden_of_scales.move_a",
+            kind: "Move",
+            audio: "audio/vo/anubis-warden-of-scales/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.anubis_warden_of_scales.move_b",
+            kind: "Move",
+            audio: "audio/vo/anubis-warden-of-scales/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.anubis_warden_of_scales.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/anubis-warden-of-scales/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.anubis_warden_of_scales.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/anubis-warden-of-scales/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.anubis_warden_of_scales.ability_q",
+            kind: "Ability: Mummy's Grasp",
+            audio: "audio/vo/anubis-warden-of-scales/ability_q.ogg",
+            text: "Mummy's Grasp!",
+        ),
+        VoiceLine(
+            id: "vo.anubis_warden_of_scales.ability_w",
+            kind: "Ability: Weight of Judgment",
+            audio: "audio/vo/anubis-warden-of-scales/ability_w.ogg",
+            text: "Weight of Judgment!",
+        ),
+        VoiceLine(
+            id: "vo.anubis_warden_of_scales.ability_r",
+            kind: "Ability: Embalming Rite",
+            audio: "audio/vo/anubis-warden-of-scales/ability_r.ogg",
+            text: "Embalming Rite!",
+        ),
+        VoiceLine(
+            id: "vo.anubis_warden_of_scales.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/anubis-warden-of-scales/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.anubis_warden_of_scales.joke",
+            kind: "Joke",
+            audio: "audio/vo/anubis-warden-of-scales/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.anubis_warden_of_scales.low_health",
+            kind: "Low health",
+            audio: "audio/vo/anubis-warden-of-scales/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.anubis_warden_of_scales.victory",
+            kind: "Victory",
+            audio: "audio/vo/anubis-warden-of-scales/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

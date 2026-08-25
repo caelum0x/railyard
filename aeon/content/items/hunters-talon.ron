@@ -1,0 +1,12 @@
+// Hunter's Talon — STARTER AD. Tempered for the deep wilds.
+ItemSpec(
+    name: "Hunter's Talon",
+    cost: 350,
+    tier: Starter,
+    stats: Stats(
+        ad: 10,
+    ),
+    passive: Some("Deal 40 bonus true damage to monsters on hit; heal on monster kill."),
+    build_from: [],
+    tags: ["starter", "jungle", "ad"],
+)

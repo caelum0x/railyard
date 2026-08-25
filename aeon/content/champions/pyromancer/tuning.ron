@@ -1,0 +1,23 @@
+// Per-rank ability tuning for Pyromancer.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/pyromancer.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "pyromancer",
+    display_name: "Pyromancer",
+    abilities: [
+        AbilityTuning(
+            name: "Fireball",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 36, cost: Some(60), damage: Some(96), ad_ratio: Some(0.5), heal: None, cc: Some(("Stun", 16))),
+                Rank(rank: 2, cooldown: 34, cost: Some(65), damage: Some(125), ad_ratio: Some(0.55), heal: None, cc: Some(("Stun", 18))),
+                Rank(rank: 3, cooldown: 32, cost: Some(70), damage: Some(154), ad_ratio: Some(0.6), heal: None, cc: Some(("Stun", 21))),
+                Rank(rank: 4, cooldown: 31, cost: Some(74), damage: Some(182), ad_ratio: Some(0.65), heal: None, cc: Some(("Stun", 23))),
+                Rank(rank: 5, cooldown: 29, cost: Some(79), damage: Some(211), ad_ratio: Some(0.7), heal: None, cc: Some(("Stun", 26))),
+            ],
+        ),
+    ],
+)

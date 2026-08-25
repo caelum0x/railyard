@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "toran",
+    champion: "Toran",
+    archetype: "mage",
+    faction: "Ember",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 34680,
+            blake3: "b39486eedce95ad4ae2b0ec23feafa1a7d214b825172aadaaedbc8bf28c3faef",
+        ),
+    },
+)

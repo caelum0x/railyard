@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Xelphine.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/xelphine.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "xelphine",
+    display_name: "Xelphine",
+    abilities: [
+        AbilityTuning(
+            name: "Eclipse Bloom",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 180, cost: Some(65), damage: Some(120), ad_ratio: Some(0.7), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 171, cost: Some(70), damage: Some(156), ad_ratio: Some(0.75), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 162, cost: Some(75), damage: Some(192), ad_ratio: Some(0.8), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 153, cost: Some(81), damage: Some(228), ad_ratio: Some(0.85), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 144, cost: Some(86), damage: Some(264), ad_ratio: Some(0.9), heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Umbral Lance",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 120, cost: Some(45), damage: Some(95), ad_ratio: Some(0.6), heal: None, cc: Some(("Slow", 75))),
+                Rank(rank: 2, cooldown: 114, cost: Some(49), damage: Some(124), ad_ratio: Some(0.65), heal: None, cc: Some(("Slow", 86))),
+                Rank(rank: 3, cooldown: 108, cost: Some(52), damage: Some(152), ad_ratio: Some(0.7), heal: None, cc: Some(("Slow", 98))),
+                Rank(rank: 4, cooldown: 102, cost: Some(56), damage: Some(180), ad_ratio: Some(0.75), heal: None, cc: Some(("Slow", 109))),
+                Rank(rank: 5, cooldown: 96, cost: Some(59), damage: Some(209), ad_ratio: Some(0.8), heal: None, cc: Some(("Slow", 120))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Nightfall",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 360, cost: Some(100), damage: Some(170), ad_ratio: Some(0.9), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 342, cost: Some(108), damage: Some(221), ad_ratio: Some(0.95), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 324, cost: Some(116), damage: Some(272), ad_ratio: Some(1.0), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 306, cost: Some(124), damage: Some(323), ad_ratio: Some(1.05), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 288, cost: Some(132), damage: Some(374), ad_ratio: Some(1.1), heal: None, cc: None),
+            ],
+        ),
+    ],
+)

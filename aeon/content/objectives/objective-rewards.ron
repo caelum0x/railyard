@@ -1,0 +1,50 @@
+// Objective & river rewards — the buffs, drops and auras granted by neutral
+// objectives and river control. Each id here is referenced by an ObjectiveSpec
+// `reward`/`drop`, by the Wyrm rotation, or by the map's river bank_buff. Values
+// are the closed content layer; the engine applies them.
+ObjectiveRewards(
+    // --- Elemental Wyrm Boons: permanent, stacking, team-wide ---
+    boons: [
+        (id: "ember_boon",  element: "Ember", stacking: true, per_stack: (bonus_attack_damage: 6, bonus_ability_power: 10)),
+        (id: "frost_boon",  element: "Frost", stacking: true, per_stack: (bonus_armor: 8, bonus_magic_resist: 8)),
+        (id: "storm_boon",  element: "Storm", stacking: true, per_stack: (bonus_attack_speed_percent: 6, bonus_move_speed_percent: 2)),
+        (id: "stone_boon",  element: "Stone", stacking: true, per_stack: (bonus_structure_damage_percent: 8, bonus_tenacity_percent: 8)),
+    ],
+
+    // --- Elder Aeonwyrm: temporary team execute-burn on top of held Boons ---
+    ascendance: (
+        id: "aeon_ascendance",
+        duration_seconds: 150,
+        desc: "Team attacks apply a burn that executes enemies below a health threshold.",
+        execute_threshold_percent: 12,
+        burn_per_second: 40,
+        burn_duration_seconds: 3,
+    ),
+
+    // --- The Sunderer: empowered recall + minion-empowering aura ---
+    sunderers_aegis: (
+        id: "sunderers_aegis",
+        duration_seconds: 210,
+        empowered_recall_seconds: 4,
+        minion_aura: (radius: 12.0, bonus_hp_percent: 75, bonus_damage_percent: 50),
+        desc: "Grants a fast empowered recall; nearby allied minions are enlarged and empowered to siege.",
+    ),
+
+    // --- Rift Vanguard: a deployable sigil that summons a charging wisp ---
+    vanguard_sigil: (
+        id: "vanguard_sigil",
+        summon: "vanguard_wisp",
+        charge_speed: 18.0,
+        structure_damage: 320,
+        lifetime_seconds: 60,
+        desc: "Deploy to summon a Vanguard Wisp that charges the nearest lane, ramming enemy structures.",
+    ),
+
+    // --- River control: the Sever bank buff ---
+    river_buff: (
+        id: "sever_current",
+        bonus_move_speed_percent: 18,
+        duration_seconds: 2,          // refreshes while on the bank, lingers briefly
+        desc: "Riding the Sever's current grants a burst of movement speed on the river banks.",
+    ),
+)

@@ -1,0 +1,12 @@
+// Umbral Verdict — LEGENDARY AD. Judgement in the dark.
+ItemSpec(
+    name: "Umbral Verdict",
+    cost: 3200,
+    tier: Legendary,
+    stats: Stats(
+        ad: 60,
+    ),
+    passive: Some("+18 lethality; dealing damage to a champion below 40% health executes for bonus true damage."),
+    build_from: ["serrated-dirk", "caulfields-warhammer", "long-blade"],
+    tags: ["legendary", "ad", "lethality"],
+)

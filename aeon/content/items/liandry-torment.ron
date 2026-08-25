@@ -1,0 +1,13 @@
+// Liandry's Torment — LEGENDARY AP. Anguish that lingers.
+ItemSpec(
+    name: "Liandry's Torment",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ap: 90,
+        hp: 300,
+    ),
+    passive: Some("Abilities burn for 2% max health per second over 3s."),
+    build_from: ["oblivion-orb", "aether-catalyst"],
+    tags: ["legendary", "ap", "dot", "hp"],
+)

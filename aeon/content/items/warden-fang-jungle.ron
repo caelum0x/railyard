@@ -1,0 +1,13 @@
+// Warden's Fang — EPIC tank. For the patient predator.
+ItemSpec(
+    name: "Warden's Fang",
+    cost: 2400,
+    tier: Epic,
+    stats: Stats(
+        hp: 300,
+        armor: 25,
+    ),
+    passive: Some("Heal when killing monsters; smites empower your next attack."),
+    build_from: ["hunters-talon", "giants-girdle"],
+    tags: ["epic", "jungle", "tank"],
+)

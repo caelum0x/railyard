@@ -1,0 +1,55 @@
+// Lane geometry for Riftline Crucible — the physical shape of each lane: minion
+// path width, wall segments that bound it, and the brush (fog-of-war bushes)
+// alongside. Referenced by riftline-crucible.ron via lane ids. Waypoint centres
+// live in the map file; this file adds width and the collision/brush detail the
+// pathfinder and vision systems consume.
+LaneGeometry(
+    map: "riftline_crucible",
+    default_lane_width: 8.0,
+    minion_collision_radius: 0.6,
+
+    lanes: [
+        (
+            id: "dawnpath",
+            width: 8.0,
+            surface: "Cobble",
+            // Wall segments (impassable) that hem the lane in, as pairs of points.
+            walls: [
+                (a: Vec2(x: 10.0, y: 24.0), b: Vec2(x: 10.0, y: 130.0)),
+                (a: Vec2(x: 20.0, y: 96.0), b: Vec2(x: 20.0, y: 122.0)),
+                (a: Vec2(x: 26.0, y: 140.0), b: Vec2(x: 124.0, y: 140.0)),
+            ],
+            brush: [
+                (id: "dawn_river_brush", pos: Vec2(x: 40.0, y: 118.0), radius: 4.0),
+                (id: "dawn_tri_brush",   pos: Vec2(x: 18.0, y: 40.0),  radius: 3.5),
+            ],
+        ),
+        (
+            id: "riftspan",
+            width: 7.0,
+            surface: "Aether",
+            walls: [
+                (a: Vec2(x: 30.0, y: 44.0),  b: Vec2(x: 44.0, y: 30.0)),
+                (a: Vec2(x: 106.0, y: 120.0), b: Vec2(x: 120.0, y: 106.0)),
+            ],
+            brush: [
+                (id: "rift_mid_brush_blue", pos: Vec2(x: 62.0, y: 70.0), radius: 3.0),
+                (id: "rift_mid_brush_red",  pos: Vec2(x: 88.0, y: 80.0), radius: 3.0),
+            ],
+        ),
+        (
+            id: "duskpath",
+            width: 8.0,
+            surface: "Cobble",
+            walls: [
+                (a: Vec2(x: 24.0, y: 10.0),  b: Vec2(x: 130.0, y: 10.0)),
+                (a: Vec2(x: 96.0, y: 20.0),  b: Vec2(x: 122.0, y: 20.0)),
+                (a: Vec2(x: 140.0, y: 26.0), b: Vec2(x: 140.0, y: 124.0)),
+            ],
+            brush: [
+                (id: "dusk_river_brush", pos: Vec2(x: 118.0, y: 40.0), radius: 4.0),
+                (id: "dusk_tri_brush",   pos: Vec2(x: 40.0,  y: 18.0), radius: 3.5),
+            ],
+        ),
+    ],
+)

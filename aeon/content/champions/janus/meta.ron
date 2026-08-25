@@ -1,0 +1,14 @@
+// Narrative + release metadata for Janus.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "janus",
+    display_name: "Janus",
+    title: "",
+    faction: "Roman",
+    archetype: "mage",
+    release_patch: "1.2.0",
+    resource: "Mana",
+    lore: "Janus — the two-faced portal SUPPORT. Mobility, sustain, and a gate-slam lockdown.",
+    tags: ["mage", "roman"],
+)

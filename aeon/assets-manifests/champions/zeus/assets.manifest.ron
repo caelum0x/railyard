@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "zeus",
+    champion: "Zeus",
+    archetype: "mage",
+    faction: "Greek",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 34680,
+            blake3: "fbacb747dd92ae7e1ac28204229b46931c4cf43eb797f0a9ef84128656d1bad9",
+        ),
+    },
+)

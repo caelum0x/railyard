@@ -1,0 +1,46 @@
+// Athena — SUPPORT / guardian. Goddess of wisdom and strategic war: raises the
+// Aegis to shield herself, snares foes with a slowing owl, and commands a phalanx
+// that stuns and slows a cluster of enemies.
+ChampionSpec(
+    name: "Athena",
+    base: BaseStats(
+        hp: 680,
+        ad: 50,
+        armor: 33,
+        attack_speed: 0.85,
+        move_speed: 10.0,
+        range: 6.0,
+    ),
+    abilities: [
+        AbilitySpec(
+            name: "Aegis of Wisdom",
+            cooldown: 140,
+            cost: Some(60),
+            targeting: SelfCast,
+            effects: [ Heal(amount: 115) ],
+        ),
+        AbilitySpec(
+            name: "Owl's Snare",
+            cooldown: 80,
+            cost: Some(45),
+            targeting: Skillshot,
+            range: 20.0,
+            effects: [
+                Damage(amount: 75, scaling: Some(AttackDamage(ratio: 0.4))),
+                Slow(duration: 35),
+            ],
+        ),
+        AbilitySpec(
+            name: "Phalanx Command",
+            cooldown: 110,
+            cost: Some(55),
+            targeting: Area,
+            range: 12.0,
+            effects: [
+                Damage(amount: 70, scaling: Some(AttackDamage(ratio: 0.4))),
+                Stun(duration: 10),
+                Slow(duration: 20),
+            ],
+        ),
+    ],
+)

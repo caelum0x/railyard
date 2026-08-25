@@ -1,0 +1,12 @@
+// Brute Pick — BASIC AD.
+ItemSpec(
+    name: "Brute Pick",
+    cost: 875,
+    tier: Basic,
+    stats: Stats(
+        ad: 25,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "ad"],
+)

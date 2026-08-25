@@ -1,0 +1,30 @@
+// Per-level stat growth for Thornquill (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "thornquill",
+    archetype: "marksman",
+    base: LevelStats(hp: 540, ad: 60, armor: 20, attack_speed: 1.15),
+    per_level: StatGrowth(hp: 74, ad: 3.8, armor: 2.6, attack_speed: 0.035),
+    levels: [
+        LevelRow(level: 1, hp: 540, ad: 60, armor: 20, attack_speed: 1.15),
+        LevelRow(level: 2, hp: 614, ad: 64, armor: 23, attack_speed: 1.185),
+        LevelRow(level: 3, hp: 688, ad: 68, armor: 25, attack_speed: 1.22),
+        LevelRow(level: 4, hp: 762, ad: 71, armor: 28, attack_speed: 1.255),
+        LevelRow(level: 5, hp: 836, ad: 75, armor: 30, attack_speed: 1.29),
+        LevelRow(level: 6, hp: 910, ad: 79, armor: 33, attack_speed: 1.325),
+        LevelRow(level: 7, hp: 984, ad: 83, armor: 36, attack_speed: 1.36),
+        LevelRow(level: 8, hp: 1058, ad: 87, armor: 38, attack_speed: 1.395),
+        LevelRow(level: 9, hp: 1132, ad: 90, armor: 41, attack_speed: 1.43),
+        LevelRow(level: 10, hp: 1206, ad: 94, armor: 43, attack_speed: 1.465),
+        LevelRow(level: 11, hp: 1280, ad: 98, armor: 46, attack_speed: 1.5),
+        LevelRow(level: 12, hp: 1354, ad: 102, armor: 49, attack_speed: 1.535),
+        LevelRow(level: 13, hp: 1428, ad: 106, armor: 51, attack_speed: 1.57),
+        LevelRow(level: 14, hp: 1502, ad: 109, armor: 54, attack_speed: 1.605),
+        LevelRow(level: 15, hp: 1576, ad: 113, armor: 56, attack_speed: 1.64),
+        LevelRow(level: 16, hp: 1650, ad: 117, armor: 59, attack_speed: 1.675),
+        LevelRow(level: 17, hp: 1724, ad: 121, armor: 62, attack_speed: 1.71),
+        LevelRow(level: 18, hp: 1798, ad: 125, armor: 64, attack_speed: 1.745),
+    ],
+)

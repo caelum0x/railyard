@@ -1,0 +1,11 @@
+[package]
+name = "aeonrift-balance-sim"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96.1"
+publish = false
+
+[dependencies]
+aeonrift-ai-bots = { path = "../../engine/ai-bots" }
+aeonrift-combat = { path = "../../engine/combat" }
+aeonrift-sim-core = { path = "../../engine/sim-core" }

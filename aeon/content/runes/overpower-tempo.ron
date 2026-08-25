@@ -1,0 +1,7 @@
+// Overpower Tempo — Precision / Tier1.
+RuneSpec(
+    name: "Overpower Tempo",
+    tree: Precision,
+    tier: Tier1,
+    effect: "Gain a stacking attack speed buff on takedown that persists between fights.",
+)

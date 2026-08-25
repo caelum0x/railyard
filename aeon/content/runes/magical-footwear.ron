@@ -1,0 +1,7 @@
+// Magical Footwear — Inspiration / Tier1.
+RuneSpec(
+    name: "Magical Footwear",
+    tree: Inspiration,
+    tier: Tier1,
+    effect: "Receive free upgraded boots after a delay, sooner with each takedown.",
+)

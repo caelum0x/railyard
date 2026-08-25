@@ -1,0 +1,10 @@
+// Sprint — Mobility buff. Maps to closed vocab.
+BuffSpec(
+    id: "sprint",
+    name: "Sprint",
+    category: Mobility,
+    vocab_ref: Some("BuffMoveSpeed"),
+    fields: ["bonus_percent", "duration"],
+    stacking: Strongest,
+    description: "A short, sharp burst of movement speed.",
+)

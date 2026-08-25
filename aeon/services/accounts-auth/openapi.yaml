@@ -1,0 +1,73 @@
+openapi: "3.0.3"
+info:
+  title: "aeonrift Accounts & Auth API"
+  version: "0.0.0-scaffold"
+  description: >-
+    Planned surface for services/accounts-auth. Scaffold only — no server behind it yet.
+servers:
+  - url: "https://api.aeonrift.example/accounts-auth"
+    description: placeholder
+paths:
+  "/v1/accounts":
+    post:
+      summary: "Register a new account (email + age gate)."
+      operationId: post_v1_accounts
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/sessions":
+    post:
+      summary: "Log in, returns access + refresh token pair."
+      operationId: post_v1_sessions
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/sessions/refresh":
+    post:
+      summary: "Exchange a refresh token for a fresh access token."
+      operationId: post_v1_sessions_refresh
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/sessions/current":
+    delete:
+      summary: "Log out / revoke the current refresh token."
+      operationId: delete_v1_sessions_current
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/accounts/{id}/links":
+    post:
+      summary: "Link a console / Steam / OAuth identity."
+      operationId: post_v1_accounts_id_links
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/accounts/{id}":
+    get:
+      summary: "Fetch public account profile + ban state."
+      operationId: get_v1_accounts_id
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/accounts/{id}/consent":
+    post:
+      summary: "Record a consent / data-processing decision."
+      operationId: post_v1_accounts_id_consent
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"

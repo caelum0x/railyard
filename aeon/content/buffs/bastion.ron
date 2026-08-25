@@ -1,0 +1,10 @@
+// Bastion — Defensive buff. Maps to closed vocab.
+BuffSpec(
+    id: "bastion",
+    name: "Bastion",
+    category: Defensive,
+    vocab_ref: Some("BuffResist"),
+    fields: ["armor", "magic_resist", "duration"],
+    stacking: Strongest,
+    description: "A large bulwark of resistances shared with a bound ally.",
+)

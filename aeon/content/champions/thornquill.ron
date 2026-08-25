@@ -1,0 +1,46 @@
+// Thornquill — a MARKSMAN.
+//
+// Long-range, high attack speed, low defenses. Rains scaling barbs, cripples
+// with a piercing quill, and springs away to keep distance. DSL data only.
+ChampionSpec(
+    name: "Thornquill",
+    base: BaseStats(
+        hp: 540,
+        ad: 60,
+        armor: 20,
+        attack_speed: 1.15,
+        move_speed: 11.5,
+        range: 16.0,
+    ),
+    abilities: [
+        // Primary damage skillshot, scales hard with AD.
+        AbilitySpec(
+            name: "Barbed Volley",
+            cooldown: 90,
+            cost: Some(50),
+            targeting: Skillshot,
+            range: 17.0,
+            effects: [ Damage(amount: 55, scaling: Some(AttackDamage(ratio: 1.0))) ],
+        ),
+        // Single-target kite tool: damage + slow.
+        AbilitySpec(
+            name: "Piercing Quill",
+            cooldown: 120,
+            cost: Some(45),
+            targeting: Target,
+            range: 15.0,
+            effects: [
+                Damage(amount: 40, scaling: Some(AttackDamage(ratio: 0.6))),
+                Slow(duration: 60),
+            ],
+        ),
+        // Escape: spring away from danger.
+        AbilitySpec(
+            name: "Rootspring",
+            cooldown: 180,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Dash(distance: 10.0) ],
+        ),
+    ],
+)

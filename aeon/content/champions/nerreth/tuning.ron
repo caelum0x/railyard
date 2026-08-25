@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Nerreth.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/nerreth.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "nerreth",
+    display_name: "Nerreth",
+    abilities: [
+        AbilityTuning(
+            name: "Haze Blink",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 180, cost: Some(50), damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 2, cooldown: 171, cost: Some(54), damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 3, cooldown: 162, cost: Some(58), damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 4, cooldown: 153, cost: Some(62), damage: None, ad_ratio: None, heal: None, cc: None),
+                Rank(rank: 5, cooldown: 144, cost: Some(66), damage: None, ad_ratio: None, heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "Emberpierce",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 150, cost: Some(55), damage: Some(95), ad_ratio: Some(0.9), heal: None, cc: Some(("Stun", 30))),
+                Rank(rank: 2, cooldown: 142, cost: Some(59), damage: Some(124), ad_ratio: Some(0.95), heal: None, cc: Some(("Stun", 34))),
+                Rank(rank: 3, cooldown: 135, cost: Some(64), damage: Some(152), ad_ratio: Some(1.0), heal: None, cc: Some(("Stun", 39))),
+                Rank(rank: 4, cooldown: 128, cost: Some(68), damage: Some(180), ad_ratio: Some(1.05), heal: None, cc: Some(("Stun", 44))),
+                Rank(rank: 5, cooldown: 120, cost: Some(73), damage: Some(209), ad_ratio: Some(1.1), heal: None, cc: Some(("Stun", 48))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Cremate",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 330, cost: Some(90), damage: Some(150), ad_ratio: Some(1.1), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 314, cost: Some(97), damage: Some(195), ad_ratio: Some(1.15), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 297, cost: Some(104), damage: Some(240), ad_ratio: Some(1.2), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 280, cost: Some(112), damage: Some(285), ad_ratio: Some(1.25), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 264, cost: Some(119), damage: Some(330), ad_ratio: Some(1.3), heal: None, cc: None),
+            ],
+        ),
+    ],
+)

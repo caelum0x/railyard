@@ -1,0 +1,30 @@
+// Per-level stat growth for Vanguard (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "vanguard",
+    archetype: "bruiser",
+    base: LevelStats(hp: 780, ad: 48, armor: 35, attack_speed: 0.85),
+    per_level: StatGrowth(hp: 92, ad: 3.6, armor: 3.4, attack_speed: 0.025),
+    levels: [
+        LevelRow(level: 1, hp: 780, ad: 48, armor: 35, attack_speed: 0.85),
+        LevelRow(level: 2, hp: 872, ad: 52, armor: 38, attack_speed: 0.875),
+        LevelRow(level: 3, hp: 964, ad: 55, armor: 42, attack_speed: 0.9),
+        LevelRow(level: 4, hp: 1056, ad: 59, armor: 45, attack_speed: 0.925),
+        LevelRow(level: 5, hp: 1148, ad: 62, armor: 49, attack_speed: 0.95),
+        LevelRow(level: 6, hp: 1240, ad: 66, armor: 52, attack_speed: 0.975),
+        LevelRow(level: 7, hp: 1332, ad: 70, armor: 55, attack_speed: 1.0),
+        LevelRow(level: 8, hp: 1424, ad: 73, armor: 59, attack_speed: 1.025),
+        LevelRow(level: 9, hp: 1516, ad: 77, armor: 62, attack_speed: 1.05),
+        LevelRow(level: 10, hp: 1608, ad: 80, armor: 66, attack_speed: 1.075),
+        LevelRow(level: 11, hp: 1700, ad: 84, armor: 69, attack_speed: 1.1),
+        LevelRow(level: 12, hp: 1792, ad: 88, armor: 72, attack_speed: 1.125),
+        LevelRow(level: 13, hp: 1884, ad: 91, armor: 76, attack_speed: 1.15),
+        LevelRow(level: 14, hp: 1976, ad: 95, armor: 79, attack_speed: 1.175),
+        LevelRow(level: 15, hp: 2068, ad: 98, armor: 83, attack_speed: 1.2),
+        LevelRow(level: 16, hp: 2160, ad: 102, armor: 86, attack_speed: 1.225),
+        LevelRow(level: 17, hp: 2252, ad: 106, armor: 89, attack_speed: 1.25),
+        LevelRow(level: 18, hp: 2344, ad: 109, armor: 93, attack_speed: 1.275),
+    ],
+)

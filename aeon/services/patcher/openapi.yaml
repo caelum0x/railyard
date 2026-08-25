@@ -1,0 +1,46 @@
+openapi: "3.0.3"
+info:
+  title: "aeonrift Patcher API"
+  version: "0.0.0-scaffold"
+  description: >-
+    Planned surface for services/patcher. Scaffold only — no server behind it yet.
+servers:
+  - url: "https://api.aeonrift.example/patcher"
+    description: placeholder
+paths:
+  "/v1/channels/{channel}/manifest":
+    get:
+      summary: "Current manifest (version + chunk hashes)."
+      operationId: get_v1_channels_channel_manifest
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/channels/{channel}/manifest/{version}":
+    get:
+      summary: "Pinned historical manifest."
+      operationId: get_v1_channels_channel_manifest_version
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/channels/{channel}/publish":
+    post:
+      summary: "Publish a new manifest to a channel."
+      operationId: post_v1_channels_channel_publish
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"
+  "/v1/chunks/{blake3}/location":
+    get:
+      summary: "Resolve a chunk hash to its CDN URL(s)."
+      operationId: get_v1_chunks_blake3_location
+      responses:
+        "200":
+          description: "OK"
+        "401":
+          description: "missing/invalid access token"

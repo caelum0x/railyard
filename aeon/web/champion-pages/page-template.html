@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<!--
+  web/champion-pages/page-template.html — SCAFFOLD render skeleton.
+  Placeholders in {{ ... }} are filled from seo-model.ron (projected from the champion RON spec).
+  This is a static template; no framework, no build-time JS required for the crawlable content.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ meta.title }}</title>
+  <meta name="description" content="{{ meta.description }}">
+  <link rel="canonical" href="{{ meta.canonical }}">
+  <meta property="og:title" content="{{ meta.title }}">
+  <meta property="og:description" content="{{ meta.description }}">
+  <meta property="og:image" content="{{ meta.og_image }}">
+  <meta property="og:type" content="website">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "VideoGame",
+    "name": "Aeonrift",
+    "character": { "@type": "Person", "name": "{{ display_name }}" }
+  }
+  </script>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="role">{{ role_tag }}</p>
+      <h1>{{ display_name }}</h1>
+      <p class="title">{{ title }}</p>
+      <p class="lore">{{ lore_tag }}</p>
+    </header>
+
+    <section aria-label="Abilities">
+      <h2>Abilities</h2>
+      <ul>
+        <!-- repeated per abilities[] entry from the spec -->
+        <li>
+          <span class="slot">{{ ability.slot }}</span>
+          <strong>{{ ability.name }}</strong>
+          <span>{{ ability.blurb }}</span>
+        </li>
+      </ul>
+    </section>
+
+    <footer>
+      <a href="/champions">All champions</a>
+      <a href="/patch-notes">Latest patch</a>
+    </footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,53 @@
+// Set — an ASSASSIN: long dash engage, single-target burst, and a chaotic escape.
+//
+// Squishier and faster than a bruiser, with the highest per-hit burst here. Desert
+// Ambush leaps a huge distance and detonates on the target; Sandstorm cleans up and
+// slows; Chaos Step repositions and heals to survive the dive.
+ChampionSpec(
+    name: "Set",
+    base: BaseStats(
+        hp: 560,
+        ad: 43,
+        armor: 22,
+        attack_speed: 0.95,
+        move_speed: 12.0,
+        range: 5.0,
+    ),
+    abilities: [
+        // Engage burst: erupt from the sand onto a target for heavy damage.
+        AbilitySpec(
+            name: "Desert Ambush",
+            cooldown: 40,
+            cost: Some(30),
+            targeting: Target,
+            range: 18.0,
+            effects: [
+                Dash(distance: 18.0),
+                Damage(amount: 76, scaling: Some(AttackDamage(ratio: 0.5))),
+            ],
+        ),
+        // Follow-up AoE: a raging sandstorm damages and slows those nearby.
+        AbilitySpec(
+            name: "Sandstorm",
+            cooldown: 60,
+            cost: Some(45),
+            targeting: Area,
+            range: 14.0,
+            effects: [
+                Damage(amount: 58, scaling: Some(AttackDamage(ratio: 0.35))),
+                Slow(duration: 14),
+            ],
+        ),
+        // Escape: step through chaos to reposition and mend.
+        AbilitySpec(
+            name: "Chaos Step",
+            cooldown: 100,
+            cost: None,
+            targeting: SelfCast,
+            effects: [
+                Dash(distance: 12.0),
+                Heal(amount: 60),
+            ],
+        ),
+    ],
+)

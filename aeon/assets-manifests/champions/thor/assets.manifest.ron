@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "thor",
+    champion: "Thor",
+    archetype: "bruiser",
+    faction: "Norse",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 35492,
+            blake3: "0ededaf4b5962a3de127ac0fef97dd982bbce3a67e344f8ce1f543937eca8c56",
+        ),
+    },
+)

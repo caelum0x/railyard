@@ -1,0 +1,7 @@
+// Time Warp Tonic — Inspiration / Tier3.
+RuneSpec(
+    name: "Time Warp Tonic",
+    tree: Inspiration,
+    tier: Tier3,
+    effect: "Consumables grant a burst of move speed and take effect instantly.",
+)

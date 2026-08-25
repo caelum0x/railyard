@@ -1,0 +1,37 @@
+// Riftling Vanguard — the melee minion. The front rank of every wave: cheap,
+// numerous, short-ranged, high-ish HP. Walks its lane's waypoints toward the enemy
+// core, prioritising enemy minions then structures. Stats are the base at 0:00;
+// growth over match time is applied by minion-scaling.ron.
+MinionSpec(
+    id: "melee_minion",
+    display_name: "Riftling Vanguard",
+    class: "Melee",
+    count_per_wave: 3,        // three melee lead each standard wave
+    collision_radius: 0.55,
+
+    base: MinionStats(
+        hp: 470,
+        ad: 12,
+        armor: 0,
+        magic_resist: 0,
+        attack_speed: 1.25,
+        move_speed: 12.5,
+        attack_range: 1.1,     // melee
+        attack_type: Physical,
+    ),
+
+    // Reward on last-hit / on-death splash to the killing team.
+    bounty: (gold_last_hit: 21, gold_shared: 0, xp: 60),
+
+    // AI targeting priority when multiple valid targets are in range.
+    aggro_priority: [
+        "EnemyMinionAttackingAlly",
+        "EnemyChampionAttackingAlly",
+        "NearestEnemyMinion",
+        "EnemyStructure",
+        "NearestEnemyChampion",
+    ],
+
+    ai: "minion_ai_behavior",   // -> content/minions/minion-ai-behavior.ron
+    scaling: "minion_scaling",  // -> content/minions/minion-scaling.ron
+)

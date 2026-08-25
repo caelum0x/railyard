@@ -1,0 +1,22 @@
+[package]
+name = "lol_champions"
+version = "0.1.0"
+edition = "2024"
+
+# aeonrift: all Riot champions + the Riot-asset test harness (test_utils.rs) were
+# removed during consolidation. The roster is now 11 original-IP champions
+# (erebos + 10 graduated), all using lol_core's asset-free in-memory `Spell` test
+# path, so no off-by-default `riot-harness` feature is needed anymore.
+
+[dependencies]
+bevy.workspace = true
+serde.workspace = true
+lol_base.workspace = true
+lol_core.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+crossbeam-channel.workspace = true
+image.workspace = true
+serde_json.workspace = true
+ron.workspace = true

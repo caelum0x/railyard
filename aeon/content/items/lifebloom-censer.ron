@@ -1,0 +1,13 @@
+// Lifebloom Censer — LEGENDARY support. An incense of quiet mending.
+ItemSpec(
+    name: "Lifebloom Censer",
+    cost: 2300,
+    tier: Legendary,
+    stats: Stats(
+        ap: 45,
+        hp: 150,
+    ),
+    passive: Some("Heals and shields grant nearby allies bonus attack and move speed."),
+    build_from: ["forbidden-idol", "bandleglass-mirror"],
+    tags: ["legendary", "support", "heal-shield", "aura"],
+)

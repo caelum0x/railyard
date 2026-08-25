@@ -1,0 +1,81 @@
+// Voice-line manifest for Hades: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "hades",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.hades.select",
+            kind: "Selected",
+            audio: "audio/vo/hades/select.ogg",
+            text: "Hades answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.hades.move_a",
+            kind: "Move",
+            audio: "audio/vo/hades/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.hades.move_b",
+            kind: "Move",
+            audio: "audio/vo/hades/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.hades.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/hades/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.hades.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/hades/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.hades.ability_q",
+            kind: "Ability: Grasp of the Underworld",
+            audio: "audio/vo/hades/ability_q.ogg",
+            text: "Grasp of the Underworld!",
+        ),
+        VoiceLine(
+            id: "vo.hades.ability_w",
+            kind: "Ability: Field of Judgment",
+            audio: "audio/vo/hades/ability_w.ogg",
+            text: "Field of Judgment!",
+        ),
+        VoiceLine(
+            id: "vo.hades.ability_r",
+            kind: "Ability: Soul Harvest",
+            audio: "audio/vo/hades/ability_r.ogg",
+            text: "Soul Harvest!",
+        ),
+        VoiceLine(
+            id: "vo.hades.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/hades/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.hades.joke",
+            kind: "Joke",
+            audio: "audio/vo/hades/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.hades.low_health",
+            kind: "Low health",
+            audio: "audio/vo/hades/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.hades.victory",
+            kind: "Victory",
+            audio: "audio/vo/hades/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

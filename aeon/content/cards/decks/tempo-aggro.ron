@@ -1,0 +1,2 @@
+// Preset deck 11 — Tempo Aggro.
+DeckDef(name: "Tempo Aggro", cards: ["pyromancer","sentinel","loki","mercury","set-lord-of-chaos","veyl","kaeza","bastet-claws-of-the-hunt"])

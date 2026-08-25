@@ -1,0 +1,10 @@
+// Damage Reduction — Defensive buff. Maps to closed vocab.
+BuffSpec(
+    id: "damage_reduction",
+    name: "Damage Reduction",
+    category: Defensive,
+    vocab_ref: Some("BuffDamageReduction"),
+    fields: ["percentage", "damage_type"],
+    stacking: Strongest,
+    description: "Reduces incoming damage of a given type by a percentage.",
+)

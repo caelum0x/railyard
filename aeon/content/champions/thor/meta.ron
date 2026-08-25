@@ -1,0 +1,14 @@
+// Narrative + release metadata for Thor.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "thor",
+    display_name: "Thor",
+    title: "",
+    faction: "Norse",
+    archetype: "bruiser",
+    release_patch: "1.1.0",
+    resource: "Mana",
+    lore: "Thor — a storm BRUISER: throw the hammer, charge in, call the thunder. Durable and mobile with real burst. Mjölnir is a long skillshot that stuns; Thunder Charge is a gap-closing dash-strike; God of Thunder is an area shock that slows. Multi-effect abilities, all authored as closed-vocabulary data.",
+    tags: ["bruiser", "norse"],
+)

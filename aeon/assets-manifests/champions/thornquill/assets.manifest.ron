@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "thornquill",
+    champion: "Thornquill",
+    archetype: "marksman",
+    faction: "Verdant",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 17820,
+            blake3: "2d069a70019867905fb079d24cd66fe2207861ab3a77e03d5f43901981f3f0b5",
+        ),
+    },
+)

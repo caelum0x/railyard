@@ -1,0 +1,13 @@
+// Goredrinker Axe — LEGENDARY AD. Thirst that a battlefield cannot slake.
+ItemSpec(
+    name: "Goredrinker Axe",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 45,
+        hp: 300,
+    ),
+    passive: Some("Active: damage and heal from all nearby enemies (15s cooldown)."),
+    build_from: ["phage-heart", "vampiric-scepter", "caulfields-hammer"],
+    tags: ["legendary", "ad", "hp", "lifesteal", "aoe"],
+)

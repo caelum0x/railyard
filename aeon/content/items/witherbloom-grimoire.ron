@@ -1,0 +1,12 @@
+// Witherbloom Grimoire — LEGENDARY AP. Rot inked on every page.
+ItemSpec(
+    name: "Witherbloom Grimoire",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        ap: 90,
+    ),
+    passive: Some("+15 magic pen; ability damage reduces enemy healing by 50%."),
+    build_from: ["oblivion-orb", "great-rod"],
+    tags: ["legendary", "ap", "antiheal", "penetration"],
+)

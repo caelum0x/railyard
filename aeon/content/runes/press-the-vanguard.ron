@@ -1,0 +1,7 @@
+// Press the Vanguard — Precision / Keystone.
+RuneSpec(
+    name: "Press the Vanguard",
+    tree: Precision,
+    tier: Keystone,
+    effect: "Basic attacks and abilities against champions stack, each stack dealing bonus adaptive damage; at max stacks gain bonus attack speed.",
+)

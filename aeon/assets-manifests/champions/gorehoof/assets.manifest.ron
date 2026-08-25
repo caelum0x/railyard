@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "gorehoof",
+    champion: "Gorehoof",
+    archetype: "bruiser",
+    faction: "Verdant",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 35496,
+            blake3: "623d24f782f8ac5a0d50231c2f65016b5f43548e140891c0ea8989ad61cd5a69",
+        ),
+    },
+)

@@ -1,0 +1,12 @@
+// Lost Chapter — BASIC AP.
+ItemSpec(
+    name: "Lost Chapter",
+    cost: 1100,
+    tier: Basic,
+    stats: Stats(
+        ap: 40,
+    ),
+    passive: Some("+300 max mana; refunds mana on level up."),
+    build_from: ["minor-tome", "aether-crystal"],
+    tags: ["basic", "mana", "haste"],
+)

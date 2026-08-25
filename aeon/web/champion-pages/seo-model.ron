@@ -1,0 +1,38 @@
+// web/champion-pages/seo-model.ron
+//
+// The projection each champion landing page renders. Every field is DERIVED from
+// content/champions/<slug>.ron (the loadable spec) — this file documents the mapping
+// so the marketing site and the game roster can never disagree.
+//
+// This is a sample/reference instance (champion "Achilles"); the page generator emits
+// one of these per champion at build time. Fields marked `source:` note their origin.
+(
+    slug:        "achilles",              // from spec directory / id
+    display_name:"Achilles",              // spec.name
+    title:       "Hero of Troy",          // spec.abilities theme / roster_meta title
+    role_tag:    "Bruiser",               // from roster_meta.ron archetype
+    lore_tag:    "The near-invincible hero who shrugs off wounds in a burst of immortal rage.",
+
+    // SEO surface
+    meta: (
+        title:       "Achilles — Aeonrift Champion",
+        description: "Play Achilles, the Bruiser hero of Troy: gap-close with a stunning spear, cleave, and rage back to life.",
+        canonical:   "https://ereboslab.com/champions/achilles",
+        og_image:    "cdn://champions/achilles/hero.webp",   // resolved via assets-manifests by hash
+        keywords:    ["aeonrift", "achilles", "bruiser", "moba champion"],
+    ),
+
+    // Ability cards on the page — projected from spec.abilities[].
+    abilities: [
+        (slot: "Q", name: "Spear of Peleus", blurb: "Dash to a foe, deal damage, and stun."),
+        (slot: "W", name: "Myrmidon Cleave", blurb: "Cleave everything around you."),
+        (slot: "R", name: "Immortal Rage",   blurb: "Heal in a burst of unkillable fury."),
+    ],
+
+    // Structured data emitted as schema.org/VideoGame + Character JSON-LD.
+    jsonld: (
+        kind:       "VideoGameCharacter",
+        game:       "Aeonrift",
+        character:  "Achilles",
+    ),
+)

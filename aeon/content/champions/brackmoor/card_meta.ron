@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Brackmoor.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "brackmoor",
+    display_name: "Brackmoor",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "bruiser",
+    faction: "Tide",
+    card_stats: CardStats(
+        hitpoints: 640,
+        attack_damage: 52,
+        attack_speed: 0.85,
+        armor: 36,
+        range: 5.0,
+        approx_dps: 44.2,
+    ),
+    deploy_power: 279,
+    collectible: true,
+)

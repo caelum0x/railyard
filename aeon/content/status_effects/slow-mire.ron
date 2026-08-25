@@ -1,0 +1,11 @@
+// Mire — SoftCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "slow_mire",
+    name: "Mire",
+    category: SoftCC,
+    vocab_ref: Some("DebuffSlow"),
+    fields: ["percent", "duration"],
+    cleansable: true,
+    stacking: Strongest,
+    description: "A terrain slow that lingers while standing in the affected zone.",
+)

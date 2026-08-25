@@ -1,0 +1,21 @@
+// content/cards/packs/tide-depths-pack.ron
+// Faction pack biased to the Tide roster (brackmoor, nyxralla, cyranth, veyl, lumisel).
+CardPack(
+    id: "tide-depths-pack",
+    name: "Tide Depths Pack",
+    description: "Abyssal cards drawn from the Tide faction pool.",
+    category: "faction",
+    card_count: 8,
+    cost: PackCost(currency: "gold", amount: 3000),
+    one_time: false,
+    guaranteed_floor: Some("rare"),
+    faction_bias: Some("Tide"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 500),
+        RarityOdd(rarity: "uncommon",  weight: 300),
+        RarityOdd(rarity: "rare",      weight: 150),
+        RarityOdd(rarity: "epic",      weight: 42),
+        RarityOdd(rarity: "legendary", weight: 7),
+        RarityOdd(rarity: "mythic",    weight: 1),
+    ],
+)

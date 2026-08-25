@@ -1,0 +1,13 @@
+// Redemption Relic — LEGENDARY support. Mercy from above.
+ItemSpec(
+    name: "Redemption Relic",
+    cost: 2300,
+    tier: Legendary,
+    stats: Stats(
+        ap: 20,
+        hp: 200,
+    ),
+    passive: Some("+10 ability haste; active: call down healing on an area (120s cooldown)."),
+    build_from: ["forbidden-idol", "kindlegem"],
+    tags: ["legendary", "support", "heal-shield"],
+)

@@ -1,0 +1,81 @@
+// Voice-line manifest for Medusa: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "medusa",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.medusa.select",
+            kind: "Selected",
+            audio: "audio/vo/medusa/select.ogg",
+            text: "Medusa answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.medusa.move_a",
+            kind: "Move",
+            audio: "audio/vo/medusa/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.medusa.move_b",
+            kind: "Move",
+            audio: "audio/vo/medusa/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.medusa.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/medusa/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.medusa.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/medusa/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.medusa.ability_q",
+            kind: "Ability: Petrifying Gaze",
+            audio: "audio/vo/medusa/ability_q.ogg",
+            text: "Petrifying Gaze!",
+        ),
+        VoiceLine(
+            id: "vo.medusa.ability_w",
+            kind: "Ability: Venom Volley",
+            audio: "audio/vo/medusa/ability_w.ogg",
+            text: "Venom Volley!",
+        ),
+        VoiceLine(
+            id: "vo.medusa.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/medusa/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.medusa.joke",
+            kind: "Joke",
+            audio: "audio/vo/medusa/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.medusa.low_health",
+            kind: "Low health",
+            audio: "audio/vo/medusa/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.medusa.victory",
+            kind: "Victory",
+            audio: "audio/vo/medusa/victory.ogg",
+            text: "The field is ours.",
+        ),
+        VoiceLine(
+            id: "vo.medusa.death",
+            kind: "Death",
+            audio: "audio/vo/medusa/death.ogg",
+            text: "Not... the end.",
+        ),
+    ],
+)

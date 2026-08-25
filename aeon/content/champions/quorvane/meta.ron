@@ -1,0 +1,14 @@
+// Narrative + release metadata for Quorvane.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "quorvane",
+    display_name: "Quorvane",
+    title: "",
+    faction: "Umbral",
+    archetype: "marksman",
+    release_patch: "1.7.0",
+    resource: "Mana",
+    lore: "Quorvane — the NIGHTGLASS HUNTER, a marksman. (Umbral faction) A patient stalker who fires shards of cooled void-glass from the edge of sight. Long range and high fire-rate, thin defenses; slips through shadow to keep the gap and pins fleeing prey with a heavy piercing round. DSL data only.",
+    tags: ["marksman", "umbral"],
+)

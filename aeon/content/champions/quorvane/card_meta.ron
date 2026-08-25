@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Quorvane.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "quorvane",
+    display_name: "Quorvane",
+    rarity: "Legendary",
+    elixir_cost: 7,
+    archetype: "marksman",
+    faction: "Umbral",
+    card_stats: CardStats(
+        hitpoints: 560,
+        attack_damage: 58,
+        attack_speed: 1.15,
+        armor: 22,
+        range: 24.0,
+        approx_dps: 66.7,
+    ),
+    deploy_power: 365,
+    collectible: true,
+)

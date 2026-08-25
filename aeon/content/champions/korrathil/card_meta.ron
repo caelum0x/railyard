@@ -1,0 +1,21 @@
+// Ascendancy (auto-battler / card mode) metadata for Korrathil.
+// Rarity + elixir are the deck-building knobs; the stat surface is derived
+// from the flat spec so card power tracks the live champion. Data only.
+CardMeta(
+    slug: "korrathil",
+    display_name: "Korrathil",
+    rarity: "Epic",
+    elixir_cost: 5,
+    archetype: "bruiser",
+    faction: "Umbral",
+    card_stats: CardStats(
+        hitpoints: 660,
+        attack_damage: 60,
+        attack_speed: 1.0,
+        armor: 33,
+        range: 8.0,
+        approx_dps: 60.0,
+    ),
+    deploy_power: 283,
+    collectible: true,
+)

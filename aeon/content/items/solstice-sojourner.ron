@@ -1,0 +1,13 @@
+// Solstice Sojourner — LEGENDARY support. A relic of the turning year.
+ItemSpec(
+    name: "Solstice Sojourner",
+    cost: 2200,
+    tier: Legendary,
+    stats: Stats(
+        ap: 20,
+        hp: 200,
+    ),
+    passive: Some("+10 ability haste; immobilizing a champion grants gold and vision of them."),
+    build_from: ["harrowing-crescent", "kindlegem"],
+    tags: ["legendary", "support", "utility", "cc"],
+)

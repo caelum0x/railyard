@@ -1,0 +1,35 @@
+// Nyxralla — a BURST MAGE.
+//
+// Fragile, long range, and detonates targets with a high-ratio lance and a
+// slowing bloom. Everything here is DATA against the closed DSL.
+ChampionSpec(
+    name: "Nyxralla",
+    base: BaseStats(
+        hp: 585,
+        ad: 47,
+        armor: 21,
+        attack_speed: 0.9,
+        move_speed: 11.0,
+        range: 22.0,          // ranged caster
+    ),
+    abilities: [
+        // Primary poke / burst skillshot.
+        AbilitySpec(
+            name: "Abyssal Lance",
+            cooldown: 120,
+            cost: Some(70),
+            targeting: Skillshot,
+            range: 24.0,
+            effects: [ Damage(amount: 175, scaling: Some(AttackDamage(ratio: 1.0))) ],
+        ),
+        // High-cost teamfight nuke with a slow.
+        AbilitySpec(
+            name: "Maelstrom Bloom",
+            cooldown: 240,
+            cost: Some(100),
+            targeting: Area,
+            range: 20.0,
+            effects: [ Damage(amount: 210, scaling: Some(AttackDamage(ratio: 0.8))), Slow(duration: 60) ],
+        ),
+    ],
+)

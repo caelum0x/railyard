@@ -1,0 +1,12 @@
+// Warmog Heart — LEGENDARY tank. A heart too stubborn to stop.
+ItemSpec(
+    name: "Warmog Heart",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        hp: 700,
+    ),
+    passive: Some("Rapidly regenerate health when out of combat above a health threshold."),
+    build_from: ["giants-girdle", "crystalline-bracer", "ruby-shard"],
+    tags: ["legendary", "tank", "hp", "sustain"],
+)

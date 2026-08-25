@@ -1,0 +1,50 @@
+// Bastet — a MARKSMAN / auto-attacker: high attack speed, long range, feline mobility.
+//
+// Damage comes from fast basics; her kit sets them up. Pounce repositions with a
+// short dash, Rending Claws hits hard and slows so she can kite, and Feral Frenzy
+// (nine lives) restores her when cornered.
+ChampionSpec(
+    name: "Bastet",
+    base: BaseStats(
+        hp: 560,
+        ad: 41,
+        armor: 20,
+        attack_speed: 0.85,
+        move_speed: 11.0,
+        range: 9.0,
+    ),
+    abilities: [
+        // Mobility: a feline leap that repositions and claws the target.
+        AbilitySpec(
+            name: "Pounce",
+            cooldown: 60,
+            cost: Some(30),
+            targeting: Target,
+            range: 12.0,
+            effects: [
+                Dash(distance: 12.0),
+                Damage(amount: 60, scaling: Some(AttackDamage(ratio: 0.5))),
+            ],
+        ),
+        // Kite tool: heavy raking claws that slow, letting her out-space melee.
+        AbilitySpec(
+            name: "Rending Claws",
+            cooldown: 30,
+            cost: Some(25),
+            targeting: Target,
+            range: 9.0,
+            effects: [
+                Damage(amount: 56, scaling: Some(AttackDamage(ratio: 0.55))),
+                Slow(duration: 8),
+            ],
+        ),
+        // Nine lives: a burst of feral vigor when cornered.
+        AbilitySpec(
+            name: "Feral Frenzy",
+            cooldown: 150,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 90) ],
+        ),
+    ],
+)

@@ -1,0 +1,47 @@
+// Per-rank ability tuning for Thor.
+// Numbers are authored knobs for the balance pass; rank 1 mirrors the
+// flat loadable spec (content/champions/thor.ron), higher ranks scale up
+// damage/heal while trimming cooldown. Consumed by the balance tooling,
+// never by the ability-dsl loader (which globs *.ron in the root only).
+ChampionTuning(
+    slug: "thor",
+    display_name: "Thor",
+    abilities: [
+        AbilityTuning(
+            name: "Mjolnir Hurl",
+            slot: "Q",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 60, cost: Some(50), damage: Some(66), ad_ratio: Some(0.4), heal: None, cc: Some(("Stun", 12))),
+                Rank(rank: 2, cooldown: 57, cost: Some(54), damage: Some(86), ad_ratio: Some(0.45), heal: None, cc: Some(("Stun", 14))),
+                Rank(rank: 3, cooldown: 54, cost: Some(58), damage: Some(106), ad_ratio: Some(0.5), heal: None, cc: Some(("Stun", 16))),
+                Rank(rank: 4, cooldown: 51, cost: Some(62), damage: Some(125), ad_ratio: Some(0.55), heal: None, cc: Some(("Stun", 17))),
+                Rank(rank: 5, cooldown: 48, cost: Some(66), damage: Some(145), ad_ratio: Some(0.6), heal: None, cc: Some(("Stun", 19))),
+            ],
+        ),
+        AbilityTuning(
+            name: "Thunder Charge",
+            slot: "W",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 80, cost: Some(45), damage: Some(60), ad_ratio: Some(0.4), heal: None, cc: None),
+                Rank(rank: 2, cooldown: 76, cost: Some(49), damage: Some(78), ad_ratio: Some(0.45), heal: None, cc: None),
+                Rank(rank: 3, cooldown: 72, cost: Some(52), damage: Some(96), ad_ratio: Some(0.5), heal: None, cc: None),
+                Rank(rank: 4, cooldown: 68, cost: Some(56), damage: Some(114), ad_ratio: Some(0.55), heal: None, cc: None),
+                Rank(rank: 5, cooldown: 64, cost: Some(59), damage: Some(132), ad_ratio: Some(0.6), heal: None, cc: None),
+            ],
+        ),
+        AbilityTuning(
+            name: "God of Thunder",
+            slot: "R",
+            max_rank: 5,
+            ranks: [
+                Rank(rank: 1, cooldown: 100, cost: Some(60), damage: Some(70), ad_ratio: Some(0.4), heal: None, cc: Some(("Slow", 15))),
+                Rank(rank: 2, cooldown: 95, cost: Some(65), damage: Some(91), ad_ratio: Some(0.45), heal: None, cc: Some(("Slow", 17))),
+                Rank(rank: 3, cooldown: 90, cost: Some(70), damage: Some(112), ad_ratio: Some(0.5), heal: None, cc: Some(("Slow", 20))),
+                Rank(rank: 4, cooldown: 85, cost: Some(74), damage: Some(133), ad_ratio: Some(0.55), heal: None, cc: Some(("Slow", 22))),
+                Rank(rank: 5, cooldown: 80, cost: Some(79), damage: Some(154), ad_ratio: Some(0.6), heal: None, cc: Some(("Slow", 24))),
+            ],
+        ),
+    ],
+)

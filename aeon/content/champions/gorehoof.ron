@@ -1,0 +1,47 @@
+// Gorehoof — a diving BRUISER.
+//
+// Charges in, staggers the target on impact, trades blows, and drinks from
+// bloodroot to stay in the brawl. Authored entirely as DSL data.
+ChampionSpec(
+    name: "Gorehoof",
+    base: BaseStats(
+        hp: 640,
+        ad: 62,
+        armor: 32,
+        attack_speed: 1.0,
+        move_speed: 12.0,
+        range: 8.0,
+    ),
+    abilities: [
+        // Engage: dash in, then crack the target with a scaling blow + stun.
+        AbilitySpec(
+            name: "Rampart Charge",
+            cooldown: 300,
+            cost: None,
+            targeting: Skillshot,
+            range: 14.0,
+            effects: [
+                Dash(distance: 12.0),
+                Damage(amount: 60, scaling: Some(AttackDamage(ratio: 0.5))),
+                Stun(duration: 30),
+            ],
+        ),
+        // Sustained trade: a heavy AD-scaling gore.
+        AbilitySpec(
+            name: "Gore Toss",
+            cooldown: 120,
+            cost: None,
+            targeting: Target,
+            range: 9.0,
+            effects: [ Damage(amount: 45, scaling: Some(AttackDamage(ratio: 0.8))) ],
+        ),
+        // Bruiser self-sustain to win extended duels.
+        AbilitySpec(
+            name: "Bloodroot",
+            cooldown: 160,
+            cost: None,
+            targeting: SelfCast,
+            effects: [ Heal(amount: 85) ],
+        ),
+    ],
+)

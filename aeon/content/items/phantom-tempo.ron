@@ -1,0 +1,13 @@
+// Phantom Tempo — LEGENDARY AD. A blur of edges.
+ItemSpec(
+    name: "Phantom Tempo",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        ad: 35,
+        attack_speed: 0.35,
+    ),
+    passive: Some("+20% critical strike chance; gain stacking move speed on attacks."),
+    build_from: ["razor-fan", "swift-dagger", "agility-cloak"],
+    tags: ["legendary", "ad", "attack-speed", "crit"],
+)

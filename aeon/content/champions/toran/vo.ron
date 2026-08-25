@@ -1,0 +1,81 @@
+// Voice-line manifest for Toran: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "toran",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.toran.select",
+            kind: "Selected",
+            audio: "audio/vo/toran/select.ogg",
+            text: "Toran answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.toran.move_a",
+            kind: "Move",
+            audio: "audio/vo/toran/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.toran.move_b",
+            kind: "Move",
+            audio: "audio/vo/toran/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.toran.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/toran/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.toran.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/toran/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.toran.ability_q",
+            kind: "Ability: Anvil Slam",
+            audio: "audio/vo/toran/ability_q.ogg",
+            text: "Anvil Slam!",
+        ),
+        VoiceLine(
+            id: "vo.toran.ability_w",
+            kind: "Ability: Molten Ward",
+            audio: "audio/vo/toran/ability_w.ogg",
+            text: "Molten Ward!",
+        ),
+        VoiceLine(
+            id: "vo.toran.ability_r",
+            kind: "Ability: Cinder Sweep",
+            audio: "audio/vo/toran/ability_r.ogg",
+            text: "Cinder Sweep!",
+        ),
+        VoiceLine(
+            id: "vo.toran.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/toran/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.toran.joke",
+            kind: "Joke",
+            audio: "audio/vo/toran/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.toran.low_health",
+            kind: "Low health",
+            audio: "audio/vo/toran/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.toran.victory",
+            kind: "Victory",
+            audio: "audio/vo/toran/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

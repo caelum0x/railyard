@@ -1,0 +1,30 @@
+// Per-level stat growth for Quorvane (levels 1-18).
+// Level 1 equals the flat spec's BaseStats; each level adds the
+// archetype-tuned growth below. Precomputed rows are provided so the
+// balance/UI tools can read a table without recomputing.
+ChampionScaling(
+    slug: "quorvane",
+    archetype: "marksman",
+    base: LevelStats(hp: 560, ad: 58, armor: 22, attack_speed: 1.15),
+    per_level: StatGrowth(hp: 74, ad: 3.8, armor: 2.6, attack_speed: 0.035),
+    levels: [
+        LevelRow(level: 1, hp: 560, ad: 58, armor: 22, attack_speed: 1.15),
+        LevelRow(level: 2, hp: 634, ad: 62, armor: 25, attack_speed: 1.185),
+        LevelRow(level: 3, hp: 708, ad: 66, armor: 27, attack_speed: 1.22),
+        LevelRow(level: 4, hp: 782, ad: 69, armor: 30, attack_speed: 1.255),
+        LevelRow(level: 5, hp: 856, ad: 73, armor: 32, attack_speed: 1.29),
+        LevelRow(level: 6, hp: 930, ad: 77, armor: 35, attack_speed: 1.325),
+        LevelRow(level: 7, hp: 1004, ad: 81, armor: 38, attack_speed: 1.36),
+        LevelRow(level: 8, hp: 1078, ad: 85, armor: 40, attack_speed: 1.395),
+        LevelRow(level: 9, hp: 1152, ad: 88, armor: 43, attack_speed: 1.43),
+        LevelRow(level: 10, hp: 1226, ad: 92, armor: 45, attack_speed: 1.465),
+        LevelRow(level: 11, hp: 1300, ad: 96, armor: 48, attack_speed: 1.5),
+        LevelRow(level: 12, hp: 1374, ad: 100, armor: 51, attack_speed: 1.535),
+        LevelRow(level: 13, hp: 1448, ad: 104, armor: 53, attack_speed: 1.57),
+        LevelRow(level: 14, hp: 1522, ad: 107, armor: 56, attack_speed: 1.605),
+        LevelRow(level: 15, hp: 1596, ad: 111, armor: 58, attack_speed: 1.64),
+        LevelRow(level: 16, hp: 1670, ad: 115, armor: 61, attack_speed: 1.675),
+        LevelRow(level: 17, hp: 1744, ad: 119, armor: 64, attack_speed: 1.71),
+        LevelRow(level: 18, hp: 1818, ad: 123, armor: 66, attack_speed: 1.745),
+    ],
+)

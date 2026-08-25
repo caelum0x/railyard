@@ -1,0 +1,14 @@
+// Narrative + release metadata for Lumisel.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "lumisel",
+    display_name: "Lumisel",
+    title: "",
+    faction: "Tide",
+    archetype: "support",
+    release_patch: "1.5.0",
+    resource: "Mana",
+    lore: "Lumisel — an enchanter SUPPORT. Two heals of different weights plus a slowing, chip-damage zone for peel. Low personal damage by design. Authored as DATA against the closed DSL.",
+    tags: ["support", "tide"],
+)

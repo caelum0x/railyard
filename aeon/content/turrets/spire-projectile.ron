@@ -1,0 +1,19 @@
+// Shared turret projectile for all Warding Spires. A homing bolt of warded aether:
+// it always hits its locked target (no dodging by movement), travels at a fixed
+// speed for visual telegraphing, and deals the turret's attack_damage as physical
+// on impact plus any heat-ramp bonus. Referenced by every TurretSpec.
+TurretProjectile(
+    id: "spire_projectile",
+    display_name: "Warded Bolt",
+
+    kind: Homing,               // tracks the locked target; cannot be side-stepped
+    speed: 40.0,                // world units / second, for the travel telegraph
+    damage_type: Physical,
+
+    // Damage = source turret attack_damage * heat_ramp multiplier, resolved on hit.
+    damage_source: "TurretAttackDamage",
+    applies_heat_ramp: true,
+
+    // No splash: single-target on impact.
+    impact: (radius: 0.0, splash: false),
+)

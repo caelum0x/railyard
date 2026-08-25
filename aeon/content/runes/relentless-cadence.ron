@@ -1,0 +1,7 @@
+// Relentless Cadence — Precision / Keystone.
+RuneSpec(
+    name: "Relentless Cadence",
+    tree: Precision,
+    tier: Keystone,
+    effect: "Attacking the same champion repeatedly ramps your attack speed and reduces their movement speed.",
+)

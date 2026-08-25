@@ -1,0 +1,13 @@
+// Bulwark of Ages — LEGENDARY tank. It has outlasted empires.
+ItemSpec(
+    name: "Bulwark of Ages",
+    cost: 2800,
+    tier: Legendary,
+    stats: Stats(
+        hp: 400,
+        armor: 50,
+    ),
+    passive: Some("Nearby enemy attacks are slowed; reflects 10% of damage taken."),
+    build_from: ["warden-mail", "giants-girdle"],
+    tags: ["legendary", "tank", "armor", "hp"],
+)

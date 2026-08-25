@@ -1,0 +1,12 @@
+// Prism Facet — EPIC AP.
+ItemSpec(
+    name: "Prism Facet",
+    cost: 1050,
+    tier: Epic,
+    stats: Stats(
+        ap: 25,
+    ),
+    passive: Some("After an ability, next attack deals bonus magic damage."),
+    build_from: ["sheen-facet", "minor-tome"],
+    tags: ["epic", "spellblade", "ap"],
+)

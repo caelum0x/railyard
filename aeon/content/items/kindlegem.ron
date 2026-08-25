@@ -1,0 +1,12 @@
+// Kindlegem — BASIC support.
+ItemSpec(
+    name: "Kindlegem",
+    cost: 800,
+    tier: Basic,
+    stats: Stats(
+        hp: 200,
+    ),
+    passive: Some("+10 ability haste."),
+    build_from: ["ruby-shard"],
+    tags: ["basic", "hp", "haste"],
+)

@@ -1,0 +1,11 @@
+// Uplift — HardCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "displace_knockup",
+    name: "Uplift",
+    category: HardCC,
+    vocab_ref: Some("Knockup"),
+    fields: ["duration"],
+    cleansable: false,
+    stacking: Longest,
+    description: "Knockup applied via a displace target-selection area.",
+)

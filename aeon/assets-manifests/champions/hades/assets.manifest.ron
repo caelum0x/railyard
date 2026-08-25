@@ -1,0 +1,15 @@
+AssetManifest(
+    slug: "hades",
+    champion: "Hades",
+    archetype: "tank",
+    faction: "Greek",
+    generator: "blender",
+    assets: {
+        "model": AssetEntry(
+            path: "model.glb",
+            format: "model/gltf-binary",
+            bytes: 32408,
+            blake3: "f06269d5931dd1fe70241aec3ee7ddfc9e6050585c2c45d42c5d92d74f2b3a53",
+        ),
+    },
+)

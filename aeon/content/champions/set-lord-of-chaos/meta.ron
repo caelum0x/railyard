@@ -1,0 +1,14 @@
+// Narrative + release metadata for Set.
+// Sidecar to the flat combat spec; carries lore/faction/archetype the
+// ChampionSpec deliberately omits. Data only -- no loader impact.
+ChampionMeta(
+    slug: "set-lord-of-chaos",
+    display_name: "Set",
+    title: "Lord Of Chaos",
+    faction: "Egyptian",
+    archetype: "assassin",
+    release_patch: "1.3.0",
+    resource: "Mana",
+    lore: "Set — an ASSASSIN: long dash engage, single-target burst, and a chaotic escape. Squishier and faster than a bruiser, with the highest per-hit burst here. Desert Ambush leaps a huge distance and detonates on the target; Sandstorm cleans up and slows; Chaos Step repositions and heals to survive the dive.",
+    tags: ["assassin", "egyptian"],
+)

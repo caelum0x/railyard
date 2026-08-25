@@ -1,0 +1,81 @@
+// Voice-line manifest for Vulcan: stable ids -> future audio refs.
+// The `audio` paths point into the content-addressed asset store and are
+// resolved later; `text` is placeholder subtitle copy. Data only.
+VoiceLines(
+    slug: "vulcan",
+    locale: "en",
+    lines: [
+        VoiceLine(
+            id: "vo.vulcan.select",
+            kind: "Selected",
+            audio: "audio/vo/vulcan/select.ogg",
+            text: "Vulcan answers the call.",
+        ),
+        VoiceLine(
+            id: "vo.vulcan.move_a",
+            kind: "Move",
+            audio: "audio/vo/vulcan/move_a.ogg",
+            text: "On my way.",
+        ),
+        VoiceLine(
+            id: "vo.vulcan.move_b",
+            kind: "Move",
+            audio: "audio/vo/vulcan/move_b.ogg",
+            text: "It shall be done.",
+        ),
+        VoiceLine(
+            id: "vo.vulcan.attack_a",
+            kind: "Attack",
+            audio: "audio/vo/vulcan/attack_a.ogg",
+            text: "Face me.",
+        ),
+        VoiceLine(
+            id: "vo.vulcan.attack_b",
+            kind: "Attack",
+            audio: "audio/vo/vulcan/attack_b.ogg",
+            text: "You chose poorly.",
+        ),
+        VoiceLine(
+            id: "vo.vulcan.ability_q",
+            kind: "Ability: Molten Anvil",
+            audio: "audio/vo/vulcan/ability_q.ogg",
+            text: "Molten Anvil!",
+        ),
+        VoiceLine(
+            id: "vo.vulcan.ability_w",
+            kind: "Ability: Cinder Chains",
+            audio: "audio/vo/vulcan/ability_w.ogg",
+            text: "Cinder Chains!",
+        ),
+        VoiceLine(
+            id: "vo.vulcan.ability_r",
+            kind: "Ability: Forge Ward",
+            audio: "audio/vo/vulcan/ability_r.ogg",
+            text: "Forge Ward!",
+        ),
+        VoiceLine(
+            id: "vo.vulcan.taunt",
+            kind: "Taunt",
+            audio: "audio/vo/vulcan/taunt.ogg",
+            text: "Is that all you bring?",
+        ),
+        VoiceLine(
+            id: "vo.vulcan.joke",
+            kind: "Joke",
+            audio: "audio/vo/vulcan/joke.ogg",
+            text: "Even legends need a moment.",
+        ),
+        VoiceLine(
+            id: "vo.vulcan.low_health",
+            kind: "Low health",
+            audio: "audio/vo/vulcan/low_health.ogg",
+            text: "I am wounded, not beaten.",
+        ),
+        VoiceLine(
+            id: "vo.vulcan.victory",
+            kind: "Victory",
+            audio: "audio/vo/vulcan/victory.ogg",
+            text: "The field is ours.",
+        ),
+    ],
+)

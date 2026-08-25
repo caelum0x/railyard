@@ -1,0 +1,7 @@
+// Sundering Blows — Precision / Tier2.
+RuneSpec(
+    name: "Sundering Blows",
+    tree: Precision,
+    tier: Tier2,
+    effect: "Immobilizing or slowing a champion deals bonus adaptive damage on your next hit.",
+)

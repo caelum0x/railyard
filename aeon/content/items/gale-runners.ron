@@ -1,0 +1,12 @@
+// Gale Runners — EPIC boots.
+ItemSpec(
+    name: "Gale Runners",
+    cost: 1000,
+    tier: Epic,
+    stats: Stats(
+        move_speed: 55.0,
+    ),
+    passive: Some("+25 move speed out of combat; drops to base for 5s after taking damage."),
+    build_from: ["wayfarer-boots"],
+    tags: ["boots", "mobility"],
+)
