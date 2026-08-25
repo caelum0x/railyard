@@ -25,6 +25,19 @@ operation keys:
 2. capture that hold to the revenue account;
 3. transfer provider COGS from the configured COGS account to the provider.
 
+These three steps are driven as one **atomic-or-compensated** settlement by the
+`SettlementCoordinator` over a durable outbox (`src/settle.rs`, `src/outbox.rs`).
+Each step is recorded in a per-request saga (`pending → committed`) *before and
+after* the Mint call, so a crash mid-sequence is recoverable:
+
+- a resumed attempt re-runs the trio, skipping already-committed steps (Mint's
+  per-step idempotency keys make any redundant call a no-op); and
+- if a step ultimately fails, the coordinator reverses the already-committed
+  steps — release the hold, move captured revenue back, undo the COGS transfer —
+  leaving the request **fully settled or fully compensated, never half-settled**
+  and never double-charged. A retry after a compensated attempt gets fresh
+  per-attempt keys and settles cleanly exactly once.
+
 All three operations share the event's `request_id` as their Mint reference.
 Failed requests are accepted only when both amounts are zero and create no Mint
 movements, preserving ADR-0002. Replaying an identical `idempotency_key` returns
@@ -102,6 +115,14 @@ cargo clippy --all-targets --all-features -- -D warnings
 This slice deliberately stops before Sx1 rating catalogs and Relay cost-feed
 subscription. Clients currently provide the already-rated revenue and exact or
 estimated COGS amounts. Postgres stores operational metadata and projections;
-Mint remains the authoritative ledger. Completing the Sx0 scale gate still
-requires load-testing one million events and replacing request-time three-call
-settlement with a durable outbox/workflow for crash-visible progress.
+Mint remains the authoritative ledger.
+
+The settlement outbox mechanism (atomic-or-compensated saga) is complete and
+proven by unit tests, but the shipped `OutboxStore` is the in-process
+`MemoryOutbox`, wired in `main.rs`. It gives crash-visible progress and
+compensation *within a single running process*; it does not survive a process
+restart. The remaining production step is a transactional `PostgresOutbox`
+implementation of the `OutboxStore` port (co-committed with the `margin_events`
+write) plus a background sweeper that resumes `pending`/`compensating` sagas
+after a restart. Completing the Sx0 scale gate also still requires load-testing
+one million events.

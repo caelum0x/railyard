@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context};
 use ledgerline::mint::MintClient;
+use ledgerline::outbox::MemoryOutbox;
 use ledgerline::server::{build_router, AppState};
+use ledgerline::settle::{SettlementCoordinator, SystemClock};
 use ledgerline::store::PostgresStore;
 
 struct Config {
@@ -44,8 +46,16 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("running Ledgerline migrations")?;
 
+    // The coordinator drives the hold+capture+COGS trio through a durable outbox
+    // so a mid-sequence failure is atomic-or-compensated, never half-settled.
+    let mint_ops = Arc::new(MintClient::new(config.mint_base, config.mint_api_key));
+    let coordinator = SettlementCoordinator::new(
+        mint_ops,
+        Arc::new(MemoryOutbox::new()),
+        Arc::new(SystemClock),
+    );
     let state = AppState {
-        mint: Arc::new(MintClient::new(config.mint_base, config.mint_api_key)),
+        mint: Arc::new(coordinator),
         store: Arc::new(store),
         api_key: Arc::from(config.ledgerline_api_key),
     };
