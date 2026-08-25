@@ -1,0 +1,28 @@
+[package]
+name = "lol_render"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+# `riot-assets` re-enables the Riot WAD/PROP/TEX dynamic-asset loader registration
+# (`league_core::register::init_league_asset`). It is OFF by default and its backing
+# crates (`league_core`/`league_file`/`league_to_lol`) are intentionally NOT workspace
+# members — Aeonrift renders ORIGINAL glTF (.glb) assets via Bevy's native glTF loader
+# instead. This feature is a preserved decoupling seam, not an active build path.
+riot-assets = []
+
+[dependencies]
+bevy.workspace = true
+bincode.workspace = true
+crossbeam-channel.workspace = true
+image.workspace = true
+lol_base.workspace = true
+lol_base_render.workspace = true
+lol_core.workspace = true
+rand.workspace = true
+regex.workspace = true
+ron.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
