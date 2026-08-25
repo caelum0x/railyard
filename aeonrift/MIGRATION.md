@@ -5,6 +5,76 @@ in this skeleton. This is the reconciliation map; the skeleton compiles today an
 the real code migrates in per row. Each destination crate's `src/lib.rs` carries the
 same pointer as a `// MIGRATE:` doc line.
 
+## RENDER/PARTICLE graduation — Riot-decoupled render engine (2026-08-26)
+
+The heavy render crates `lol_render` and `lol_particle` are now **GREEN additive
+workspace members** on Bevy `0.20-dev`, compiled with `cargo +1.96.1`. They were the
+"GRADUATE-LATER" render subset; they land WITHOUT disturbing the default build (the whole
+`cargo +1.96.1 check --workspace` stays green) and WITHOUT copying any Riot data/assets.
+
+### How the Riot-format coupling was removed (DECOUPLE, the preferred path)
+
+Both crates were only *shallowly* coupled to the Riot-format crates
+(`league_core`/`league_file`/`league_to_lol`), so decoupling — not vendoring the Riot
+parsers — was the right call:
+
+- **`lol_render`** had exactly **one** functional Riot line:
+  `league_core::register::init_league_asset(app)` in `src/lib.rs` (registers the Riot
+  WAD/PROP/TEX dynamic-asset loaders). It is now `#[cfg(feature = "riot-assets")]` and
+  OFF by default; the crate renders ORIGINAL glTF (`.glb`) champion assets (the 47 in
+  `assets/champions/`) via Bevy's native glTF loader + Bevy-native meshes. The unused
+  `league_core`/`league_file`/`league_to_lol`/`league_loader`/`league_utils` deps and the
+  unused `naga`/`walkdir` deps were dropped from its `Cargo.toml` (0 code references
+  each — verified by grep).
+- **`lol_particle`** coupled to Riot formats only in `src/loaders/scb.rs` (the `.scb`
+  static-mesh loader via `league_file`/`league_to_lol`). That module and its
+  `init_asset_loader::<ScbMeshLoader>()` registration are now `#[cfg(feature =
+  "riot-assets")]`; particles consume ORIGINAL glTF/Bevy-native meshes by default. It
+  keeps `league_utils` (already a member — pure hashing helpers, no Riot data).
+- A new `clap` entry was added to the workspace deps (needed by `lol_particle`'s
+  playback-server bin `main.rs`).
+
+The `riot-assets` feature is a preserved seam (its backing Riot crates are deliberately
+NOT workspace members, so it is a no-op path today, not an active build).
+
+Build tails (`cargo +1.96.1`, `CARGO_TARGET_DIR` shared with the main checkout to stay
+under the ~19GiB disk ceiling):
+- `cargo +1.96.1 build -p lol_render` → `Finished dev profile ... in 2m 25s` (warnings
+  only: one deprecated glam fn in lol_base_render, one unused-assignment in lol_render).
+- `cargo +1.96.1 build -p lol_particle` → `Finished ... in 2m 32s` (lib + `lol_particle`
+  bin; warnings only).
+- `cargo +1.96.1 check --workspace` → `Finished ...` GREEN across all members (default
+  workspace stays green; no existing member's source was touched).
+
+### lol_rl — DEFERRED, honest blocker (NOT the candle/CUDA one the plan expected)
+
+`lol_rl` is **still excluded**. The plan framed its blocker as candle-CUDA + postgres,
+but that is the *lesser* problem:
+- The candle fix is trivial: `lol_rl/Cargo.toml` has `default = ["cuda"]` — change to
+  `default = []`. `src/device.rs` already selects `Device::Cpu` / `cuda_if_available`,
+  so CPU-only self-play/inference works once the default feature no longer force-enables
+  CUDA. postgres/`sqlx` (the `db.rs` training-persistence layer) would be feature-gated
+  similarly.
+- The **hard** blocker: `lol_rl` has a non-optional dependency on **`lol_env`**, used
+  pervasively in its core library (`RlEnvironment` trait + concrete envs in
+  `service.rs`, `ppo.rs`, `training.rs`, `rollout.rs`, `autotune.rs`, `async_session.rs`
+  and the `for_all_rl_environments!` macro). `lol_env` in turn hard-depends on
+  `lol_agent` (which embeds the **`rquickjs`** JS engine), plus `lol_render`,
+  `lol_particle`, and `winit`. So `lol_rl` cannot compile until `lol_env` + `lol_agent`
+  are also graduated.
+
+Exact remaining work to graduate `lol_rl` (a separate, larger task):
+1. Graduate `lol_agent` (decouple/verify `rquickjs` builds under `cargo +1.96.1`).
+2. Graduate `lol_env` (now that `lol_render`/`lol_particle` are members; add `winit`).
+3. In `lol_rl/Cargo.toml`: set candle `default = []`; feature-gate the `sqlx`/postgres
+   `db.rs` persistence behind an off-by-default `persistence` feature.
+4. Add `lol_rl` (+ `lol_env`, `lol_agent`) as members and build `-p lol_rl`.
+
+This was NOT attempted to completion here because building candle-core + candle-nn +
+rquickjs + winit + the env stack fresh would exceed the remaining disk budget (~5GiB
+after render/particle) and the mandate is to STOP rather than thrash on disk-full. A
+smaller green set (render + particle) was delivered instead of a broken/half-built one.
+
 ## INTEGRATION — real netcode + deterministic pathfinding (2026-08-26)
 
 The deferred **M1.5** step is graduated: the cloned crates are now actually wired,
@@ -93,12 +163,13 @@ harness. Verified: zero Riot champion modules remain.
 ### Excluded heavy crates (kept in `../moon-lol`, NOT workspace members)
 
 No crate had to be excluded during consolidation itself — the workspace builds fully
-green with `cargo +1.96.1 build --workspace`. The crates below were already excluded by
-the moon-lol migration (they depend on excluded Riot-format crates or on deps that don't
-build in this environment) and remain excluded: `lol_render`, `lol_particle`,
-`lol_debug`, `lol_env`, `lol_agent`, `lol_rl`, and the Riot-data-coupled/dev-only crates
-`league_core`, `league_file`, `league_to_lol`, `lol_extractor`,
-`lol_game_process_manager`, `lol_cli`, `lol_web_*`, `apps/client`. No Riot assets copied.
+green with `cargo +1.96.1 build --workspace`. **UPDATE (2026-08-26): `lol_render` and
+`lol_particle` have since been graduated IN as members** (Riot-format loaders
+feature-gated off — see the "RENDER/PARTICLE graduation" section at the top of this
+file). The crates that remain excluded: `lol_debug`, `lol_env`, `lol_agent`, `lol_rl`,
+and the Riot-data-coupled/dev-only crates `league_core`, `league_file`, `league_to_lol`,
+`lol_extractor`, `lol_game_process_manager`, `lol_cli`, `lol_web_*`, `apps/client`. No
+Riot assets copied.
 
 ### Build + test status (toolchain `cargo +1.96.1`, Bevy `0.20-dev`)
 
@@ -198,13 +269,21 @@ netcode / server / agent:
 
 ### EXCLUDED heavy / blocked crates (NOT members — see root `Cargo.toml` comment)
 
+> **UPDATE (2026-08-26):** `lol_render` and `lol_particle` are now GREEN workspace
+> members — see the "RENDER/PARTICLE graduation" section at the top of this file. The
+> list below is the *remaining* excluded set.
+
 These are intentionally left in `../moon-lol` and NOT migrated because they depend on the
 excluded Riot-format crates or on deps that don't build in this environment:
-- `lol_render` → requires `league_core`/`league_file`/`league_to_lol` (Riot formats) + `naga`.
-- `lol_particle` → requires `lol_render` + `league_file`/`league_to_lol`.
-- `lol_debug` → requires `lol_render`. `lol_env` → requires `lol_render`+`lol_particle`+`winit`.
-- `lol_agent` → requires `lol_render` + `rquickjs`.
-- `lol_rl` → `candle-core` default feature `cuda` (no CUDA on macOS) + postgres `sqlx`.
+- `lol_debug` → requires `lol_render` (debug overlay only; not needed for the engine).
+- `lol_env` → requires `lol_render` + `lol_particle` + **`lol_agent` (rquickjs)** + `winit`.
+- `lol_agent` → requires `lol_render` + `rquickjs` (embedded JS scripting engine).
+- `lol_rl` → requires **`lol_env`** (hard dep across its core library — `RlEnvironment`
+  trait used in `service.rs`/`ppo.rs`/`training.rs`/`rollout.rs`/`autotune.rs`/
+  `async_session.rs`), PLUS `candle-core` default feature `cuda` (no CUDA on macOS) and
+  postgres `sqlx`. The candle/postgres items are the *lesser* blocker (trivial Cargo
+  fixes); the hard blocker is the `lol_env → lol_agent(rquickjs)` chain. See the deferral
+  note in the top section for the exact remaining work.
 
 Riot-data-coupled / dev-only crates excluded entirely (per FORK-NOTES): `league_core`,
 `league_file`, `league_to_lol`, `lol_extractor`, `lol_game_process_manager`, `lol_cli`,
@@ -230,9 +309,13 @@ toolchain 1.96.1, not a migration regression, and are unrelated to the min-ECS p
 tests are red. The 89 min-ECS tests and the Erebos champion tests all pass.
 
 ### GRADUATE-LATER track (still deferred)
-- The heavy render/particle/RL subset above graduates when the asset pipeline (our own,
-  non-Riot format) lands to replace the `league_*` Riot-format dependency of `lol_render`.
-  These still map onto the `engine/{render,particle,ai-bots}` min-ECS stubs.
+- **DONE (2026-08-26):** `lol_render` + `lol_particle` graduated as members by DECOUPLING
+  from the Riot formats (feature-gated `riot-assets`), rendering ORIGINAL glTF instead —
+  see the "RENDER/PARTICLE graduation" section at the top of this file. They still
+  co-exist with the `engine/{render,particle}` min-ECS stubs.
+- **STILL DEFERRED:** the RL subset (`lol_rl` + its `lol_env`/`lol_agent` chain) — blocked
+  on graduating `lol_env`/`lol_agent`(rquickjs), not on the asset pipeline. Maps onto the
+  `engine/ai-bots` min-ECS stub. See the deferral note in the top section for exact work.
 - The MOBA netcode graduates from the in-process predict/reconcile spine
   (`aeonrift-moba`) to real UDP transport (bevy_replicon / lightyear) in `engine/net` +
   `engine/protocol`.

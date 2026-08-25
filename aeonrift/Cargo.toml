@@ -46,20 +46,25 @@ members = [
     "engine/lol_server",
     # agent runtime (rig/rmcp — no render/Riot deps)
     "engine/lol_agent_runtime",
+    # heavy render/particle engine (Bevy 0.20-dev) — DECOUPLED from Riot formats.
+    # The Riot WAD/PROP/TEX/.scb loaders (league_core/league_file/league_to_lol) are
+    # feature-gated behind the off-by-default `riot-assets` feature; by default these
+    # render ORIGINAL glTF (.glb) + Bevy-native meshes. No Riot data/assets copied.
+    "engine/lol_render",
+    "engine/lol_particle",
 
     # --- EXCLUDED from workspace members (kept in ../moon-lol; NOT migrated) ---
     # The following moon-lol crates are intentionally NOT members because they
-    # either depend on the excluded Riot-format crates (league_core/league_file/
-    # league_to_lol) or on heavy/unbuildable deps in this environment:
-    #   lol_render    -> requires league_core/league_file/league_to_lol (Riot formats) + naga
-    #   lol_particle  -> requires lol_render + league_file/league_to_lol
-    #   lol_debug     -> requires lol_render
-    #   lol_env       -> requires lol_render + lol_particle + winit
-    #   lol_agent     -> requires lol_render + rquickjs
-    #   lol_rl        -> candle-core default feature = "cuda" (no CUDA on macOS) + postgres
-    # And per the migration mandate, the Riot-data-coupled / dev-only crates are
-    # excluded entirely: league_core, league_file, league_to_lol, lol_extractor,
-    # lol_game_process_manager, lol_cli, lol_web_*, apps/client.
+    # depend on heavy/unbuildable deps or on the Riot-data-coupled crates:
+    #   lol_debug   -> requires lol_render (debug-only overlay; not needed)
+    #   lol_agent   -> requires lol_render + rquickjs (JS scripting engine)
+    #   lol_env     -> requires lol_render + lol_particle + lol_agent(rquickjs) + winit
+    #   lol_rl      -> requires lol_env (see above chain) + candle-core + postgres/sqlx
+    # NOTE: lol_rl's own deps (candle CUDA default, postgres) are the *lesser* blocker;
+    # its hard blocker is the lol_env -> lol_agent(rquickjs) chain (see MIGRATION.md).
+    # Riot-data-coupled / dev-only crates excluded entirely: league_core, league_file,
+    # league_to_lol, lol_extractor, lol_game_process_manager, lol_cli, lol_web_*,
+    # apps/client. No Riot WAD/PROP/TEX assets or champion configs copied.
 ]
 
 [workspace.package]
@@ -82,6 +87,8 @@ lol_client = { path = "engine/lol_client" }
 lol_rpc = { path = "engine/lol_rpc" }
 lol_server = { path = "engine/lol_server" }
 lol_agent_runtime = { path = "engine/lol_agent_runtime" }
+lol_render = { path = "engine/lol_render" }
+lol_particle = { path = "engine/lol_particle" }
 
 # --- external deps (versions from moon-lol workspace) ---
 bevy = { git = "https://github.com/mutemoon/bevy", branch = "main", features = [
@@ -104,6 +111,7 @@ image = { version = "0.25", features = ["png"] }
 nom = "8.0.0"
 rand = "0.9.2"
 regex = "1"
+clap = { version = "4", features = ["derive"] }
 serde = "1.0.219"
 thiserror = "2.0.12"
 ron = "0.8"
