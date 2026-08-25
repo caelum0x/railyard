@@ -15,7 +15,9 @@ pub mod auth;
 pub mod config;
 pub mod enforce;
 pub mod handler;
+pub mod hold_reaper;
 pub mod local_store;
+pub mod mem_hold_store;
 pub mod pricing;
 pub mod settle;
 
