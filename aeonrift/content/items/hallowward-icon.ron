@@ -1,0 +1,13 @@
+// Hallowward Icon — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Hallowward Icon",
+    cost: 1050,
+    tier: Epic,
+    stats: Stats(
+        mr: 40,
+        hp: 100,
+    ),
+    passive: Some("Cleanse-adjacent tenacity aura."),
+    build_from: ["stoneheart-core", "faerie-charm"],
+    tags: ["epic", "mr", "hp", "tenacity", "support"],
+)

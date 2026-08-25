@@ -1,0 +1,13 @@
+// Infernal Crown — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Infernal Crown",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        hp: 300,
+        ap: 50,
+    ),
+    passive: Some("Immobilizing a champion burns them for max-health magic damage."),
+    build_from: ["quicksilver-treads", "spectre-cowl", "wayfarer-boots"],
+    tags: ["legendary", "hp", "ap", "dot", "cc"],
+)

@@ -1,0 +1,12 @@
+// Mindshatter Rod — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Mindshatter Rod",
+    cost: 1200,
+    tier: Epic,
+    stats: Stats(
+        ap: 40,
+    ),
+    passive: None,
+    build_from: ["hallowed-thread", "ruby-shard"],
+    tags: ["epic", "ap", "burst"],
+)

@@ -1,0 +1,10 @@
+// Arcane Ward — Shield buff. Maps to closed vocab.
+BuffSpec(
+    id: "arcane-ward",
+    name: "Arcane Ward",
+    category: Shield,
+    vocab_ref: Some("BuffShieldMagic"),
+    fields: ["amount"],
+    stacking: Independent,
+    description: "Absorbs a flat amount of magic damage only.",
+)

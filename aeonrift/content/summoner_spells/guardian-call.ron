@@ -1,0 +1,7 @@
+// Guardian's Call — summoner spell.
+SummonerSpell(
+    name: "Guardian's Call",
+    cooldown: 240,
+    effect: "Summon a temporary spirit that taunts nearby enemy minions and soaks damage for allies.",
+    tags: ["utility", "defense"],
+)

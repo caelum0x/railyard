@@ -1,0 +1,12 @@
+// Astral Deathcap — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Astral Deathcap",
+    cost: 3600,
+    tier: Legendary,
+    stats: Stats(
+        ap: 120,
+    ),
+    passive: Some("Amplifies your total ability power."),
+    build_from: ["stormbreaker-maul", "voidglass-lens", "gilded-coin"],
+    tags: ["legendary", "ap", "amplify", "burst"],
+)

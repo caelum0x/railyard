@@ -1,0 +1,2 @@
+// Preset deck 19 — Wildgrowth Pact.
+DeckDef(name: "Wildgrowth Pact", cards: ["mosscloak","gorehoof","sporeveil","thornquill","petalsong","freyja","athena","artemis"])

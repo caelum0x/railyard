@@ -1,0 +1,13 @@
+// Skyfin Quiver — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Skyfin Quiver",
+    cost: 1200,
+    tier: Epic,
+    stats: Stats(
+        ad: 18,
+        attack_speed: 0.25,
+    ),
+    passive: None,
+    build_from: ["hallowed-thread", "warding-totem-frag"],
+    tags: ["epic", "ad", "attack-speed", "crit"],
+)

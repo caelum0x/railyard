@@ -1,0 +1,7 @@
+// Conqueror — Precision / Keystone.
+RuneSpec(
+    name: "Conqueror",
+    tree: Precision,
+    tier: Keystone,
+    effect: "Attacks and abilities against champions build stacks of adaptive force; at full stacks, heal for a portion of damage dealt.",
+)

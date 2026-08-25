@@ -1,0 +1,7 @@
+// Absorb Life — Domination / Tier1.
+RuneSpec(
+    name: "Absorb Life",
+    tree: Domination,
+    tier: Tier1,
+    effect: "Champion takedowns heal you and permanently increase your health regeneration.",
+)

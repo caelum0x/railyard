@@ -1,0 +1,13 @@
+// Embermaw Juggernaut — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Embermaw Juggernaut",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        hp: 400,
+        ad: 40,
+    ),
+    passive: Some("Bonus attack damage scaling with bonus health."),
+    build_from: ["emberclaw-warblade", "tideguard-mantle", "hunters-talon"],
+    tags: ["legendary", "hp", "ad", "tank", "bruiser"],
+)

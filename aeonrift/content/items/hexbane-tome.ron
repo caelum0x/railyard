@@ -1,0 +1,13 @@
+// Hexbane Tome — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Hexbane Tome",
+    cost: 3100,
+    tier: Legendary,
+    stats: Stats(
+        ap: 80,
+        mr: 30,
+    ),
+    passive: Some("Magic damage cuts through enemy magic resist."),
+    build_from: ["seraphs-embrace", "astral-conduit", "aether-tears"],
+    tags: ["legendary", "ap", "mr", "penetration"],
+)

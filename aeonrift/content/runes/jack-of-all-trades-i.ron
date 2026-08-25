@@ -1,0 +1,7 @@
+// Jack of All Trades — Inspiration / Tier3.
+RuneSpec(
+    name: "Jack of All Trades",
+    tree: Inspiration,
+    tier: Tier3,
+    effect: "Each unique item stat type you hold grants a small bonus to a rotating set of stats.",
+)

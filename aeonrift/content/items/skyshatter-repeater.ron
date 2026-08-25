@@ -1,0 +1,13 @@
+// Skyshatter Repeater — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Skyshatter Repeater",
+    cost: 3400,
+    tier: Legendary,
+    stats: Stats(
+        ad: 45,
+        attack_speed: 0.35,
+    ),
+    passive: Some("Ramping attack speed and bonus damage on-hit."),
+    build_from: ["tideguard-mantle", "swiftmarch-sandals", "gale-feather"],
+    tags: ["legendary", "ad", "attack-speed", "onhit", "marksman"],
+)

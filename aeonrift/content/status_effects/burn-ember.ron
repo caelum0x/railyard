@@ -1,0 +1,11 @@
+// Ember Burn — Damage status effect. Maps to closed vocab.
+StatusEffect(
+    id: "burn-ember",
+    name: "Ember Burn",
+    category: Damage,
+    vocab_ref: Some("Damage"),
+    fields: ["amount", "damage_type", "tag"],
+    cleansable: false,
+    stacking: Stronger,
+    description: "Fire damage over time that stacks with repeated ignition.",
+)

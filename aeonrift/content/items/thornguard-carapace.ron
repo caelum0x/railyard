@@ -1,0 +1,13 @@
+// Thornguard Carapace — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Thornguard Carapace",
+    cost: 1200,
+    tier: Epic,
+    stats: Stats(
+        hp: 220,
+        armor: 30,
+    ),
+    passive: Some("Reflects a portion of basic-attack damage."),
+    build_from: ["stoneheart-core", "fiendish-codex"],
+    tags: ["epic", "hp", "armor", "tank"],
+)

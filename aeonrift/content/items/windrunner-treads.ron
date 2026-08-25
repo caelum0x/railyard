@@ -1,0 +1,12 @@
+// Windrunner Treads — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Windrunner Treads",
+    cost: 1100,
+    tier: Epic,
+    stats: Stats(
+        move_speed: 45.0,
+    ),
+    passive: Some("Bonus move speed toward enemies."),
+    build_from: ["cindershot-ore", "umbral-splinter"],
+    tags: ["epic", "boots", "mobility"],
+)

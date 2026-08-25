@@ -1,0 +1,12 @@
+// Scryer's Lens — BASIC. Sees the unseen.
+ItemSpec(
+    name: "Scryer's Lens",
+    cost: 250,
+    tier: Basic,
+    stats: Stats(
+        ap: 10,
+    ),
+    passive: None,
+    build_from: [],
+    tags: ["basic", "ap", "vision"],
+)

@@ -1,0 +1,10 @@
+// Wardveil — Shield buff. Maps to closed vocab.
+BuffSpec(
+    id: "wardveil",
+    name: "Wardveil",
+    category: Shield,
+    vocab_ref: Some("BuffShieldWhite"),
+    fields: ["amount"],
+    stacking: Independent,
+    description: "A general shield absorbing all incoming damage.",
+)

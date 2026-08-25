@@ -1,0 +1,13 @@
+// Emberfury Blade — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Emberfury Blade",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 55,
+        attack_speed: 0.15,
+    ),
+    passive: Some("Attacks build heat; at max heat, unleash a burning cleave."),
+    build_from: ["warden-mail", "emberpiercer", "hextech-alternator"],
+    tags: ["legendary", "ad", "attack-speed", "dot"],
+)

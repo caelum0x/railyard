@@ -1,0 +1,23 @@
+// Emberling Hatchling — a small monster of the Emberlings camp. Two accompany the
+// Broodmother. Low HP, quick, minor reward. No buff. Camp grouping in camp-emberlings.ron.
+MonsterSpec(
+    id: "emberling_hatchling",
+    display_name: "Emberling Hatchling",
+    role: "CampSmall",
+    camp: "camp_emberlings",
+
+    stats: NeutralStats(
+        hp: 380,
+        armor: 6,
+        magic_resist: 10,
+        attack_damage: 26,
+        attack_speed: 0.85,
+        attack_range: 1.0,
+        move_speed: 0.0,
+    ),
+
+    scaling: "monster_scaling",
+
+    grants_buff: "none",
+    bounty: (gold_local: 11, gold_shared: 0, xp: 20),
+)

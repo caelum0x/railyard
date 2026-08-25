@@ -1,0 +1,2 @@
+// Preset deck 13 — Olympian Wrath.
+DeckDef(name: "Olympian Wrath", cards: ["zeus","athena","achilles","artemis","medusa","hades","bellona","mars"])

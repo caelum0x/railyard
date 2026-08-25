@@ -1,0 +1,13 @@
+// Silentveil Mantle — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Silentveil Mantle",
+    cost: 1100,
+    tier: Epic,
+    stats: Stats(
+        mr: 40,
+        ap: 15,
+    ),
+    passive: Some("Reduces incoming crowd control duration."),
+    build_from: ["cindershot-ore", "ironbark-buckle"],
+    tags: ["epic", "mr", "ap", "tenacity"],
+)

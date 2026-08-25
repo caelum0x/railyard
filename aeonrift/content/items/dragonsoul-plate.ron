@@ -1,0 +1,13 @@
+// Dragonsoul Plate — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Dragonsoul Plate",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        hp: 500,
+        armor: 40,
+    ),
+    passive: Some("Immunity ramps against sustained single-target damage."),
+    build_from: ["gloomweave-cowl", "emberpiercer", "bloodroot-vial"],
+    tags: ["legendary", "hp", "armor", "tank"],
+)

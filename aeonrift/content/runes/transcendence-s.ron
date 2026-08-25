@@ -1,0 +1,7 @@
+// Transcendence — Sorcery / Tier2.
+RuneSpec(
+    name: "Transcendence",
+    tree: Sorcery,
+    tier: Tier2,
+    effect: "Gain ability haste at set levels; ability casts reduce your basic-ability cooldowns.",
+)

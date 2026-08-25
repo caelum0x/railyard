@@ -1,0 +1,7 @@
+// Ghostwalk — summoner spell.
+SummonerSpell(
+    name: "Ghostwalk",
+    cooldown: 210,
+    effect: "Gain move speed and unit ghosting, ignoring collision for the duration.",
+    tags: ["mobility", "escape"],
+)

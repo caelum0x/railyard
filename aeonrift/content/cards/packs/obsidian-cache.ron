@@ -1,0 +1,20 @@
+// content/cards/packs/obsidian-cache.ron
+// A heavy standard cache for dedicated collectors.
+CardPack(
+    id: "obsidian-cache",
+    name: "Obsidian Cache",
+    description: "A heavy standard cache for dedicated collectors.",
+    category: "standard",
+    card_count: 8,
+    cost: PackCost(currency: "gold", amount: 1500),
+    one_time: false,
+    guaranteed_floor: None,
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 600),
+        RarityOdd(rarity: "uncommon",  weight: 280),
+        RarityOdd(rarity: "rare",      weight: 100),
+        RarityOdd(rarity: "epic",      weight: 17),
+        RarityOdd(rarity: "legendary", weight: 3),
+        RarityOdd(rarity: "mythic",    weight: 0),
+    ],
+)

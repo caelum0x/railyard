@@ -1,0 +1,7 @@
+// Primal Smite — summoner spell.
+SummonerSpell(
+    name: "Primal Smite",
+    cooldown: 15,
+    effect: "Deal true damage to a large monster or enemy minion; empowers your jungle presence.",
+    tags: ["jungle", "damage"],
+)

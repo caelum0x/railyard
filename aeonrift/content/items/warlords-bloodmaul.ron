@@ -1,0 +1,13 @@
+// Warlord's Bloodmaul — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Warlord's Bloodmaul",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 55,
+        hp: 250,
+    ),
+    passive: Some("Sustained attacks build lifesteal and attack speed."),
+    build_from: ["voidglass-lens", "gravemind-tome", "wyrmscale-chip"],
+    tags: ["legendary", "ad", "hp", "lifesteal", "attack-speed"],
+)

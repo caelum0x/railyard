@@ -1,0 +1,13 @@
+// Phoenix Heart — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Phoenix Heart",
+    cost: 3400,
+    tier: Legendary,
+    stats: Stats(
+        ap: 70,
+        hp: 300,
+    ),
+    passive: Some("On lethal damage, revive once per match with a burst of flame."),
+    build_from: ["shadowstep-greaves", "hunters-warglaive", "soulbead-charm"],
+    tags: ["legendary", "ap", "hp", "burst"],
+)

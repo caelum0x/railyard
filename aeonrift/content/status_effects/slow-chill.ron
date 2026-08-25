@@ -1,0 +1,11 @@
+// Chill — SoftCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "slow-chill",
+    name: "Chill",
+    category: SoftCC,
+    vocab_ref: Some("DebuffSlow"),
+    fields: ["percent", "duration"],
+    cleansable: true,
+    stacking: Strongest,
+    description: "A light frost slow applied on ability hit.",
+)

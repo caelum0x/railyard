@@ -1,0 +1,12 @@
+// Astral Conduit — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Astral Conduit",
+    cost: 1200,
+    tier: Epic,
+    stats: Stats(
+        ap: 40,
+    ),
+    passive: Some("Ability haste and mana regeneration."),
+    build_from: ["great-rod", "warblade"],
+    tags: ["epic", "ap", "haste", "mana"],
+)

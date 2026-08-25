@@ -1,0 +1,23 @@
+// Frostfang Warden — the solo buff monster of the Frostfang camp. Slow, tanky, and
+// grants the Frostfang Boon to the killer. Camp grouping in camp-frostfang.ron.
+MonsterSpec(
+    id: "frostfang_warden",
+    display_name: "Frostfang Warden",
+    role: "BuffMonster",
+    camp: "camp_frostfang",
+
+    stats: NeutralStats(
+        hp: 1650,
+        armor: 22,
+        magic_resist: 22,
+        attack_damage: 72,
+        attack_speed: 0.5,
+        attack_range: 1.5,
+        move_speed: 0.0,
+    ),
+
+    scaling: "monster_scaling",
+
+    grants_buff: "frostfang_boon",
+    bounty: (gold_local: 62, gold_shared: 10, xp: 110),
+)

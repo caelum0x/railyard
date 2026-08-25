@@ -1,0 +1,7 @@
+// Legend: Bloodline — Precision / Tier2.
+RuneSpec(
+    name: "Legend: Bloodline",
+    tree: Precision,
+    tier: Tier2,
+    effect: "Gain lifesteal for each Legend stack, up to a cap.",
+)

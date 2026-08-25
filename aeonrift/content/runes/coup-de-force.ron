@@ -1,0 +1,7 @@
+// Coup de Force — Precision / Tier3.
+RuneSpec(
+    name: "Coup de Force",
+    tree: Precision,
+    tier: Tier3,
+    effect: "Killing a low-health champion grants a burst of gold and move speed.",
+)

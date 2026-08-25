@@ -1,0 +1,10 @@
+// Gilded Coin — BASIC. Old mint, still shines.
+ItemSpec(
+    name: "Gilded Coin",
+    cost: 250,
+    tier: Basic,
+    stats: Stats(),
+    passive: Some("Generates bonus gold over time."),
+    build_from: [],
+    tags: ["basic", "gold", "support"],
+)

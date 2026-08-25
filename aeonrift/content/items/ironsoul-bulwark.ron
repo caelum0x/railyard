@@ -1,0 +1,13 @@
+// Ironsoul Bulwark — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Ironsoul Bulwark",
+    cost: 2900,
+    tier: Legendary,
+    stats: Stats(
+        hp: 450,
+        armor: 40,
+    ),
+    passive: Some("Blocks a share of critical-strike damage."),
+    build_from: ["dreadnought-plating", "razorwind-blade", "giants-girdle"],
+    tags: ["legendary", "hp", "armor", "tank"],
+)

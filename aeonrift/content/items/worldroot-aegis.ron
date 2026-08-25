@@ -1,0 +1,13 @@
+// Worldroot Aegis — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Worldroot Aegis",
+    cost: 3000,
+    tier: Legendary,
+    stats: Stats(
+        hp: 450,
+        armor: 45,
+    ),
+    passive: Some("Rooting or immobilizing a foe grants a large shield."),
+    build_from: ["emberclaw-warblade", "sheen-prism", "giants-girdle"],
+    tags: ["legendary", "hp", "armor", "tank", "shield"],
+)

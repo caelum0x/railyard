@@ -1,0 +1,7 @@
+// Press the Attack — Precision / Keystone.
+RuneSpec(
+    name: "Press the Attack",
+    tree: Precision,
+    tier: Keystone,
+    effect: "Three consecutive attacks on a champion deal bonus damage and make them take more damage from all sources briefly.",
+)

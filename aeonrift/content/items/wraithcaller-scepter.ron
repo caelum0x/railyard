@@ -1,0 +1,12 @@
+// Wraithcaller Scepter — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Wraithcaller Scepter",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ap: 85,
+    ),
+    passive: Some("Summons a spectral echo that repeats a fraction of your ability damage."),
+    build_from: ["verdant-bulwark", "solar-focus", "ruby-shard"],
+    tags: ["legendary", "ap", "burst"],
+)

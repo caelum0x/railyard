@@ -1,0 +1,12 @@
+// Moonlit Scepter — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Moonlit Scepter",
+    cost: 1250,
+    tier: Epic,
+    stats: Stats(
+        ap: 45,
+    ),
+    passive: None,
+    build_from: ["vanguard-fang", "blasting-rod"],
+    tags: ["epic", "ap", "burst"],
+)

@@ -1,0 +1,7 @@
+// Demolish — Resolve / Tier1.
+RuneSpec(
+    name: "Demolish",
+    tree: Resolve,
+    tier: Tier1,
+    effect: "Charge up a powerful attack against turrets after being near them.",
+)

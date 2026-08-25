@@ -1,0 +1,21 @@
+// content/cards/packs/umbral-eclipse-pack.ron
+// Umbral-faction cards from the eclipse pool.
+CardPack(
+    id: "umbral-eclipse-pack",
+    name: "Umbral Eclipse Pack",
+    description: "Umbral-faction cards from the eclipse pool.",
+    category: "faction",
+    card_count: 9,
+    cost: PackCost(currency: "shards", amount: 2800),
+    one_time: false,
+    guaranteed_floor: Some("epic"),
+    faction_bias: Some("Umbral"),
+    rarity_odds: [
+        RarityOdd(rarity: "common",    weight: 380),
+        RarityOdd(rarity: "uncommon",  weight: 300),
+        RarityOdd(rarity: "rare",      weight: 200),
+        RarityOdd(rarity: "epic",      weight: 80),
+        RarityOdd(rarity: "legendary", weight: 32),
+        RarityOdd(rarity: "mythic",    weight: 8),
+    ],
+)

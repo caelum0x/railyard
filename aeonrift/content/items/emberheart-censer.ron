@@ -1,0 +1,12 @@
+// Emberheart Censer — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Emberheart Censer",
+    cost: 1150,
+    tier: Epic,
+    stats: Stats(
+        ap: 30,
+    ),
+    passive: Some("Healing and shielding on allies is amplified."),
+    build_from: ["aether-crystal", "lost-chapter"],
+    tags: ["epic", "ap", "heal-shield", "support"],
+)

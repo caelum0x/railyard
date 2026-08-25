@@ -1,0 +1,7 @@
+// Unsealed Spellbook — Inspiration / Keystone.
+RuneSpec(
+    name: "Unsealed Spellbook",
+    tree: Inspiration,
+    tier: Keystone,
+    effect: "Swap summoner spells during a match, gaining new tactical options over time.",
+)

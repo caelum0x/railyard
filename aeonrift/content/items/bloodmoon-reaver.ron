@@ -1,0 +1,12 @@
+// Bloodmoon Reaver — LEGENDARY. An artifact of the Rift.
+ItemSpec(
+    name: "Bloodmoon Reaver",
+    cost: 3300,
+    tier: Legendary,
+    stats: Stats(
+        ad: 60,
+    ),
+    passive: Some("Executes low-health champions and heals hugely on takedown."),
+    build_from: ["nightreaver-talon", "harrowing-crescent", "hunters-machete-frag"],
+    tags: ["legendary", "ad", "lifesteal", "burst", "assassin"],
+)

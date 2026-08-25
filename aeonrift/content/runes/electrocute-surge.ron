@@ -1,0 +1,7 @@
+// Electrocute Surge — Domination / Keystone.
+RuneSpec(
+    name: "Electrocute Surge",
+    tree: Domination,
+    tier: Keystone,
+    effect: "Hitting a champion with three separate attacks or abilities in a short window deals a burst of adaptive damage.",
+)

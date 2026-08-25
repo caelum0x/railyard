@@ -1,0 +1,23 @@
+// Mire Crawler — a small solo monster that lurks in the river brush. Very low reward,
+// used as a scouting/leash-timing camp. No buff. Placement in jungle-layout-riftline.ron.
+MonsterSpec(
+    id: "mire_crawler",
+    display_name: "Mire Crawler",
+    role: "CampSmall",
+    camp: "none",
+
+    stats: NeutralStats(
+        hp: 260,
+        armor: 4,
+        magic_resist: 4,
+        attack_damage: 20,
+        attack_speed: 0.9,
+        attack_range: 1.0,
+        move_speed: 0.0,
+    ),
+
+    scaling: "monster_scaling",
+
+    grants_buff: "none",
+    bounty: (gold_local: 8, gold_shared: 0, xp: 14),
+)

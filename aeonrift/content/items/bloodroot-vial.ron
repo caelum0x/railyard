@@ -1,0 +1,12 @@
+// Bloodroot Vial — BASIC. Thick and red.
+ItemSpec(
+    name: "Bloodroot Vial",
+    cost: 350,
+    tier: Basic,
+    stats: Stats(
+        ad: 10,
+    ),
+    passive: Some("Heals for 5% of damage dealt."),
+    build_from: [],
+    tags: ["basic", "ad", "lifesteal"],
+)

@@ -1,0 +1,12 @@
+// Stormforged Edge — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Stormforged Edge",
+    cost: 1300,
+    tier: Epic,
+    stats: Stats(
+        ad: 25,
+    ),
+    passive: Some("Basic attacks deal bonus magic on a cadence."),
+    build_from: ["wardens-stone", "tithe-shard"],
+    tags: ["epic", "ad", "onhit"],
+)

@@ -1,0 +1,28 @@
+// content/cards/tuning/season_pass.ron
+//
+// Card-only tuning: the SEASON PASS reward track. Purely cosmetic/economy rewards
+// earned by accruing season XP; never grants combat advantage (no ChampionSpec stats).
+// `free_track` and `premium_track` list the reward at each tier. Card economy only.
+SeasonPass(
+    season_id: "s3-eclipse",
+    display_name: "Eclipse Pass",
+    tiers: 30,
+    xp_per_tier: 1000,
+    free_track: [
+        PassReward(tier: 1,  kind: "currency", id: "gold",   amount: 500),
+        PassReward(tier: 5,  kind: "pack",     id: "bronze-cache", amount: 1),
+        PassReward(tier: 10, kind: "currency", id: "shards", amount: 400),
+        PassReward(tier: 15, kind: "pack",     id: "silver-cache", amount: 1),
+        PassReward(tier: 20, kind: "currency", id: "gold",   amount: 1000),
+        PassReward(tier: 30, kind: "pack",     id: "gold-cache", amount: 1),
+    ],
+    premium_track: [
+        PassReward(tier: 1,  kind: "cosmetic", id: "banner-eclipse-initiate", amount: 1),
+        PassReward(tier: 5,  kind: "pack",     id: "mythril-cache", amount: 1),
+        PassReward(tier: 10, kind: "currency", id: "gems",   amount: 150),
+        PassReward(tier: 15, kind: "pack",     id: "umbral-eclipse-pack", amount: 1),
+        PassReward(tier: 20, kind: "cosmetic", id: "board-eclipse-court", amount: 1),
+        PassReward(tier: 25, kind: "pack",     id: "seasonal-eclipse-vault", amount: 1),
+        PassReward(tier: 30, kind: "cosmetic", id: "title-eclipse-sovereign", amount: 1),
+    ],
+)

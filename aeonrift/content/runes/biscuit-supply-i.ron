@@ -1,0 +1,7 @@
+// Biscuit Supply — Inspiration / Tier2.
+RuneSpec(
+    name: "Biscuit Supply",
+    tree: Inspiration,
+    tier: Tier2,
+    effect: "Receive biscuits over time that restore resources and raise your maximum resource.",
+)

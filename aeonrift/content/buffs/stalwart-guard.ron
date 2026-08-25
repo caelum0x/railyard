@@ -1,0 +1,10 @@
+// Stalwart Guard — Defensive buff. Maps to closed vocab.
+BuffSpec(
+    id: "stalwart-guard",
+    name: "Stalwart Guard",
+    category: Defensive,
+    vocab_ref: Some("BuffDamageReduction"),
+    fields: ["percentage", "damage_type"],
+    stacking: Strongest,
+    description: "Reduces incoming damage of a given type by a percentage.",
+)

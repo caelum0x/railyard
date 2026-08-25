@@ -1,0 +1,7 @@
+// Triple Tonic — Inspiration / Tier2.
+RuneSpec(
+    name: "Triple Tonic",
+    tree: Inspiration,
+    tier: Tier2,
+    effect: "Start with a tonic that grants a temporary combat buff and a permanent minor stat.",
+)

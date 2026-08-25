@@ -1,0 +1,10 @@
+// Renewal Font — Sustain buff. Maps to closed vocab.
+BuffSpec(
+    id: "renewal-font",
+    name: "Renewal Font",
+    category: Sustain,
+    vocab_ref: Some("BuffSelfHeal"),
+    fields: ["amount"],
+    stacking: Independent,
+    description: "A large restorative surge of self-healing.",
+)

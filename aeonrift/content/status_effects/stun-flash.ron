@@ -1,0 +1,11 @@
+// Flash Stun — HardCC status effect. Maps to closed vocab.
+StatusEffect(
+    id: "stun-flash",
+    name: "Flash Stun",
+    category: HardCC,
+    vocab_ref: Some("DebuffStun"),
+    fields: ["duration"],
+    cleansable: true,
+    stacking: Refresh,
+    description: "A very brief stun from a burst of light.",
+)

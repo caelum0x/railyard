@@ -1,0 +1,7 @@
+// Hextech Flashtraption — Inspiration / Tier1.
+RuneSpec(
+    name: "Hextech Flashtraption",
+    tree: Inspiration,
+    tier: Tier1,
+    effect: "While Flash is down, channel briefly to blink a short distance.",
+)

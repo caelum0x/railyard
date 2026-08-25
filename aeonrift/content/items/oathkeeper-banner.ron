@@ -1,0 +1,13 @@
+// Oathkeeper Banner — EPIC. A crafted advantage.
+ItemSpec(
+    name: "Oathkeeper Banner",
+    cost: 1050,
+    tier: Epic,
+    stats: Stats(
+        hp: 180,
+        mr: 25,
+    ),
+    passive: Some("Empowers nearby minions."),
+    build_from: ["umbral-splinter", "great-rod"],
+    tags: ["epic", "hp", "mr", "aura", "support"],
+)

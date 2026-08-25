@@ -1,0 +1,13 @@
+// Frostfang camp — the solo buff camp holding the Frostfang Warden. Grants the
+// Frostfang Boon (out-of-combat move speed + slow on next hit) to the killer.
+// Placement + respawn in jungle-layout-riftline.ron.
+CampSpec(
+    id: "camp_frostfang",
+    display_name: "Frostfang Boon",
+    kind: "BuffCamp",
+    members: [
+        (monster: "frostfang_warden", count: 1),
+    ],
+    grants_buff: "frostfang_boon",
+    leash_radius: 10.0,
+)

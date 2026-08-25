@@ -1,0 +1,12 @@
+// Soulbead Charm — BASIC. A whispering bead.
+ItemSpec(
+    name: "Soulbead Charm",
+    cost: 300,
+    tier: Basic,
+    stats: Stats(
+        ap: 15,
+    ),
+    passive: Some("Grants 2 ability haste."),
+    build_from: [],
+    tags: ["basic", "ap", "haste"],
+)
