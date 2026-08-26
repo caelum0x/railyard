@@ -1,0 +1,577 @@
+{
+  "zeus": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Zeus, mighty bearded Greek storm-god hurling a forked lightning bolt, conjuring surging magic mid-cast, arms sweeping wide as energy spirals around them, low dramatic angle, amid shattered white marble columns and golden divine light under storm clouds, wearing ornate gold-and-white marble armor with blue-white lightning accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "file": "zeus__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/lpD8D3NU84ZaAdJJR0osaFrrQ2s0em5PqyB2Ge3zVp6WqfNuA/tmp9rnvszqj.png",
+      "faction": "Greek",
+      "archetype": "mage",
+      "display": "Zeus"
+    },
+    "B_recraft": {
+      "model": "recraft-ai/recraft-v3",
+      "prompt": "Zeus king of Olympus, a mighty bearded Greek storm god, lunging from a low heroic angle as he hurls a crackling forked lightning bolt, arcs of blue-white electricity coiling up his arm, roiling thunderclouds and glowing storm energy swirling behind, shattered marble columns of Olympus, ornate golden greek armor and a wind-torn cape. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus",
+      "file": "zeus__B_recraft.png",
+      "output_url": "https://replicate.delivery/xezq/3gT6f6H7kkxqD6CHHZvmkuSPm8mRg9ugOjP6mSp6HeQoqfNuA/tmpuvrulwny.webp"
+    },
+    "C_sdxl": {
+      "model": "stability-ai/sdxl",
+      "prompt": "Zeus king of Olympus, a mighty bearded Greek storm god, lunging from a low heroic angle as he hurls a crackling forked lightning bolt, arcs of blue-white electricity coiling up his arm, roiling thunderclouds and glowing storm energy swirling behind, shattered marble columns of Olympus, ornate golden greek armor and a wind-torn cape. extreme low-angle heroic shot looking up, over-the-shoulder dynamic framing, the hero towering and lunging into frame. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus",
+      "negative": "static centered portrait, standing still, flat lighting, plain empty background, anime, cel shaded, manga, cartoon, photograph, photorealistic photo, 3d render, blurry, out of focus, deformed hands, extra fingers, extra limbs, mutated, watermark, signature, text, caption, logo, ui, card frame, border, low detail, amateur, jpeg artifacts",
+      "error": "HTTP 404: {\"detail\":\"The requested resource could not be found.\",\"status\":404}\n"
+    },
+    "A_flux_hires": {
+      "model": "philz1337x/clarity-upscaler",
+      "file": "zeus__A_flux__hires.png",
+      "base": "zeus__A_flux.png"
+    }
+  },
+  "anubis-warden-of-scales": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Anubis, towering jackal-headed Egyptian death god holding golden scales of judgment, conjuring surging magic mid-cast, arms sweeping wide as energy spirals around them, low dramatic angle, inside a torchlit desert tomb glowing with turquoise hieroglyphs and drifting sand, wearing ornate gold-and-obsidian regalia with turquoise soul-light accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "file": "anubis-warden-of-scales__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/68ec0m5ldVW0ECCydjDIoTu3rQbuzrP416SsmDMzJKC01fGXA/tmpcc46hc4a.png",
+      "faction": "Egyptian",
+      "archetype": "mage",
+      "display": "Anubis"
+    },
+    "B_recraft": {
+      "model": "recraft-ai/recraft-v3",
+      "prompt": "Anubis warden of scales, a towering jackal-headed Egyptian death god, kneeling low as he slams golden scales of judgment into the ground, ghostly turquoise spirits and glowing hieroglyphs streaming upward around him, soul-light and drifting sand, ornate gold-and-obsidian ceremonial armor, dark torchlit tomb. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus",
+      "file": "anubis-warden-of-scales__B_recraft.png",
+      "output_url": "https://replicate.delivery/xezq/803rDt9G1O4pJNQ0ePPrho0lBu4aHedCcS6OQ5IxQqY7rfNuA/tmpks5j9c9p.webp"
+    },
+    "C_sdxl": {
+      "model": "stability-ai/sdxl",
+      "prompt": "Anubis warden of scales, a towering jackal-headed Egyptian death god, kneeling low as he slams golden scales of judgment into the ground, ghostly turquoise spirits and glowing hieroglyphs streaming upward around him, soul-light and drifting sand, ornate gold-and-obsidian ceremonial armor, dark torchlit tomb. extreme low-angle heroic shot looking up, over-the-shoulder dynamic framing, the hero towering and lunging into frame. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus",
+      "negative": "static centered portrait, standing still, flat lighting, plain empty background, anime, cel shaded, manga, cartoon, photograph, photorealistic photo, 3d render, blurry, out of focus, deformed hands, extra fingers, extra limbs, mutated, watermark, signature, text, caption, logo, ui, card frame, border, low detail, amateur, jpeg artifacts",
+      "error": "HTTP 404: {\"detail\":\"The requested resource could not be found.\",\"status\":404}\n"
+    }
+  },
+  "mars": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Mars, disciplined Roman god of war with a plumed centurion helm and a flaming spear, charging mid-leap into battle with weapon raised, dynamic diagonal motion, low heroic angle, on a dark war-torn battlefield with legion banners and drifting embers, wearing ornate crimson-and-bronze lorica armor with red-gold accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "file": "mars__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/XEyRM89KF8ZGKFzbug1AWKEDP7XXqhCb7nWQEIHFgWZL7vxF/tmpp24auxcp.png",
+      "faction": "Roman",
+      "archetype": "bruiser",
+      "display": "Mars"
+    },
+    "B_recraft": {
+      "model": "recraft-ai/recraft-v3",
+      "prompt": "Mars disciplined Roman god of war, lunging spear-first mid-dash toward the viewer, a trail of crimson battle-energy streaking off the spearhead, legion banners and drifting embers behind, dark storm-lit battlefield, ornate crimson-and-bronze lorica armor and a plumed centurion helm. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus",
+      "file": "mars__B_recraft.png",
+      "output_url": "https://replicate.delivery/xezq/f80ofFTzajveEJCmt1gijH6q5XnUVGAugcHEZNYjaN2UafbcB/tmp9p_2p2dm.webp"
+    },
+    "C_sdxl": {
+      "model": "stability-ai/sdxl",
+      "prompt": "Mars disciplined Roman god of war, lunging spear-first mid-dash toward the viewer, a trail of crimson battle-energy streaking off the spearhead, legion banners and drifting embers behind, dark storm-lit battlefield, ornate crimson-and-bronze lorica armor and a plumed centurion helm. extreme low-angle heroic shot looking up, over-the-shoulder dynamic framing, the hero towering and lunging into frame. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus",
+      "negative": "static centered portrait, standing still, flat lighting, plain empty background, anime, cel shaded, manga, cartoon, photograph, photorealistic photo, 3d render, blurry, out of focus, deformed hands, extra fingers, extra limbs, mutated, watermark, signature, text, caption, logo, ui, card frame, border, low detail, amateur, jpeg artifacts",
+      "error": "HTTP 404: {\"detail\":\"The requested resource could not be found.\",\"status\":404}\n"
+    },
+    "A_flux_hires": {
+      "model": "philz1337x/clarity-upscaler",
+      "version": "dfad41707589d68ecdccd1dfa600d55a208f9310748e44bfe35b4a6291453d5e",
+      "file": "mars__A_flux__hires.png",
+      "base": "mars__A_flux.png",
+      "output_url": "https://replicate.delivery/yhqm/QbEJewq3iryrX63GV5fM7HXqPIrfZu11dADqZIHpxur9AAOuA/1337-1dba76f0-a0f5-11f1-a952-ea7c37bf6971.png"
+    }
+  },
+  "nyxralla": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Nyxralla, abyssal tide sorceress conjuring a swirling maelstrom of dark water, conjuring surging magic mid-cast, arms sweeping wide as energy spirals around them, low dramatic angle, in sunken ruins deep in an ocean trench, ribbons of water and bioluminescent light, wearing ornate teal-and-pearl armor with glowing cyan abyssal accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "file": "nyxralla__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/8FtxYNG8mW6hCltkGIOo81R7eNmuQla0AnZNe4geweoE3e34C/tmpbe8jzq8o.png",
+      "faction": "Tide",
+      "archetype": "mage",
+      "display": "Nyxralla"
+    },
+    "B_recraft": {
+      "model": "recraft-ai/recraft-v3",
+      "prompt": "Nyxralla abyssal tide sorceress, arms sweeping wide from a low angle as she conjures a spiraling maelstrom of dark water and glowing cyan abyssal energy, ribbons of water and bioluminescent light coiling around her, sunken ruins in a deep ocean trench, ornate teal-and-pearl armor and flowing translucent robes. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus",
+      "file": "nyxralla__B_recraft.png",
+      "output_url": "https://replicate.delivery/xezq/LNJaKTqEcCaUOxsDkaNGnwoE3XK6TO0xTjZYvLmLKRFh7vxF/tmprcrnhcxo.webp"
+    }
+  },
+  "achilles": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Achilles, legendary armored Greek hero of Troy with a plumed helm, round hoplite shield and spear, charging mid-leap into battle with weapon raised, dynamic diagonal motion, low heroic angle, amid shattered white marble columns and golden divine light under storm clouds, wearing ornate gold-and-white marble armor with blue-white lightning accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Greek",
+      "archetype": "bruiser",
+      "display": "Achilles",
+      "file": "achilles__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/9k81VlfN2CWZDSt4gK7kmFK29BmpL5XLWM54eHY6vTdzwfNuA/tmppxo7bg2p.png"
+    }
+  },
+  "artemis": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Artemis, lithe Greek goddess of the hunt drawing a glowing crescent silver bow, loosing a glowing shot mid-motion with weapon drawn, agile dynamic stance, low angle, amid shattered white marble columns and golden divine light under storm clouds, wearing ornate gold-and-white marble armor with blue-white lightning accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Greek",
+      "archetype": "marksman",
+      "display": "Artemis",
+      "file": "artemis__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/N5e6Xf6RJggehphMfjvWgGW8s7R1kyLAtHbK8gZ3pheSIevxF/tmpsqaly7hi.png"
+    }
+  },
+  "athena": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Athena, Greek goddess of wisdom in a gilded aegis with owl motifs, spear and shield, raising a radiant protective aura with cape and robes billowing, dramatic uplit angle, amid shattered white marble columns and golden divine light under storm clouds, wearing ornate gold-and-white marble armor with blue-white lightning accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Greek",
+      "archetype": "support",
+      "display": "Athena",
+      "file": "athena__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/KkEkIWI058pzFRns5SSftw7T30fsfdX4LJzG6LriPb9mifbcB/tmpamjyreco.png"
+    }
+  },
+  "bastet-claws-of-the-hunt": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Bastet, sleek cat-headed Egyptian huntress with dual clawed gauntlets, lunging from the shadows mid-strike as blades flash, explosive dynamic motion, inside a torchlit desert tomb glowing with turquoise hieroglyphs and drifting sand, wearing ornate gold-and-obsidian regalia with turquoise soul-light accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Egyptian",
+      "archetype": "assassin",
+      "display": "Bastet",
+      "file": "bastet-claws-of-the-hunt__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/eCAVSeykkYlemoXKFvYuUCp9g0kEtRzgWGVYrj8BqiCeGf34C/tmp2opqmo5c.png"
+    }
+  },
+  "bellona": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Bellona, Roman weapon-master goddess with a whip-blade and battle shield, charging mid-leap into battle with weapon raised, dynamic diagonal motion, low heroic angle, on a dark war-torn battlefield with legion banners and drifting embers, wearing ornate crimson-and-bronze lorica armor with red-gold accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Roman",
+      "archetype": "bruiser",
+      "display": "Bellona",
+      "file": "bellona__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/is0zeZiNtQ0nWKu4OvWK4jXoEWoQicTFS2jifOZraHvfjfbcB/tmpp_3wbme4.png"
+    }
+  },
+  "brackmoor": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Brackmoor, hulking barnacle-crusted tide leviathan-knight with a massive shell shield, charging mid-leap into battle with weapon raised, dynamic diagonal motion, low heroic angle, in sunken ruins deep in an ocean trench, ribbons of water and bioluminescent light, wearing ornate teal-and-pearl armor with glowing cyan abyssal accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Tide",
+      "archetype": "bruiser",
+      "display": "Brackmoor",
+      "file": "brackmoor__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/getx1pFYbhxWOyZGBt4M3E9Z8M58wAFQrfftbNIeaEt6If34C/tmp70wuvgou.png"
+    }
+  },
+  "cyranth": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Cyranth, sharp-eyed tide marksman wielding a coral longbow of glowing water, loosing a glowing shot mid-motion with weapon drawn, agile dynamic stance, low angle, in sunken ruins deep in an ocean trench, ribbons of water and bioluminescent light, wearing ornate teal-and-pearl armor with glowing cyan abyssal accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Tide",
+      "archetype": "marksman",
+      "display": "Cyranth",
+      "file": "cyranth__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/22eUixYJxmW3b66OszvcxnmOqSADRKFyGZfxctByLHEfkfbcB/tmpb1buuzxj.png"
+    }
+  },
+  "dregmaw": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Dregmaw, monstrous hulking Duskbulwark of jagged shadow plate, a void-tank, bracing low and slamming into the ground sending out a shockwave, towering low-angle hero shot, in a starless void of purple eldritch energy, shadow tendrils and floating shards, wearing dark voidmetal armor with violet-magenta accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Umbral",
+      "archetype": "tank",
+      "display": "Dregmaw",
+      "file": "dregmaw__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/3UE2q5hFDDr5G1NP02dLLKZ6Tk22prjfNewJevbCPdLdlfbcB/tmp1mboqe5m.png"
+    }
+  },
+  "freyja": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Freyja, Norse enchantress goddess in a falcon-feather cloak weaving rune magic, conjuring surging magic mid-cast, arms sweeping wide as energy spirals around them, low dramatic angle, on a frozen fjord cliff beneath swirling aurora, driving snow and frost shards, wearing frost-steel and fur armor with icy-blue rune accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Norse",
+      "archetype": "mage",
+      "display": "Freyja",
+      "file": "freyja__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/ihR2iEKP2KJUIVuuAv29Apf0hhjm8ilgp5tWFfjiXpnIzfNuA/tmpksatb634.png"
+    }
+  },
+  "gorehoof": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Gorehoof, brutish antlered Verdant beast-man swinging a mossy warclub, diving, charging mid-leap into battle with weapon raised, dynamic diagonal motion, low heroic angle, in a bioluminescent overgrown forest, drifting petals, spores and glowing green motes, wearing living bark-and-leaf armor with emerald-green accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Verdant",
+      "archetype": "bruiser",
+      "display": "Gorehoof",
+      "file": "gorehoof__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/58ctjAJqfYx2fkMeeXgu3uG91nOBki0BHwhNBkARLRsiNf34C/tmpamcul0rc.png"
+    }
+  },
+  "hades": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Hades, grim Greek lord of the underworld wreathed in dark blue soul-fire, black armor, bracing low and slamming into the ground sending out a shockwave, towering low-angle hero shot, amid shattered white marble columns and golden divine light under storm clouds, wearing ornate gold-and-white marble armor with blue-white lightning accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Greek",
+      "archetype": "tank",
+      "display": "Hades",
+      "file": "hades__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/LPmJfiV5513bIqRXyFWrFje3pffkTZAuOucOwqXfaeoo88vxF/tmpv1r7uccf.png"
+    }
+  },
+  "horus-skyfall-talon": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Horus, falcon-headed Egyptian sky-warrior with golden winged blades, diving down, charging mid-leap into battle with weapon raised, dynamic diagonal motion, low heroic angle, inside a torchlit desert tomb glowing with turquoise hieroglyphs and drifting sand, wearing ornate gold-and-obsidian regalia with turquoise soul-light accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Egyptian",
+      "archetype": "bruiser",
+      "display": "Horus",
+      "file": "horus-skyfall-talon__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/FVUFzTRn4eSvB6dMDtk8fsZcH5PTXlN0wvRzBixt7zKA0fNuA/tmpyrdbqok2.png"
+    }
+  },
+  "isis-mother-of-magic": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Isis, radiant winged Egyptian goddess with outstretched feathered wings and gold regalia, conjuring surging magic mid-cast, arms sweeping wide as energy spirals around them, low dramatic angle, inside a torchlit desert tomb glowing with turquoise hieroglyphs and drifting sand, wearing ornate gold-and-obsidian regalia with turquoise soul-light accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Egyptian",
+      "archetype": "mage",
+      "display": "Isis",
+      "file": "isis-mother-of-magic__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/KKOalMUrvvqlBBi74yPtfMgaBeibrGdukHzmenTnqmqgofbcB/tmpf32xhfc3.png"
+    }
+  },
+  "janus": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Janus, two-faced Roman portal god with a double-faced helm summoning glowing gates, conjuring surging magic mid-cast, arms sweeping wide as energy spirals around them, low dramatic angle, on a dark war-torn battlefield with legion banners and drifting embers, wearing ornate crimson-and-bronze lorica armor with red-gold accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Roman",
+      "archetype": "mage",
+      "display": "Janus",
+      "file": "janus__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/eZYBlIlpLLRevUSClDSAdiLcLFe2Kvf4WkK7nu6lRqHBSf34C/tmp9a24uovl.png"
+    }
+  },
+  "kaeza": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Kaeza, ember markswoman the Emberlock aiming a molten flintlock rifle of fire, loosing a glowing shot mid-motion with weapon drawn, agile dynamic stance, low angle, across a dark volcanic ashland at night, molten fissures, fire and swirling cinders, wearing scorched blackened-iron armor veined with lava and orange-red fire accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Ember",
+      "archetype": "marksman",
+      "display": "Kaeza",
+      "file": "kaeza__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/eYLZswbv1sReVEkkA7uwE0HjqRJaDx4bqPD6K4KRBeTjpfbcB/tmpl_0fpm_7.png"
+    }
+  },
+  "korrathil": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Korrathil, monstrous many-fanged Voidgorger with dark tendrils and a gaping maw, diving, charging mid-leap into battle with weapon raised, dynamic diagonal motion, low heroic angle, in a starless void of purple eldritch energy, shadow tendrils and floating shards, wearing dark voidmetal armor with violet-magenta accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Umbral",
+      "archetype": "bruiser",
+      "display": "Korrathil",
+      "file": "korrathil__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/AYHbVkyxvKogHpI8hJ64hYbwE4hJ8ElfuFZo4BYKJSEg6fGXA/tmpn58ltqog.png"
+    }
+  },
+  "loki": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Loki, grinning Norse trickster assassin with twin daggers and shimmering illusions, lunging from the shadows mid-strike as blades flash, explosive dynamic motion, on a frozen fjord cliff beneath swirling aurora, driving snow and frost shards, wearing frost-steel and fur armor with icy-blue rune accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Norse",
+      "archetype": "assassin",
+      "display": "Loki",
+      "file": "loki__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/at7F163vEJ7kB5NgUrqGptIjsxEeZfhjtysol6C6UnfjqfbcB/tmp_qxjauvi.png"
+    }
+  },
+  "lumisel": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Lumisel, graceful tide enchanter in luminous jellyfish-light robes, raising a radiant protective aura with cape and robes billowing, dramatic uplit angle, in sunken ruins deep in an ocean trench, ribbons of water and bioluminescent light, wearing ornate teal-and-pearl armor with glowing cyan abyssal accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Tide",
+      "archetype": "support",
+      "display": "Lumisel",
+      "file": "lumisel__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/MhaXEaBqRf3XHaSvLjvliDLi1xanvUrhqmoKLnUdRZp16fGXA/tmpclx2wf0r.png"
+    }
+  },
+  "medusa": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Medusa, serpent-haired gorgon markswoman with a petrifying glowing bow and a coiled snake tail, loosing a glowing shot mid-motion with weapon drawn, agile dynamic stance, low angle, amid shattered white marble columns and golden divine light under storm clouds, wearing ornate gold-and-white marble armor with blue-white lightning accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Greek",
+      "archetype": "marksman",
+      "display": "Medusa",
+      "file": "medusa__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/ZiClKGFvCAohFxU4mLhMdDdCrBPcwE743rl62zsz8YCf6fGXA/tmpti3c9s8e.png"
+    }
+  },
+  "mercury": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Mercury, swift winged-sandaled Roman messenger assassin trailing a blur of speed, lunging from the shadows mid-strike as blades flash, explosive dynamic motion, on a dark war-torn battlefield with legion banners and drifting embers, wearing ornate crimson-and-bronze lorica armor with red-gold accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Roman",
+      "archetype": "assassin",
+      "display": "Mercury",
+      "file": "mercury__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/1uufV8gpNZVeYkKn6UlRjbL0W91VrgJOsePIJoNnp0zusfbcB/tmpcvycl9ig.png"
+    }
+  },
+  "mosscloak": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Mosscloak, hulking Verdant treant tank cloaked in moss and bark with heavy stone fists, charging mid-leap into battle with weapon raised, dynamic diagonal motion, low heroic angle, in a bioluminescent overgrown forest, drifting petals, spores and glowing green motes, wearing living bark-and-leaf armor with emerald-green accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Verdant",
+      "archetype": "bruiser",
+      "display": "Mosscloak",
+      "file": "mosscloak__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/x4eCgdWxsPVOK6hLNKmOKDRGzxGf0g0vrfv2EQZkHyzRtfbcB/tmpri8r555y.png"
+    }
+  },
+  "neptune": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Neptune, regal Roman sea-god raising a glowing trident amid surging tidal water, conjuring surging magic mid-cast, arms sweeping wide as energy spirals around them, low dramatic angle, on a dark war-torn battlefield with legion banners and drifting embers, wearing ornate crimson-and-bronze lorica armor with red-gold accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Roman",
+      "archetype": "mage",
+      "display": "Neptune",
+      "file": "neptune__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/eU9WVrwGqesaZEhFUJEeAqbNbevGz6eWL3styjXpG2cJ3evxF/tmp20r083b5.png"
+    }
+  },
+  "nerreth": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Nerreth, shadowy ember Ashstalker assassin wielding blades of black fire, charging mid-leap into battle with weapon raised, dynamic diagonal motion, low heroic angle, across a dark volcanic ashland at night, molten fissures, fire and swirling cinders, wearing scorched blackened-iron armor veined with lava and orange-red fire accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Ember",
+      "archetype": "bruiser",
+      "display": "Nerreth",
+      "file": "nerreth__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/IALum6Dql2rdAlqXnReHqxXgV5evpWBAh4Yf4ijJpu5TufbcB/tmp1zysof80.png"
+    }
+  },
+  "odin": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Odin, one-eyed Norse allfather flanked by ravens, hurling the rune-crackling spear Gungnir, conjuring surging magic mid-cast, arms sweeping wide as energy spirals around them, low dramatic angle, on a frozen fjord cliff beneath swirling aurora, driving snow and frost shards, wearing frost-steel and fur armor with icy-blue rune accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Norse",
+      "archetype": "mage",
+      "display": "Odin",
+      "file": "odin__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/NBwRODwZ7WorExo2d7uIfPRfUU8jifjEEDZaLqspf54MeevxF/tmp5oq5qizf.png"
+    }
+  },
+  "petalsong": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Petalsong, delicate Verdant flower-spirit support scattering swirls of glowing petals, raising a radiant protective aura with cape and robes billowing, dramatic uplit angle, in a bioluminescent overgrown forest, drifting petals, spores and glowing green motes, wearing living bark-and-leaf armor with emerald-green accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Verdant",
+      "archetype": "support",
+      "display": "Petalsong",
+      "file": "petalsong__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/OpQctn0xdzpmDNXHs6wrkoMJId6WLuFqGLBAZ3RqPh389vxF/tmpb81e498o.png"
+    }
+  },
+  "pyromancer": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Pyromancer, ember burst-mage hurling a massive fireball, robes trailing flame, conjuring surging magic mid-cast, arms sweeping wide as energy spirals around them, low dramatic angle, across a dark volcanic ashland at night, molten fissures, fire and swirling cinders, wearing scorched blackened-iron armor veined with lava and orange-red fire accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Ember",
+      "archetype": "mage",
+      "display": "Pyromancer",
+      "file": "pyromancer__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/kl8KiOKnhoq8DF9m1y9oK7mKAF69I1F0sAUypsmOCIxAefGXA/tmp_c52r6qp.png"
+    }
+  },
+  "quorvane": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Quorvane, cloaked Umbral Nightglass Hunter aiming a crossbow of dark crystal, loosing a glowing shot mid-motion with weapon drawn, agile dynamic stance, low angle, in a starless void of purple eldritch energy, shadow tendrils and floating shards, wearing dark voidmetal armor with violet-magenta accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Umbral",
+      "archetype": "marksman",
+      "display": "Quorvane",
+      "file": "quorvane__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/MRccNkrpCsLvGBY6sVQ0c8Yxn55lfHhoADUkZRyiKBVJ8fGXA/tmpfh0wlv1j.png"
+    }
+  },
+  "ra-radiant-dawn": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Ra, radiant falcon-crowned Egyptian sun-god blazing with solar fire and a golden disc halo, conjuring surging magic mid-cast, arms sweeping wide as energy spirals around them, low dramatic angle, inside a torchlit desert tomb glowing with turquoise hieroglyphs and drifting sand, wearing ornate gold-and-obsidian regalia with turquoise soul-light accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Egyptian",
+      "archetype": "mage",
+      "display": "Ra",
+      "file": "ra-radiant-dawn__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/7fMIX6YXNlRoR6MjOM47QbSTG6uGfiXxwfmj00RRXbZExfbcB/tmpougm0xbq.png"
+    }
+  },
+  "sentinel": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Sentinel, stoic Umbral automaton sentinel leveling a void-lance with a single glowing eye, loosing a glowing shot mid-motion with weapon drawn, agile dynamic stance, low angle, in a starless void of purple eldritch energy, shadow tendrils and floating shards, wearing dark voidmetal armor with violet-magenta accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Umbral",
+      "archetype": "marksman",
+      "display": "Sentinel",
+      "file": "sentinel__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/7liZzhre9lXVCiBvK7yPhi6v8oxwnSMw7BIK1Nc6VN2Y8fGXA/tmp7jo3jynd.png"
+    }
+  },
+  "set-lord-of-chaos": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Set, sinister beast-headed Egyptian god of chaos swinging a curved khopesh in a dark storm, lunging from the shadows mid-strike as blades flash, explosive dynamic motion, inside a torchlit desert tomb glowing with turquoise hieroglyphs and drifting sand, wearing ornate gold-and-obsidian regalia with turquoise soul-light accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Egyptian",
+      "archetype": "assassin",
+      "display": "Set",
+      "file": "set-lord-of-chaos__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/J5EzORT4ccKwE1zWDOfgOSiEOFRNluoIOaVyXHavcCFg8fGXA/tmp849iozdf.png"
+    }
+  },
+  "sporeveil": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Sporeveil, eerie Verdant fungal mage cloaked in glowing mushrooms and drifting spore clouds, conjuring surging magic mid-cast, arms sweeping wide as energy spirals around them, low dramatic angle, in a bioluminescent overgrown forest, drifting petals, spores and glowing green motes, wearing living bark-and-leaf armor with emerald-green accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Verdant",
+      "archetype": "mage",
+      "display": "Sporeveil",
+      "file": "sporeveil__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/0wJDVL5m73ZvKNje37jdeVd4u52fx9ls3tZgJe7hBXaAlf34C/tmpzj5yyxgr.png"
+    }
+  },
+  "thor": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Thor, mighty Norse storm-god swinging a lightning warhammer beneath thunderclouds, charging mid-leap into battle with weapon raised, dynamic diagonal motion, low heroic angle, on a frozen fjord cliff beneath swirling aurora, driving snow and frost shards, wearing frost-steel and fur armor with icy-blue rune accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Norse",
+      "archetype": "bruiser",
+      "display": "Thor",
+      "file": "thor__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/hiuspwYV6NIWG10iJ7e0fNHExy8mVsTLnr1yK1ekNcuBzfbcB/tmpj_j8x5zd.png"
+    }
+  },
+  "thornquill": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Thornquill, Verdant archer drawing a living thorn-bow that fires glowing seed-arrows, loosing a glowing shot mid-motion with weapon drawn, agile dynamic stance, low angle, in a bioluminescent overgrown forest, drifting petals, spores and glowing green motes, wearing living bark-and-leaf armor with emerald-green accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Verdant",
+      "archetype": "marksman",
+      "display": "Thornquill",
+      "file": "thornquill__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/eKezQc5fAQNlmJpdkpCidvUHzPHlfN83zFJdJ8meDyy4NfvxF/tmpq4nt3_qu.png"
+    }
+  },
+  "toran": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Toran, molten Slagwarden tank, a cracked stone golem body glowing with lava, conjuring surging magic mid-cast, arms sweeping wide as energy spirals around them, low dramatic angle, across a dark volcanic ashland at night, molten fissures, fire and swirling cinders, wearing scorched blackened-iron armor veined with lava and orange-red fire accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Ember",
+      "archetype": "mage",
+      "display": "Toran",
+      "file": "toran__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/nHrq64zie3SWICfnVviG1Fuqam2iKJYQKuABVuJUcIIfzfbcB/tmpv0830pwf.png"
+    }
+  },
+  "tyr": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Tyr, stalwart one-handed Norse war-god raising a great shield and a rune-sword, bracing low and slamming into the ground sending out a shockwave, towering low-angle hero shot, on a frozen fjord cliff beneath swirling aurora, driving snow and frost shards, wearing frost-steel and fur armor with icy-blue rune accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Norse",
+      "archetype": "tank",
+      "display": "Tyr",
+      "file": "tyr__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/Ab2qQtQMTfRjQagfJcrUDiRvCb0sCL61ARgVAyvrgwiP6fNuA/tmp2kxmjw3f.png"
+    }
+  },
+  "ullr": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Ullr, frost-cloaked Norse god of the bow drawing an icy longbow in a winter storm, loosing a glowing shot mid-motion with weapon drawn, agile dynamic stance, low angle, on a frozen fjord cliff beneath swirling aurora, driving snow and frost shards, wearing frost-steel and fur armor with icy-blue rune accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Norse",
+      "archetype": "marksman",
+      "display": "Ullr",
+      "file": "ullr__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/zlHb6jGgOeQrTK2MqNUxLvMv7primnBzB4G5yXeXC62g6fNuA/tmpul6994ol.png"
+    }
+  },
+  "vanguard": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Vanguard, armored Roman vanguard charging behind a tower shield with a short sword, charging mid-leap into battle with weapon raised, dynamic diagonal motion, low heroic angle, on a dark war-torn battlefield with legion banners and drifting embers, wearing ornate crimson-and-bronze lorica armor with red-gold accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Roman",
+      "archetype": "bruiser",
+      "display": "Vanguard",
+      "file": "vanguard__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/INpeblmMBCwddSVsKfP6LuFk2Co1F475zrjA4IZPYpKw6fNuA/tmppyvonb73.png"
+    }
+  },
+  "vashka": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Vashka, feral ember Cindermaw beast-warrior with molten fangs charging through fire, charging mid-leap into battle with weapon raised, dynamic diagonal motion, low heroic angle, across a dark volcanic ashland at night, molten fissures, fire and swirling cinders, wearing scorched blackened-iron armor veined with lava and orange-red fire accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Ember",
+      "archetype": "bruiser",
+      "display": "Vashka",
+      "file": "vashka__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/Cf5QW4YeLbmBN0cuSMiofJ1rNetSEctcg8R2hbINK1y8rf34C/tmp31d9l5eb.png"
+    },
+    "B_recraft": {
+      "model": "recraft-ai/recraft-v3",
+      "file": "vashka__B_recraft.png"
+    }
+  },
+  "veyl": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Veyl, shadowy tide assassin the Veyl wielding curved water-blades wreathed in mist, lunging from the shadows mid-strike as blades flash, explosive dynamic motion, in sunken ruins deep in an ocean trench, ribbons of water and bioluminescent light, wearing ornate teal-and-pearl armor with glowing cyan abyssal accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Tide",
+      "archetype": "assassin",
+      "display": "Veyl",
+      "file": "veyl__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/zsr3V4eEuS1DSC9WvnUiDrKJPvRQiHNMVdhlYB8rKsCo9fGXA/tmpdj2csndc.png"
+    }
+  },
+  "vulcan": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Vulcan, burly Roman forge-god swinging a molten hammer amid sparks and lava, bracing low and slamming into the ground sending out a shockwave, towering low-angle hero shot, on a dark war-torn battlefield with legion banners and drifting embers, wearing ornate crimson-and-bronze lorica armor with red-gold accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Roman",
+      "archetype": "tank",
+      "display": "Vulcan",
+      "file": "vulcan__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/8Uv0rkgUVG52B1kvtjwC6Nww8oF8nHhq1uXVskQRejfh7fNuA/tmpo0kjrv0q.png"
+    }
+  },
+  "xelphine": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Xelphine, mysterious Umbral Eclipse-Seer mage with a floating dark sun and violet runes, conjuring surging magic mid-cast, arms sweeping wide as energy spirals around them, low dramatic angle, in a starless void of purple eldritch energy, shadow tendrils and floating shards, wearing dark voidmetal armor with violet-magenta accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Umbral",
+      "archetype": "mage",
+      "display": "Xelphine",
+      "file": "xelphine__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/jfmAd8rsILxGCCdjJCxdADz4US4WfzsNqXwW6Ad9tWN87fNuA/tmpvhoulh6d.png"
+    }
+  },
+  "ysmera": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Ysmera, ember Pyre-Oracle sorceress wreathed in prophetic flame, conjuring surging magic mid-cast, arms sweeping wide as energy spirals around them, low dramatic angle, across a dark volcanic ashland at night, molten fissures, fire and swirling cinders, wearing scorched blackened-iron armor veined with lava and orange-red fire accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Ember",
+      "archetype": "mage",
+      "display": "Ysmera",
+      "file": "ysmera__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/KsDh1pcU4hYUFZ6e0lH6wpVsiOD9NWAPzgahvK5TrE0GefNuA/tmp_kn8j2oz.png"
+    }
+  },
+  "zeryth": {
+    "A_flux": {
+      "model": "black-forest-labs/flux-1.1-pro",
+      "prompt": "Zeryth, sleek Umbral Fang assassin striking with twin void-daggers and shadow, lunging from the shadows mid-strike as blades flash, explosive dynamic motion, in a starless void of purple eldritch energy, shadow tendrils and floating shards, wearing dark voidmetal armor with violet-magenta accents. League of Legends splash art style, dynamic full-body action pose mid-motion, low dramatic camera angle, cinematic key-art composition, moody dark atmospheric environment, strong rim lighting with a glowing magical accent color, volumetric fog and floating particles, painterly semi-realistic digital illustration, ornate highly detailed fantasy armor and costume, rich cinematic color grade, sense of depth and atmosphere, tells a small story, epic fantasy concept art, artstation trending, highly detailed, sharp focus, no text, no watermark, no border",
+      "faction": "Umbral",
+      "archetype": "assassin",
+      "display": "Zeryth",
+      "file": "zeryth__A_flux.png",
+      "output_url": "https://replicate.delivery/xezq/ndjf9GDA2xxOWKkfGVCdhkfUFaBy5KiJVJo0NpwqUSemyf34C/tmpyh4ekyhu.png"
+    }
+  }
+}

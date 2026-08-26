@@ -1,3 +1,9 @@
 /target
 **/*.rs.bk
 Cargo.lock
+
+# never commit secrets / API tokens (Replicate token is read at runtime only)
+.env
+.env.*
+*.env
+**/.env.local
