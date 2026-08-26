@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Athena",
     archetype: "support",
     faction: "Greek",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 27776,
-            blake3: "f8c47dd7d2fd8343b6af65afcbbe710620d7c892bb0a422b1c7dd117ca6ffd9f",
+            bytes: 2011880,
+            blake3: "681d80dbd66e43d0c8fd12bb33f2d8ec9b80e9e853e44c9a07c11fb4dd0304c2",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 884691,
+            blake3: "",
         ),
     },
 )

@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Veyl",
     archetype: "assassin",
     faction: "Tide",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 16016,
-            blake3: "121debaedcd05a547facff65f4d5c937332a514ee31ab43882741755069a7f66",
+            bytes: 1854096,
+            blake3: "5f9f521ec0caea3043392f6756b17cbe739ac60a51d02dc6bcc7ba359e13ed1e",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 695888,
+            blake3: "",
         ),
     },
 )

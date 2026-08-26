@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Pyromancer",
     archetype: "mage",
     faction: "Ember",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 34680,
-            blake3: "b39486eedce95ad4ae2b0ec23feafa1a7d214b825172aadaaedbc8bf28c3faef",
+            bytes: 2826716,
+            blake3: "f0538273181f59f0dcdc18a3df0ce9384c184392a8ed588a4253a157214b33d3",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 1047896,
+            blake3: "",
         ),
     },
 )
