@@ -5,15 +5,18 @@
 //! that this module adds the collectible economy:
 //! - [`rarity`]    — rarity tiers loaded from `content/cards/rarities.ron`,
 //! - [`card_pool`] — the whole roster as a catalogue + a player [`Collection`],
+//! - [`face`]      — the card-face bridge (a card's finished painterly PNG),
 //! - [`pack`]      — deterministic, seeded pack opening.
 
 pub mod card;
 pub mod card_pool;
+pub mod face;
 pub mod pack;
 pub mod rarity;
 
 pub use card::{elixir_cost, Card, CardMeta, MAX_COST, MIN_COST};
 pub use card_pool::{load_card_by_slug, CardPool, Collection, PoolCard};
+pub use face::{default_face_path, face_exists, face_filename, face_path_in, CARD_FACES_DIR};
 pub use pack::{load_pack, open_pack, parse_pack, PackDef};
 pub use rarity::{default_rarity_table, load_rarity_table, RarityTable, RarityTier};
 

@@ -39,8 +39,8 @@ use tick::{step_once, TICK_HZ};
 /// Resolve run options from CLI args / environment.
 fn resolve_options() -> RunOptions {
     let args: Vec<String> = std::env::args().collect();
-    let headless = args.iter().any(|a| a == "--headless")
-        || std::env::var("AEONRIFT_HEADLESS").is_ok();
+    let headless =
+        args.iter().any(|a| a == "--headless") || std::env::var("AEONRIFT_HEADLESS").is_ok();
     let headless_max_ticks = args
         .iter()
         .position(|a| a == "--ticks")
@@ -68,18 +68,27 @@ pub fn main() {
 /// Build + run the full windowed/touch app.
 fn run_windowed(options: RunOptions) {
     App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Aeonrift: Ascendancy".into(),
-                resolution: (450u32, 820u32).into(),
-                // iOS-only niceties (harmless elsewhere), matching Bevy's mobile example.
-                recognize_rotation_gesture: true,
-                prefers_home_indicator_hidden: true,
-                prefers_status_bar_hidden: true,
-                ..default()
-            }),
-            ..default()
-        }))
+        .add_plugins(
+            DefaultPlugins
+                // Point Bevy's asset root at the repo `assets/` dir so the hand can load
+                // the real finished card faces under `cards/final-v2/`.
+                .set(AssetPlugin {
+                    file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets").to_string(),
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Aeonrift: Ascendancy".into(),
+                        resolution: (450u32, 820u32).into(),
+                        // iOS-only niceties (harmless elsewhere), matching Bevy's mobile example.
+                        recognize_rotation_gesture: true,
+                        prefers_home_indicator_hidden: true,
+                        prefers_status_bar_hidden: true,
+                        ..default()
+                    }),
+                    ..default()
+                }),
+        )
         // Fixed timestep == the core's tick rate: the sim is stepped deterministically,
         // never coupled to the render frame rate.
         .insert_resource(Time::<Fixed>::from_hz(TICK_HZ))
