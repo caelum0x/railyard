@@ -102,11 +102,30 @@ pub async fn settle(
 ) -> Result<SettleOutcome, AbacusError> {
     let (outcome, receipt_outcome, captured, balance_after, seq) = match terminal {
         Terminal::Capture { actual_micros } => {
+            // Clamp the capture to the reserved hold. Mint rejects any capture
+            // that exceeds the held amount with `CaptureExceedsHold`; letting
+            // that error escape here would abort settlement BEFORE the guard is
+            // disarmed, stranding the hold armed and billing the agent NOTHING
+            // for a successful call (revenue leakage — the reaper later releases
+            // it for free). The priced `est_max` is a conservative ceiling, but
+            // the prompt-token estimate (a chars/4 heuristic) and the default
+            // completion ceiling can under-count real usage, so `actual` can
+            // legitimately land above the reserve. Bill up to the reserved
+            // amount — never more (it is physically held), never zero.
+            let capture_micros = actual_micros.min(guard.reserved_micros);
+            if capture_micros < actual_micros {
+                tracing::warn!(
+                    hold_id = %guard.hold_id(),
+                    actual_micros,
+                    reserved_micros = guard.reserved_micros,
+                    "actual cost exceeded the reserved hold; capturing the reserved ceiling (under-reservation — revisit pricing)"
+                );
+            }
             let cap = mint
                 .capture_hold(
                     guard.hold_id(),
                     Capture {
-                        amount_micros: actual_micros,
+                        amount_micros: capture_micros,
                         payee: identity.payee.as_str().to_string(),
                         idem_key: guard.idem_key().to_string(),
                     },
@@ -168,10 +187,109 @@ fn identity_agent_id(identity: &AgentIdentity) -> abacus_core::ids::AgentId {
 mod tests {
     use super::*;
 
+    use abacus_core::ids::{AccountId, Ait1Address, BudgetId, RunId};
+    use abacus_core::identity::{BudgetPolicy, FundingPath};
+    use abacus_core::transport::Hold;
+    use abacus_testkit::fake_mint::Call;
+    use abacus_testkit::{FakeReceiptStore, LedgerFakeMint};
+
     #[test]
     fn dropping_disarmed_guard_is_quiet() {
         let mut g = HoldGuard::new("hold_x", "idem_x", 100);
         g.disarm();
         drop(g);
+    }
+
+    fn identity() -> AgentIdentity {
+        AgentIdentity {
+            agent_acct: AccountId::parse("acct_agent01").unwrap(),
+            run_id: RunId::generate(),
+            treasury: AccountId::parse("acct_treasury01").unwrap(),
+            payee: Ait1Address::parse("ait1qprovider").unwrap(),
+            budget: BudgetPolicy {
+                budget_id: BudgetId::generate(),
+                funding_path: FundingPath::DirectHold,
+                allowance_id: None,
+                per_request_max_micros: Some(5_000_000),
+            },
+        }
+    }
+
+    /// Open a real hold reserving `reserved` µ$ against a seeded treasury, then
+    /// return the guard armed over it (mirrors the handler's arming step).
+    async fn armed_hold(mint: &LedgerFakeMint, reserved: i64) -> HoldGuard {
+        let receipt = mint
+            .create_hold(Hold {
+                account_id: "acct_treasury01".into(),
+                amount_micros: reserved,
+                idem_key: "idem_base".into(),
+            })
+            .await
+            .unwrap();
+        HoldGuard::new(receipt.hold_id, "idem_base", reserved)
+    }
+
+    // The regression: a successful call whose ACTUAL cost exceeds the reserved
+    // hold must still settle. Before the clamp, `capture_hold(actual)` returned
+    // `CaptureExceedsHold`, aborting settlement before disarm — the hold stayed
+    // armed and the agent was billed nothing for a successful call.
+    #[tokio::test]
+    async fn capture_over_reserve_bills_the_ceiling_not_zero() {
+        let mint = LedgerFakeMint::new().with_balance("acct_treasury01", 10_000);
+        let receipts = FakeReceiptStore::new();
+        let id = identity();
+        let mut guard = armed_hold(&mint, 4_000).await;
+
+        // Actual came in ABOVE the reserved 4,000 (under-estimated prompt).
+        let outcome = settle(
+            &mint,
+            &receipts,
+            &id,
+            &mut guard,
+            Terminal::Capture {
+                actual_micros: 6_500,
+            },
+        )
+        .await
+        .expect("settlement must not fail when actual exceeds the reserve");
+
+        // Captured exactly the reserved ceiling — never more, never zero.
+        assert_eq!(outcome, SettleOutcome::Captured(4_000));
+        assert!(!guard.armed, "guard disarmed after a clamped capture");
+        assert_eq!(receipts.len(), 1, "a receipt records the settled charge");
+
+        // Mint saw a capture for the clamped amount (not the over-estimate).
+        assert!(matches!(
+            mint.calls().last().unwrap(),
+            Call::Capture { amount, .. } if *amount == 4_000
+        ));
+        // Payer keeps only the un-reserved remainder (10,000 - 4,000 captured).
+        assert_eq!(mint.balance("acct_treasury01"), 6_000);
+    }
+
+    // A capture at or below the reserve is unaffected: the exact actual settles
+    // and the unused remainder returns to the payer.
+    #[tokio::test]
+    async fn capture_under_reserve_settles_exact_actual() {
+        let mint = LedgerFakeMint::new().with_balance("acct_treasury01", 10_000);
+        let receipts = FakeReceiptStore::new();
+        let id = identity();
+        let mut guard = armed_hold(&mint, 4_000).await;
+
+        let outcome = settle(
+            &mint,
+            &receipts,
+            &id,
+            &mut guard,
+            Terminal::Capture {
+                actual_micros: 2_500,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome, SettleOutcome::Captured(2_500));
+        // Remainder (4,000 - 2,500) refunded: 6,000 + 1,500 back = 7,500.
+        assert_eq!(mint.balance("acct_treasury01"), 7_500);
     }
 }
