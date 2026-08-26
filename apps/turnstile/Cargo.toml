@@ -48,3 +48,15 @@ rand = "0.8"
 # --- Production HTTP client (used via aitp-client's ReqwestTransport) ---------
 # Pinned to the same major aitp-client resolves so the graph shares one reqwest.
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+
+# --- Durable nonce store (turnstile-core `postgres` feature) ------------------
+# RUNTIME query API ONLY (sqlx::query / query_as with .bind) — never the
+# compile-time query! macros — so turnstile-core builds with NO live DATABASE_URL.
+# Optional + off by default: the in-memory store keeps the base build sqlx-free.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "macros",
+    "migrate",
+] }

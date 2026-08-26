@@ -30,6 +30,11 @@ pub enum TurnstileError {
     #[error("nonce expired")]
     NonceExpired,
 
+    /// The durable nonce store backend (e.g. Postgres) failed. Distinct from a
+    /// payment rejection: this is infrastructure, not a bad authorization.
+    #[error("nonce store error: {0}")]
+    Storage(String),
+
     /// A required configuration value was missing or malformed at startup.
     #[error("configuration error: {0}")]
     Config(String),

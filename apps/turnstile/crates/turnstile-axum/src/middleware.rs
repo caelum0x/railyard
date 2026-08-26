@@ -33,10 +33,12 @@ pub async fn admit(State(gate): State<Arc<Turnstile>>, mut req: Request, next: N
 
     match gate.admit(authorization.as_deref(), &resource).await {
         Admit::Challenge(challenge) => response::challenge(&challenge),
-        Admit::Rejected(error) => {
-            let fresh = gate.challenge(&resource);
-            response::rejected(&error, &fresh)
-        }
+        Admit::Rejected(error) => match gate.challenge(&resource).await {
+            Ok(fresh) => response::rejected(&error, &fresh),
+            // The nonce store is unavailable, so we cannot mint a fresh challenge.
+            // Still fail closed with a `402` carrying the reason.
+            Err(_) => response::unavailable(&error),
+        },
         Admit::Admitted(settled) => {
             let reported = Arc::new(Mutex::new(None));
             req.extensions_mut()

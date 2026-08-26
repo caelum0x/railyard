@@ -8,6 +8,7 @@ use rand::RngCore;
 
 use crate::clock::now_ms;
 use crate::config::TurnstileConfig;
+use crate::error::TurnstileError;
 use crate::nonce::NonceStore;
 
 /// Builds `402` challenges from config and registers each nonce for later
@@ -40,14 +41,16 @@ impl ChallengeIssuer {
     ///
     /// The scheme is always `aitp-hold` — Turnstile reserves up to the quoted
     /// price and captures the ACTUAL usage after the handler runs (success-only).
-    #[must_use]
-    pub fn issue(&self, resource: &str) -> PaymentChallenge {
+    ///
+    /// Fallible because a durable [`NonceStore`] does I/O to persist the nonce;
+    /// the in-memory store never errors.
+    pub async fn issue(&self, resource: &str) -> Result<PaymentChallenge, TurnstileError> {
         let now = now_ms();
         let expiry = now + self.config.challenge_ttl_ms;
         let nonce = generate_nonce();
-        self.nonces.register(&nonce, expiry);
+        self.nonces.register(&nonce, expiry).await?;
 
-        PaymentChallenge {
+        Ok(PaymentChallenge {
             payee: self.config.payee.clone(),
             amount_micros: self.config.price_micros,
             currency: self.config.currency.clone(),
@@ -55,7 +58,7 @@ impl ChallengeIssuer {
             nonce,
             expiry,
             scheme: Scheme::Hold,
-        }
+        })
     }
 }
 
@@ -86,17 +89,17 @@ mod tests {
         }
     }
 
-    #[test]
-    fn issues_hold_challenge_and_registers_nonce() {
+    #[tokio::test]
+    async fn issues_hold_challenge_and_registers_nonce() {
         let nonces = Arc::new(InMemoryNonceStore::new());
         let issuer = ChallengeIssuer::new(config(), nonces.clone());
-        let ch = issuer.issue("POST /v1/echo");
+        let ch = issuer.issue("POST /v1/echo").await.unwrap();
 
         assert_eq!(ch.scheme, Scheme::Hold);
         assert_eq!(ch.payee, "ait1qpayee");
         assert_eq!(ch.amount_micros, AmountMicros(1_000));
         assert_eq!(ch.nonce.len(), 32);
         // Nonce is live and single-use.
-        assert!(nonces.consume(&ch.nonce, now_ms()).is_ok());
+        assert!(nonces.consume(&ch.nonce, now_ms()).await.is_ok());
     }
 }

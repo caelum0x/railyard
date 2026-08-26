@@ -167,7 +167,7 @@ async fn valid_authorization_admits_captures_and_attaches_receipt() {
     );
 
     // Issue a real challenge (registers the nonce) as the 402 would.
-    let challenge = gate.challenge(RESOURCE);
+    let challenge = gate.challenge(RESOURCE).await.unwrap();
     let header = encode_authorization(&authorization_for(&challenge)).unwrap();
 
     let resp = app
@@ -214,7 +214,7 @@ async fn handler_error_releases_hold_without_capture() {
         post(failing_handler).route_layer(from_fn_with_state(gate.clone(), admit)),
     );
 
-    let challenge = gate.challenge(RESOURCE);
+    let challenge = gate.challenge(RESOURCE).await.unwrap();
     let header = encode_authorization(&authorization_for(&challenge)).unwrap();
 
     let resp = app
@@ -252,7 +252,7 @@ async fn replayed_authorization_is_rejected_with_402() {
         post(ok_handler).route_layer(from_fn_with_state(gate.clone(), admit)),
     );
 
-    let challenge = gate.challenge(RESOURCE);
+    let challenge = gate.challenge(RESOURCE).await.unwrap();
     let header = encode_authorization(&authorization_for(&challenge)).unwrap();
 
     let make = || {
@@ -272,5 +272,5 @@ async fn replayed_authorization_is_rejected_with_402() {
     assert_eq!(second.status(), StatusCode::PAYMENT_REQUIRED);
 
     // The nonce store swept the consumed nonce (it is gone, not merely flagged).
-    assert!(nonces.consume(&challenge.nonce, 0).is_err());
+    assert!(nonces.consume(&challenge.nonce, 0).await.is_err());
 }

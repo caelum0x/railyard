@@ -5,27 +5,43 @@
 //! request bearing the same nonce is rejected as a replay even if the signature
 //! and mint would otherwise accept it. Expired nonces are swept eagerly on
 //! consume and can be bulk-cleared via [`sweep`](NonceStore::sweep).
+//!
+//! The store is a persistence port so a single Turnstile process (the default
+//! [`InMemoryNonceStore`]) and a horizontally-scaled fleet (the durable Postgres
+//! [`PostgresNonceStore`](crate::pg::PostgresNonceStore), behind the `postgres`
+//! feature) both drop in behind the same async trait. The trait is async because
+//! a shared, durable backend does network I/O on every operation.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+
+use async_trait::async_trait;
 
 use crate::error::TurnstileError;
 
 /// A store of live, single-use nonces keyed to their expiry (unix ms).
 ///
 /// Implementors must be safe to share across request handlers. The default
-/// [`InMemoryNonceStore`] fits a single Turnstile process; a Redis-backed store
-/// dropping in behind this trait handles a horizontally-scaled fleet.
+/// [`InMemoryNonceStore`] fits a single Turnstile process; the durable
+/// [`PostgresNonceStore`](crate::pg::PostgresNonceStore) fits a horizontally
+/// scaled fleet sharing one transactional store.
+#[async_trait]
 pub trait NonceStore: Send + Sync {
     /// Record a freshly-issued nonce and the unix-ms time it expires.
-    fn register(&self, nonce: &str, expiry_ms: i64);
+    ///
+    /// Idempotent by `nonce`: re-registering the same nonce refreshes its expiry.
+    async fn register(&self, nonce: &str, expiry_ms: i64) -> Result<(), TurnstileError>;
 
     /// Consume a nonce exactly once. `Ok(())` only if it was registered, unused,
     /// and not yet expired; otherwise a replay/expiry [`TurnstileError`].
-    fn consume(&self, nonce: &str, now_ms: i64) -> Result<(), TurnstileError>;
+    ///
+    /// The consume must be atomic: under concurrent requests bearing the same
+    /// nonce, at most one may observe `Ok(())`.
+    async fn consume(&self, nonce: &str, now_ms: i64) -> Result<(), TurnstileError>;
 
-    /// Drop every nonce whose expiry is `< now_ms`.
-    fn sweep(&self, now_ms: i64);
+    /// Drop every nonce whose expiry is `< now_ms`. Returns the number removed so
+    /// a reaper can report/observe its progress.
+    async fn sweep(&self, now_ms: i64) -> Result<u64, TurnstileError>;
 }
 
 /// Process-local [`NonceStore`] backed by a mutex-guarded map. Suitable for a
@@ -54,15 +70,17 @@ impl InMemoryNonceStore {
     }
 }
 
+#[async_trait]
 impl NonceStore for InMemoryNonceStore {
-    fn register(&self, nonce: &str, expiry_ms: i64) {
+    async fn register(&self, nonce: &str, expiry_ms: i64) -> Result<(), TurnstileError> {
         self.inner
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(nonce.to_string(), expiry_ms);
+        Ok(())
     }
 
-    fn consume(&self, nonce: &str, now_ms: i64) -> Result<(), TurnstileError> {
+    async fn consume(&self, nonce: &str, now_ms: i64) -> Result<(), TurnstileError> {
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         match guard.remove(nonce) {
             None => Err(TurnstileError::NonceReplayed(nonce.to_string())),
@@ -71,11 +89,11 @@ impl NonceStore for InMemoryNonceStore {
         }
     }
 
-    fn sweep(&self, now_ms: i64) {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|_, expiry| *expiry >= now_ms);
+    async fn sweep(&self, now_ms: i64) -> Result<u64, TurnstileError> {
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let before = guard.len();
+        guard.retain(|_, expiry| *expiry >= now_ms);
+        Ok((before - guard.len()) as u64)
     }
 }
 
@@ -83,28 +101,28 @@ impl NonceStore for InMemoryNonceStore {
 mod tests {
     use super::*;
 
-    #[test]
-    fn consumes_a_live_nonce_exactly_once() {
+    #[tokio::test]
+    async fn consumes_a_live_nonce_exactly_once() {
         let store = InMemoryNonceStore::new();
-        store.register("abc", 1_000);
-        assert!(store.consume("abc", 500).is_ok());
+        store.register("abc", 1_000).await.unwrap();
+        assert!(store.consume("abc", 500).await.is_ok());
         // Second use is a replay.
         assert!(matches!(
-            store.consume("abc", 500),
+            store.consume("abc", 500).await,
             Err(TurnstileError::NonceReplayed(_))
         ));
     }
 
-    #[test]
-    fn rejects_expired_nonce_and_sweeps() {
+    #[tokio::test]
+    async fn rejects_expired_nonce_and_sweeps() {
         let store = InMemoryNonceStore::new();
-        store.register("old", 100);
+        store.register("old", 100).await.unwrap();
         assert!(matches!(
-            store.consume("old", 200),
+            store.consume("old", 200).await,
             Err(TurnstileError::NonceExpired)
         ));
-        store.register("gone", 100);
-        store.sweep(200);
+        store.register("gone", 100).await.unwrap();
+        assert_eq!(store.sweep(200).await.unwrap(), 1);
         assert!(store.is_empty());
     }
 }

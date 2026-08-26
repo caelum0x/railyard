@@ -24,6 +24,8 @@ pub mod config;
 pub mod error;
 pub mod guard;
 pub mod nonce;
+#[cfg(feature = "postgres")]
+pub mod pg;
 pub mod settle;
 pub mod verifier;
 
@@ -40,5 +42,7 @@ pub use config::TurnstileConfig;
 pub use error::TurnstileError;
 pub use guard::{Admit, Turnstile};
 pub use nonce::{InMemoryNonceStore, NonceStore};
+#[cfg(feature = "postgres")]
+pub use pg::{spawn_reaper, PostgresNonceStore};
 pub use settle::Settled;
 pub use verifier::{FakeVerifier, MintVerifier, PaymentVerifier, VerifiedHold};

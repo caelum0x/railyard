@@ -54,9 +54,11 @@ impl Turnstile {
     }
 
     /// Issue a fresh challenge for `resource` (used for `402` responses).
-    #[must_use]
-    pub fn challenge(&self, resource: &str) -> PaymentChallenge {
-        self.issuer.issue(resource)
+    ///
+    /// Fallible because registering the challenge's single-use nonce may touch a
+    /// durable store; the in-memory store never errors.
+    pub async fn challenge(&self, resource: &str) -> Result<PaymentChallenge, TurnstileError> {
+        self.issuer.issue(resource).await
     }
 
     /// The quoted price per protected call.
@@ -71,7 +73,10 @@ impl Turnstile {
     /// when the caller sent no payment (the common first-request case).
     pub async fn admit(&self, authorization: Option<&str>, resource: &str) -> Admit {
         let Some(header) = authorization else {
-            return Admit::Challenge(self.issuer.issue(resource));
+            return match self.issuer.issue(resource).await {
+                Ok(challenge) => Admit::Challenge(challenge),
+                Err(e) => Admit::Rejected(e),
+            };
         };
 
         let auth = match codec::decode_authorization(header) {
@@ -86,7 +91,7 @@ impl Turnstile {
 
         // Single-use replay guard at the edge, BEFORE the mint round-trip so a
         // replayed nonce is rejected even if it would otherwise verify.
-        if let Err(e) = self.nonces.consume(&auth.nonce, now_ms()) {
+        if let Err(e) = self.nonces.consume(&auth.nonce, now_ms()).await {
             return Admit::Rejected(e);
         }
 
@@ -187,7 +192,7 @@ mod tests {
         let verifier = Arc::new(FakeVerifier::with_hold("hold_1"));
         let gate = gate(verifier.clone());
 
-        let challenge = gate.challenge("POST /v1/echo");
+        let challenge = gate.challenge("POST /v1/echo").await.unwrap();
         let header = encode_authorization(&authorization_for(&challenge)).unwrap();
 
         match gate.admit(Some(&header), "POST /v1/echo").await {
@@ -208,7 +213,7 @@ mod tests {
         let verifier = Arc::new(FakeVerifier::with_hold("hold_1"));
         let gate = gate(verifier);
 
-        let challenge = gate.challenge("POST /v1/echo");
+        let challenge = gate.challenge("POST /v1/echo").await.unwrap();
         let header = encode_authorization(&authorization_for(&challenge)).unwrap();
 
         // First use consumes the nonce.
@@ -226,7 +231,7 @@ mod tests {
     #[tokio::test]
     async fn resource_mismatch_is_rejected() {
         let gate = gate(Arc::new(FakeVerifier::with_hold("hold_1")));
-        let challenge = gate.challenge("POST /v1/echo");
+        let challenge = gate.challenge("POST /v1/echo").await.unwrap();
         let header = encode_authorization(&authorization_for(&challenge)).unwrap();
 
         assert!(matches!(
@@ -240,7 +245,7 @@ mod tests {
         let verifier = Arc::new(FakeVerifier::with_hold("hold_1"));
         let gate = gate(verifier.clone());
 
-        let challenge = gate.challenge("POST /v1/echo");
+        let challenge = gate.challenge("POST /v1/echo").await.unwrap();
         let mut auth = authorization_for(&challenge);
         auth.expiry = now_ms() - 1; // already expired
         let header = encode_authorization(&auth).unwrap();

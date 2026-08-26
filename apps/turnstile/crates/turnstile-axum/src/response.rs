@@ -45,6 +45,22 @@ pub fn rejected(error: &TurnstileError, fresh: &PaymentChallenge) -> Response {
     resp
 }
 
+/// A `402` when we could not even mint a fresh challenge (e.g. the durable nonce
+/// store is unavailable). Fails closed: surfaces the reason in `AITP-Error` and
+/// carries no `AITP-Challenge`, so the client cannot proceed without payment.
+pub fn unavailable(error: &TurnstileError) -> Response {
+    let mut resp = (StatusCode::PAYMENT_REQUIRED, "payment required\n").into_response();
+    let headers = resp.headers_mut();
+    if let Ok(value) = HeaderValue::from_str(&error.to_string()) {
+        headers.insert(header_name(H_ERROR), value);
+    }
+    headers.insert(
+        header_name(H_VERSION),
+        HeaderValue::from_static(AITP_VERSION),
+    );
+    resp
+}
+
 /// Attach an `AITP-Receipt` (when a capture produced one) and the protocol
 /// version to a successful handler response.
 pub fn attach_receipt(mut resp: Response, receipt: Option<Receipt>) -> Response {
