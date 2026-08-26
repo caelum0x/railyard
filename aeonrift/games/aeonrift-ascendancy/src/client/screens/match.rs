@@ -8,20 +8,25 @@
 
 use bevy::prelude::*;
 
-use super::super::{hud, input, render, tick};
+use super::super::{hud, input, render, tick, vfx};
 
 /// Plugin that wires the live-match systems (render + hud + input + fixed-step tick).
 pub struct MatchScreenPlugin;
 
 impl Plugin for MatchScreenPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, hud::setup)
+        app.init_resource::<vfx::CastTracker>()
+            .add_systems(Startup, hud::setup)
             .add_systems(FixedUpdate, tick::advance_match)
             .add_systems(
                 Update,
                 (
                     input::handle_input,
-                    render::draw_battle,
+                    render::sync_unit_sprites,
+                    render::draw_field,
+                    render::draw_unit_overlays,
+                    vfx::spawn_cast_vfx,
+                    vfx::animate_vfx,
                     hud::update_hand,
                     hud::update_elixir,
                     hud::update_bases,

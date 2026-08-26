@@ -6,9 +6,12 @@
 //! match is advanced only through `crate::step_tick` / `crate::try_deploy` (see the
 //! `tick` and `input` modules).
 
+use std::collections::HashMap;
+
 use bevy::prelude::*;
 
 use crate::{Card, MatchConfig, MatchState};
+use sim::EntityId;
 
 /// The player controlled by the human on this device. Player 1 is the bot.
 pub const HUMAN: u8 = 0;
@@ -69,6 +72,41 @@ pub fn champion_tint(name: &str) -> Color {
     Color::hsl(hue, 0.85, 0.6)
 }
 
+/// A faction/ability-identity hue (0..360) derived deterministically from a champion
+/// slug. The shared roster carries no faction field yet, so — exactly like
+/// [`champion_tint`] — identity is hashed from the slug. This drives the board unit's
+/// frame accent AND the color of its ability-cast VFX, so a champion reads the same in
+/// both places (the "same card, same colour" seam).
+pub fn faction_hue(slug: &str) -> f32 {
+    let mut h: u32 = 2166136261;
+    for b in slug.bytes() {
+        h ^= b as u32;
+        h = h.wrapping_mul(16777619);
+    }
+    (h % 360) as f32
+}
+
+/// The saturated identity color for a slug (used for the unit frame + as the VFX base).
+pub fn faction_color(slug: &str) -> Color {
+    Color::hsl(faction_hue(slug), 0.9, 0.58)
+}
+
+/// The frame accent around a board unit: the team side blended toward the champion's
+/// faction color, so team (azure/crimson) and identity (hue) both read at a glance.
+pub fn unit_frame_color(team: u8, slug: &str) -> Color {
+    blend(team_color(team), faction_color(slug), 0.45)
+}
+
+/// The high-dynamic-range core color of a cast burst: the faction color pushed past
+/// 1.0 in linear space so the camera's bloom makes it glow. `team` nudges the tone so
+/// friendly casts lean azure and enemy casts lean crimson without losing identity.
+pub fn vfx_color(team: u8, slug: &str) -> Color {
+    let base = blend(faction_color(slug), team_color(team), 0.25).to_linear();
+    // Over-drive the brightest channels so HDR + bloom produce a readable glow.
+    const GAIN: f32 = 4.0;
+    Color::linear_rgb(base.red * GAIN, base.green * GAIN, base.blue * GAIN)
+}
+
 /// Blend two colors in linear RGB by `t` (0 => a, 1 => b).
 pub fn blend(a: Color, b: Color, t: f32) -> Color {
     let a = a.to_linear();
@@ -92,6 +130,23 @@ pub fn sim_to_view(p: sim::Vec2) -> Vec2 {
 pub struct Battle {
     pub state: MatchState,
     pub bot_interval: u64,
+    /// Deployed-unit entity id => champion slug, filled at deploy time. This is the
+    /// client VIEW's copy of the recorder's `id => slug` map (see `rules::replay`): it
+    /// lets a board unit render its REAL finished card face (`final-v2/<slug>.png`)
+    /// instead of an anonymous disc. The rules core stays slug-free + deterministic.
+    pub unit_slugs: HashMap<EntityId, String>,
+}
+
+impl Battle {
+    /// Remember that the freshly deployed unit `id` was played from `slug`'s card.
+    pub fn record_unit(&mut self, id: EntityId, slug: impl Into<String>) {
+        self.unit_slugs.insert(id, slug.into());
+    }
+
+    /// The champion slug for a live unit id, if known.
+    pub fn slug_of(&self, id: EntityId) -> Option<&str> {
+        self.unit_slugs.get(&id).map(String::as_str)
+    }
 }
 
 /// The human's current card selection (index into their deck), if any.
@@ -161,5 +216,13 @@ pub fn new_battle() -> Battle {
     Battle {
         state: MatchState::new(config, build_deck(), build_deck()),
         bot_interval: BOT_INTERVAL,
+        unit_slugs: HashMap::new(),
     }
+}
+
+/// The champion slug a given player's card index maps to. Both players field
+/// [`build_deck`] (the same three-champion roster), so the slug is the deck slug at
+/// that index — this is the VIEW's link from a deploy to a finished card face.
+pub fn slug_for_card(card_index: usize) -> Option<&'static str> {
+    DECK_SLUGS.get(card_index).copied()
 }
