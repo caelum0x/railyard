@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anubis, Warden of Scales — 3D Finishing Slice</title>
+<style>
+  :root{ --bg:#0b0d13; --panel:#141821; --panel2:#1b2130; --ink:#e8ecf4; --muted:#8b94a7;
+         --gold:#e8b559; --red:#c0392b; --teal:#31c4c8; --line:#28303f; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:radial-gradient(1200px 700px at 50% -10%, #161c2b, var(--bg)); color:var(--ink);
+        font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  header{ padding:38px 24px 10px; text-align:center; }
+  h1{ margin:0 0 6px; font-size:30px; letter-spacing:.4px; }
+  h1 .g{ color:var(--gold); }
+  .sub{ color:var(--muted); max-width:820px; margin:0 auto; }
+  .wrap{ max-width:1200px; margin:0 auto; padding:20px 18px 70px; }
+
+  .pipeline{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:26px 0 10px; }
+  @media(max-width:900px){ .pipeline{ grid-template-columns:repeat(2,1fr);} }
+  .step{ background:var(--panel); border:1px solid var(--line); border-radius:14px; overflow:hidden;
+         display:flex; flex-direction:column; }
+  .step .cap{ padding:10px 12px; border-bottom:1px solid var(--line); }
+  .step .cap b{ display:block; font-size:14px; }
+  .step .cap span{ color:var(--muted); font-size:12px; }
+  .step .imgbox{ aspect-ratio:1/1; background:
+       repeating-conic-gradient(#0f1320 0% 25%, #10151f 0% 50%) 50%/22px 22px; display:flex; }
+  .step img{ width:100%; height:100%; object-fit:contain; display:block; }
+  .arrowrow{ text-align:center; color:var(--muted); letter-spacing:6px; font-size:12px; margin:2px 0 20px; }
+
+  .hero{ display:grid; grid-template-columns:1.15fr 1fr; gap:18px; margin-top:14px; }
+  @media(max-width:900px){ .hero{ grid-template-columns:1fr; } }
+  .card{ background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:16px; }
+  .card h3{ margin:0 0 4px; font-size:16px; }
+  .card .tag{ font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); }
+  .stage{ position:relative; aspect-ratio:1/1; border-radius:12px; margin-top:12px; overflow:hidden;
+          background:#05070c; }
+  .stage img{ position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
+  .pill{ display:inline-flex; gap:6px; align-items:center; background:var(--panel2); border:1px solid var(--line);
+         padding:6px 10px; border-radius:999px; font-size:12px; color:var(--muted); }
+  .controls{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; align-items:center; }
+  button{ background:var(--panel2); color:var(--ink); border:1px solid var(--line); border-radius:9px;
+          padding:8px 14px; font-size:13px; cursor:pointer; }
+  button.on{ border-color:var(--gold); color:var(--gold); }
+  .badge{ font-size:11px; padding:3px 8px; border-radius:6px; }
+  .badge.real{ background:rgba(49,196,200,.14); color:var(--teal); border:1px solid rgba(49,196,200,.4); }
+  .badge.proxy{ background:rgba(232,181,89,.12); color:var(--gold); border:1px solid rgba(232,181,89,.4); }
+
+  table{ width:100%; border-collapse:collapse; margin-top:8px; font-size:13px; }
+  td,th{ text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); }
+  th{ color:var(--muted); font-weight:600; }
+  td.n{ color:var(--gold); font-variant-numeric:tabular-nums; }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:22px; }
+  @media(max-width:760px){ .grid2{ grid-template-columns:1fr; } }
+  .note{ color:var(--muted); font-size:13px; }
+  .honest{ background:linear-gradient(180deg,#171b26,#12151d); border:1px solid var(--line);
+           border-radius:16px; padding:18px 20px; margin-top:26px; }
+  .honest h3{ margin:0 0 8px; }
+  .honest li{ margin:4px 0; }
+  .ok{ color:#5fce7f; } .warn{ color:#e6a23c; } .bad{ color:#e06c5f; }
+  code{ background:#0d1017; border:1px solid var(--line); padding:1px 6px; border-radius:6px; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="g">Anubis</span>, Warden of Scales — 3D Finishing Slice</h1>
+  <p class="sub">One champion taken end-to-end through the game-ready pipeline:
+     TRELLIS static mesh → retopo → humanoid auto-rig → idle+walk → cel/toon shader, and rendered
+     <b>fully headless</b> in the Bevy engine (Metal, no window) plus a Blender-EEVEE cross-check.
+     A vertical-slice proof before batching all 47.</p>
+</header>
+
+<div class="wrap">
+
+  <!-- PIPELINE STRIP -->
+  <div class="pipeline">
+    <div class="step">
+      <div class="cap"><b>1 · TRELLIS input</b><span>textured static mesh · 13,966 tris</span></div>
+      <div class="imgbox"><img src="frames/01_trellis.png" alt="trellis"></div>
+    </div>
+    <div class="step">
+      <div class="cap"><b>2 · Retopo</b><span>cleaned + decimated · 10,500 tris · UVs kept</span></div>
+      <div class="imgbox"><img src="frames/02_retopo_wire.png" alt="retopo wire"></div>
+    </div>
+    <div class="step">
+      <div class="cap"><b>3 · Auto-rig</b><span>22-bone humanoid · Mixamo names · auto weights</span></div>
+      <div class="imgbox"><img src="frames/03_rigged.png" alt="rigged"></div>
+    </div>
+    <div class="step">
+      <div class="cap"><b>4 · Cel shader (in-engine)</b><span>mtoon + outline + bloom · animated</span></div>
+      <div class="imgbox"><img id="stripFinal" src="frames/bevy/bevy_walk_000.png" alt="final"></div>
+    </div>
+  </div>
+  <div class="arrowrow">TRELLIS &nbsp;→&nbsp; RETOPO &nbsp;→&nbsp; RIGGED &nbsp;→&nbsp; STYLIZED · ANIMATED</div>
+
+  <!-- HERO: animated engine render + controls -->
+  <div class="hero">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div><span class="tag">Final in-engine render</span>
+          <h3>Bevy 0.19 headless <span class="badge real">REAL ENGINE</span></h3></div>
+        <span class="pill" id="fpsPill">turntable · 18 fps</span>
+      </div>
+      <div class="stage"><img id="engine" src="frames/bevy/bevy_walk_000.png" alt="engine render"></div>
+      <div class="controls">
+        <button id="bWalk" class="on" onclick="setClip('walk')">Walk</button>
+        <button id="bIdle" onclick="setClip('idle')">Idle</button>
+        <button id="bPlay" class="on" onclick="togglePlay()">⏸ Pause</button>
+        <span class="note">bevy_shader_mtoon 0.4 · bevy_mod_outline 0.13 · Bloom OLD_SCHOOL · offscreen Image → PNG</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <span class="tag">Look cross-check</span>
+      <h3>Blender EEVEE toon <span class="badge proxy">PROXY</span></h3>
+      <div class="stage"><img id="proxy" src="frames/cel_walk_000.png" alt="eevee proxy"></div>
+      <p class="note" style="margin-top:12px">Flat 3-band Shader-to-RGB diffuse + Freestyle silhouette/crease
+        outline + fresnel rim. Rendered <code>--background</code>. Kept as a faithful, clearly-labelled
+        reference for the target flat-cel look (harder ink lines than the engine's rim-based outline).</p>
+    </div>
+  </div>
+
+  <!-- DATA -->
+  <div class="grid2">
+    <div class="card">
+      <span class="tag">Pipeline facts</span>
+      <table>
+        <tr><th>Stage</th><th>Result</th></tr>
+        <tr><td>Tris before (TRELLIS)</td><td class="n">13,966</td></tr>
+        <tr><td>Tris after retopo</td><td class="n">10,500</td></tr>
+        <tr><td>Verts (welded)</td><td class="n">5,240</td></tr>
+        <tr><td>UV atlas / PBR textures</td><td class="ok">preserved</td></tr>
+        <tr><td>Skeleton</td><td class="n">22 bones · Mixamo-compatible</td></tr>
+        <tr><td>Skinning</td><td class="ok">automatic (bone-heat) weights</td></tr>
+        <tr><td>Clips baked into 1 GLB</td><td class="n">Idle (2s) · Walk (1s)</td></tr>
+        <tr><td>Export</td><td>+Y up · quaternion · no Draco</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <span class="tag">Which path actually ran</span>
+      <table>
+        <tr><th>Step</th><th>Path</th><th></th></tr>
+        <tr><td>Retopo</td><td>Blender decimate+clean, UV-preserve</td><td class="ok">✓ worked</td></tr>
+        <tr><td>Rig</td><td>Scripted Blender humanoid + auto-weights</td><td class="ok">✓ worked</td></tr>
+        <tr><td>Rig (fallback)</td><td>Mixamo/AccuRIG (not headless-scriptable)</td><td class="note">skipped</td></tr>
+        <tr><td>Animation</td><td>Procedural keyed idle + walk</td><td class="ok">✓ worked</td></tr>
+        <tr><td>Shader (primary)</td><td>Bevy 0.19 mtoon+outline, headless Metal</td><td class="ok">✓ worked</td></tr>
+        <tr><td>Shader (fallback)</td><td>Blender EEVEE cel+Freestyle</td><td class="ok">✓ also rendered</td></tr>
+      </table>
+      <p class="note" style="margin-top:10px">Both render paths succeeded — the engine path is the hero;
+        the EEVEE render is a labelled proxy/cross-check, not a substitute.</p>
+    </div>
+  </div>
+
+  <!-- HONEST READ -->
+  <div class="honest">
+    <h3>Honest read — does this clear a “stylized indie MOBA” bar?</h3>
+    <p class="note">Short answer: <b class="ok">yes for silhouette, palette and readability</b>; <b class="warn">not yet
+       for hand-authored polish</b>. It’s a believable early-alpha champion, not a shipped League skin.</p>
+    <ul>
+      <li><b class="ok">Works:</b> strong readable silhouette, on-model palette (navy skin, gold regalia, red kilt),
+        real-time toon banding + rim/bloom that reads “stylized” at a glance, clean looping walk with visible stride,
+        and a fully headless engine capture — the actual in-game bar, not a beauty render.</li>
+      <li><b class="warn">Still off:</b> the arms are locked in the A-pose holding the scales (props were
+        never rigged as separate hand attachments), so arm swing is minimal and the scales float rigidly.
+        The tail is a single blobby skinned mass with no secondary motion. Auto-weights pinch slightly at the
+        hips/kilt. Retopo is decimated triangles, not artist quad-flow, so deformation at the knees is soft.</li>
+      <li><b class="bad">Needs a human pass:</b> face/jaw has no rig (no snarl/blink), fingers are a single hand bone,
+        and the toon ramp is uniform — a real skin would get per-material shade tuning, a spec/hair highlight on the
+        gold, and a proper outline width map. The engine outline currently reads more as a rim-light than an ink line.</li>
+    </ul>
+    <p class="note">Verdict for batching 47: the <b>automated skeleton</b> is production-viable for background/minion-tier
+      units and greyboxing; hero champions still want ~1–2 hrs of manual rig cleanup + a quad retopo on the torso/legs.
+      The headless engine-render harness is the real win — it gives an objective, repeatable visual gate per champion.</p>
+  </div>
+
+  <p class="note" style="text-align:center;margin-top:24px">
+    Concept ref &amp; TRELLIS source untouched · all frames rendered headless
+    (<code>blender --background --factory-startup</code> · Bevy windowless Metal).
+  </p>
+</div>
+
+<script>
+  const N = 36;
+  const seq = {
+    walk: { engine:i=>`frames/bevy/bevy_walk_${String(i).padStart(3,'0')}.png`,
+            proxy: i=>`frames/cel_walk_${String(i).padStart(3,'0')}.png` },
+    idle: { engine:i=>`frames/bevy/bevy_idle_${String(i).padStart(3,'0')}.png`,
+            proxy: i=>`frames/cel_idle_${String(i).padStart(3,'0')}.png` },
+  };
+  // preload
+  const cache=[];
+  for(const c of ['walk','idle']) for(const k of ['engine','proxy'])
+    for(let i=0;i<N;i++){ const im=new Image(); im.src=seq[c][k](i); cache.push(im); }
+
+  let clip='walk', frame=0, playing=true;
+  const engine=document.getElementById('engine');
+  const proxy=document.getElementById('proxy');
+  const strip=document.getElementById('stripFinal');
+
+  function draw(){
+    engine.src=seq[clip].engine(frame);
+    proxy.src=seq[clip].proxy(frame);
+    strip.src=seq[clip].engine(frame);
+  }
+  function setClip(c){
+    clip=c; frame=0; draw();
+    document.getElementById('bWalk').classList.toggle('on',c==='walk');
+    document.getElementById('bIdle').classList.toggle('on',c==='idle');
+  }
+  function togglePlay(){
+    playing=!playing;
+    document.getElementById('bPlay').textContent = playing?'⏸ Pause':'▶ Play';
+    document.getElementById('bPlay').classList.toggle('on',playing);
+  }
+  let last=0;
+  function loop(t){
+    if(playing && t-last>1000/18){ frame=(frame+1)%N; draw(); last=t; }
+    requestAnimationFrame(loop);
+  }
+  draw(); requestAnimationFrame(loop);
+</script>
+</body>
+</html>
