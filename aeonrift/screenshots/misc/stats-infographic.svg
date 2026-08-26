@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900" font-family="Inter, Segoe UI, sans-serif">
+<rect width="1400" height="900" fill="#0e1116"/>
+<text x="50" y="60" fill="#e8edf4" font-size="34" font-weight="800">Aeonrift — project at a glance</text>
+<text x="50" y="90" fill="#7f8ea3" font-size="17">A Rust MOBA monorepo: authored content, a deterministic sim core, and a 3D asset pipeline (greybox).</text>
+<rect x="50" y="120" width="315" height="130" rx="14" fill="#161d27" stroke="#d4af37" stroke-width="2"/>
+<text x="74" y="198" fill="#d4af37" font-size="60" font-weight="800">47</text>
+<text x="76" y="230" fill="#cdd6e2" font-size="18">champions</text>
+<rect x="385" y="120" width="315" height="130" rx="14" fill="#161d27" stroke="#3da5ff" stroke-width="2"/>
+<text x="409" y="198" fill="#3da5ff" font-size="60" font-weight="800">39</text>
+<text x="411" y="230" fill="#cdd6e2" font-size="18">workspace crates</text>
+<rect x="720" y="120" width="315" height="130" rx="14" fill="#161d27" stroke="#7c4dff" stroke-width="2"/>
+<text x="744" y="198" fill="#7c4dff" font-size="60" font-weight="800">8</text>
+<text x="746" y="230" fill="#cdd6e2" font-size="18">factions</text>
+<rect x="1055" y="120" width="315" height="130" rx="14" fill="#161d27" stroke="#43a047" stroke-width="2"/>
+<text x="1079" y="198" fill="#43a047" font-size="60" font-weight="800">630</text>
+<text x="1081" y="230" fill="#cdd6e2" font-size="18">content entries</text>
+<text x="50" y="300" fill="#e8edf4" font-size="22" font-weight="700">Champions by faction (47)</text>
+<text x="50" y="350" fill="#cdd6e2" font-size="17">Roman</text>
+<rect x="230" y="332" width="380" height="24" rx="6" fill="#1b2430"/>
+<rect x="230" y="332" width="380" height="24" rx="6" fill="#c1272d"/>
+<text x="620" y="350" fill="#e8edf4" font-size="16" font-weight="700">7</text>
+<text x="50" y="392" fill="#cdd6e2" font-size="17">Egyptian</text>
+<rect x="230" y="374" width="380" height="24" rx="6" fill="#1b2430"/>
+<rect x="230" y="374" width="326" height="24" rx="6" fill="#d9a441"/>
+<text x="566" y="392" fill="#e8edf4" font-size="16" font-weight="700">6</text>
+<text x="50" y="434" fill="#cdd6e2" font-size="17">Ember</text>
+<rect x="230" y="416" width="380" height="24" rx="6" fill="#1b2430"/>
+<rect x="230" y="416" width="326" height="24" rx="6" fill="#ff6b35"/>
+<text x="566" y="434" fill="#e8edf4" font-size="16" font-weight="700">6</text>
+<text x="50" y="476" fill="#cdd6e2" font-size="17">Greek</text>
+<rect x="230" y="458" width="380" height="24" rx="6" fill="#1b2430"/>
+<rect x="230" y="458" width="326" height="24" rx="6" fill="#d4af37"/>
+<text x="566" y="476" fill="#e8edf4" font-size="16" font-weight="700">6</text>
+<text x="50" y="518" fill="#cdd6e2" font-size="17">Norse</text>
+<rect x="230" y="500" width="380" height="24" rx="6" fill="#1b2430"/>
+<rect x="230" y="500" width="326" height="24" rx="6" fill="#5b8fb0"/>
+<text x="566" y="518" fill="#e8edf4" font-size="16" font-weight="700">6</text>
+<text x="50" y="560" fill="#cdd6e2" font-size="17">Umbral</text>
+<rect x="230" y="542" width="380" height="24" rx="6" fill="#1b2430"/>
+<rect x="230" y="542" width="326" height="24" rx="6" fill="#7c4dff"/>
+<text x="566" y="560" fill="#e8edf4" font-size="16" font-weight="700">6</text>
+<text x="50" y="602" fill="#cdd6e2" font-size="17">Tide</text>
+<rect x="230" y="584" width="380" height="24" rx="6" fill="#1b2430"/>
+<rect x="230" y="584" width="271" height="24" rx="6" fill="#22d3ee"/>
+<text x="511" y="602" fill="#e8edf4" font-size="16" font-weight="700">5</text>
+<text x="50" y="644" fill="#cdd6e2" font-size="17">Verdant</text>
+<rect x="230" y="626" width="380" height="24" rx="6" fill="#1b2430"/>
+<rect x="230" y="626" width="271" height="24" rx="6" fill="#43a047"/>
+<text x="511" y="644" fill="#e8edf4" font-size="16" font-weight="700">5</text>
+<text x="760" y="300" fill="#e8edf4" font-size="22" font-weight="700">Authored content catalog (630)</text>
+<text x="760" y="348" fill="#cdd6e2" font-size="16">Items</text>
+<rect x="940" y="332" width="350" height="22" rx="6" fill="#1b2430"/>
+<rect x="940" y="332" width="350" height="22" rx="6" fill="#3da5ff"/>
+<text x="1300" y="349" fill="#e8edf4" font-size="15" font-weight="700">302</text>
+<text x="760" y="390" fill="#cdd6e2" font-size="16">Runes</text>
+<rect x="940" y="374" width="350" height="22" rx="6" fill="#1b2430"/>
+<rect x="940" y="374" width="140" height="22" rx="6" fill="#3da5ff"/>
+<text x="1090" y="391" fill="#e8edf4" font-size="15" font-weight="700">121</text>
+<text x="760" y="432" fill="#cdd6e2" font-size="16">Champions</text>
+<rect x="940" y="416" width="350" height="22" rx="6" fill="#1b2430"/>
+<rect x="940" y="416" width="54" height="22" rx="6" fill="#3da5ff"/>
+<text x="1004" y="433" fill="#e8edf4" font-size="15" font-weight="700">47</text>
+<text x="760" y="474" fill="#cdd6e2" font-size="16">Buffs</text>
+<rect x="940" y="458" width="350" height="22" rx="6" fill="#1b2430"/>
+<rect x="940" y="458" width="41" height="22" rx="6" fill="#3da5ff"/>
+<text x="991" y="475" fill="#e8edf4" font-size="15" font-weight="700">35</text>
+<text x="760" y="516" fill="#cdd6e2" font-size="16">Status effects</text>
+<rect x="940" y="500" width="350" height="22" rx="6" fill="#1b2430"/>
+<rect x="940" y="500" width="41" height="22" rx="6" fill="#3da5ff"/>
+<text x="991" y="517" fill="#e8edf4" font-size="15" font-weight="700">35</text>
+<text x="760" y="558" fill="#cdd6e2" font-size="16">Monsters</text>
+<rect x="940" y="542" width="350" height="22" rx="6" fill="#1b2430"/>
+<rect x="940" y="542" width="29" height="22" rx="6" fill="#3da5ff"/>
+<text x="979" y="559" fill="#e8edf4" font-size="15" font-weight="700">25</text>
+<text x="760" y="600" fill="#cdd6e2" font-size="16">Summoner spells</text>
+<rect x="940" y="584" width="350" height="22" rx="6" fill="#1b2430"/>
+<rect x="940" y="584" width="23" height="22" rx="6" fill="#3da5ff"/>
+<text x="973" y="601" fill="#e8edf4" font-size="15" font-weight="700">20</text>
+<text x="760" y="642" fill="#cdd6e2" font-size="16">Objectives</text>
+<rect x="940" y="626" width="350" height="22" rx="6" fill="#1b2430"/>
+<rect x="940" y="626" width="16" height="22" rx="6" fill="#3da5ff"/>
+<text x="966" y="643" fill="#e8edf4" font-size="15" font-weight="700">14</text>
+<text x="760" y="684" fill="#cdd6e2" font-size="16">Maps</text>
+<rect x="940" y="668" width="350" height="22" rx="6" fill="#1b2430"/>
+<rect x="940" y="668" width="14" height="22" rx="6" fill="#3da5ff"/>
+<text x="964" y="685" fill="#e8edf4" font-size="15" font-weight="700">12</text>
+<text x="760" y="726" fill="#cdd6e2" font-size="16">Minions</text>
+<rect x="940" y="710" width="350" height="22" rx="6" fill="#1b2430"/>
+<rect x="940" y="710" width="12" height="22" rx="6" fill="#3da5ff"/>
+<text x="962" y="727" fill="#e8edf4" font-size="15" font-weight="700">10</text>
+<text x="760" y="768" fill="#cdd6e2" font-size="16">Turrets</text>
+<rect x="940" y="752" width="350" height="22" rx="6" fill="#1b2430"/>
+<rect x="940" y="752" width="10" height="22" rx="6" fill="#3da5ff"/>
+<text x="960" y="769" fill="#e8edf4" font-size="15" font-weight="700">9</text>
+<text x="50" y="876" fill="#5c6a7e" font-size="14">Counts read live from content/*.ron and the workspace Cargo manifests · champion models are greybox 3D (final art pending).</text>
+</svg>

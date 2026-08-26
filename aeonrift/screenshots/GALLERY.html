@@ -1,0 +1,458 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aeonrift — Visual Gallery</title>
+<style>
+:root{color-scheme:dark;}
+*{box-sizing:border-box;}
+body{margin:0;background:#0b0e13;color:#e8edf4;font-family:Inter,"Segoe UI",system-ui,sans-serif;line-height:1.5;}
+.wrap{max-width:1440px;margin:0 auto;padding:40px 28px 90px;}
+header h1{font-size:40px;margin:0 0 6px;font-weight:800;letter-spacing:-0.5px;}
+header p{color:#8b98ad;margin:0 0 4px;font-size:17px;max-width:900px;}
+.note{display:inline-block;margin-top:14px;padding:8px 14px;border:1px solid #b9822d;background:#241a0d;color:#f0c987;border-radius:10px;font-size:14px;}
+section{margin-top:56px;}
+h2{font-size:26px;font-weight:800;margin:0 0 6px;}
+h2 .count{color:#7f8ea3;font-weight:600;font-size:18px;}
+.sub{color:#8b98ad;font-size:15px;margin:0 0 20px;}
+.full{width:100%;border-radius:16px;border:1px solid #1e2733;background:#12161d;display:block;}
+.fac-h{display:flex;align-items:center;gap:12px;margin:34px 0 16px;}
+.dot{width:14px;height:14px;border-radius:50%;}
+.fac-h h3{font-size:20px;margin:0;font-weight:700;}
+.fac-h .n{color:#7f8ea3;font-size:15px;}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:18px;}
+.card{background:#12161d;border:1px solid #1e2733;border-radius:14px;overflow:hidden;transition:transform .12s ease,border-color .12s ease;}
+.card:hover{transform:translateY(-3px);border-color:#33465c;}
+.card img{width:100%;aspect-ratio:4/5;object-fit:cover;background:#0e1116;display:block;}
+.meta{padding:12px 14px 14px;}
+.meta .name{font-weight:700;font-size:16px;margin:0 0 8px;}
+.badges{display:flex;gap:8px;flex-wrap:wrap;}
+.badge{font-size:12px;padding:3px 9px;border-radius:20px;font-weight:600;}
+.badge.arch{background:#1b2430;color:#b9c6d8;border:1px solid #2a3746;}
+figure{margin:0;}
+figcaption{color:#8b98ad;font-size:14px;margin-top:10px;}
+footer{margin-top:70px;color:#5c6a7e;font-size:13px;border-top:1px solid #1a222d;padding-top:20px;}
+a{color:#5aa9ff;}
+</style></head><body><div class="wrap">
+<header>
+<h1>Aeonrift — Visual Gallery</h1>
+<p>Everything built so far, rendered fully headless: the 47-champion roster as clean studio portraits, a live MOBA match snapshot from the deterministic sim, the crate architecture, and the content stats.</p>
+<div class="note">Honest caveat: the champion 3D models are <strong>greybox procedural</strong> stand-ins (shaped by archetype, tinted by faction) — final art is pending. Everything here is a rendered image file; no windows were opened.</div>
+</header>
+<section><h2>Project at a glance</h2>
+<p class="sub">Counts read live from <code>content/*.ron</code> and the workspace Cargo manifests.</p>
+<img class="full" src="misc/stats-infographic.png" alt="Aeonrift stats infographic">
+</section>
+<section><h2>Champion models <span class="count">· 47 greybox renders</span></h2>
+<p class="sub">EEVEE studio renders (800×1000) of the actual shipped <code>.glb</code> models. Proportions come from the archetype; the tint is the faction color.</p>
+<div class="fac-h"><span class="dot" style="background:#d4af37"></span><h3>Greek</h3><span class="n">6 champions</span></div>
+<div class="grid">
+<div class="card">
+<img loading="lazy" src="champions/achilles.png" alt="Achilles">
+<div class="meta">
+<p class="name">Achilles</p>
+<div class="badges">
+<span class="badge" style="background:#d4af3722;color:#d4af37;border:1px solid #d4af3766">Greek</span>
+<span class="badge arch">bruiser</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/artemis.png" alt="Artemis">
+<div class="meta">
+<p class="name">Artemis</p>
+<div class="badges">
+<span class="badge" style="background:#d4af3722;color:#d4af37;border:1px solid #d4af3766">Greek</span>
+<span class="badge arch">marksman</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/athena.png" alt="Athena">
+<div class="meta">
+<p class="name">Athena</p>
+<div class="badges">
+<span class="badge" style="background:#d4af3722;color:#d4af37;border:1px solid #d4af3766">Greek</span>
+<span class="badge arch">support</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/hades.png" alt="Hades">
+<div class="meta">
+<p class="name">Hades</p>
+<div class="badges">
+<span class="badge" style="background:#d4af3722;color:#d4af37;border:1px solid #d4af3766">Greek</span>
+<span class="badge arch">tank</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/medusa.png" alt="Medusa">
+<div class="meta">
+<p class="name">Medusa</p>
+<div class="badges">
+<span class="badge" style="background:#d4af3722;color:#d4af37;border:1px solid #d4af3766">Greek</span>
+<span class="badge arch">marksman</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/zeus.png" alt="Zeus">
+<div class="meta">
+<p class="name">Zeus</p>
+<div class="badges">
+<span class="badge" style="background:#d4af3722;color:#d4af37;border:1px solid #d4af3766">Greek</span>
+<span class="badge arch">mage</span>
+</div></div></div>
+</div>
+<div class="fac-h"><span class="dot" style="background:#5b8fb0"></span><h3>Norse</h3><span class="n">6 champions</span></div>
+<div class="grid">
+<div class="card">
+<img loading="lazy" src="champions/freyja.png" alt="Freyja">
+<div class="meta">
+<p class="name">Freyja</p>
+<div class="badges">
+<span class="badge" style="background:#5b8fb022;color:#5b8fb0;border:1px solid #5b8fb066">Norse</span>
+<span class="badge arch">mage</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/loki.png" alt="Loki">
+<div class="meta">
+<p class="name">Loki</p>
+<div class="badges">
+<span class="badge" style="background:#5b8fb022;color:#5b8fb0;border:1px solid #5b8fb066">Norse</span>
+<span class="badge arch">assassin</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/odin.png" alt="Odin">
+<div class="meta">
+<p class="name">Odin</p>
+<div class="badges">
+<span class="badge" style="background:#5b8fb022;color:#5b8fb0;border:1px solid #5b8fb066">Norse</span>
+<span class="badge arch">mage</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/thor.png" alt="Thor">
+<div class="meta">
+<p class="name">Thor</p>
+<div class="badges">
+<span class="badge" style="background:#5b8fb022;color:#5b8fb0;border:1px solid #5b8fb066">Norse</span>
+<span class="badge arch">bruiser</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/tyr.png" alt="Tyr">
+<div class="meta">
+<p class="name">Tyr</p>
+<div class="badges">
+<span class="badge" style="background:#5b8fb022;color:#5b8fb0;border:1px solid #5b8fb066">Norse</span>
+<span class="badge arch">tank</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/ullr.png" alt="Ullr">
+<div class="meta">
+<p class="name">Ullr</p>
+<div class="badges">
+<span class="badge" style="background:#5b8fb022;color:#5b8fb0;border:1px solid #5b8fb066">Norse</span>
+<span class="badge arch">marksman</span>
+</div></div></div>
+</div>
+<div class="fac-h"><span class="dot" style="background:#c1272d"></span><h3>Roman</h3><span class="n">7 champions</span></div>
+<div class="grid">
+<div class="card">
+<img loading="lazy" src="champions/bellona.png" alt="Bellona">
+<div class="meta">
+<p class="name">Bellona</p>
+<div class="badges">
+<span class="badge" style="background:#c1272d22;color:#c1272d;border:1px solid #c1272d66">Roman</span>
+<span class="badge arch">bruiser</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/janus.png" alt="Janus">
+<div class="meta">
+<p class="name">Janus</p>
+<div class="badges">
+<span class="badge" style="background:#c1272d22;color:#c1272d;border:1px solid #c1272d66">Roman</span>
+<span class="badge arch">mage</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/mars.png" alt="Mars">
+<div class="meta">
+<p class="name">Mars</p>
+<div class="badges">
+<span class="badge" style="background:#c1272d22;color:#c1272d;border:1px solid #c1272d66">Roman</span>
+<span class="badge arch">bruiser</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/mercury.png" alt="Mercury">
+<div class="meta">
+<p class="name">Mercury</p>
+<div class="badges">
+<span class="badge" style="background:#c1272d22;color:#c1272d;border:1px solid #c1272d66">Roman</span>
+<span class="badge arch">assassin</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/neptune.png" alt="Neptune">
+<div class="meta">
+<p class="name">Neptune</p>
+<div class="badges">
+<span class="badge" style="background:#c1272d22;color:#c1272d;border:1px solid #c1272d66">Roman</span>
+<span class="badge arch">mage</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/vanguard.png" alt="Vanguard">
+<div class="meta">
+<p class="name">Vanguard</p>
+<div class="badges">
+<span class="badge" style="background:#c1272d22;color:#c1272d;border:1px solid #c1272d66">Roman</span>
+<span class="badge arch">bruiser</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/vulcan.png" alt="Vulcan">
+<div class="meta">
+<p class="name">Vulcan</p>
+<div class="badges">
+<span class="badge" style="background:#c1272d22;color:#c1272d;border:1px solid #c1272d66">Roman</span>
+<span class="badge arch">tank</span>
+</div></div></div>
+</div>
+<div class="fac-h"><span class="dot" style="background:#d9a441"></span><h3>Egyptian</h3><span class="n">6 champions</span></div>
+<div class="grid">
+<div class="card">
+<img loading="lazy" src="champions/anubis-warden-of-scales.png" alt="Anubis">
+<div class="meta">
+<p class="name">Anubis</p>
+<div class="badges">
+<span class="badge" style="background:#d9a44122;color:#d9a441;border:1px solid #d9a44166">Egyptian</span>
+<span class="badge arch">mage</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/bastet-claws-of-the-hunt.png" alt="Bastet">
+<div class="meta">
+<p class="name">Bastet</p>
+<div class="badges">
+<span class="badge" style="background:#d9a44122;color:#d9a441;border:1px solid #d9a44166">Egyptian</span>
+<span class="badge arch">assassin</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/horus-skyfall-talon.png" alt="Horus">
+<div class="meta">
+<p class="name">Horus</p>
+<div class="badges">
+<span class="badge" style="background:#d9a44122;color:#d9a441;border:1px solid #d9a44166">Egyptian</span>
+<span class="badge arch">bruiser</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/isis-mother-of-magic.png" alt="Isis">
+<div class="meta">
+<p class="name">Isis</p>
+<div class="badges">
+<span class="badge" style="background:#d9a44122;color:#d9a441;border:1px solid #d9a44166">Egyptian</span>
+<span class="badge arch">mage</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/ra-radiant-dawn.png" alt="Ra">
+<div class="meta">
+<p class="name">Ra</p>
+<div class="badges">
+<span class="badge" style="background:#d9a44122;color:#d9a441;border:1px solid #d9a44166">Egyptian</span>
+<span class="badge arch">mage</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/set-lord-of-chaos.png" alt="Set">
+<div class="meta">
+<p class="name">Set</p>
+<div class="badges">
+<span class="badge" style="background:#d9a44122;color:#d9a441;border:1px solid #d9a44166">Egyptian</span>
+<span class="badge arch">assassin</span>
+</div></div></div>
+</div>
+<div class="fac-h"><span class="dot" style="background:#ff6b35"></span><h3>Ember</h3><span class="n">6 champions</span></div>
+<div class="grid">
+<div class="card">
+<img loading="lazy" src="champions/kaeza.png" alt="Kaeza">
+<div class="meta">
+<p class="name">Kaeza</p>
+<div class="badges">
+<span class="badge" style="background:#ff6b3522;color:#ff6b35;border:1px solid #ff6b3566">Ember</span>
+<span class="badge arch">marksman</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/nerreth.png" alt="Nerreth">
+<div class="meta">
+<p class="name">Nerreth</p>
+<div class="badges">
+<span class="badge" style="background:#ff6b3522;color:#ff6b35;border:1px solid #ff6b3566">Ember</span>
+<span class="badge arch">bruiser</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/pyromancer.png" alt="Pyromancer">
+<div class="meta">
+<p class="name">Pyromancer</p>
+<div class="badges">
+<span class="badge" style="background:#ff6b3522;color:#ff6b35;border:1px solid #ff6b3566">Ember</span>
+<span class="badge arch">mage</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/toran.png" alt="Toran">
+<div class="meta">
+<p class="name">Toran</p>
+<div class="badges">
+<span class="badge" style="background:#ff6b3522;color:#ff6b35;border:1px solid #ff6b3566">Ember</span>
+<span class="badge arch">mage</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/vashka.png" alt="Vashka">
+<div class="meta">
+<p class="name">Vashka</p>
+<div class="badges">
+<span class="badge" style="background:#ff6b3522;color:#ff6b35;border:1px solid #ff6b3566">Ember</span>
+<span class="badge arch">bruiser</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/ysmera.png" alt="Ysmera">
+<div class="meta">
+<p class="name">Ysmera</p>
+<div class="badges">
+<span class="badge" style="background:#ff6b3522;color:#ff6b35;border:1px solid #ff6b3566">Ember</span>
+<span class="badge arch">mage</span>
+</div></div></div>
+</div>
+<div class="fac-h"><span class="dot" style="background:#22d3ee"></span><h3>Tide</h3><span class="n">5 champions</span></div>
+<div class="grid">
+<div class="card">
+<img loading="lazy" src="champions/brackmoor.png" alt="Brackmoor">
+<div class="meta">
+<p class="name">Brackmoor</p>
+<div class="badges">
+<span class="badge" style="background:#22d3ee22;color:#22d3ee;border:1px solid #22d3ee66">Tide</span>
+<span class="badge arch">bruiser</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/cyranth.png" alt="Cyranth">
+<div class="meta">
+<p class="name">Cyranth</p>
+<div class="badges">
+<span class="badge" style="background:#22d3ee22;color:#22d3ee;border:1px solid #22d3ee66">Tide</span>
+<span class="badge arch">marksman</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/lumisel.png" alt="Lumisel">
+<div class="meta">
+<p class="name">Lumisel</p>
+<div class="badges">
+<span class="badge" style="background:#22d3ee22;color:#22d3ee;border:1px solid #22d3ee66">Tide</span>
+<span class="badge arch">support</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/nyxralla.png" alt="Nyxralla">
+<div class="meta">
+<p class="name">Nyxralla</p>
+<div class="badges">
+<span class="badge" style="background:#22d3ee22;color:#22d3ee;border:1px solid #22d3ee66">Tide</span>
+<span class="badge arch">mage</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/veyl.png" alt="Veyl">
+<div class="meta">
+<p class="name">Veyl</p>
+<div class="badges">
+<span class="badge" style="background:#22d3ee22;color:#22d3ee;border:1px solid #22d3ee66">Tide</span>
+<span class="badge arch">assassin</span>
+</div></div></div>
+</div>
+<div class="fac-h"><span class="dot" style="background:#43a047"></span><h3>Verdant</h3><span class="n">5 champions</span></div>
+<div class="grid">
+<div class="card">
+<img loading="lazy" src="champions/gorehoof.png" alt="Gorehoof">
+<div class="meta">
+<p class="name">Gorehoof</p>
+<div class="badges">
+<span class="badge" style="background:#43a04722;color:#43a047;border:1px solid #43a04766">Verdant</span>
+<span class="badge arch">bruiser</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/mosscloak.png" alt="Mosscloak">
+<div class="meta">
+<p class="name">Mosscloak</p>
+<div class="badges">
+<span class="badge" style="background:#43a04722;color:#43a047;border:1px solid #43a04766">Verdant</span>
+<span class="badge arch">bruiser</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/petalsong.png" alt="Petalsong">
+<div class="meta">
+<p class="name">Petalsong</p>
+<div class="badges">
+<span class="badge" style="background:#43a04722;color:#43a047;border:1px solid #43a04766">Verdant</span>
+<span class="badge arch">support</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/sporeveil.png" alt="Sporeveil">
+<div class="meta">
+<p class="name">Sporeveil</p>
+<div class="badges">
+<span class="badge" style="background:#43a04722;color:#43a047;border:1px solid #43a04766">Verdant</span>
+<span class="badge arch">mage</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/thornquill.png" alt="Thornquill">
+<div class="meta">
+<p class="name">Thornquill</p>
+<div class="badges">
+<span class="badge" style="background:#43a04722;color:#43a047;border:1px solid #43a04766">Verdant</span>
+<span class="badge arch">marksman</span>
+</div></div></div>
+</div>
+<div class="fac-h"><span class="dot" style="background:#7c4dff"></span><h3>Umbral</h3><span class="n">6 champions</span></div>
+<div class="grid">
+<div class="card">
+<img loading="lazy" src="champions/dregmaw.png" alt="Dregmaw">
+<div class="meta">
+<p class="name">Dregmaw</p>
+<div class="badges">
+<span class="badge" style="background:#7c4dff22;color:#7c4dff;border:1px solid #7c4dff66">Umbral</span>
+<span class="badge arch">tank</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/korrathil.png" alt="Korrathil">
+<div class="meta">
+<p class="name">Korrathil</p>
+<div class="badges">
+<span class="badge" style="background:#7c4dff22;color:#7c4dff;border:1px solid #7c4dff66">Umbral</span>
+<span class="badge arch">bruiser</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/quorvane.png" alt="Quorvane">
+<div class="meta">
+<p class="name">Quorvane</p>
+<div class="badges">
+<span class="badge" style="background:#7c4dff22;color:#7c4dff;border:1px solid #7c4dff66">Umbral</span>
+<span class="badge arch">marksman</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/sentinel.png" alt="Sentinel">
+<div class="meta">
+<p class="name">Sentinel</p>
+<div class="badges">
+<span class="badge" style="background:#7c4dff22;color:#7c4dff;border:1px solid #7c4dff66">Umbral</span>
+<span class="badge arch">marksman</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/xelphine.png" alt="Xelphine">
+<div class="meta">
+<p class="name">Xelphine</p>
+<div class="badges">
+<span class="badge" style="background:#7c4dff22;color:#7c4dff;border:1px solid #7c4dff66">Umbral</span>
+<span class="badge arch">mage</span>
+</div></div></div>
+<div class="card">
+<img loading="lazy" src="champions/zeryth.png" alt="Zeryth">
+<div class="meta">
+<p class="name">Zeryth</p>
+<div class="badges">
+<span class="badge" style="background:#7c4dff22;color:#7c4dff;border:1px solid #7c4dff66">Umbral</span>
+<span class="badge arch">assassin</span>
+</div></div></div>
+</div>
+</section>
+<section><h2>Live MOBA match snapshot</h2>
+<p class="sub">A Normal 5v5 <code>Match</code> stepped ~500 deterministic ticks headless (seed 42), then the live unit positions plotted over the parsed map geometry.</p>
+<figure><img class="full" style="max-width:820px;margin:0 auto" src="misc/moba-map-snapshot.png" alt="MOBA map + live match snapshot">
+<figcaption>Three lanes, tier-1/2 turrets (squares), inhibitors (diamonds) and nexuses (circles) team-colored; jungle camps (green) and epic objectives (triangles); small dots are live minions marching, ringed dots are surviving champions.</figcaption></figure>
+</section>
+<section><h2>Crate architecture</h2>
+<p class="sub">The workspace crates clustered by directory, with the real <code>DEPENDS_ON</code> edges from the repo knowledge-graph tool (<code>aeonrift-graph</code>).</p>
+<figure><img class="full" src="misc/architecture-graph.png" alt="Crate architecture graph">
+<figcaption>Graphviz <code>dot</code> was not installed, so this is a hand-laid architecture view. The complete knowledge graph (crates + champions + abilities + assets, 800+ edges) is exported to <code>misc/architecture-graph.dot</code> and <code>misc/architecture-graph.mermaid</code>.</figcaption></figure>
+</section>
+<footer>Generated headlessly on the <code>aeon/visual-gallery</code> branch. Cards were skipped: no <code>assets/cards/*.svg</code> exist on <code>aeon/card-visuals</code> yet. Champion art is greybox — final models pending.</footer>
+</div></body></html>

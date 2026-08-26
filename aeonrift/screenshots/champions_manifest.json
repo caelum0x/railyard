@@ -1,0 +1,425 @@
+[
+  {
+    "slug": "achilles",
+    "name": "Achilles",
+    "archetype": "bruiser",
+    "faction": "Greek",
+    "color": "#d4af37",
+    "glb": "assets/champions/achilles/model.glb",
+    "png": "screenshots/champions/achilles.png"
+  },
+  {
+    "slug": "anubis-warden-of-scales",
+    "name": "Anubis",
+    "archetype": "mage",
+    "faction": "Egyptian",
+    "color": "#d9a441",
+    "glb": "assets/champions/anubis-warden-of-scales/model.glb",
+    "png": "screenshots/champions/anubis-warden-of-scales.png"
+  },
+  {
+    "slug": "artemis",
+    "name": "Artemis",
+    "archetype": "marksman",
+    "faction": "Greek",
+    "color": "#d4af37",
+    "glb": "assets/champions/artemis/model.glb",
+    "png": "screenshots/champions/artemis.png"
+  },
+  {
+    "slug": "athena",
+    "name": "Athena",
+    "archetype": "support",
+    "faction": "Greek",
+    "color": "#d4af37",
+    "glb": "assets/champions/athena/model.glb",
+    "png": "screenshots/champions/athena.png"
+  },
+  {
+    "slug": "bastet-claws-of-the-hunt",
+    "name": "Bastet",
+    "archetype": "assassin",
+    "faction": "Egyptian",
+    "color": "#d9a441",
+    "glb": "assets/champions/bastet-claws-of-the-hunt/model.glb",
+    "png": "screenshots/champions/bastet-claws-of-the-hunt.png"
+  },
+  {
+    "slug": "bellona",
+    "name": "Bellona",
+    "archetype": "bruiser",
+    "faction": "Roman",
+    "color": "#c1272d",
+    "glb": "assets/champions/bellona/model.glb",
+    "png": "screenshots/champions/bellona.png"
+  },
+  {
+    "slug": "brackmoor",
+    "name": "Brackmoor",
+    "archetype": "bruiser",
+    "faction": "Tide",
+    "color": "#22d3ee",
+    "glb": "assets/champions/brackmoor/model.glb",
+    "png": "screenshots/champions/brackmoor.png"
+  },
+  {
+    "slug": "cyranth",
+    "name": "Cyranth",
+    "archetype": "marksman",
+    "faction": "Tide",
+    "color": "#22d3ee",
+    "glb": "assets/champions/cyranth/model.glb",
+    "png": "screenshots/champions/cyranth.png"
+  },
+  {
+    "slug": "dregmaw",
+    "name": "Dregmaw",
+    "archetype": "tank",
+    "faction": "Umbral",
+    "color": "#7c4dff",
+    "glb": "assets/champions/dregmaw/model.glb",
+    "png": "screenshots/champions/dregmaw.png"
+  },
+  {
+    "slug": "freyja",
+    "name": "Freyja",
+    "archetype": "mage",
+    "faction": "Norse",
+    "color": "#5b8fb0",
+    "glb": "assets/champions/freyja/model.glb",
+    "png": "screenshots/champions/freyja.png"
+  },
+  {
+    "slug": "gorehoof",
+    "name": "Gorehoof",
+    "archetype": "bruiser",
+    "faction": "Verdant",
+    "color": "#43a047",
+    "glb": "assets/champions/gorehoof/model.glb",
+    "png": "screenshots/champions/gorehoof.png"
+  },
+  {
+    "slug": "hades",
+    "name": "Hades",
+    "archetype": "tank",
+    "faction": "Greek",
+    "color": "#d4af37",
+    "glb": "assets/champions/hades/model.glb",
+    "png": "screenshots/champions/hades.png"
+  },
+  {
+    "slug": "horus-skyfall-talon",
+    "name": "Horus",
+    "archetype": "bruiser",
+    "faction": "Egyptian",
+    "color": "#d9a441",
+    "glb": "assets/champions/horus-skyfall-talon/model.glb",
+    "png": "screenshots/champions/horus-skyfall-talon.png"
+  },
+  {
+    "slug": "isis-mother-of-magic",
+    "name": "Isis",
+    "archetype": "mage",
+    "faction": "Egyptian",
+    "color": "#d9a441",
+    "glb": "assets/champions/isis-mother-of-magic/model.glb",
+    "png": "screenshots/champions/isis-mother-of-magic.png"
+  },
+  {
+    "slug": "janus",
+    "name": "Janus",
+    "archetype": "mage",
+    "faction": "Roman",
+    "color": "#c1272d",
+    "glb": "assets/champions/janus/model.glb",
+    "png": "screenshots/champions/janus.png"
+  },
+  {
+    "slug": "kaeza",
+    "name": "Kaeza",
+    "archetype": "marksman",
+    "faction": "Ember",
+    "color": "#ff6b35",
+    "glb": "assets/champions/kaeza/model.glb",
+    "png": "screenshots/champions/kaeza.png"
+  },
+  {
+    "slug": "korrathil",
+    "name": "Korrathil",
+    "archetype": "bruiser",
+    "faction": "Umbral",
+    "color": "#7c4dff",
+    "glb": "assets/champions/korrathil/model.glb",
+    "png": "screenshots/champions/korrathil.png"
+  },
+  {
+    "slug": "loki",
+    "name": "Loki",
+    "archetype": "assassin",
+    "faction": "Norse",
+    "color": "#5b8fb0",
+    "glb": "assets/champions/loki/model.glb",
+    "png": "screenshots/champions/loki.png"
+  },
+  {
+    "slug": "lumisel",
+    "name": "Lumisel",
+    "archetype": "support",
+    "faction": "Tide",
+    "color": "#22d3ee",
+    "glb": "assets/champions/lumisel/model.glb",
+    "png": "screenshots/champions/lumisel.png"
+  },
+  {
+    "slug": "mars",
+    "name": "Mars",
+    "archetype": "bruiser",
+    "faction": "Roman",
+    "color": "#c1272d",
+    "glb": "assets/champions/mars/model.glb",
+    "png": "screenshots/champions/mars.png"
+  },
+  {
+    "slug": "medusa",
+    "name": "Medusa",
+    "archetype": "marksman",
+    "faction": "Greek",
+    "color": "#d4af37",
+    "glb": "assets/champions/medusa/model.glb",
+    "png": "screenshots/champions/medusa.png"
+  },
+  {
+    "slug": "mercury",
+    "name": "Mercury",
+    "archetype": "assassin",
+    "faction": "Roman",
+    "color": "#c1272d",
+    "glb": "assets/champions/mercury/model.glb",
+    "png": "screenshots/champions/mercury.png"
+  },
+  {
+    "slug": "mosscloak",
+    "name": "Mosscloak",
+    "archetype": "bruiser",
+    "faction": "Verdant",
+    "color": "#43a047",
+    "glb": "assets/champions/mosscloak/model.glb",
+    "png": "screenshots/champions/mosscloak.png"
+  },
+  {
+    "slug": "neptune",
+    "name": "Neptune",
+    "archetype": "mage",
+    "faction": "Roman",
+    "color": "#c1272d",
+    "glb": "assets/champions/neptune/model.glb",
+    "png": "screenshots/champions/neptune.png"
+  },
+  {
+    "slug": "nerreth",
+    "name": "Nerreth",
+    "archetype": "bruiser",
+    "faction": "Ember",
+    "color": "#ff6b35",
+    "glb": "assets/champions/nerreth/model.glb",
+    "png": "screenshots/champions/nerreth.png"
+  },
+  {
+    "slug": "nyxralla",
+    "name": "Nyxralla",
+    "archetype": "mage",
+    "faction": "Tide",
+    "color": "#22d3ee",
+    "glb": "assets/champions/nyxralla/model.glb",
+    "png": "screenshots/champions/nyxralla.png"
+  },
+  {
+    "slug": "odin",
+    "name": "Odin",
+    "archetype": "mage",
+    "faction": "Norse",
+    "color": "#5b8fb0",
+    "glb": "assets/champions/odin/model.glb",
+    "png": "screenshots/champions/odin.png"
+  },
+  {
+    "slug": "petalsong",
+    "name": "Petalsong",
+    "archetype": "support",
+    "faction": "Verdant",
+    "color": "#43a047",
+    "glb": "assets/champions/petalsong/model.glb",
+    "png": "screenshots/champions/petalsong.png"
+  },
+  {
+    "slug": "pyromancer",
+    "name": "Pyromancer",
+    "archetype": "mage",
+    "faction": "Ember",
+    "color": "#ff6b35",
+    "glb": "assets/champions/pyromancer/model.glb",
+    "png": "screenshots/champions/pyromancer.png"
+  },
+  {
+    "slug": "quorvane",
+    "name": "Quorvane",
+    "archetype": "marksman",
+    "faction": "Umbral",
+    "color": "#7c4dff",
+    "glb": "assets/champions/quorvane/model.glb",
+    "png": "screenshots/champions/quorvane.png"
+  },
+  {
+    "slug": "ra-radiant-dawn",
+    "name": "Ra",
+    "archetype": "mage",
+    "faction": "Egyptian",
+    "color": "#d9a441",
+    "glb": "assets/champions/ra-radiant-dawn/model.glb",
+    "png": "screenshots/champions/ra-radiant-dawn.png"
+  },
+  {
+    "slug": "sentinel",
+    "name": "Sentinel",
+    "archetype": "marksman",
+    "faction": "Umbral",
+    "color": "#7c4dff",
+    "glb": "assets/champions/sentinel/model.glb",
+    "png": "screenshots/champions/sentinel.png"
+  },
+  {
+    "slug": "set-lord-of-chaos",
+    "name": "Set",
+    "archetype": "assassin",
+    "faction": "Egyptian",
+    "color": "#d9a441",
+    "glb": "assets/champions/set-lord-of-chaos/model.glb",
+    "png": "screenshots/champions/set-lord-of-chaos.png"
+  },
+  {
+    "slug": "sporeveil",
+    "name": "Sporeveil",
+    "archetype": "mage",
+    "faction": "Verdant",
+    "color": "#43a047",
+    "glb": "assets/champions/sporeveil/model.glb",
+    "png": "screenshots/champions/sporeveil.png"
+  },
+  {
+    "slug": "thor",
+    "name": "Thor",
+    "archetype": "bruiser",
+    "faction": "Norse",
+    "color": "#5b8fb0",
+    "glb": "assets/champions/thor/model.glb",
+    "png": "screenshots/champions/thor.png"
+  },
+  {
+    "slug": "thornquill",
+    "name": "Thornquill",
+    "archetype": "marksman",
+    "faction": "Verdant",
+    "color": "#43a047",
+    "glb": "assets/champions/thornquill/model.glb",
+    "png": "screenshots/champions/thornquill.png"
+  },
+  {
+    "slug": "toran",
+    "name": "Toran",
+    "archetype": "mage",
+    "faction": "Ember",
+    "color": "#ff6b35",
+    "glb": "assets/champions/toran/model.glb",
+    "png": "screenshots/champions/toran.png"
+  },
+  {
+    "slug": "tyr",
+    "name": "Tyr",
+    "archetype": "tank",
+    "faction": "Norse",
+    "color": "#5b8fb0",
+    "glb": "assets/champions/tyr/model.glb",
+    "png": "screenshots/champions/tyr.png"
+  },
+  {
+    "slug": "ullr",
+    "name": "Ullr",
+    "archetype": "marksman",
+    "faction": "Norse",
+    "color": "#5b8fb0",
+    "glb": "assets/champions/ullr/model.glb",
+    "png": "screenshots/champions/ullr.png"
+  },
+  {
+    "slug": "vanguard",
+    "name": "Vanguard",
+    "archetype": "bruiser",
+    "faction": "Roman",
+    "color": "#c1272d",
+    "glb": "assets/champions/vanguard/model.glb",
+    "png": "screenshots/champions/vanguard.png"
+  },
+  {
+    "slug": "vashka",
+    "name": "Vashka",
+    "archetype": "bruiser",
+    "faction": "Ember",
+    "color": "#ff6b35",
+    "glb": "assets/champions/vashka/model.glb",
+    "png": "screenshots/champions/vashka.png"
+  },
+  {
+    "slug": "veyl",
+    "name": "Veyl",
+    "archetype": "assassin",
+    "faction": "Tide",
+    "color": "#22d3ee",
+    "glb": "assets/champions/veyl/model.glb",
+    "png": "screenshots/champions/veyl.png"
+  },
+  {
+    "slug": "vulcan",
+    "name": "Vulcan",
+    "archetype": "tank",
+    "faction": "Roman",
+    "color": "#c1272d",
+    "glb": "assets/champions/vulcan/model.glb",
+    "png": "screenshots/champions/vulcan.png"
+  },
+  {
+    "slug": "xelphine",
+    "name": "Xelphine",
+    "archetype": "mage",
+    "faction": "Umbral",
+    "color": "#7c4dff",
+    "glb": "assets/champions/xelphine/model.glb",
+    "png": "screenshots/champions/xelphine.png"
+  },
+  {
+    "slug": "ysmera",
+    "name": "Ysmera",
+    "archetype": "mage",
+    "faction": "Ember",
+    "color": "#ff6b35",
+    "glb": "assets/champions/ysmera/model.glb",
+    "png": "screenshots/champions/ysmera.png"
+  },
+  {
+    "slug": "zeryth",
+    "name": "Zeryth",
+    "archetype": "assassin",
+    "faction": "Umbral",
+    "color": "#7c4dff",
+    "glb": "assets/champions/zeryth/model.glb",
+    "png": "screenshots/champions/zeryth.png"
+  },
+  {
+    "slug": "zeus",
+    "name": "Zeus",
+    "archetype": "mage",
+    "faction": "Greek",
+    "color": "#d4af37",
+    "glb": "assets/champions/zeus/model.glb",
+    "png": "screenshots/champions/zeus.png"
+  }
+]

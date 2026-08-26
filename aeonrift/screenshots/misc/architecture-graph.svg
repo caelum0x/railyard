@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1000" viewBox="0 0 1500 1000" font-family="Inter, Segoe UI, sans-serif">
+<rect width="1500" height="1000" fill="#0e1116"/>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L7,3 L0,6 z" fill="#e8b04b"/></marker></defs>
+<text x="40" y="46" fill="#e8edf4" font-size="28" font-weight="800">Aeonrift — crate architecture</text>
+<text x="40" y="74" fill="#7f8ea3" font-size="16">39 workspace crates, clustered by directory · arrows = DEPENDS_ON (from the knowledge-graph export)</text>
+<rect x="40" y="100" width="880" height="860" rx="14" fill="#12324a" fill-opacity="0.35" stroke="#2f7fb0" stroke-width="1.5"/>
+<text x="58" y="130" fill="#bfe3ff" font-size="18" font-weight="700">engine/  (29)</text>
+<rect x="960" y="100" width="500" height="300" rx="14" fill="#3a2140" fill-opacity="0.4" stroke="#a05bbf" stroke-width="1.5"/>
+<text x="978" y="130" fill="#f0d6ff" font-size="18" font-weight="700">games/  (2)</text>
+<rect x="960" y="440" width="500" height="520" rx="14" fill="#123a2a" fill-opacity="0.4" stroke="#3fa079" stroke-width="1.5"/>
+<text x="978" y="470" fill="#c8f5df" font-size="18" font-weight="700">tools/  (8)</text>
+<rect x="60" y="152" width="270" height="30" rx="7" fill="#243347" stroke="#e8b04b" stroke-width="2"/>
+<text x="70" y="172" fill="#bfe3ff" font-size="14" font-weight="500">aeonrift-ability-dsl</text>
+<rect x="342" y="152" width="270" height="30" rx="7" fill="#243347" stroke="#e8b04b" stroke-width="2"/>
+<text x="352" y="172" fill="#bfe3ff" font-size="14" font-weight="500">aeonrift-ai-bots</text>
+<rect x="980" y="152" width="440" height="30" rx="7" fill="#243347" stroke="#e8b04b" stroke-width="2"/>
+<text x="990" y="172" fill="#f0d6ff" font-size="14" font-weight="500">aeonrift-ascendancy</text>
+<rect x="980" y="492" width="440" height="30" rx="7" fill="#1b2430" stroke="#3fa079" stroke-width="1"/>
+<text x="990" y="512" fill="#c8f5df" font-size="14" font-weight="500">aeonrift-asset-cli</text>
+<rect x="624" y="152" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="634" y="172" fill="#bfe3ff" font-size="14" font-weight="500">aeonrift-audio-engine</text>
+<rect x="980" y="536" width="440" height="30" rx="7" fill="#243347" stroke="#e8b04b" stroke-width="2"/>
+<text x="990" y="556" fill="#c8f5df" font-size="14" font-weight="500">aeonrift-balance-sim</text>
+<rect x="980" y="580" width="440" height="30" rx="7" fill="#243347" stroke="#e8b04b" stroke-width="2"/>
+<text x="990" y="600" fill="#c8f5df" font-size="14" font-weight="500">aeonrift-card-gen</text>
+<rect x="980" y="624" width="440" height="30" rx="7" fill="#243347" stroke="#e8b04b" stroke-width="2"/>
+<text x="990" y="644" fill="#c8f5df" font-size="14" font-weight="500">aeonrift-champion-gen</text>
+<rect x="60" y="194" width="270" height="30" rx="7" fill="#243347" stroke="#e8b04b" stroke-width="2"/>
+<text x="70" y="214" fill="#bfe3ff" font-size="14" font-weight="500">aeonrift-combat</text>
+<rect x="980" y="668" width="440" height="30" rx="7" fill="#243347" stroke="#e8b04b" stroke-width="2"/>
+<text x="990" y="688" fill="#c8f5df" font-size="14" font-weight="500">aeonrift-content-lint</text>
+<rect x="342" y="194" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="352" y="214" fill="#bfe3ff" font-size="14" font-weight="500">aeonrift-economy</text>
+<rect x="980" y="712" width="440" height="30" rx="7" fill="#243347" stroke="#e8b04b" stroke-width="2"/>
+<text x="990" y="732" fill="#c8f5df" font-size="14" font-weight="500">aeonrift-graph</text>
+<rect x="980" y="756" width="440" height="30" rx="7" fill="#1b2430" stroke="#3fa079" stroke-width="1"/>
+<text x="990" y="776" fill="#c8f5df" font-size="14" font-weight="500">aeonrift-localization</text>
+<rect x="980" y="800" width="440" height="30" rx="7" fill="#1b2430" stroke="#3fa079" stroke-width="1"/>
+<text x="990" y="820" fill="#c8f5df" font-size="14" font-weight="500">aeonrift-mcp</text>
+<rect x="980" y="196" width="440" height="30" rx="7" fill="#243347" stroke="#e8b04b" stroke-width="2"/>
+<text x="990" y="216" fill="#f0d6ff" font-size="14" font-weight="500">aeonrift-moba</text>
+<rect x="624" y="194" width="270" height="30" rx="7" fill="#243347" stroke="#e8b04b" stroke-width="2"/>
+<text x="634" y="214" fill="#bfe3ff" font-size="14" font-weight="500">aeonrift-net</text>
+<rect x="60" y="236" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="70" y="256" fill="#bfe3ff" font-size="14" font-weight="500">aeonrift-particle</text>
+<rect x="342" y="236" width="270" height="30" rx="7" fill="#243347" stroke="#e8b04b" stroke-width="2"/>
+<text x="352" y="256" fill="#bfe3ff" font-size="14" font-weight="500">aeonrift-pathfinding</text>
+<rect x="624" y="236" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="634" y="256" fill="#bfe3ff" font-size="14" font-weight="500">aeonrift-platform</text>
+<rect x="60" y="278" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="70" y="298" fill="#bfe3ff" font-size="14" font-weight="500">aeonrift-protocol</text>
+<rect x="342" y="278" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="352" y="298" fill="#bfe3ff" font-size="14" font-weight="500">aeonrift-render</text>
+<rect x="624" y="278" width="270" height="30" rx="7" fill="#243347" stroke="#e8b04b" stroke-width="2"/>
+<text x="634" y="298" fill="#bfe3ff" font-size="14" font-weight="500">aeonrift-sim-core</text>
+<rect x="60" y="320" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="70" y="340" fill="#bfe3ff" font-size="14" font-weight="500">aeonrift-ui-kit</text>
+<rect x="342" y="320" width="270" height="30" rx="7" fill="#243347" stroke="#e8b04b" stroke-width="2"/>
+<text x="352" y="340" fill="#bfe3ff" font-size="14" font-weight="500">aeonrift-vision</text>
+<rect x="624" y="320" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="634" y="340" fill="#bfe3ff" font-size="14" font-weight="500">league_loader</text>
+<rect x="60" y="362" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="70" y="382" fill="#bfe3ff" font-size="14" font-weight="500">league_property</text>
+<rect x="342" y="362" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="352" y="382" fill="#bfe3ff" font-size="14" font-weight="500">league_utils</text>
+<rect x="624" y="362" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="634" y="382" fill="#bfe3ff" font-size="14" font-weight="500">lol_agent_runtime</text>
+<rect x="60" y="404" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="70" y="424" fill="#bfe3ff" font-size="14" font-weight="500">lol_base</text>
+<rect x="342" y="404" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="352" y="424" fill="#bfe3ff" font-size="14" font-weight="500">lol_base_render</text>
+<rect x="624" y="404" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="634" y="424" fill="#bfe3ff" font-size="14" font-weight="500">lol_champions</text>
+<rect x="60" y="446" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="70" y="466" fill="#bfe3ff" font-size="14" font-weight="500">lol_client</text>
+<rect x="342" y="446" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="352" y="466" fill="#bfe3ff" font-size="14" font-weight="500">lol_core</text>
+<rect x="624" y="446" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="634" y="466" fill="#bfe3ff" font-size="14" font-weight="500">lol_particle</text>
+<rect x="60" y="488" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="70" y="508" fill="#bfe3ff" font-size="14" font-weight="500">lol_render</text>
+<rect x="342" y="488" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="352" y="508" fill="#bfe3ff" font-size="14" font-weight="500">lol_rl_protocol</text>
+<rect x="624" y="488" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="634" y="508" fill="#bfe3ff" font-size="14" font-weight="500">lol_rpc</text>
+<rect x="60" y="530" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="70" y="550" fill="#bfe3ff" font-size="14" font-weight="500">lol_server</text>
+<rect x="342" y="530" width="270" height="30" rx="7" fill="#1b2430" stroke="#2f7fb0" stroke-width="1"/>
+<text x="352" y="550" fill="#bfe3ff" font-size="14" font-weight="500">lol_share</text>
+<path d="M 195 167 C 477 167 477 293 759 293" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 477 167 C 336 167 336 209 195 209" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 477 167 C 618 167 618 293 759 293" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 1200 167 C 698 167 698 167 195 167" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 1200 167 C 980 167 980 293 759 293" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 1200 551 C 838 551 838 167 477 167" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 1200 551 C 698 551 698 209 195 209" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 1200 551 C 980 551 980 293 759 293" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 1200 595 C 698 595 698 167 195 167" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 1200 639 C 698 639 698 167 195 167" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 195 209 C 477 209 477 293 759 293" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 1200 683 C 698 683 698 167 195 167" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 1200 727 C 698 727 698 167 195 167" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 1200 211 C 698 211 698 167 195 167" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 1200 211 C 838 211 838 251 477 251" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 1200 211 C 980 211 980 293 759 293" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 759 209 C 759 209 759 293 759 293" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 477 251 C 618 251 618 293 759 293" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<path d="M 477 335 C 618 335 618 293 759 293" fill="none" stroke="#e8b04b" stroke-width="1.4" opacity="0.5" marker-end="url(#arrow)"/>
+<text x="40" y="984" fill="#5c6a7e" font-size="13">Full knowledge graph (crates + champions + abilities + assets, 800+ edges) exported to architecture-graph.dot / .mermaid.</text>
+</svg>
