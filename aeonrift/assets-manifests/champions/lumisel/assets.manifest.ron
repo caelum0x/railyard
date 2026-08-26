@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Lumisel",
     archetype: "support",
     faction: "Tide",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 27772,
-            blake3: "ff6222c4c09acd64dced281a294b060dd303af2f832cde036924d44bf2761a46",
+            bytes: 2819596,
+            blake3: "083b2cbc8a2b80a91210ca35e70091aa034f38d2bb3c37b5ca518be99aabac9c",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 985945,
+            blake3: "",
         ),
     },
 )

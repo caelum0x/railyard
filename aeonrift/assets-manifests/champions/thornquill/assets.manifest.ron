@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Thornquill",
     archetype: "marksman",
     faction: "Verdant",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 17820,
-            blake3: "2d069a70019867905fb079d24cd66fe2207861ab3a77e03d5f43901981f3f0b5",
+            bytes: 2145520,
+            blake3: "c4d37f00b3f3dea76c97eaa525c9dfa81bf8000a108a5070c485b6e1d809e6b5",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 842170,
+            blake3: "",
         ),
     },
 )

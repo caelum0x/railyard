@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aeonrift — AI 3D Champion Models</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#0e0e12; color:#e8e8ee;
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  header { padding:28px 32px; border-bottom:1px solid #23232b; }
+  header h1 { margin:0 0 6px; font-size:24px; }
+  header p { margin:0; color:#9a9aa8; }
+  .stat { color:#3fa34d; font-weight:600; }
+  main { padding:12px 32px 64px; }
+  section { margin:36px 0; }
+  h2 { font-size:19px; border-left:4px solid #888; padding-left:12px; margin:0 0 16px; }
+  h2 small { color:#7a7a88; font-weight:400; }
+  .grid { display:grid; gap:18px;
+    grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); }
+  .card { background:#16161c; border:1px solid #26262f; border-radius:12px;
+    overflow:hidden; }
+  .imgs { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:#26262f; }
+  figure { margin:0; background:#0b0b0f; position:relative; }
+  figcaption { position:absolute; top:6px; left:6px; font-size:11px; color:#c8c8d4;
+    background:rgba(0,0,0,.55); padding:2px 7px; border-radius:6px; }
+  .imgs img { display:block; width:100%; aspect-ratio:3/4; object-fit:cover; }
+  .noimg { display:flex; align-items:center; justify-content:center; aspect-ratio:3/4;
+    color:#555; font-size:12px; }
+  .meta { display:flex; align-items:center; gap:8px; padding:10px 12px; }
+  .name { font-weight:600; }
+  .slug { color:#6a6a78; font-size:12px; margin-left:auto; }
+  .badge { font-size:11px; padding:2px 8px; border-radius:20px; }
+  .badge.ok { background:#123d1c; color:#5cd67a; }
+  .badge.miss { background:#3d1212; color:#e07a7a; }
+</style></head>
+<body>
+<header>
+  <h1>Aeonrift — AI-Generated 3D Champion Models</h1>
+  <p><span class="stat">47/47</span> champions with real image-to-3D models
+     (Flux concept &rarr; TRELLIS textured GLB). Left = headless Blender render of the
+     new <code>model.glb</code>; right = the Flux concept reference.</p>
+  <p style="margin-top:6px;color:#7a7a88">These are STATIC / un-rigged meshes — good for
+     display &amp; prototype; need retopo + rigging for in-game animation.</p>
+</header>
+<main>
+    <section>
+      <h2 style="border-color:#d4af37"><span style="color:#d4af37">&#9670;</span> Greek
+        <small>(6 champions)</small></h2>
+      <div class="grid">
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="achilles/preview.png" alt="Achilles 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="achilles/reference.png" alt="Achilles concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Achilles</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">achilles</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="artemis/preview.png" alt="Artemis 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="artemis/reference.png" alt="Artemis concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Artemis</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">artemis</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="athena/preview.png" alt="Athena 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="athena/reference.png" alt="Athena concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Athena</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">athena</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="hades/preview.png" alt="Hades 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="hades/reference.png" alt="Hades concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Hades</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">hades</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="medusa/preview.png" alt="Medusa 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="medusa/reference.png" alt="Medusa concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Medusa</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">medusa</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="zeus/preview.png" alt="Zeus 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="zeus/reference.png" alt="Zeus concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Zeus</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">zeus</span>
+        </div>
+      </div></div>
+    </section>
+    <section>
+      <h2 style="border-color:#6f9fd0"><span style="color:#6f9fd0">&#9670;</span> Norse
+        <small>(6 champions)</small></h2>
+      <div class="grid">
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="freyja/preview.png" alt="Freyja 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="freyja/reference.png" alt="Freyja concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Freyja</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">freyja</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="loki/preview.png" alt="Loki 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="loki/reference.png" alt="Loki concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Loki</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">loki</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="odin/preview.png" alt="Odin 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="odin/reference.png" alt="Odin concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Odin</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">odin</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="thor/preview.png" alt="Thor 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="thor/reference.png" alt="Thor concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Thor</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">thor</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="tyr/preview.png" alt="Tyr 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="tyr/reference.png" alt="Tyr concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Tyr</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">tyr</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="ullr/preview.png" alt="Ullr 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="ullr/reference.png" alt="Ullr concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Ullr</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">ullr</span>
+        </div>
+      </div></div>
+    </section>
+    <section>
+      <h2 style="border-color:#c0392b"><span style="color:#c0392b">&#9670;</span> Roman
+        <small>(7 champions)</small></h2>
+      <div class="grid">
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="bellona/preview.png" alt="Bellona 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="bellona/reference.png" alt="Bellona concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Bellona</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">bellona</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="janus/preview.png" alt="Janus 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="janus/reference.png" alt="Janus concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Janus</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">janus</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="mars/preview.png" alt="Mars 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="mars/reference.png" alt="Mars concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Mars</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">mars</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="mercury/preview.png" alt="Mercury 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="mercury/reference.png" alt="Mercury concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Mercury</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">mercury</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="neptune/preview.png" alt="Neptune 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="neptune/reference.png" alt="Neptune concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Neptune</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">neptune</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="vanguard/preview.png" alt="Vanguard 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="vanguard/reference.png" alt="Vanguard concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Vanguard</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">vanguard</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="vulcan/preview.png" alt="Vulcan 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="vulcan/reference.png" alt="Vulcan concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Vulcan</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">vulcan</span>
+        </div>
+      </div></div>
+    </section>
+    <section>
+      <h2 style="border-color:#e0b872"><span style="color:#e0b872">&#9670;</span> Egyptian
+        <small>(6 champions)</small></h2>
+      <div class="grid">
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="anubis-warden-of-scales/preview.png" alt="Anubis 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="anubis-warden-of-scales/reference.png" alt="Anubis concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Anubis</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">anubis-warden-of-scales</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="bastet-claws-of-the-hunt/preview.png" alt="Bastet 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="bastet-claws-of-the-hunt/reference.png" alt="Bastet concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Bastet</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">bastet-claws-of-the-hunt</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="horus-skyfall-talon/preview.png" alt="Horus 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="horus-skyfall-talon/reference.png" alt="Horus concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Horus</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">horus-skyfall-talon</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="isis-mother-of-magic/preview.png" alt="Isis 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="isis-mother-of-magic/reference.png" alt="Isis concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Isis</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">isis-mother-of-magic</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="ra-radiant-dawn/preview.png" alt="Ra 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="ra-radiant-dawn/reference.png" alt="Ra concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Ra</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">ra-radiant-dawn</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="set-lord-of-chaos/preview.png" alt="Set 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="set-lord-of-chaos/reference.png" alt="Set concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Set</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">set-lord-of-chaos</span>
+        </div>
+      </div></div>
+    </section>
+    <section>
+      <h2 style="border-color:#e67e22"><span style="color:#e67e22">&#9670;</span> Ember
+        <small>(6 champions)</small></h2>
+      <div class="grid">
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="kaeza/preview.png" alt="Kaeza 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="kaeza/reference.png" alt="Kaeza concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Kaeza</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">kaeza</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="nerreth/preview.png" alt="Nerreth 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="nerreth/reference.png" alt="Nerreth concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Nerreth</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">nerreth</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="pyromancer/preview.png" alt="Pyromancer 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="pyromancer/reference.png" alt="Pyromancer concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Pyromancer</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">pyromancer</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="toran/preview.png" alt="Toran 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="toran/reference.png" alt="Toran concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Toran</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">toran</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="vashka/preview.png" alt="Vashka 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="vashka/reference.png" alt="Vashka concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Vashka</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">vashka</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="ysmera/preview.png" alt="Ysmera 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="ysmera/reference.png" alt="Ysmera concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Ysmera</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">ysmera</span>
+        </div>
+      </div></div>
+    </section>
+    <section>
+      <h2 style="border-color:#1ab4c4"><span style="color:#1ab4c4">&#9670;</span> Tide
+        <small>(5 champions)</small></h2>
+      <div class="grid">
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="brackmoor/preview.png" alt="Brackmoor 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="brackmoor/reference.png" alt="Brackmoor concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Brackmoor</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">brackmoor</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="cyranth/preview.png" alt="Cyranth 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="cyranth/reference.png" alt="Cyranth concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Cyranth</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">cyranth</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="lumisel/preview.png" alt="Lumisel 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="lumisel/reference.png" alt="Lumisel concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Lumisel</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">lumisel</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="nyxralla/preview.png" alt="Nyxralla 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="nyxralla/reference.png" alt="Nyxralla concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Nyxralla</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">nyxralla</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="veyl/preview.png" alt="Veyl 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="veyl/reference.png" alt="Veyl concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Veyl</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">veyl</span>
+        </div>
+      </div></div>
+    </section>
+    <section>
+      <h2 style="border-color:#3fa34d"><span style="color:#3fa34d">&#9670;</span> Verdant
+        <small>(5 champions)</small></h2>
+      <div class="grid">
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="gorehoof/preview.png" alt="Gorehoof 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="gorehoof/reference.png" alt="Gorehoof concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Gorehoof</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">gorehoof</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="mosscloak/preview.png" alt="Mosscloak 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="mosscloak/reference.png" alt="Mosscloak concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Mosscloak</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">mosscloak</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="petalsong/preview.png" alt="Petalsong 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="petalsong/reference.png" alt="Petalsong concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Petalsong</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">petalsong</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="sporeveil/preview.png" alt="Sporeveil 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="sporeveil/reference.png" alt="Sporeveil concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Sporeveil</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">sporeveil</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="thornquill/preview.png" alt="Thornquill 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="thornquill/reference.png" alt="Thornquill concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Thornquill</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">thornquill</span>
+        </div>
+      </div></div>
+    </section>
+    <section>
+      <h2 style="border-color:#9b59b6"><span style="color:#9b59b6">&#9670;</span> Umbral
+        <small>(6 champions)</small></h2>
+      <div class="grid">
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="dregmaw/preview.png" alt="Dregmaw 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="dregmaw/reference.png" alt="Dregmaw concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Dregmaw</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">dregmaw</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="korrathil/preview.png" alt="Korrathil 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="korrathil/reference.png" alt="Korrathil concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Korrathil</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">korrathil</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="quorvane/preview.png" alt="Quorvane 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="quorvane/reference.png" alt="Quorvane concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Quorvane</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">quorvane</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="sentinel/preview.png" alt="Sentinel 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="sentinel/reference.png" alt="Sentinel concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Sentinel</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">sentinel</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="xelphine/preview.png" alt="Xelphine 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="xelphine/reference.png" alt="Xelphine concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Xelphine</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">xelphine</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="imgs">
+          <figure><figcaption>3D render</figcaption><img loading="lazy" src="zeryth/preview.png" alt="Zeryth 3D render"></figure>
+          <figure><figcaption>concept ref</figcaption><img loading="lazy" src="zeryth/reference.png" alt="Zeryth concept"></figure>
+        </div>
+        <div class="meta">
+          <span class="name">Zeryth</span>
+          <span class="badge ok">AI 3D</span>
+          <span class="slug">zeryth</span>
+        </div>
+      </div></div>
+    </section></main>
+</body></html>

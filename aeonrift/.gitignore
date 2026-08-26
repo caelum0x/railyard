@@ -1,3 +1,17 @@
 /target
 **/*.rs.bk
 Cargo.lock
+
+# --- AI 3D model pipeline (never commit venv, secrets, or transient logs) ---
+tools/aeonrift_models_ai/.venv/
+tools/aeonrift_models_ai/summary.json
+**/pipeline.log
+**/render_error.log
+**/*.glb.tmp
+.env
+.env.local
+*.secret
+tools/aeonrift_models_ai/full_run.log
+tools/aeonrift_models_ai/zeus_run.log
+**/.ai3d.done
+tools/aeonrift_models_ai/cargo_test.log

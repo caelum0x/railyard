@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Cyranth",
     archetype: "marksman",
     faction: "Tide",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 17832,
-            blake3: "7e88cd26074be6c006e6d4dc3045b0e8d9f98c319cc478ee6a36dc7c76e8f877",
+            bytes: 2389516,
+            blake3: "f306f200d4af9909fa770ace8217b30ed8d9d4afd87290b817e7923523f1f3f0",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 831422,
+            blake3: "",
         ),
     },
 )
