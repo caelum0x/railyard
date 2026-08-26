@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Quorvane",
     archetype: "marksman",
     faction: "Umbral",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 17820,
-            blake3: "8408b4d2a6bdbaf452f5b3e4d4bc25228742c1ccf82f0d57d4a421f7fe8faadc",
+            bytes: 2394768,
+            blake3: "03b5bbc772d9cddde4851f6013746a7f01af0f11afc3ac074c6f029957456ead",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 644854,
+            blake3: "",
         ),
     },
 )

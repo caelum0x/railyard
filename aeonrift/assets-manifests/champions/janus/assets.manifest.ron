@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Janus",
     archetype: "mage",
     faction: "Roman",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 34680,
-            blake3: "d407607b81d62d52af40c1285072b7792ff445e8c75095a8af221a4c316937b9",
+            bytes: 2246536,
+            blake3: "b2c5f6793a1520efa55775bf3612ba4a852d48fe7044ffd003f934089f8b707a",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 860192,
+            blake3: "",
         ),
     },
 )

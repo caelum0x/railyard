@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Brackmoor",
     archetype: "bruiser",
     faction: "Tide",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 35504,
-            blake3: "fa39dc61a30acac37ee6c7f130f428230323f64997953fc35471f3e85d60d1d7",
+            bytes: 1968612,
+            blake3: "3f78c09fdee55ca807e48726bedb61534b328c0fab2d01fd513bb27b4abd3530",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 873669,
+            blake3: "",
         ),
     },
 )

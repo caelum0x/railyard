@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Hades",
     archetype: "tank",
     faction: "Greek",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 32408,
-            blake3: "f06269d5931dd1fe70241aec3ee7ddfc9e6050585c2c45d42c5d92d74f2b3a53",
+            bytes: 2042840,
+            blake3: "047f211c1249c932d3106932bfd97a6a974a3c8c864a6577ba23f4793d399250",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 898896,
+            blake3: "",
         ),
     },
 )

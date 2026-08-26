@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Sporeveil",
     archetype: "mage",
     faction: "Verdant",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 34668,
-            blake3: "b5abcfaf0c09162569a064456cde9e3e42b4eb1d20516fd65f37d9a65addd6f9",
+            bytes: 2083460,
+            blake3: "d857d94f7097b24bc56d48fadd7a8a19c08ea35a826e93f2bc0d92335529822e",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 796305,
+            blake3: "",
         ),
     },
 )

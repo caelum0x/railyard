@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Korrathil",
     archetype: "bruiser",
     faction: "Umbral",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 35492,
-            blake3: "e2d37b1e787e4ed4604f4817ccce085249d4f0994a705e9b1160ebc378c9fb08",
+            bytes: 2350348,
+            blake3: "4e4777c607b870397d39b93c7d53d59430cd157ff9e05ffee51d8f4d83c26476",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 879075,
+            blake3: "",
         ),
     },
 )

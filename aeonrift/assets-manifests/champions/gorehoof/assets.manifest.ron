@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Gorehoof",
     archetype: "bruiser",
     faction: "Verdant",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 35496,
-            blake3: "623d24f782f8ac5a0d50231c2f65016b5f43548e140891c0ea8989ad61cd5a69",
+            bytes: 2480748,
+            blake3: "ee58d1f0d472a7ca2da93e78675f915d19d2356d51c249d86b6dd3d036188531",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 1007130,
+            blake3: "",
         ),
     },
 )

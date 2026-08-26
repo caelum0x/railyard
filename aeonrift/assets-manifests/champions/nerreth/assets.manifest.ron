@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Nerreth",
     archetype: "bruiser",
     faction: "Ember",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 35508,
-            blake3: "84f233d7a7bb657d5de43c4f08d80f5ee6632e7176f6c1910052f9d149a6532c",
+            bytes: 1870276,
+            blake3: "0f8d6e444cfd1fc687335c3191a498a3741147405f753eb03430c75eaa12aeb8",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 1028508,
+            blake3: "",
         ),
     },
 )
