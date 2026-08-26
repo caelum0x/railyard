@@ -33,7 +33,7 @@ use lightyear::prelude::client::ClientPlugins;
 use lightyear::prelude::server::ServerPlugins;
 
 pub use client::{NetcodeClientPlugin, ScriptedInput};
-pub use protocol::{MoveInput, NetChampion, NetPlayer, ProtocolPlugin};
+pub use protocol::{MoveInput, NetChampion, NetPlayer, ProtocolPlugin, SimStateHash};
 pub use server::NetcodeServerPlugin;
 pub use shared::{server_addr, tick_duration, SharedPlugin, SimChecksum, SimNet, CHAMPION_ID};
 

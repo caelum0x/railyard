@@ -94,7 +94,7 @@ lightyear server + client over **UDP** (`NetcodeServer`/`ServerUdpIo`,
 |---------------------------------|------------------------------------------|
 | `StampedInput` (inputs-only)    | `MoveInput` native input (`input_native`)|
 | `Client::predict` / `reconcile` | `PredictionTarget` + rollback            |
-| `sim::state_hash`               | `ChecksumPlugin` + `SimChecksum` resource|
+| `sim::state_hash`               | `SimStateHash` component, `add_custom_hash`-bound into `ChecksumPlugin`'s per-tick XOR |
 | fixed `DT` tick                 | `FixedUpdate` at `sim::TICK_HZ`          |
 | `effect_tick` input delay       | lightyear input-delay config             |
 
@@ -105,6 +105,52 @@ lightyear server + client over **UDP** (`NetcodeServer`/`ServerUdpIo`,
   spins a server + client as two in-process apps over **real UDP loopback**, drives a
   move, and asserts the client connects, receives replication, and converges toward the
   server's authoritative `sim::step` position. ✅ PASSES.
+
+#### Checksum binding — `sim::state_hash` → lightyear per-tick checksum XOR
+The `ChecksumPlugin` was previously *added*, and `SimChecksum`/`sim::state_hash` was
+*computed* every tick, but nothing bound the fingerprint into lightyear's checksum, so
+a client↔server divergence was never actually DETECTED. That binding is now closed:
+- **`protocol::SimStateHash(u64)`** — a replicated + predicted component carrying the
+  per-tick `sim::state_hash`. `shared::sim_step_system` writes `state_hash(&world)` into
+  it every tick (server = authoritative hash; client = predicted hash, which lightyear
+  records into `PredictionHistory<SimStateHash>`).
+- **`add_custom_hash(hash_sim_state)`** on `SimStateHash` (lightyear 0.29's real spelling
+  of the older `local_rollback().add_custom_hash()`; it is a `ComponentRegistration`
+  method and must be called *before* `.predict()` downcasts the builder) feeds that
+  `u64` into the per-tick checksum's `seahash` XOR.
+- The **`Deterministic`** marker (`lightyear_deterministic_replication`) is inserted on
+  the server's authoritative champion (`server.rs`) and the client's predicted champion
+  (`client.rs::handle_controlled_spawn`) — it is the archetype opt-in the checksum
+  machinery filters on. Without it the checksum would hash *no* entity and compare 0s.
+- Net effect: the client's `ChecksumSendPlugin` XORs `hash(SimStateHash)` at its
+  `LastConfirmedInput` tick and sends it; the server's `ChecksumReceivePlugin` compares
+  it against its authoritative history — a mismatch is a **detected** desync, and
+  lightyear's prediction rollback (`PredictionTarget` + replayed `MoveInput` history)
+  re-applies unacknowledged inputs to reconverge on the authoritative state.
+- Adds a direct `seahash = "4.1"` dep (netcode-gated) so the custom-hash hook can name
+  `seahash::SeaHasher` — the exact hasher lightyear hands it.
+- Test: `cargo +1.96.1 test -p aeonrift-moba --features netcode --test netcode_rollback`
+  — proves the bind is REAL (the lightyear `ComponentRegistry` has a deterministic hash
+  fn for `SimStateHash`, and `Deterministic` is registered), and that the fingerprint it
+  carries is divergence-sensitive: a lost input yields a different `state_hash` (desync
+  detected) while a deterministic replay of the acknowledged input stream reproduces the
+  authoritative `state_hash` bit-for-bit (rollback reconverges). ✅ PASSES (3 tests).
+
+**Scope / honest gap (catch-up `register_catchup`):** lightyear 0.29's
+`AppCatchUpExt::register_catchup` (the `LateJoinCatchUpPlugin` path) is a **bevy_replicon
+0.42**-based mid-game-join snapshot mechanism: it hides physics/state components behind a
+replicon `SingleComponent<C>: FilterScope` visibility filter until a joining client
+requests a bundled snapshot, and requires an `ActionStateSequence` input type. Our netcode
+uses lightyear-**native** replication (`Replicate::to_clients`, native `MoveInput` inputs)
+with a single controlling client and no mid-game join, so that replicon catch-up stack is
+not wired in. The determinism guarantee it exists to protect — deterministic re-application
+of unacknowledged inputs after a snapshot — is provided here by lightyear's prediction
+rollback over the predicted entity's `MoveInput` history, now **guarded** by the
+`SimStateHash` checksum bind above. The one remaining gap is that the `SimNet.world`
+*resource* itself is re-simulated but not snapshot-restored to the confirmed tick before a
+rollback replay (lightyear restores predicted *components* + input history, not arbitrary
+resources); closing that fully would require storing sim-world state in prediction history
+or adopting the replicon snapshot path, and is deferred.
 
 ### Pathfinding — deterministic engine crate (`aeonrift-pathfinding`, Bevy-free)
 `engine/pathfinding` is now a real, Bevy-free, integer flow-field / grid nav layer
