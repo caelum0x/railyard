@@ -1,0 +1,4 @@
+# Intermediate splash crops staged by compose_final.py (regenerated on every run).
+# The finished card PNGs + GALLERY.html are the committed deliverables.
+art-crops/
+*.svg
