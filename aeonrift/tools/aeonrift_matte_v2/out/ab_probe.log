@@ -1,0 +1,11 @@
+[13:46:15] resolved ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f
+[13:46:15] 4 generation jobs
+[13:46:15] [1/4] cyranth:transparent: generating... (ref=reference.matte2.png)
+[13:51:56]     ok tris=40000 bytes=4427136 predict_time=158.6s spend=$0.27
+[13:52:07] [2/4] cyranth:gray: generating... (ref=reference.matte2_gray.png)
+[13:56:18]     ok tris=40000 bytes=5795060 predict_time=239.9s spend=$0.54
+[13:56:29] [3/4] xelphine:transparent: generating... (ref=reference.matte2.png)
+[13:59:48]     ok tris=40000 bytes=5277912 predict_time=186.3s spend=$0.81
+[13:59:59] [4/4] xelphine:gray: generating... (ref=reference.matte2_gray.png)
+[14:02:48]     ok tris=40000 bytes=5428096 predict_time=157.9s spend=$1.08
+[14:02:48] DONE. ok=4/4 created=4 spend~$1.08

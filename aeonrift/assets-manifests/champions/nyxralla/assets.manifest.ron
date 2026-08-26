@@ -9,8 +9,8 @@ AssetManifest(
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 4235560,
-            blake3: "3951f9e3bf3544872e5d372bf336d84139647961ee440b19db153ebbeaf05b80",
+            bytes: 4385424,
+            blake3: "dc0d0e90d0c0eca696b0cccca7a285ec07e7d8101d4bbb01eb4179082d5509e5",
         ),
         "reference": AssetEntry(
             path: "reference.png",
