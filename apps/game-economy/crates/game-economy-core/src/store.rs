@@ -15,6 +15,18 @@
 //! `:release` suffixes), so a retried purchase collapses in Mint and the grant is
 //! re-derived to the SAME entitlement id — never a double charge, never a
 //! duplicate item.
+//!
+//! ## Idempotent replay vs. the ownership guard
+//! Single-owner goods (a cosmetic, a battle-pass) carry a *pre-hold* ownership
+//! guard so a NEW purchase of something already owned is rejected before any
+//! charge. A genuine idempotent RETRY (same `idem_key`, e.g. after a client
+//! timeout on a call that actually succeeded) must NOT trip that guard — it has
+//! to return the ORIGINAL outcome, exactly like a consumable pack does. The store
+//! therefore memoizes every completed purchase by its `idem_key` and short-circuits
+//! a replay to the stored outcome BEFORE the ownership guard runs. Without this,
+//! retrying a settled cosmetic/pass purchase wrongly returns `AlreadyOwned` even
+//! though Mint already captured the money — pushing the caller toward a fresh key
+//! and a genuine double charge.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -66,6 +78,17 @@ pub struct PurchaseOutcome {
     pub idempotent_replay: bool,
 }
 
+/// A completed purchase, memoized under its `idem_key` so an idempotent retry
+/// replays the ORIGINAL result without re-charging or re-granting — even for
+/// single-owner goods whose ownership guard would otherwise reject the retry.
+#[derive(Clone)]
+struct CompletedPurchase {
+    /// The player the purchase settled for (guards against key reuse across players).
+    player: String,
+    /// The outcome to replay verbatim (with `idempotent_replay` flipped on).
+    outcome: PurchaseOutcome,
+}
+
 /// A storefront bound to one Mint account rail. Generic over the transport `M`
 /// and the fulfiller `F` so tests inject a FakeMint / a failing fulfiller.
 pub struct GameStore<M: MintTransport, F: Fulfiller = AlwaysFulfill> {
@@ -76,6 +99,8 @@ pub struct GameStore<M: MintTransport, F: Fulfiller = AlwaysFulfill> {
     revenue_account: String,
     /// player -> inventory.
     inventories: Mutex<HashMap<String, Inventory>>,
+    /// idem_key -> completed purchase, so a retry replays the original outcome.
+    purchases: Mutex<HashMap<String, CompletedPurchase>>,
 }
 
 impl<M: MintTransport> GameStore<M, AlwaysFulfill> {
@@ -99,6 +124,7 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             catalog,
             revenue_account: revenue_account.into(),
             inventories: Mutex::new(HashMap::new()),
+            purchases: Mutex::new(HashMap::new()),
         }
     }
 
@@ -139,9 +165,24 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         let price = product.price_micros();
         let entitlement_id = entitlement_id(player, idem_key);
 
+        // 0. Idempotent replay: a completed purchase under this key returns the
+        //    ORIGINAL outcome (no second charge, no duplicate grant). This runs
+        //    BEFORE the ownership guard so a genuine retry of a single-owner good
+        //    replays instead of being rejected as `AlreadyOwned`. Reusing the same
+        //    key for a different player or SKU is an idempotency conflict.
+        if let Some(done) = self.purchases.lock().unwrap().get(idem_key) {
+            if done.player != player || done.outcome.product_sku != product_sku {
+                return Err(GameError::IdempotencyConflict);
+            }
+            let mut out = done.outcome.clone();
+            out.idempotent_replay = true;
+            return Ok(out);
+        }
+
         // Pre-hold ownership guard for single-owner goods: never open a hold (let
         // alone charge) for a cosmetic/pass the player already owns. Packs are
-        // consumable, so buying another is always allowed.
+        // consumable, so buying another is always allowed. Idempotent retries are
+        // handled above, so this only fires for a genuinely NEW purchase.
         self.reject_if_already_owned(player, &product)?;
 
         // 1. Reserve the price. Insufficient funds fails here — no hold, no grant.
@@ -182,16 +223,35 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             .await?;
 
         // 4. Grant the entitlement (idempotent by deterministic id).
-        self.grant(player, &product, &entitlement_id, &capture.receipt_id, capture.settlement_seq);
+        self.grant(
+            player,
+            &product,
+            &entitlement_id,
+            &capture.receipt_id,
+            capture.settlement_seq,
+        );
 
-        Ok(PurchaseOutcome {
+        let outcome = PurchaseOutcome {
             entitlement_id,
             product_sku: product_sku.to_string(),
             charged_micros: capture.captured_micros,
             receipt_id: capture.receipt_id,
             settlement_seq: capture.settlement_seq,
             idempotent_replay: capture.idempotent_replay,
-        })
+        };
+
+        // 5. Memoize the completed purchase so a later retry under the same key
+        //    replays this exact outcome (see step 0) instead of re-charging or
+        //    tripping the ownership guard.
+        self.purchases.lock().unwrap().insert(
+            idem_key.to_string(),
+            CompletedPurchase {
+                player: player.to_string(),
+                outcome: outcome.clone(),
+            },
+        );
+
+        Ok(outcome)
     }
 
     /// Open an owned pack. Deterministic: contents are derived from the pack's

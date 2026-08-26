@@ -141,7 +141,10 @@ async fn cosmetic_purchase_grants_cosmetic() {
     // The bought skin shares the canonical content id with its pack-drop twin.
     let expected = content_item_id(Rarity::Legendary, "Aeon Rift Blade");
     assert!(inv.owns_cosmetic(&expected));
-    assert_eq!(inv.cosmetics.get(&expected).map(|s| s.as_str()), Some("Aeon Rift Blade"));
+    assert_eq!(
+        inv.cosmetics.get(&expected).map(|s| s.as_str()),
+        Some("Aeon Rift Blade")
+    );
 
     // Re-buying the same skin is rejected pre-hold (never double-charged).
     let err = store
@@ -150,6 +153,81 @@ async fn cosmetic_purchase_grants_cosmetic() {
         .unwrap_err();
     assert_eq!(err, GameError::AlreadyOwned("skin.aeon.blade".into()));
     assert_eq!(store.mint_balance(REVENUE), 4_990_000); // still charged only once
+}
+
+/// (e2) An idempotent RETRY of a cosmetic (same idem_key) replays the original
+/// outcome instead of being rejected as `AlreadyOwned`, and never double-charges.
+#[tokio::test]
+async fn idempotent_retry_of_cosmetic_replays_not_rejected() {
+    let mint = FakeMint::new().with_balance(PLAYER, 10_000_000);
+    let store = GameStore::new(mint, Catalog::demo(), REVENUE);
+
+    let first = store
+        .purchase(PLAYER, "skin.aeon.blade", "buy-skin")
+        .await
+        .expect("first cosmetic purchase succeeds");
+    assert!(!first.idempotent_replay);
+
+    // Same idem_key retry: MUST replay, not reject.
+    let second = store
+        .purchase(PLAYER, "skin.aeon.blade", "buy-skin")
+        .await
+        .expect("idempotent retry must replay, not error AlreadyOwned");
+    assert!(
+        second.idempotent_replay,
+        "retry must be flagged as a replay"
+    );
+    assert_eq!(first.entitlement_id, second.entitlement_id);
+    assert_eq!(first.receipt_id, second.receipt_id);
+    assert_eq!(first.charged_micros, second.charged_micros);
+
+    // Charged exactly once despite the retry.
+    assert_eq!(store.mint_balance(REVENUE), 4_990_000);
+    assert_eq!(store.mint_balance(PLAYER), 10_000_000 - 4_990_000);
+    // Exactly one cosmetic owned.
+    assert_eq!(store.inventory(PLAYER).cosmetics.len(), 1);
+}
+
+/// (e3) An idempotent RETRY of a battle-pass (same idem_key) replays too — the
+/// single-owner guard must not shadow a legitimate retry.
+#[tokio::test]
+async fn idempotent_retry_of_battle_pass_replays_not_rejected() {
+    let mint = FakeMint::new().with_balance(PLAYER, 10_000_000);
+    let store = GameStore::new(mint, Catalog::demo(), REVENUE);
+
+    let first = store
+        .purchase(PLAYER, "pass.season1", "buy-pass")
+        .await
+        .unwrap();
+    let second = store
+        .purchase(PLAYER, "pass.season1", "buy-pass")
+        .await
+        .expect("idempotent retry must replay, not error AlreadyOwned");
+    assert!(!first.idempotent_replay);
+    assert!(second.idempotent_replay);
+    assert_eq!(first.entitlement_id, second.entitlement_id);
+    assert_eq!(store.mint_balance(REVENUE), 9_990_000); // charged once
+    assert!(store.inventory(PLAYER).owns_battle_pass("pass.season1"));
+}
+
+/// (e4) Reusing one idem_key for a DIFFERENT SKU is an idempotency conflict, not a
+/// silent replay of the wrong product.
+#[tokio::test]
+async fn same_idem_key_different_sku_is_conflict() {
+    let mint = FakeMint::new().with_balance(PLAYER, 20_000_000);
+    let store = GameStore::new(mint, Catalog::demo(), REVENUE);
+
+    store
+        .purchase(PLAYER, "pack.standard", "dup-key")
+        .await
+        .unwrap();
+    let err = store
+        .purchase(PLAYER, "skin.aeon.blade", "dup-key")
+        .await
+        .expect_err("same key, different SKU must conflict");
+    assert_eq!(err, GameError::IdempotencyConflict);
+    // The conflicting call never charged for the skin.
+    assert_eq!(store.mint_balance(REVENUE), 990_000);
 }
 
 /// A battle-pass purchase grants the pass at tier 1 and settles on Mint.
@@ -184,8 +262,14 @@ async fn unknown_product_never_touches_mint() {
 /// The deterministic entitlement id is a pure function of (player, idem_key).
 #[test]
 fn entitlement_ids_are_deterministic() {
-    assert_eq!(entitlement_id(PLAYER, "buy-1"), entitlement_id(PLAYER, "buy-1"));
-    assert_ne!(entitlement_id(PLAYER, "buy-1"), entitlement_id(PLAYER, "buy-2"));
+    assert_eq!(
+        entitlement_id(PLAYER, "buy-1"),
+        entitlement_id(PLAYER, "buy-1")
+    );
+    assert_ne!(
+        entitlement_id(PLAYER, "buy-1"),
+        entitlement_id(PLAYER, "buy-2")
+    );
 }
 
 // --- small test-only accessors kept out of the public store API ---------------
