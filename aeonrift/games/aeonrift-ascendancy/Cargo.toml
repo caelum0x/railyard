@@ -19,6 +19,14 @@ path = "src/lib.rs"
 name = "cardmatch"
 path = "src/bin/cardmatch.rs"
 
+# Headless match-replay gallery: runs a scripted deterministic match and writes HTML
+# board states (REPLAY.html + BOARD.html + frames) rendered with the real final-v2
+# card faces, so the match can be SEEN playing without opening a window.
+# `cargo run -p aeonrift-ascendancy --bin matchreplay -- --seed 42`
+[[bin]]
+name = "matchreplay"
+path = "src/bin/matchreplay.rs"
+
 # The Bevy touch client (migrated from moba/cards-client). Gated behind the `client`
 # feature so the default workspace build stays fast + green; the client pulls Bevy,
 # which compiles slowly. Build it with:

@@ -9,7 +9,13 @@ use cards::deck::{load_default_presets, validate_deck_slugs, DeckError, DECK_SIZ
 #[test]
 fn all_twelve_preset_decks_load_and_are_legal() {
     let decks = load_default_presets().expect("all preset decks load + validate");
-    assert_eq!(decks.len(), 12, "the roster ships 12 preset decks");
+    // The content-mega consolidation grew the shipped set beyond the original 12
+    // curated decks; the contract is "at least the 12 curated decks, all legal".
+    assert!(
+        decks.len() >= 12,
+        "the roster ships at least 12 preset decks, found {}",
+        decks.len()
+    );
 
     for d in &decks {
         assert_eq!(d.cards.len(), DECK_SIZE, "{}: must have 8 cards", d.name);
@@ -41,7 +47,14 @@ fn deck_validation_rejects_illegal_decks() {
     );
     // A slug not in the roster.
     let bad: Vec<String> = [
-        "zeus", "hades", "athena", "medusa", "achilles", "artemis", "mars", "ghost-not-real",
+        "zeus",
+        "hades",
+        "athena",
+        "medusa",
+        "achilles",
+        "artemis",
+        "mars",
+        "ghost-not-real",
     ]
     .iter()
     .map(|s| s.to_string())
