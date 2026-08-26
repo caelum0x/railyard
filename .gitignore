@@ -22,3 +22,6 @@ weights/*.tar
 .work/
 lora-test/*.png
 train/*.png
+
+# matte-v2 tool intermediate meshes/previews (per-champion out subdirs)
+aeonrift/tools/aeonrift_matte_v2/out/*/
