@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Horus",
     archetype: "bruiser",
     faction: "Egyptian",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 35508,
-            blake3: "c2dc642f87de0ce782e5076fe1591133f1343a3ec51681f81bd4203239f9ff2b",
+            bytes: 1746144,
+            blake3: "a1937712f2503963bd77364c13d28bcaf569b43602f0c1231d5df5fbd00ae828",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 765727,
+            blake3: "",
         ),
     },
 )

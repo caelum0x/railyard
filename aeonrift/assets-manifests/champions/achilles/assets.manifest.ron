@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Achilles",
     archetype: "bruiser",
     faction: "Greek",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 35508,
-            blake3: "a4ac27f5082f61d8abb5a16c2bb595ac6104325258db10f8e1dc16d9f04e8dce",
+            bytes: 1727820,
+            blake3: "249d425de42d2094c752e0528f7383fc05789dc532579786e8884d7a5e7012ee",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 798250,
+            blake3: "",
         ),
     },
 )

@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Ysmera",
     archetype: "mage",
     faction: "Ember",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 34680,
-            blake3: "b39486eedce95ad4ae2b0ec23feafa1a7d214b825172aadaaedbc8bf28c3faef",
+            bytes: 2297884,
+            blake3: "d95e7e4776424c1bfd095fbeeaf321cd85be60d31925cc0a25e2c711496d4c8c",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 966292,
+            blake3: "",
         ),
     },
 )

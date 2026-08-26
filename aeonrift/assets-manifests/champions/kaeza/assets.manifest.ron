@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Kaeza",
     archetype: "marksman",
     faction: "Ember",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 17832,
-            blake3: "ce46ced92885d088bb9880a7fc3a2b6ecba913ec54546ce8b5af44fbfebccbcf",
+            bytes: 2119104,
+            blake3: "1c398303016455cea31d48b0e6f3803dba6258e015aed7e1702e002d39fac7e3",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 829120,
+            blake3: "",
         ),
     },
 )

@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Isis",
     archetype: "mage",
     faction: "Egyptian",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 34680,
-            blake3: "824231bc7c91b1774ffd752b8244e627fbbd77fb1ae6c69c45c874441da633b0",
+            bytes: 1883448,
+            blake3: "ad74c61a877a6ce05a0637cdd65850cef0bda386533481a9bc135fd65e5d9bca",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 792104,
+            blake3: "",
         ),
     },
 )
