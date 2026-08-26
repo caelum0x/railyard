@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Anubis",
     archetype: "mage",
     faction: "Egyptian",
-    generator: "blender",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 34680,
-            blake3: "824231bc7c91b1774ffd752b8244e627fbbd77fb1ae6c69c45c874441da633b0",
+            bytes: 7572244,
+            blake3: "581a316afef1fbd2d29aa5fb5807231a86b66130c417ff45a2dc51a0f4060797",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 648791,
+            blake3: "a9bbb180eb7548b6db0eff968616bfc7ead1cf43a9dea6bce898bfe2a1ff9e8a",
         ),
     },
 )

@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Janus",
     archetype: "mage",
     faction: "Roman",
-    generator: "blender",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 34680,
-            blake3: "d407607b81d62d52af40c1285072b7792ff445e8c75095a8af221a4c316937b9",
+            bytes: 6714320,
+            blake3: "5adbc62a9b66cffd31c6c2f100dade34aa4d84f2cd6983106bda6caaff573e9d",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 860192,
+            blake3: "9868d71fbb089fea74a761b117d1f69f2304076862f11a7b0da8e07b1f765a7d",
         ),
     },
 )

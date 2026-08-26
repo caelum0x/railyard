@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Medusa",
     archetype: "marksman",
     faction: "Greek",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 17832,
-            blake3: "f785ff4218c19746b022dc487e739171e5f1855895a3093496226d5c989105c3",
+            bytes: 1693508,
+            blake3: "d721e6fc3a77b1e593b30b7f044138e2223c09f62459633d74b9ee65d79e9fb8",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 1106994,
+            blake3: "b47485490210b76406804870c40f6064f1242019e8ba0a8df90edfeba622130c",
         ),
     },
 )

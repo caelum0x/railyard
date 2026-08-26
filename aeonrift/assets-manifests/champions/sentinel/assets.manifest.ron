@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Sentinel",
     archetype: "marksman",
     faction: "Umbral",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 17820,
-            blake3: "8408b4d2a6bdbaf452f5b3e4d4bc25228742c1ccf82f0d57d4a421f7fe8faadc",
+            bytes: 2471712,
+            blake3: "bf0bf3d671c0bca4ab2369dd86c628e98190471c5352450546322daad772276f",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 576059,
+            blake3: "1226f444204e56e9847d0ff825f01b8ef38698b1ecf2ca921f526615b174d2bd",
         ),
     },
 )
