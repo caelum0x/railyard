@@ -1,0 +1,245 @@
+{
+  "model": "ndreca/hunyuan3d-2.1",
+  "version_id": "895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
+  "cost_per_run": 0.27,
+  "spend": 5.67,
+  "champions": {
+    "anubis-warden-of-scales": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/anubis-warden-of-scales/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/anubis-warden-of-scales/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 7572244,
+      "predict_time": 119.4,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "achilles": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/achilles/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/achilles/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 6284312,
+      "predict_time": 118.5,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "artemis": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/artemis/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/artemis/preview.png",
+      "tris": 39994,
+      "tris_ok": true,
+      "bytes": 7402500,
+      "predict_time": 118.0,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "athena": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/athena/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/athena/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 7187188,
+      "predict_time": 115.4,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "bastet-claws-of-the-hunt": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/bastet-claws-of-the-hunt/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/bastet-claws-of-the-hunt/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 6120608,
+      "predict_time": 102.1,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "bellona": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/bellona/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/bellona/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 6653004,
+      "predict_time": 118.1,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "brackmoor": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/brackmoor/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/brackmoor/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 5385452,
+      "predict_time": 118.5,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "cyranth": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/cyranth/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/cyranth/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 5922560,
+      "predict_time": 121.8,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "dregmaw": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/dregmaw/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/dregmaw/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 5892136,
+      "predict_time": 121.0,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "freyja": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/freyja/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/freyja/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 6809192,
+      "predict_time": 126.6,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "gorehoof": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/gorehoof/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/gorehoof/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 7027960,
+      "predict_time": 132.2,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "hades": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/hades/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/hades/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 6980784,
+      "predict_time": 120.4,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "horus-skyfall-talon": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/horus-skyfall-talon/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/horus-skyfall-talon/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 5916472,
+      "predict_time": 118.4,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "isis-mother-of-magic": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/isis-mother-of-magic/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/isis-mother-of-magic/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 7692048,
+      "predict_time": 106.2,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "janus": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/janus/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/janus/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 6714320,
+      "predict_time": 116.8,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "kaeza": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/kaeza/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/kaeza/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 5989408,
+      "predict_time": 117.9,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "korrathil": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/korrathil/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/korrathil/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 7356324,
+      "predict_time": 125.8,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "loki": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/loki/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/loki/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 7827084,
+      "predict_time": 120.3,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "lumisel": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/lumisel/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/lumisel/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 3809360,
+      "predict_time": 141.2,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "mars": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/mars/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/mars/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 6444724,
+      "predict_time": 120.0,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "medusa": {
+      "ok": true,
+      "glb": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/medusa/model.hunyuan.glb",
+      "png": "/Users/arhansubasi/products/rail-3d-hq/aeonrift/tools/aeonrift_3d_hq/out/medusa/preview.png",
+      "tris": 40000,
+      "tris_ok": true,
+      "bytes": 8444620,
+      "predict_time": 122.1,
+      "cost": 0.27,
+      "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f"
+    },
+    "mercury": {
+      "ok": false,
+      "error": "balance: ReplicateError Details:\ntitle: Insufficient credit\nstatus: 402\ndetail: You have insufficient credit to run this model. Go to https://replicate.com/account/billing#billing to purchase credit. Once you "
+    }
+  },
+  "model_source": "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
+  "stopped_balance": true
+}
