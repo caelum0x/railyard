@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aeonrift image-to-3D generator A/B — Anubis &amp; Zeus</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background:#0d0e12; color:#e7e9ee; margin:0; padding:24px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:#9aa0ad; font-size:13px; margin-bottom:20px; }
+  table { border-collapse:separate; border-spacing:10px; width:100%; }
+  th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:#9aa0ad;
+    font-weight:600; text-align:left; padding:0 6px; }
+  td { background:#16181f; border:1px solid #23262f; border-radius:12px; padding:10px;
+    vertical-align:top; text-align:center; width:260px; }
+  td.name { background:transparent; border:none; text-align:left; width:120px; vertical-align:middle; }
+  td.name h2 { margin:0; font-size:19px; }
+  td.name .slug { color:#6b7280; font-size:11px; }
+  td.ref { background:#12141a; }
+  img { width:100%; max-width:240px; height:auto; border-radius:8px; display:block;
+    margin:6px auto; background:#000; }
+  .gen { font-size:12px; font-weight:600; color:#c7ccd6; margin-bottom:4px; min-height:30px; }
+  .meta { font-size:11px; color:#9aa0ad; margin-top:4px; }
+  .cost { color:#7fd1a6; }
+  .miss .err { color:#e07a7a; font-size:12px; padding:40px 6px; }
+  .legend { margin-top:24px; font-size:12px; color:#9aa0ad; line-height:1.6; }
+  .legend b { color:#c7ccd6; }
+  code { background:#23262f; padding:1px 5px; border-radius:4px; }
+</style></head><body>
+<h1>Aeonrift image-to-3D generator A/B</h1>
+<div class="sub">Two champions (Anubis, Zeus) &mdash; same Flux concept reference into each generator, then
+rendered with an identical headless Blender EEVEE camera/light rig. fal generators (Tripo v3, Meshy v6) were <b>skipped</b> — no FAL key found in the environment.</div>
+<table>
+<thead><tr><th>Champion</th><th>Concept ref</th><th>TRELLIS (firtoz/trellis)</th><th>Hunyuan3D-2.1 (ndreca/hunyuan3d-2.1)</th><th>Hunyuan3D-2mv (tencent/hunyuan3d-2mv)</th></tr></thead>
+<tbody>
+<tr><td class="name"><h2>Anubis</h2><div class="slug">anubis-warden-of-scales</div></td><td class="ref"><div class="gen">Concept ref (Flux)</div><a href="out/anubis/reference.png" target="_blank"><img src="out/anubis/reference.png" alt="ref"></a><div class="meta">image-to-3D input</div></td><td><div class="gen">TRELLIS (firtoz/trellis)</div><a href="out/anubis/trellis.png" target="_blank"><img src="out/anubis/trellis.png" alt="TRELLIS (firtoz/trellis)"></a><div class="meta">13,966 tris &middot; 1.6 MB</div><div class="meta cost">$0.00 (reused) &middot; reused existing baseline</div></td><td><div class="gen">Hunyuan3D-2.1 (ndreca/hunyuan3d-2.1)</div><a href="out/anubis/hunyuan21.png" target="_blank"><img src="out/anubis/hunyuan21.png" alt="Hunyuan3D-2.1 (ndreca/hunyuan3d-2.1)"></a><div class="meta">40,000 tris &middot; 7.6 MB</div><div class="meta cost">$0.27/run &middot; 110s gen</div></td><td><div class="gen">Hunyuan3D-2mv (tencent/hunyuan3d-2mv)</div><a href="out/anubis/hunyuan2mv.png" target="_blank"><img src="out/anubis/hunyuan2mv.png" alt="Hunyuan3D-2mv (tencent/hunyuan3d-2mv)"></a><div class="meta">40,000 tris &middot; 0.8 MB</div><div class="meta cost">$0.11/run &middot; 12s gen</div></td></tr>
+<tr><td class="name"><h2>Zeus</h2><div class="slug">zeus</div></td><td class="ref"><div class="gen">Concept ref (Flux)</div><a href="out/zeus/reference.png" target="_blank"><img src="out/zeus/reference.png" alt="ref"></a><div class="meta">image-to-3D input</div></td><td><div class="gen">TRELLIS (firtoz/trellis)</div><a href="out/zeus/trellis.png" target="_blank"><img src="out/zeus/trellis.png" alt="TRELLIS (firtoz/trellis)"></a><div class="meta">66,287 tris &middot; 3.0 MB</div><div class="meta cost">$0.00 (reused) &middot; reused existing baseline</div></td><td><div class="gen">Hunyuan3D-2.1 (ndreca/hunyuan3d-2.1)</div><a href="out/zeus/hunyuan21.png" target="_blank"><img src="out/zeus/hunyuan21.png" alt="Hunyuan3D-2.1 (ndreca/hunyuan3d-2.1)"></a><div class="meta">40,000 tris &middot; 7.2 MB</div><div class="meta cost">$0.27/run &middot; 126s gen</div></td><td><div class="gen">Hunyuan3D-2mv (tencent/hunyuan3d-2mv)</div><a href="out/zeus/hunyuan2mv.png" target="_blank"><img src="out/zeus/hunyuan2mv.png" alt="Hunyuan3D-2mv (tencent/hunyuan3d-2mv)"></a><div class="meta">40,000 tris &middot; 0.8 MB</div><div class="meta cost">$0.11/run &middot; 17s gen</div></td></tr>
+</tbody>
+</table>
+<div class="legend">
+<b>How to read:</b> every model was fed the <i>same</i> <code>reference.png</code> and rendered with the
+same camera and 3-point lighting, so differences are the generator's, not the render's.
+Tri-count is measured post-import in Blender (triangulated). Cost is the per-run Replicate estimate;
+gen time is the model's <code>predict_time</code>. TRELLIS is the current baseline (reused, no new spend).<br>
+<b>Generators:</b> TRELLIS <code>firtoz/trellis</code> &middot; Hunyuan3D-2.1 <code>ndreca/hunyuan3d-2.1</code>
+(PBR texture + auto-rig) &middot; Hunyuan3D-2mv <code>tencent/hunyuan3d-2mv</code> (single front view).
+</div>
+<div class="legend" style="margin-top:20px;border-top:1px solid #23262f;padding-top:16px;">
+<b style="color:#7fd1a6;font-size:14px;">Verdict &mdash; winner: Hunyuan3D-2.1</b><br>
+<b>Hunyuan3D-2.1</b> is clearly the best stylized game-ready result on both champions: sharpest
+geometry, faithful PBR texture, and it preserves flowing/ornate detail the baseline loses
+(e.g. Zeus's full flowing cape and layered gold armor; Anubis's crisp collar, kilt glyphs and
+fluffy tail). ~$0.27/run, ~110&ndash;125s. Minor artifacts to QA: occasional glitch shard where the
+concept holds a prop (Zeus's lightning bolt) and slight face-texture bleed.<br>
+<b>TRELLIS (baseline)</b> is acceptable and cheap but noticeably softer/&ldquo;melted&rdquo; &mdash; blobby hands,
+truncated Zeus cape, less crisp ornamentation.<br>
+<b>Hunyuan3D-2mv</b> produced clean geometry but <b>no texture</b> (white clay) from a single front
+image &mdash; not usable as-is without true multi-view inputs or a separate texture pass, despite being
+cheapest/fastest ($0.11, ~12&ndash;17s).<br>
+<b>Recommendation:</b> switch the full 47-batch to Hunyuan3D-2.1 (~47 &times; $0.27 &asymp; $12.70 total),
+with a light artifact-QA pass. Keep TRELLIS only as a cheap fallback; skip 2mv unless fed multi-view refs.
+</div>
+</body></html>
