@@ -1,16 +1,6 @@
-# Rust
-target/
-**/target/
-# Python
-__pycache__/
-*.pyc
-.venv/
-.coverage
-*.db
-# Node
-node_modules/
-# Secrets / env
-.env
-.env.*
-!.env.example
-*.p8
+weights/*.zip
+weights/*.safetensors
+weights/*.tar
+.work/
+lora-test/*.png
+train/*.png
