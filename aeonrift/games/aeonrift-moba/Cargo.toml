@@ -23,7 +23,7 @@ default = []
 # M1.5 netcode: server-authoritative + client prediction/rollback over real UDP
 # (lightyear 0.29 + Bevy 0.19). Pulls the Bevy-0.19 world; kept OFF by default so
 # `cargo build --workspace` never drags it into the Bevy-0.20-dev engine build.
-netcode = ["dep:bevy", "dep:lightyear", "dep:lightyear_deterministic_replication"]
+netcode = ["dep:bevy", "dep:lightyear", "dep:lightyear_deterministic_replication", "dep:seahash"]
 # Client-side rendering deps (Bevy 0.19), NON-authoritative and OFF by default for
 # the same Bevy-version isolation reason:
 #   - vleue_navigator 0.16 : any-angle navmesh visualization,
@@ -76,6 +76,12 @@ lightyear = { version = "0.29", default-features = false, features = [
     "std",
 ], optional = true }
 lightyear_deterministic_replication = { version = "0.29", optional = true }
+# The exact hasher lightyear's ChecksumPlugin uses (seahash 4.1). We depend on it
+# directly (same version lightyear_replication locks) so `SimStateHash`'s
+# `add_custom_hash` fn can name `seahash::SeaHasher` — the argument type lightyear
+# hands the custom hash function. A mismatched seahash major would be a *different*
+# `SeaHasher` type and fail to type-check the hook.
+seahash = { version = "4.1", optional = true }
 # Client-side navmesh (Polyanya any-angle) for visualization only — never authoritative.
 vleue_navigator = { version = "0.16", optional = true }
 # Immediate-mode debug/HUD overlay (Bevy 0.19). Default features give the egui

@@ -78,6 +78,33 @@ impl bevy::ecs::entity::MapEntities for MoveInput {
     fn map_entities<M: bevy::ecs::entity::EntityMapper>(&mut self, _m: &mut M) {}
 }
 
+/// The per-tick `sim::state_hash` carried on the wire as a replicated + predicted
+/// component, so lightyear's checksum XOR is computed over the SAME fingerprint the
+/// `no_desync` gate uses.
+///
+/// This is the value that binds aeonrift's determinism fingerprint into lightyear's
+/// desync guard: the server writes `state_hash(&world)` into it every authoritative
+/// tick, and the client writes `state_hash(&predicted_world)` every predicted tick.
+/// Registered with [`ChecksumPlugin`] via `add_custom_hash` + the [`Deterministic`]
+/// marker, so:
+///   - the client's `ChecksumSendPlugin` XORs `hash(SimStateHash)` at its
+///     `LastConfirmedInput` tick (read from the `PredictionHistory<SimStateHash>`)
+///     and sends it to the server, and
+///   - the server's `ChecksumReceivePlugin` compares it against its own authoritative
+///     `hash(SimStateHash)` history for that tick — a mismatch is a detected desync.
+#[derive(Component, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Reflect)]
+pub struct SimStateHash(pub u64);
+
+/// The `add_custom_hash` target: feed the raw `sim::state_hash` u64 into lightyear's
+/// per-tick checksum seahash. Because the whole-world `state_hash` is already an
+/// order-independent fingerprint of every deterministic entity, hashing this single
+/// component reproduces the exact desync signal `no_desync` asserts offline — now as
+/// a live client<->server checksum.
+fn hash_sim_state(state: &SimStateHash, hasher: &mut seahash::SeaHasher) {
+    use core::hash::Hasher;
+    hasher.write_u64(state.0);
+}
+
 /// A replicated snapshot of a champion's authoritative state. The server writes it
 /// from `sim::step`; lightyear replicates + predicts it to clients.
 #[derive(Component, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Reflect)]
@@ -130,5 +157,23 @@ impl Plugin for ProtocolPlugin {
             .predict()
             .add_linear_interpolation();
         app.component::<NetPlayer>().replicate();
+
+        // THE BIND: register `sim::state_hash` (carried by `SimStateHash`) into
+        // lightyear's per-tick checksum XOR. `.predict()` gives it a
+        // `PredictionHistory<SimStateHash>` so the client's `ChecksumSendPlugin` can
+        // read the fingerprint at the `LastConfirmedInput` tick; `.add_custom_hash`
+        // (the real lightyear-0.29 spelling of the deprecated
+        // `local_rollback().add_custom_hash()`) makes it a hashable deterministic
+        // component so it actually contributes to the checksum instead of being a
+        // resource nobody compares. The `Deterministic` marker (added on both the
+        // server's authoritative champion and the client's predicted champion) is
+        // what opts the entity into the checksum archetype set.
+        // NOTE: `add_custom_hash` lives on the base `ComponentRegistration`, so it
+        // must be called before `.predict()` (which downcasts the builder to
+        // `PredictedComponentRegistration`).
+        app.component::<SimStateHash>()
+            .add_custom_hash(hash_sim_state)
+            .replicate()
+            .predict();
     }
 }
