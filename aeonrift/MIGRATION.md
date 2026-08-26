@@ -5,6 +5,82 @@ in this skeleton. This is the reconciliation map; the skeleton compiles today an
 the real code migrates in per row. Each destination crate's `src/lib.rs` carries the
 same pointer as a `// MIGRATE:` doc line.
 
+## RL stack graduation — DEFERRED (blocked on Riot-champion decoupling) (2026-08-26)
+
+Attempted to graduate the RL stack `lol_agent -> lol_env -> lol_rl` (moon-lol
+`crates/`, branch `fork/original-ip`) onto Bevy `0.20-dev` with CPU candle, so the RL
+bots could become the balance/PvE oracle. **Outcome: all three EXCLUDED — none graduated
+as members.** This is an honest zero-graduation with a corrected blocker analysis; the
+default `cargo +1.96.1 build --workspace` stays green (only comments changed).
+
+### The dependency blockers named previously were FALSE or solvable
+
+The prior `Cargo.toml` comment claimed the "hard blocker is the `lol_env -> lol_agent`
+(rquickjs) chain." That is **wrong**. Building `lol_agent` against the shared target
+(`CARGO_TARGET_DIR` = main checkout) compiled the full Bevy render stack and:
+
+- **rquickjs 0.12 — compiles cleanly on `cargo 1.96.1`.** Verified: `librquickjs` and
+  `librquickjs-sys` `.rlib`s built (the bundled QuickJS C sources compile with clang).
+  It is NOT a blocker.
+- **candle CUDA default — trivially flipped to CPU.** In the staged `lol_rl/Cargo.toml`:
+  crate `default = []` (was `["cuda"]`), and `candle-core` / `candle-nn` pulled with
+  `default-features = false`. A `cuda` feature is preserved as an off seam. No CUDA in
+  the workspace.
+- **postgres/sqlx — cleanly gated behind an off-by-default `db` feature.** `sqlx =
+  { ..., optional = true }`; `db = ["dep:sqlx"]`. `src/db.rs` (`PgRlRepo`, `apply_schema`,
+  `map_db_error`, `parse_*`, the `RepoError::Db(sqlx::Error)` variant) and the Pg
+  constructors in `src/service.rs` / `src/server.rs` go under `#[cfg(feature = "db")]`;
+  with `db` off the WS training server runs pure in-memory (`NoopRlRepo`), and sqlx is
+  not compiled at all (a large disk win). `src/db.rs` uses runtime `sqlx::query(...)`
+  (no compile-time `query!` macros), so no `DATABASE_URL` is needed to build.
+
+### The REAL hard blocker — Riot-champion gameplay coupling
+
+The RL stack is built on the Riot champions **Fiora** and **Riven** at the
+gameplay-logic level, not a thin asset seam:
+
+- `lol_agent` — every observation/RPC/script system queries
+  `lol_champions::fiora::passive::Vital` (Fiora's passive) as `Option<&Vital>`
+  (6 files: `models.rs`, `systems/obs.rs`, `systems/script.rs`,
+  `systems/rpc/{observe,rl_reset,rl_step}.rs`).
+- `lol_env` — **all** concrete environments are Fiora/Riven self-play:
+  `fiora_v0`/`fiora_v1`/`fiora_v2`, `solo_v0`, `fiora_riven_common` (the whole public
+  API is `FioraVsRiven*` / `FioraV2*` / `SoloV0*` types; `traits.rs`'s env registry
+  macro hard-references `fiora_v0/v1/v2`). Only `traits.rs` (the `RlEnvironment` trait +
+  `EnvConfig`/`StepResult`), `obs_plugins.rs`, `flash_plugin.rs`, `raycast_plugin.rs`
+  are Riot-free.
+- `lol_rl` — `worker.rs`/`rollout.rs`/etc. directly name the Fiora parallel envs
+  (`ParallelFioraV2Envs`, ...).
+
+Aeonrift's `lol_champions` is deliberately an **original-IP-only** roster (erebos,
+zeus, hades, artemis, ...) with **zero** Riot champions — the same clean-IP stance the
+render/particle graduation preserved. So the RL code cannot compile here, and gating
+the Fiora/Riven envs off by default would leave hollow, non-functional shells (fake
+green) while dragging Riot champion identities (Fiora/Riven/Vital/Riposte) into a tree
+that was intentionally scrubbed of them. Neither is acceptable, so no Riot-coupled RL
+source was committed.
+
+### Remaining work — turnkey recipe for the original-IP port
+
+Unlike render/particle (a one-line asset-loader seam), decoupling the RL stack requires
+**porting the training envs to original-IP champions**, e.g. an `erebos_v0` / `erebos-vs-
+hades` env pair, plus a neutral original observation component to replace Fiora's
+`Vital` (a generic "weak-point / exposed-objective" marker in `lol_core`). Once the
+concrete envs are original-IP:
+
+1. Add `lol_agent`, `lol_env`, `lol_rl` as members + `[workspace.dependencies]` path
+   deps (dep order: agent -> env -> rl).
+2. Use the staged Cargo recipes above (candle `default = []` + `default-features =
+   false`; sqlx `optional` + `db` feature off).
+3. Drop the GUI `lol_rl_visual` bin and the dev/bench drivers under `lol_rl/src/bin/`
+   (headless workspace — no window bins).
+4. Add the CPU smoke test: construct an original-IP `RlEnvironment` and step it
+   deterministically (seeded RNG), asserting a stable observation/reward.
+
+Verified facts captured this session: rquickjs OK on 1.96.1; bevy render stack builds;
+lol_agent's ONLY external Riot symbol is `Vital`; lol_env/lol_rl are pervasively
+Fiora/Riven-coupled. Disk held at ~36 GiB free throughout (shared target, no thrash).
+
 ## RENDER/PARTICLE graduation — Riot-decoupled render engine (2026-08-26)
 
 The heavy render crates `lol_render` and `lol_particle` are now **GREEN additive

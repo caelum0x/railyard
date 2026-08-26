@@ -57,11 +57,25 @@ members = [
     # The following moon-lol crates are intentionally NOT members because they
     # depend on heavy/unbuildable deps or on the Riot-data-coupled crates:
     #   lol_debug   -> requires lol_render (debug-only overlay; not needed)
-    #   lol_agent   -> requires lol_render + rquickjs (JS scripting engine)
-    #   lol_env     -> requires lol_render + lol_particle + lol_agent(rquickjs) + winit
-    #   lol_rl      -> requires lol_env (see above chain) + candle-core + postgres/sqlx
-    # NOTE: lol_rl's own deps (candle CUDA default, postgres) are the *lesser* blocker;
-    # its hard blocker is the lol_env -> lol_agent(rquickjs) chain (see MIGRATION.md).
+    #
+    # RL stack (lol_agent / lol_env / lol_rl): attempted for graduation onto Bevy
+    # 0.20-dev with CPU candle; EXCLUDED. The dependency-level blockers named in the
+    # prior revision of this comment turned out to be FALSE or solvable:
+    #   * rquickjs 0.12 (lol_agent's JS engine) compiles cleanly on cargo 1.96.1
+    #     (verified — librquickjs/librquickjs-sys built; NOT a blocker).
+    #   * candle CUDA default is trivially flipped to CPU (crate `default = []`,
+    #     candle-core/candle-nn `default-features = false`).
+    #   * postgres/sqlx is cleanly gated behind an off-by-default `db` feature
+    #     (sqlx `optional = true`; server falls back to in-memory NoopRlRepo).
+    # The REAL hard blocker is Riot IP coupling: every RL training environment
+    # (fiora_v0/v1/v2, solo_v0, fiora_riven_common) and lol_agent's observation
+    # (`lol_champions::fiora::passive::Vital`) are built on the Riot champions
+    # Fiora & Riven at the GAMEPLAY-LOGIC level — not a thin asset seam. Aeonrift's
+    # `lol_champions` is deliberately an original-IP-only roster (erebos, zeus, hades,
+    # ...) with ZERO Riot champions, so the RL code cannot compile here, and gating
+    # the Riot envs off by default would leave hollow, non-functional shells. See
+    # MIGRATION.md ("RL stack — deferred") for the turnkey original-IP port recipe.
+    #
     # Riot-data-coupled / dev-only crates excluded entirely: league_core, league_file,
     # league_to_lol, lol_extractor, lol_game_process_manager, lol_cli, lol_web_*,
     # apps/client. No Riot WAD/PROP/TEX assets or champion configs copied.
