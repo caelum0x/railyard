@@ -3,14 +3,14 @@ AssetManifest(
     champion: "Odin",
     archetype: "mage",
     faction: "Norse",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 2742824,
-            blake3: "34015035a89a999d8aa11fba8a7eccc4d61bd6bf07cf0e64429ec63b75e343a7",
+            bytes: 6640696,
+            blake3: "88e6395f75daa28f25b43a3869cff42859e9180106c6d8c137aad7907d079b3d",
         ),
         "reference": AssetEntry(
             path: "reference.png",

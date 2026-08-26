@@ -3,14 +3,14 @@ AssetManifest(
     champion: "Set",
     archetype: "assassin",
     faction: "Egyptian",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 1592556,
-            blake3: "4fd3078d1de244291025f146293240e09360b9c8432163eb74d33131bf73330d",
+            bytes: 5262148,
+            blake3: "e1522f1c0cf01ea2818be644c848bdc4e8fc8ffb2374f1f28f2f49b9eef9d632",
         ),
         "reference": AssetEntry(
             path: "reference.png",
