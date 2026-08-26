@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Dregmaw",
     archetype: "tank",
     faction: "Umbral",
-    generator: "blender",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 32392,
-            blake3: "a96ca90f7d61bce08ea30d25655e88fcf6d4a22756fb7b62124f0efb683f0bbd",
+            bytes: 5892136,
+            blake3: "08e0dff61e27142c4429c7c5c85ab94bb8f8ea0178ac387c4f4bcec567599cf9",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 946447,
+            blake3: "a8bdd9badb6d260b9444268eac851420848ea957b3e3858f29447f5d102a7cbe",
         ),
     },
 )

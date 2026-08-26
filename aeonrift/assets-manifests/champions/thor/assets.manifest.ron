@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Thor",
     archetype: "bruiser",
     faction: "Norse",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 35492,
-            blake3: "0ededaf4b5962a3de127ac0fef97dd982bbce3a67e344f8ce1f543937eca8c56",
+            bytes: 2670940,
+            blake3: "aa5bd66a9e6d4d04eb1a70af85ae43b1a3b3b7daecc869d30cd57f7501df21d9",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 836762,
+            blake3: "32ecb9b332ac6675a42a4ae99dc1f0b6ac1d9f6a5bd6b9fd0407b9f9a8c338b4",
         ),
     },
 )

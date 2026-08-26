@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Petalsong",
     archetype: "support",
     faction: "Verdant",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 27764,
-            blake3: "a06d5efbd16266df7174b1e1cfb784f6d0f450bc7edc0df67772d3ddbdf5690e",
+            bytes: 3323808,
+            blake3: "346c37ff65fab901646637f16cea33c2cc36468b7dbf1f53212f5dd610beb69a",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 981945,
+            blake3: "c0cd3d94b800d7bb5e67111a0a4d2e0af85323b12f3a5b3c62e2186f2bdc5c3b",
         ),
     },
 )

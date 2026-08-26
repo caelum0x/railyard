@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Mosscloak",
     archetype: "bruiser",
     faction: "Verdant",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 35496,
-            blake3: "623d24f782f8ac5a0d50231c2f65016b5f43548e140891c0ea8989ad61cd5a69",
+            bytes: 2221200,
+            blake3: "b7bcb15a9c42e698055844d660cc424e2065a69e54a5ffb5316734a57954bab0",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 848877,
+            blake3: "5b57fa9d96fc3e0bd81bdeca2a7812db598c3c742271c69f18c4f9cf34490a1d",
         ),
     },
 )

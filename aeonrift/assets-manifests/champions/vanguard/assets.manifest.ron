@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Vanguard",
     archetype: "bruiser",
     faction: "Roman",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 35508,
-            blake3: "fd250632501acbdd504bd9011cf4a092c03b8d4b1d74d9e6504cc8f2ed78e50b",
+            bytes: 1918260,
+            blake3: "cd360ee9b42fddbfe8fe4dd697ff673b74bdf325464a02991f2efac907fb95d4",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 823045,
+            blake3: "8afb0e7a300fdba254bf6df3e71d1063c75b60ff2938883c1470e6f7ef706076",
         ),
     },
 )

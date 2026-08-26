@@ -3,13 +3,20 @@ AssetManifest(
     champion: "Bastet",
     archetype: "assassin",
     faction: "Egyptian",
-    generator: "blender",
+    generator: "ai-3d",
+    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 16016,
-            blake3: "a9cb956488c8d7630dd0052f7094f6d52e502037e661c962fd58fabb1d13993a",
+            bytes: 1845148,
+            blake3: "8b8f0814e23790737e59a1e059de6e7ff85b8769a469bb195589fd1bd31d6203",
+        ),
+        "reference": AssetEntry(
+            path: "reference.png",
+            format: "image/png",
+            bytes: 578990,
+            blake3: "b3fa110ab1365f17fb520e7e89b33f2dd225f176c9a6a123911fe2c9cd0788bc",
         ),
     },
 )
