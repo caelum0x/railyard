@@ -36,7 +36,7 @@ fn font(size: f32) -> TextFont {
 }
 
 /// Spawn the camera, the match resource, and every persistent HUD entity.
-pub fn setup(mut commands: Commands, options: Res<RunOptions>) {
+pub fn setup(mut commands: Commands, options: Res<RunOptions>, asset_server: Res<AssetServer>) {
     let battle = new_battle();
 
     // A fixed-height orthographic camera: the same vertical slice of the world is
@@ -87,17 +87,29 @@ pub fn setup(mut commands: Commands, options: Res<RunOptions>) {
     let n = deck.len();
     for (i, card) in deck.iter().enumerate() {
         let cx = card_center_x(i, n);
+        // The hand card FACE is the real finished PNG (`assets/cards/final-v2/<slug>.png`)
+        // — the played card is the pictured card. `update_hand` tints this sprite to
+        // show affordability/selection; a white tint shows the art unmodified.
+        let face: Handle<Image> = super::game::DECK_SLUGS
+            .get(i)
+            .map(|slug| asset_server.load(super::game::face_asset_path(slug)))
+            .unwrap_or_default();
         commands.spawn((
-            Sprite::from_color(Color::srgb(0.15, 0.17, 0.22), Vec2::new(CARD_W, CARD_H)),
+            Sprite {
+                image: face,
+                custom_size: Some(Vec2::new(CARD_W, CARD_H)),
+                ..default()
+            },
             Transform::from_xyz(cx, CARD_ROW_Y, 0.5),
             CardSprite(i),
         ));
+        // The elixir cost badge sits just below the face.
         commands.spawn((
-            Text2d::new(format!("{}\n{}", card.name(), card.meta.cost)),
-            font(5.0),
+            Text2d::new(format!("{}  ⬦{}", card.name(), card.meta.cost)),
+            font(4.5),
             TextColor(Color::WHITE),
             TextLayout::justify(Justify::Center),
-            Transform::from_xyz(cx, CARD_ROW_Y, 1.0),
+            Transform::from_xyz(cx, CARD_ROW_Y - CARD_H / 2.0 - 2.5, 1.0),
             CardLabel(i),
         ));
     }
@@ -138,12 +150,14 @@ pub fn update_hand(
         };
         let affordable = card.meta.cost <= elixir;
         let selected = selection.card == Some(marker.0);
+        // Tint multiplies the card-face texture: warm highlight when selected, full
+        // art when affordable, dimmed when it can't be paid for.
         sprite.color = if selected {
-            Color::srgb(0.95, 0.8, 0.2)
+            Color::srgb(1.0, 0.95, 0.55)
         } else if affordable {
-            Color::srgb(0.20, 0.30, 0.45)
+            Color::WHITE
         } else {
-            Color::srgb(0.12, 0.12, 0.15)
+            Color::srgb(0.45, 0.45, 0.5)
         };
     }
 }
@@ -172,7 +186,11 @@ pub fn update_elixir(
 pub fn update_bases(battle: Res<Battle>, mut bases: Query<(&BaseSprite, &mut Sprite)>) {
     for (marker, mut sprite) in &mut bases {
         let frac = base_hp_fraction(&battle, marker.0);
-        sprite.color = blend(Color::srgb(0.1, 0.1, 0.1), team_color(marker.0), frac.max(0.15));
+        sprite.color = blend(
+            Color::srgb(0.1, 0.1, 0.1),
+            team_color(marker.0),
+            frac.max(0.15),
+        );
     }
 }
 

@@ -59,6 +59,7 @@ pub const CONTENT_CARDS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../
 // ---------------------------------------------------------------------------
 pub use ai::deploy_bot::bot_deploys;
 pub use cards::card::{elixir_cost, Card, CardMeta};
+pub use cards::face::{default_face_path, face_exists, face_filename, CARD_FACES_DIR};
 pub use rules::config::MatchConfig;
 pub use rules::deploy::{try_deploy, Deploy, DeployError};
 pub use rules::elixir::regen_elixir;

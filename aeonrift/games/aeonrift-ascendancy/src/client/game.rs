@@ -131,6 +131,17 @@ const SENTINEL_RON: &str = include_str!("../../../../content/champions/sentinel.
 const VANGUARD_RON: &str = include_str!("../../../../content/champions/vanguard.ron");
 const PYROMANCER_RON: &str = include_str!("../../../../content/champions/pyromancer.ron");
 
+/// The file slugs of the deck, in the same order as [`build_deck`]. These key the
+/// finished card faces (`assets/cards/final-v2/<slug>.png`) the hand renders — the
+/// played-card === pictured-card seam, in the client's VIEW.
+pub const DECK_SLUGS: [&str; 3] = ["sentinel", "vanguard", "pyromancer"];
+
+/// The Bevy asset path (relative to the asset root, which `run_windowed` points at the
+/// repo `assets/` dir) for a champion's finished card face.
+pub fn face_asset_path(slug: &str) -> String {
+    format!("cards/final-v2/{slug}.png")
+}
+
 /// Build a deck from the shared roster. Each spec is parsed + fully validated by the
 /// `champions` DSL, then turned into a `crate::Card` (which derives the elixir cost).
 /// Panics only if an embedded roster spec is malformed — a build-time invariant.

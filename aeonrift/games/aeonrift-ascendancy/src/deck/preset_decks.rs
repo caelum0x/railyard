@@ -136,7 +136,14 @@ mod tests {
     #[test]
     fn all_preset_decks_load_and_validate() {
         let decks = load_default_presets().expect("preset decks load + validate");
-        assert_eq!(decks.len(), 12, "expected 12 preset decks");
+        // The shipped content set grew past the original 12 curated decks (the
+        // content-mega consolidation added faction/archetype variants). The contract
+        // is "at least the 12 curated decks, and every shipped deck is legal".
+        assert!(
+            decks.len() >= 12,
+            "expected at least 12 preset decks, found {}",
+            decks.len()
+        );
         for d in &decks {
             assert_eq!(d.cards.len(), super::super::validation::DECK_SIZE);
             assert!(!d.name.is_empty());
