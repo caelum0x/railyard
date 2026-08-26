@@ -3,14 +3,14 @@ AssetManifest(
     champion: "Toran",
     archetype: "mage",
     faction: "Ember",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 2816040,
-            blake3: "59f4fc9c9dc67d3e0b908c0302e3524791fdc00ed3c11a34d47b7e627bf3d5db",
+            bytes: 6950528,
+            blake3: "a3fcc94108e4f202f5319b099909c52643d0eec2808c1fa4a7f14c7bf5a6e55b",
         ),
         "reference": AssetEntry(
             path: "reference.png",

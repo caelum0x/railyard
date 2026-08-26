@@ -1,0 +1,80 @@
+[11:05:00] resolved ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f
+[11:05:00] 47 champions to process
+[11:05:00] [1/47] achilles: already done (skip)
+[11:05:00] [2/47] anubis-warden-of-scales: already done (skip)
+[11:05:00] [3/47] artemis: already done (skip)
+[11:05:00] [4/47] athena: already done (skip)
+[11:05:00] [5/47] bastet-claws-of-the-hunt: generating... (ref=reference.matte.png)
+[11:09:51]     ok tris=40000 bytes=5126468 predict_time=110.0s spend=$5.94
+[11:10:02] [6/47] bellona: already done (skip)
+[11:10:02] [7/47] brackmoor: already done (skip)
+[11:10:02] [8/47] cyranth: already done (skip)
+[11:10:02] [9/47] dregmaw: already done (skip)
+[11:10:02] [10/47] freyja: already done (skip)
+[11:10:02] [11/47] gorehoof: generating... (ref=reference.matte.png)
+[11:12:15]     ok tris=40000 bytes=6931880 predict_time=123.6s spend=$6.21
+[11:12:26] [12/47] hades: already done (skip)
+[11:12:26] [13/47] horus-skyfall-talon: already done (skip)
+[11:12:26] [14/47] isis-mother-of-magic: already done (skip)
+[11:12:26] [15/47] janus: already done (skip)
+[11:12:26] [16/47] kaeza: already done (skip)
+[11:12:26] [17/47] korrathil: already done (skip)
+[11:12:26] [18/47] loki: already done (skip)
+[11:12:26] [19/47] lumisel: generating... (ref=reference.matte.png)
+[11:14:45]     ok tris=40000 bytes=3727952 predict_time=130.0s spend=$6.48
+[11:14:56] [20/47] mars: already done (skip)
+[11:14:56] [21/47] medusa: generating... (ref=reference.matte.png)
+[11:16:48]     ok tris=40000 bytes=7895536 predict_time=101.6s spend=$6.75
+[11:16:59] [22/47] mercury: generating... (ref=reference.matte.png)
+[11:18:59]     ok tris=40000 bytes=7595192 predict_time=113.1s spend=$7.02
+[11:19:10] [23/47] mosscloak: generating... (ref=reference.matte.png)
+[11:21:02]     ok tris=40000 bytes=5809292 predict_time=106.7s spend=$7.29
+[11:21:13] [24/47] neptune: generating... (ref=reference.matte.png)
+[11:23:19]     ok tris=40000 bytes=6379360 predict_time=116.6s spend=$7.56
+[11:23:30] [25/47] nerreth: generating... (ref=reference.matte.png)
+[11:25:31]     ok tris=40000 bytes=6417776 predict_time=115.4s spend=$7.83
+[11:25:42] [26/47] nyxralla: generating... (ref=reference.matte.png)
+[11:27:48]     ok tris=40000 bytes=4235560 predict_time=115.3s spend=$8.10
+[11:27:59] [27/47] odin: generating... (ref=reference.matte.png)
+[11:30:03]     ok tris=40000 bytes=6640696 predict_time=118.3s spend=$8.37
+[11:30:14] [28/47] petalsong: generating... (ref=reference.matte.png)
+[11:32:37]     ok tris=40000 bytes=7985528 predict_time=133.1s spend=$8.64
+[11:32:48] [29/47] pyromancer: generating... (ref=reference.matte.png)
+[11:35:15]     ok tris=40000 bytes=6544904 predict_time=137.7s spend=$8.91
+[11:35:26] [30/47] quorvane: generating... (ref=reference.matte.png)
+[11:37:30]     ok tris=40000 bytes=4493312 predict_time=117.4s spend=$9.18
+[11:37:41] [31/47] ra-radiant-dawn: generating... (ref=reference.matte.png)
+[11:39:13]     ok tris=40000 bytes=5807008 predict_time=87.5s spend=$9.45
+[11:39:24] [32/47] sentinel: generating... (ref=reference.matte.png)
+[11:41:41]     ok tris=40000 bytes=5791948 predict_time=119.6s spend=$9.72
+[11:41:52] [33/47] set-lord-of-chaos: generating... (ref=reference.matte.png)
+[11:43:45]     ok tris=40000 bytes=5262148 predict_time=109.2s spend=$9.99
+[11:43:56] [34/47] sporeveil: generating... (ref=reference.matte.png)
+[11:46:01]     ok tris=40000 bytes=4676176 predict_time=114.3s spend=$10.26
+[11:46:12] [35/47] thor: generating... (ref=reference.matte.png)
+[11:48:04]     ok tris=40000 bytes=6281964 predict_time=107.8s spend=$10.53
+[11:48:15] [36/47] thornquill: generating... (ref=reference.matte.png)
+[11:50:01]     ok tris=40000 bytes=5987544 predict_time=100.4s spend=$10.80
+[11:50:12] [37/47] toran: generating... (ref=reference.matte.png)
+[11:52:22]     ok tris=40000 bytes=6950528 predict_time=121.4s spend=$11.07
+[11:52:33] [38/47] tyr: generating... (ref=reference.matte.png)
+[11:54:42]     ok tris=40000 bytes=6944144 predict_time=119.8s spend=$11.34
+[11:54:53] [39/47] ullr: generating... (ref=reference.matte.png)
+[11:56:55]     ok tris=40000 bytes=6930328 predict_time=111.9s spend=$11.61
+[11:57:06] [40/47] vanguard: generating... (ref=reference.matte.png)
+[11:59:10]     ok tris=40000 bytes=6505560 predict_time=118.6s spend=$11.88
+[11:59:21] [41/47] vashka: generating... (ref=reference.matte.png)
+[12:01:25]     ok tris=40000 bytes=5678672 predict_time=112.3s spend=$12.15
+[12:01:36] [42/47] veyl: generating... (ref=reference.matte.png)
+[12:22:48]     FAILED: ReadTimeout: [Errno 60] Operation timed out
+[12:22:48] [43/47] vulcan: generating... (ref=reference.matte.png)
+[12:22:48]     FAILED: ConnectError: [Errno 8] nodename nor servname provided, or not known
+[12:22:48] [44/47] xelphine: generating... (ref=reference.matte.png)
+[12:22:48]     FAILED: ConnectError: [Errno 8] nodename nor servname provided, or not known
+[12:22:48] [45/47] ysmera: generating... (ref=reference.matte.png)
+[12:22:48]     FAILED: ConnectError: [Errno 8] nodename nor servname provided, or not known
+[12:22:48] [46/47] zeryth: generating... (ref=reference.matte.png)
+[12:22:48]     FAILED: ConnectError: [Errno 8] nodename nor servname provided, or not known
+[12:22:48] [47/47] zeus: generating... (ref=reference.matte.png)
+[12:22:48]     FAILED: ConnectError: [Errno 8] nodename nor servname provided, or not known
+[12:22:48] DONE. ok=41/47 new=24 spend~$12.15

@@ -3,14 +3,14 @@ AssetManifest(
     champion: "Vulcan",
     archetype: "tank",
     faction: "Roman",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 2194860,
-            blake3: "0e2715342f269384b96fb24d33e140b36a92d62a37e909e8c702b00bba6867d0",
+            bytes: 6065376,
+            blake3: "9eb621a7f09d1fdc71cd7dfb2b393d0d5ace677873359e9af46ebc541fde6fec",
         ),
         "reference": AssetEntry(
             path: "reference.png",

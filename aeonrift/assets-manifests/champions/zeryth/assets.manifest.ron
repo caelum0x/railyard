@@ -3,14 +3,14 @@ AssetManifest(
     champion: "Zeryth",
     archetype: "assassin",
     faction: "Umbral",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 2499264,
-            blake3: "17654940c2df9c8f6b5bc0aa47fa46553cd8b82e05331223ed79dcb0d8849a88",
+            bytes: 6771000,
+            blake3: "7a65ea18d0af484b337cc73b50e334fd57f86727b5c665b0edfe32c6780720c9",
         ),
         "reference": AssetEntry(
             path: "reference.png",
