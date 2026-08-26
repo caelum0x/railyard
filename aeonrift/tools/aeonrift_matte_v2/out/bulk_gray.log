@@ -1,0 +1,21 @@
+[14:04:47] resolved ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f
+[14:04:47] 9 generation jobs
+[14:04:47] [1/9] kaeza:gray: generating... (ref=reference.matte2_gray.png)
+[14:09:52]     ok tris=40000 bytes=6686400 predict_time=114.0s spend=$1.35
+[14:10:03] [2/9] korrathil:gray: generating... (ref=reference.matte2_gray.png)
+[14:12:16]     ok tris=40000 bytes=7543492 predict_time=123.4s spend=$1.62
+[14:12:28] [3/9] mars:gray: generating... (ref=reference.matte2_gray.png)
+[14:14:35]     ok tris=40000 bytes=6465080 predict_time=118.4s spend=$1.89
+[14:14:46] [4/9] veyl:gray: generating... (ref=reference.matte2_gray.png)
+[14:18:00]     ok tris=40000 bytes=4426264 predict_time=124.5s spend=$2.16
+[14:18:11] [5/9] zeryth:gray: generating... (ref=reference.matte2_gray.png)
+[14:20:28]     ok tris=40000 bytes=6098488 predict_time=124.5s spend=$2.43
+[14:20:39] [6/9] nyxralla:gray: generating... (ref=reference.matte2_gray.png)
+[14:22:42]     ok tris=40000 bytes=4385424 predict_time=118.2s spend=$2.70
+[14:22:53] [7/9] petalsong:gray: generating... (ref=reference.matte2_gray.png)
+[14:25:24]     ok tris=40000 bytes=7365080 predict_time=138.4s spend=$2.97
+[14:25:35] [8/9] artemis:gray: generating... (ref=reference.matte2_gray.png)
+[14:27:42]     ok tris=40000 bytes=6428712 predict_time=116.1s spend=$3.24
+[14:27:53] [9/9] vulcan:gray: generating... (ref=reference.matte2_gray.png)
+[14:30:00]     ok tris=40000 bytes=7222952 predict_time=117.5s spend=$3.51
+[14:30:00] DONE. ok=13/13 created=9 spend~$3.51

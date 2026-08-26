@@ -7,7 +7,59 @@
 **glTF validation:** every shipped `model.glb` passes the same structural assertion as the Rust `every_spec_has_a_resolvable_valid_glb` test (magic `glTF`, version 2, declared length == file size, first chunk JSON). **Asset test: PASS (47/47).**
 **Background-matte pre-pass:** before generation, each reference was matted (`rembg` u2net → subject composited onto solid neutral `#808080` → `reference.matte.png`) so Hunyuan sees a single clean subject on a plain background. This was added specifically to kill the flat white/colored **base-geometry artifact** that dominated the first (raw-reference) pass — and it worked for the large majority.
 
+> **UPDATE — matte-v2 pass (branch `aeon/matte-v2`).** A tighter re-matte + re-gen of the 11 flagged base-artifact champions changed the split to **35 Hunyuan / 12 TRELLIS**. See [Matte-v2 pass](#matte-v2-pass-tighter-cut-out--per-target-best-of-3) below. Asset test still **PASS (47/47)**.
+
+## Matte-v2 pass (tighter cut-out + per-target best-of-3)
+
+The v1 matte (u2net → composite on `#808080`) removed the *outer* background but left the
+real culprit intact: **flat near-white / background-coloured pockets that rembg kept
+*inside* the subject** — enclosed negative space inside a bow-loop, between legs, in
+trailing cloth. Hunyuan reconstructed exactly those pockets as the white base-plane / plate
+/ blob. **Matte-v2** (`tools/aeonrift_matte_v2/matte_v2.py`) is tighter:
+
+1. `rembg` u2net **with alpha matting** (`alpha_matting=True`, fg=240 / bg=15 trimap) for an accurate soft edge;
+2. a **background-colour key** (border-sampled bg colour + a universal bright-desaturated near-white test) that knocks out the interior background-coloured pockets rembg wrongly kept — the actual source of the white base geometry;
+3. **erode (2 px) + feather (σ0.8)** to cut the residual halo fringe;
+4. emit two candidates: `reference.matte2.png` (transparent) and `reference.matte2_gray.png` (on `#808080`).
+
+**Transparent vs gray — decided empirically (A/B on cyranth + xelphine):** the **transparent**
+variant is *worse* — Hunyuan flattens the alpha over white internally and rebuilds a full
+white backing slab. The **gray `#808080`** composite gives a clean, coherent figure with no
+backing plane. **All matte-v2 gens use the gray composite.**
+
+Each target's shipped mesh is the **cleanest of three** by headless-render vision compare:
+`{matte-v2 Hunyuan, previous Hunyuan (model.glb), TRELLIS (model.trellis.glb)}`.
+
+| Champion | v1 flagged defect | matte-v2 result | Ship | Verdict |
+|---|---|---|---|---|
+| cyranth | white backing-plane | plane **gone** (bow-loop pocket cut) | **Hunyuan v2** | ✅ fixed |
+| kaeza | white shards + melted bow | shards **gone**, coherent flame-bow | **Hunyuan v2** | ✅ fixed |
+| mars | pink ground-plate shards | shards **gone**, clean base | **Hunyuan v2** | ✅ fixed |
+| artemis | skirt cloth-shards | shards **gone**, solid gown | **Hunyuan v2** | ✅ fixed |
+| vulcan | coppery base-plate | flat plate **gone** → small molten base | **Hunyuan v2** | ✅ fixed |
+| xelphine | white base-blob + pink hand-crystals | base-blob + hands **much reduced** | **Hunyuan v2** | ✅ improved |
+| korrathil | white ghost-sheets | **reduced** (minor thin sheets remain in negative space) | **Hunyuan v2** | ✅ improved |
+| nyxralla | white robe patches | **reduced** (minor patches remain) | **Hunyuan v2** | ✅ improved |
+| veyl | white edge-fringing | **worse** — pale translucent fins slabbed to white | **TRELLIS** | matte can't help; TRELLIS cleanest |
+| zeryth | white base-hem shards | **reduced** to a pale flare, but TRELLIS base is cleaner | **TRELLIS** | TRELLIS cleanest |
+| petalsong | white harp/veil shards | **reduced** but white harp-strings persist; TRELLIS veil is clean green | **TRELLIS** | TRELLIS cleanest |
+
+**Result: 8 improved & shipped as matte-v2 Hunyuan; 3 flipped to TRELLIS (cleanest of the 3).**
+In all 11 cases the previously-shipped Hunyuan mesh is replaced (8 by v2 Hunyuan, 3 by TRELLIS).
+Every prior mesh is retained as a backup: `model.hunyuan_v1.glb` (previous Hunyuan),
+`model.hunyuan_v2.glb` (this pass's Hunyuan, kept even where TRELLIS ships), `model.trellis.glb`.
+
+**Not matte-fixable (defect is not a base artifact — matte won't help; note for prompt-tweak or keep-current):**
+- **anubis-warden-of-scales** — thumbs-up hand pose (geometry/pose issue).
+- **set-lord-of-chaos** — torn hip cloth-sash (design/topology, not background).
+- **toran** — shadowed void face (lighting/material under topknot, not a base blob).
+
+**Matte-v2 spend:** **$3.51** (13 × $0.27 — 2 A/B probe champions × 2 backgrounds = 4, plus 9 gray gens). Credit not exhausted.
+
 ## Outcome summary (all 47 complete)
+
+> Post matte-v2: **35 Hunyuan / 12 TRELLIS** (8 of the 35 are matte-v2 Hunyuan; the 3 flips
+> veyl / zeryth / petalsong joined the TRELLIS fallbacks). The pre-matte-v2 split is below.
 
 | Category | Count |
 |---|---|
