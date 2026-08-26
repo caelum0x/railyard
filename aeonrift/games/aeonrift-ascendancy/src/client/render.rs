@@ -1,17 +1,31 @@
-//! Immediate-mode battlefield rendering with gizmos.
+//! Battlefield rendering: textured board units + gizmo field furniture.
 //!
-//! Every frame this reads the deterministic core's `sim::World` (via `Battle`) and
-//! draws lanes, each deployed unit (a team-colored disc scaled by HP with a health
-//! bar), and both bases' health bars. Nothing here mutates state — it is a pure view
-//! of whatever the core computed on the last fixed tick.
+//! Board units are drawn as SPRITES carrying each champion's real finished card face
+//! (`assets/cards/final-v2/<slug>.png`) — the same "played card is the pictured card"
+//! seam the hand already uses, now on the field. [`sync_unit_sprites`] keeps one
+//! retained sprite entity per live deployed unit (spawns on deploy, follows the sim
+//! position each frame, despawns on death). Everything else — lane guides, the field
+//! border, base HP bars, the faction-tinted unit frame + unit HP bar, and the hand
+//! selection outline — is drawn immediately with gizmos in [`draw_field`] /
+//! [`draw_unit_overlays`]. Nothing here mutates match state; it is a pure view.
 
 use bevy::prelude::*;
 
 use super::game::{
-    blend, champion_tint, sim_to_view, team_color, Battle, Selection, CARD_H, CARD_ROW_Y, CARD_W,
-    UNIT_RADIUS,
+    face_asset_path, sim_to_view, team_color, unit_frame_color, Battle, Selection, CARD_H,
+    CARD_ROW_Y, CARD_W,
 };
 use super::input::card_center_x;
+use sim::EntityId;
+
+/// On-field footprint of a board unit's face sprite (world units). Sized to read at
+/// board scale without swamping the lanes.
+pub const UNIT_SPRITE_W: f32 = 5.6;
+pub const UNIT_SPRITE_H: f32 = 7.2;
+
+/// A retained board-unit sprite, tagged with the sim entity id it mirrors.
+#[derive(Component)]
+pub struct UnitSprite(pub EntityId);
 
 /// A short health bar centered above `pos`, `frac` filled (0..=1) in `color`.
 fn health_bar(gizmos: &mut Gizmos, pos: Vec2, y_off: f32, width: f32, frac: f32, color: Color) {
@@ -29,8 +43,59 @@ fn health_bar(gizmos: &mut Gizmos, pos: Vec2, y_off: f32, width: f32, frac: f32,
     }
 }
 
-/// Draw the lanes, all deployed units, base health bars, and the selection outline.
-pub fn draw_battle(mut gizmos: Gizmos, battle: Res<Battle>, selection: Res<Selection>) {
+/// Spawn/update/despawn one face sprite per live deployed unit so the board shows the
+/// REAL champion card faces instead of anonymous discs. Retained-mode: sprites persist
+/// across frames and merely follow the sim, so textures are loaded once per unit.
+pub fn sync_unit_sprites(
+    mut commands: Commands,
+    battle: Res<Battle>,
+    asset_server: Res<AssetServer>,
+    mut sprites: Query<(Entity, &UnitSprite, &mut Transform)>,
+) {
+    // 1) Update existing sprites; collect which unit ids currently have one, and drop
+    //    sprites whose unit has died or left the world.
+    let mut have: std::collections::HashSet<EntityId> = std::collections::HashSet::new();
+    for (entity, marker, mut tf) in &mut sprites {
+        let live = battle
+            .state
+            .world
+            .champion(marker.0)
+            .filter(|c| c.alive && !battle.state.is_base(c.id));
+        match live {
+            Some(champ) => {
+                let p = sim_to_view(champ.pos);
+                tf.translation.x = p.x;
+                tf.translation.y = p.y;
+                have.insert(marker.0);
+            }
+            None => commands.entity(entity).despawn(),
+        }
+    }
+
+    // 2) Spawn a face sprite for any live deployed unit that does not have one yet.
+    for champ in &battle.state.world.champions {
+        if battle.state.is_base(champ.id) || !champ.alive || have.contains(&champ.id) {
+            continue;
+        }
+        let Some(slug) = battle.slug_of(champ.id) else {
+            continue; // unknown slug: no face to show (should not happen for deploys)
+        };
+        let face: Handle<Image> = asset_server.load(face_asset_path(slug));
+        let p = sim_to_view(champ.pos);
+        commands.spawn((
+            Sprite {
+                image: face,
+                custom_size: Some(Vec2::new(UNIT_SPRITE_W, UNIT_SPRITE_H)),
+                ..default()
+            },
+            Transform::from_xyz(p.x, p.y, 0.6),
+            UnitSprite(champ.id),
+        ));
+    }
+}
+
+/// Draw the lanes, the field border, base HP bars, and the hand selection outline.
+pub fn draw_field(mut gizmos: Gizmos, battle: Res<Battle>, selection: Res<Selection>) {
     let cfg = &battle.state.config;
 
     // Lane guides: faint vertical lines spanning between the two bases.
@@ -68,25 +133,6 @@ pub fn draw_battle(mut gizmos: Gizmos, battle: Res<Battle>, selection: Res<Selec
         );
     }
 
-    // Deployed units: a disc scaled by HP, tinted by champion type, with a HP bar.
-    for champ in &battle.state.world.champions {
-        if battle.state.is_base(champ.id) || !champ.alive {
-            continue;
-        }
-        let pos = sim_to_view(champ.pos);
-        let max = champ.health.max.max(1) as f32;
-        let frac = (champ.health.current.max(0) as f32 / max).clamp(0.0, 1.0);
-        // No faction field exists on the roster yet; tint by champion type (max HP)
-        // so Sentinel/Vanguard/Pyromancer read differently on the same team.
-        let tint = champion_tint(&format!("hp{}", champ.health.max));
-        let color = blend(team_color(champ.team), tint, 0.3);
-        let radius = UNIT_RADIUS * (0.55 + 0.45 * frac);
-        gizmos.circle_2d(pos, radius, color);
-        // Inner dot marks the team clearly even when tinted.
-        gizmos.circle_2d(pos, radius * 0.4, team_color(champ.team));
-        health_bar(&mut gizmos, pos, UNIT_RADIUS + 1.2, UNIT_RADIUS * 2.0, frac, color);
-    }
-
     // Selection outline around the chosen hand card.
     if let Some(idx) = selection.card {
         let n = battle.state.decks[0].len();
@@ -95,6 +141,37 @@ pub fn draw_battle(mut gizmos: Gizmos, battle: Res<Battle>, selection: Res<Selec
             Vec2::new(cx, CARD_ROW_Y),
             Vec2::new(CARD_W + 1.5, CARD_H + 1.5),
             Color::srgb(1.0, 0.9, 0.2),
+        );
+    }
+}
+
+/// Overlay each live board unit with a faction-tinted frame and an HP bar. Drawn with
+/// gizmos on top of the face sprite so the team side + champion identity + health all
+/// read at a glance at board scale.
+pub fn draw_unit_overlays(mut gizmos: Gizmos, battle: Res<Battle>) {
+    for champ in &battle.state.world.champions {
+        if battle.state.is_base(champ.id) || !champ.alive {
+            continue;
+        }
+        let pos = sim_to_view(champ.pos);
+        let max = champ.health.max.max(1) as f32;
+        let frac = (champ.health.current.max(0) as f32 / max).clamp(0.0, 1.0);
+        let slug = battle.slug_of(champ.id).unwrap_or("unknown");
+        let frame = unit_frame_color(champ.team, slug);
+        // Faction/team frame around the face sprite.
+        gizmos.rect_2d(
+            pos,
+            Vec2::new(UNIT_SPRITE_W + 0.7, UNIT_SPRITE_H + 0.7),
+            frame,
+        );
+        // HP bar just above the frame, colored by the same accent.
+        health_bar(
+            &mut gizmos,
+            pos,
+            UNIT_SPRITE_H / 2.0 + 1.3,
+            UNIT_SPRITE_W,
+            frac,
+            frame,
         );
     }
 }

@@ -117,8 +117,12 @@ pub fn handle_input(
                 let lane = nearest_lane(&battle, world.x);
                 let deploy = Deploy::new(HUMAN, card, lane);
                 match try_deploy(&mut battle.state, deploy) {
-                    Ok(_) => {
+                    Ok(id) => {
                         let name = battle.state.decks[HUMAN as usize][card].name().to_string();
+                        // Tag the new unit with its slug so the board can draw its face.
+                        if let Some(slug) = super::game::slug_for_card(card) {
+                            battle.record_unit(id, slug);
+                        }
                         status.set(format!("Deployed {name} -> lane {}", lane + 1));
                         selection.card = None;
                     }
