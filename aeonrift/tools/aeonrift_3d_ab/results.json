@@ -1,0 +1,87 @@
+{
+  "champions": {
+    "anubis": {
+      "slug": "anubis-warden-of-scales",
+      "ref": "reference.png",
+      "generators": {
+        "trellis": {
+          "ok": true,
+          "glb": "trellis.glb",
+          "png": "trellis.png",
+          "tris": 13966,
+          "bytes": 1616216,
+          "cost": 0.0,
+          "predict_time": null,
+          "note": "reused existing baseline"
+        },
+        "hunyuan21": {
+          "ok": true,
+          "glb": "hunyuan21.glb",
+          "png": "hunyuan21.png",
+          "tris": 40000,
+          "bytes": 7572244,
+          "cost": 0.27,
+          "predict_time": 109.9
+        },
+        "hunyuan2mv": {
+          "ok": true,
+          "glb": "hunyuan2mv.glb",
+          "png": "hunyuan2mv.png",
+          "tris": 40000,
+          "bytes": 800040,
+          "cost": 0.11,
+          "predict_time": 11.7
+        }
+      }
+    },
+    "zeus": {
+      "slug": "zeus",
+      "ref": "reference.png",
+      "generators": {
+        "trellis": {
+          "ok": true,
+          "glb": "trellis.glb",
+          "png": "trellis.png",
+          "tris": 66287,
+          "bytes": 2982140,
+          "cost": 0.0,
+          "predict_time": null,
+          "note": "reused existing baseline"
+        },
+        "hunyuan21": {
+          "ok": true,
+          "glb": "hunyuan21.glb",
+          "png": "hunyuan21.png",
+          "tris": 40000,
+          "bytes": 7210056,
+          "cost": 0.27,
+          "predict_time": 125.9
+        },
+        "hunyuan2mv": {
+          "ok": true,
+          "glb": "hunyuan2mv.glb",
+          "png": "hunyuan2mv.png",
+          "tris": 40000,
+          "bytes": 799944,
+          "cost": 0.11,
+          "predict_time": 17.0
+        }
+      }
+    }
+  },
+  "fal_available": false,
+  "gen_label": {
+    "trellis": "TRELLIS (firtoz/trellis)",
+    "hunyuan21": "Hunyuan3D-2.1 (ndreca/hunyuan3d-2.1)",
+    "hunyuan2mv": "Hunyuan3D-2mv (tencent/hunyuan3d-2mv)",
+    "tripo3d": "Tripo v3 (fal-ai/tripo3d)",
+    "meshy6": "Meshy v6 (fal-ai/meshy/v6)"
+  },
+  "cost": {
+    "trellis": 0.0,
+    "hunyuan21": 0.27,
+    "hunyuan2mv": 0.11,
+    "tripo3d": 0.3,
+    "meshy6": 0.3
+  }
+}
