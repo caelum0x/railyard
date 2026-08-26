@@ -305,3 +305,82 @@ impl KycGate for FakeKycGate {
         Ok(())
     }
 }
+
+/// The production-default [`KycGate`]: **denies every redemption**.
+///
+/// Mint ships with KYC *closed*. Until an operator wires a real KYC/limit
+/// provider — its own impl of [`KycGate`] that can affirmatively approve a
+/// redemption against verified identity — every `redeem` is refused with
+/// [`MintError::KycRequired`]. Unlike the permissive [`FakeKycGate`] (which
+/// trusts a caller-*presented* tier), this gate fails **closed**: a missing or
+/// mis-configured provider denies the payout rather than waving it through. It
+/// is the safe default for a money-moving path and is the only gate the
+/// `mint-server` binary installs when running against a production database.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct StrictKycGate;
+
+impl StrictKycGate {
+    /// A gate that denies every redemption until a real provider is wired.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl KycGate for StrictKycGate {
+    async fn authorize(
+        &self,
+        _account: &AccountId,
+        _tier: KycTier,
+        _amount: Micros,
+    ) -> Result<(), MintError> {
+        Err(MintError::KycRequired)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mint_core::AccountKind;
+    use ulid::Ulid;
+
+    fn acct() -> AccountId {
+        AccountId::new(AccountKind::User, Ulid::new())
+    }
+
+    #[tokio::test]
+    async fn strict_gate_denies_even_the_highest_tier_and_smallest_amount() {
+        let gate = StrictKycGate::new();
+        // Fully-verified identity, a one-microdollar redemption: still denied.
+        let err = gate
+            .authorize(&acct(), KycTier::Verified, Micros::new(1))
+            .await
+            .expect_err("strict gate must deny by default");
+        assert_eq!(err, MintError::KycRequired);
+    }
+
+    #[tokio::test]
+    async fn strict_gate_denies_regardless_of_amount() {
+        let gate = StrictKycGate::default();
+        for amount in [0, 1, 1_000, i64::MAX] {
+            assert_eq!(
+                gate.authorize(&acct(), KycTier::Verified, Micros::new(amount))
+                    .await,
+                Err(MintError::KycRequired),
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn fake_gate_stays_permissive_for_contrast() {
+        // The dev fake, by design, admits a caller-presented tier at/above its
+        // minimum and under its limit — exactly the behavior that must NOT ship
+        // in production, which is why the binary defaults to StrictKycGate.
+        let gate = FakeKycGate::new(KycTier::Basic, i64::MAX);
+        assert!(gate
+            .authorize(&acct(), KycTier::Basic, Micros::new(999_999_999))
+            .await
+            .is_ok());
+    }
+}
