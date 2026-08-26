@@ -3,20 +3,20 @@ AssetManifest(
     champion: "Loki",
     archetype: "assassin",
     faction: "Norse",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 2198156,
-            blake3: "099cff0a095de6ade5712796e48c843563921a49c9a5e95912965dd479a29edb",
+            bytes: 7827084,
+            blake3: "27cc16c9bd5b1d7323f041b442299774b745fb102da37437525487df44fa737b",
         ),
         "reference": AssetEntry(
             path: "reference.png",
             format: "image/png",
             bytes: 917835,
-            blake3: "",
+            blake3: "6406fa19b4cd08361a951e3ff1f93369f9d347ca1c7eb9d5863953217a17a726",
         ),
     },
 )

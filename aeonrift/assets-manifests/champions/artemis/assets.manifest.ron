@@ -3,20 +3,20 @@ AssetManifest(
     champion: "Artemis",
     archetype: "marksman",
     faction: "Greek",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 2124064,
-            blake3: "3848b216ce12eec660daa95282175545020ca25dce640e9863ce3d9e5539de3f",
+            bytes: 7402500,
+            blake3: "715bf4f464812685184f36cac2a3916e2a08c78e60db571bbdae62734c004955",
         ),
         "reference": AssetEntry(
             path: "reference.png",
             format: "image/png",
             bytes: 797029,
-            blake3: "",
+            blake3: "777828556c3c7d1bfafbc42b3b364654026f14bb5bad02e6b5493499e9639329",
         ),
     },
 )

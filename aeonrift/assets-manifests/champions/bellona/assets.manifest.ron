@@ -3,20 +3,20 @@ AssetManifest(
     champion: "Bellona",
     archetype: "bruiser",
     faction: "Roman",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 1936904,
-            blake3: "1c8264e13efb4f5d225d5a4fd08abb902c3cd42bab5e87ed2d8cdfb6370f3fe4",
+            bytes: 6653004,
+            blake3: "d9e34bde271f721abd72719a60dc9edfba68b1ba5f66c4fa85762578fbd92302",
         ),
         "reference": AssetEntry(
             path: "reference.png",
             format: "image/png",
             bytes: 768747,
-            blake3: "",
+            blake3: "ac6d6f42c7b9489bf46177d8a887bbc5191609c51c9e6600294852fd1146be71",
         ),
     },
 )

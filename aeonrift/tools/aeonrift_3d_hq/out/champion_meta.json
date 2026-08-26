@@ -1,0 +1,284 @@
+{
+  "achilles": {
+    "champion": "Achilles",
+    "archetype": "bruiser",
+    "faction": "Greek",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "anubis-warden-of-scales": {
+    "champion": "Anubis",
+    "archetype": "mage",
+    "faction": "Egyptian",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "artemis": {
+    "champion": "Artemis",
+    "archetype": "marksman",
+    "faction": "Greek",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "athena": {
+    "champion": "Athena",
+    "archetype": "support",
+    "faction": "Greek",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "bastet-claws-of-the-hunt": {
+    "champion": "Bastet",
+    "archetype": "assassin",
+    "faction": "Egyptian",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "bellona": {
+    "champion": "Bellona",
+    "archetype": "bruiser",
+    "faction": "Roman",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "brackmoor": {
+    "champion": "Brackmoor",
+    "archetype": "bruiser",
+    "faction": "Tide",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "cyranth": {
+    "champion": "Cyranth",
+    "archetype": "marksman",
+    "faction": "Tide",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "dregmaw": {
+    "champion": "Dregmaw",
+    "archetype": "tank",
+    "faction": "Umbral",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "freyja": {
+    "champion": "Freyja",
+    "archetype": "mage",
+    "faction": "Norse",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "gorehoof": {
+    "champion": "Gorehoof",
+    "archetype": "bruiser",
+    "faction": "Verdant",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "hades": {
+    "champion": "Hades",
+    "archetype": "tank",
+    "faction": "Greek",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "horus-skyfall-talon": {
+    "champion": "Horus",
+    "archetype": "bruiser",
+    "faction": "Egyptian",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "isis-mother-of-magic": {
+    "champion": "Isis",
+    "archetype": "mage",
+    "faction": "Egyptian",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "janus": {
+    "champion": "Janus",
+    "archetype": "mage",
+    "faction": "Roman",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "kaeza": {
+    "champion": "Kaeza",
+    "archetype": "marksman",
+    "faction": "Ember",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "korrathil": {
+    "champion": "Korrathil",
+    "archetype": "bruiser",
+    "faction": "Umbral",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "loki": {
+    "champion": "Loki",
+    "archetype": "assassin",
+    "faction": "Norse",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "lumisel": {
+    "champion": "Lumisel",
+    "archetype": "support",
+    "faction": "Tide",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "mars": {
+    "champion": "Mars",
+    "archetype": "bruiser",
+    "faction": "Roman",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "medusa": {
+    "champion": "Medusa",
+    "archetype": "marksman",
+    "faction": "Greek",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "mercury": {
+    "champion": "Mercury",
+    "archetype": "assassin",
+    "faction": "Roman",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "mosscloak": {
+    "champion": "Mosscloak",
+    "archetype": "bruiser",
+    "faction": "Verdant",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "neptune": {
+    "champion": "Neptune",
+    "archetype": "mage",
+    "faction": "Roman",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "nerreth": {
+    "champion": "Nerreth",
+    "archetype": "bruiser",
+    "faction": "Ember",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "nyxralla": {
+    "champion": "Nyxralla",
+    "archetype": "mage",
+    "faction": "Tide",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "odin": {
+    "champion": "Odin",
+    "archetype": "mage",
+    "faction": "Norse",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "petalsong": {
+    "champion": "Petalsong",
+    "archetype": "support",
+    "faction": "Verdant",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "pyromancer": {
+    "champion": "Pyromancer",
+    "archetype": "mage",
+    "faction": "Ember",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "quorvane": {
+    "champion": "Quorvane",
+    "archetype": "marksman",
+    "faction": "Umbral",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "ra-radiant-dawn": {
+    "champion": "Ra",
+    "archetype": "mage",
+    "faction": "Egyptian",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "sentinel": {
+    "champion": "Sentinel",
+    "archetype": "marksman",
+    "faction": "Umbral",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "set-lord-of-chaos": {
+    "champion": "Set",
+    "archetype": "assassin",
+    "faction": "Egyptian",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "sporeveil": {
+    "champion": "Sporeveil",
+    "archetype": "mage",
+    "faction": "Verdant",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "thor": {
+    "champion": "Thor",
+    "archetype": "bruiser",
+    "faction": "Norse",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "thornquill": {
+    "champion": "Thornquill",
+    "archetype": "marksman",
+    "faction": "Verdant",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "toran": {
+    "champion": "Toran",
+    "archetype": "mage",
+    "faction": "Ember",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "tyr": {
+    "champion": "Tyr",
+    "archetype": "tank",
+    "faction": "Norse",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "ullr": {
+    "champion": "Ullr",
+    "archetype": "marksman",
+    "faction": "Norse",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "vanguard": {
+    "champion": "Vanguard",
+    "archetype": "bruiser",
+    "faction": "Roman",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "vashka": {
+    "champion": "Vashka",
+    "archetype": "bruiser",
+    "faction": "Ember",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "veyl": {
+    "champion": "Veyl",
+    "archetype": "assassin",
+    "faction": "Tide",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "vulcan": {
+    "champion": "Vulcan",
+    "archetype": "tank",
+    "faction": "Roman",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "xelphine": {
+    "champion": "Xelphine",
+    "archetype": "mage",
+    "faction": "Umbral",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "ysmera": {
+    "champion": "Ysmera",
+    "archetype": "mage",
+    "faction": "Ember",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "zeryth": {
+    "champion": "Zeryth",
+    "archetype": "assassin",
+    "faction": "Umbral",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  },
+  "zeus": {
+    "champion": "Zeus",
+    "archetype": "mage",
+    "faction": "Greek",
+    "trellis_model_source": "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+  }
+}

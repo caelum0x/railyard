@@ -16,7 +16,7 @@ AssetManifest(
             path: "reference.png",
             format: "image/png",
             bytes: 1047896,
-            blake3: "",
+            blake3: "e362a082d2748c5b72fdaf3bb0ae0ca3da2afc142cdbe25285e56734fb1d42bd",
         ),
     },
 )
