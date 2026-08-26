@@ -3,14 +3,14 @@ AssetManifest(
     champion: "Ullr",
     archetype: "marksman",
     faction: "Norse",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 2362340,
-            blake3: "ad207226149e252eb7d281357bcd38ac41acddb7f122ff1a2b85c680d5526536",
+            bytes: 6930328,
+            blake3: "45af13f9ba4c46014f91743610a5d16ebdbb6583277971eac5281fb3693e60bf",
         ),
         "reference": AssetEntry(
             path: "reference.png",

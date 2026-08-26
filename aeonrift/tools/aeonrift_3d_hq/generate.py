@@ -276,8 +276,12 @@ def main() -> int:
             except Exception:
                 glb.unlink(missing_ok=True)
 
-        ref = SRC_BASE / slug / "reference.png"
-        log(f"[{i}/{len(slugs)}] {slug}: generating...")
+        # Prefer the background-matted reference (subject on neutral gray) when present:
+        # it eliminates Hunyuan's flat white/colored base-geometry artifact. Fall back to
+        # the raw concept reference.png for champions with no matte.
+        matte = SRC_BASE / slug / "reference.matte.png"
+        ref = matte if matte.is_file() else (SRC_BASE / slug / "reference.png")
+        log(f"[{i}/{len(slugs)}] {slug}: generating... (ref={ref.name})")
         try:
             url, ptime = run_hunyuan(client, version_id, ref)
             download(url, glb)

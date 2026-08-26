@@ -3,14 +3,14 @@ AssetManifest(
     champion: "Nyxralla",
     archetype: "mage",
     faction: "Tide",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 2451804,
-            blake3: "04361e3b7dc9b39a0e1247b307629c0d03d51a9ee46fa14ef68177311e0b9358",
+            bytes: 4235560,
+            blake3: "3951f9e3bf3544872e5d372bf336d84139647961ee440b19db153ebbeaf05b80",
         ),
         "reference": AssetEntry(
             path: "reference.png",

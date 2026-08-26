@@ -3,14 +3,14 @@ AssetManifest(
     champion: "Mercury",
     archetype: "assassin",
     faction: "Roman",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 2044264,
-            blake3: "18114d0f244f65e2d0ac6b4f45bc82f43574d08667d65138a7ed45ca5478003b",
+            bytes: 7595192,
+            blake3: "ad72448bb7a614c51b06662b02cd5ab0b8082843533f67862ada4d0b24f69210",
         ),
         "reference": AssetEntry(
             path: "reference.png",
