@@ -14,6 +14,7 @@ use lightyear::prelude::client::input::*;
 use lightyear::prelude::client::*;
 use lightyear::prelude::input::native::*;
 use lightyear::prelude::*;
+use lightyear_deterministic_replication::Deterministic;
 
 use super::protocol::{MoveInput, NetPlayer};
 use super::shared::{server_addr, SimNet};
@@ -91,7 +92,13 @@ fn buffer_input(
     }
 }
 
-/// When lightyear hands us a controlled champion, mark it as our input source.
+/// When lightyear hands us a controlled champion, mark it as our input source AND
+/// opt its predicted copy into the checksum archetype set.
+///
+/// The `Controlled` entity is the client's *predicted* champion (it carries
+/// `PredictionHistory<SimStateHash>`); inserting [`Deterministic`] here is the client
+/// half of the checksum bind — without it `ChecksumSendPlugin` would hash no entity
+/// and send an empty (0) checksum that the server silently ignores.
 fn handle_controlled_spawn(
     trigger: On<Add, Controlled>,
     players: Query<(), (With<NetPlayer>, Without<InputMarker<MoveInput>>)>,
@@ -100,6 +107,6 @@ fn handle_controlled_spawn(
     if players.get(trigger.entity).is_ok() {
         commands
             .entity(trigger.entity)
-            .insert(InputMarker::<MoveInput>::default());
+            .insert((InputMarker::<MoveInput>::default(), Deterministic));
     }
 }
