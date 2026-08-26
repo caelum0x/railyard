@@ -15,3 +15,8 @@ tools/aeonrift_models_ai/full_run.log
 tools/aeonrift_models_ai/zeus_run.log
 **/.ai3d.done
 tools/aeonrift_models_ai/cargo_test.log
+
+# never commit secrets / API tokens (Replicate token is read at runtime only)
+.env.*
+*.env
+**/.env.local
