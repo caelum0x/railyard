@@ -3,14 +3,14 @@ AssetManifest(
     champion: "Tyr",
     archetype: "tank",
     faction: "Norse",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 2795524,
-            blake3: "d7bf322e81134730e1a517cf94d9f0eb51d1994c1841a9e5ded655859414cb62",
+            bytes: 6944144,
+            blake3: "d94bbdbcc0717ec48109b1c40c4d3f6a439bed942a2628a7c0cd4aa39fb3bdc4",
         ),
         "reference": AssetEntry(
             path: "reference.png",

@@ -3,75 +3,87 @@
 **Generator:** `ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f`
 **Fallback:** `firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c` (existing TRELLIS meshes)
 **Render rig:** headless Blender EEVEE, 768×1024, 3-point lighting — identical to the existing gallery previews (`render_preview.py`, copied verbatim from the A/B pipeline).
-**Tri budget:** `max_facenum=40000` — every generated mesh landed at ~40k tris (achilles…medusa all 40000; artemis 39994). All within budget.
-**glTF validation:** every shipped `model.glb` passes the same structural assertion as the Rust `every_spec_has_a_resolvable_valid_glb` test (magic `glTF`, version 2, declared length == file size, first chunk JSON).
+**Tri budget:** `max_facenum=40000` — every regenerated mesh landed at 40000 tris. All within budget.
+**glTF validation:** every shipped `model.glb` passes the same structural assertion as the Rust `every_spec_has_a_resolvable_valid_glb` test (magic `glTF`, version 2, declared length == file size, first chunk JSON). **Asset test: PASS (47/47).**
+**Background-matte pre-pass:** before generation, each reference was matted (`rembg` u2net → subject composited onto solid neutral `#808080` → `reference.matte.png`) so Hunyuan sees a single clean subject on a plain background. This was added specifically to kill the flat white/colored **base-geometry artifact** that dominated the first (raw-reference) pass — and it worked for the large majority.
 
-## Outcome summary
+## Outcome summary (all 47 complete)
 
 | Category | Count |
 |---|---|
-| Hunyuan3D-2.1 shipped | **17** |
-| TRELLIS fallback (quality — Hunyuan clearly worse) | **4** |
-| TRELLIS fallback (not regenerated — out of credit) | **26** |
+| **Hunyuan3D-2.1 shipped** | **38** |
+| **TRELLIS fallback (quality — Hunyuan clearly worse)** | **9** |
 | **Total champions** | **47** |
 
-- **Hunyuan models actually generated:** 21 / 47 before the account hit a hard `402 Insufficient credit`.
-- **Spend:** ~$5.67 (21 × $0.27). The run stopped **gracefully** at champion 22 (mercury) per the "stop rather than fail hard" instruction — it did not thrash the throttled API.
-- Of the 21 generated, **17 passed QA and ship as Hunyuan**; **4 were clearly worse than their TRELLIS baseline and were reverted** to TRELLIS.
-- The remaining **26 champions keep TRELLIS purely because they were never regenerated** (no credit), *not* a quality judgement. They are the priority list for a follow-up run once credit is topped up.
+- **All 47 champions were generated on Hunyuan** across three runs (51 generations total — the 4 first-pass quality-reverts were re-generated with the matte pre-pass).
+- **38 ship as Hunyuan** (25 PASS, 13 FLAG-but-shipped); **9 revert to TRELLIS** where the Hunyuan mesh has a dominant white artifact and the TRELLIS baseline is clearly cleaner.
+- **Spend this run:** **$1.62** (6 champions × $0.27 — veyl, vulcan, xelphine, ysmera, zeryth, zeus). **Cumulative across all runs:** ~$13.77 (51 × $0.27). Credit was **not** exhausted this run; the earlier stop was a `402` in run 1 and a transient network drop at the tail of run 2.
+- Every champion keeps its original TRELLIS mesh as `model.trellis.glb` (backup), regardless of what ships as `model.glb`.
 
-Every champion keeps its original TRELLIS mesh as `model.trellis.glb` (backup), regardless of what ships as `model.glb`.
+### ZEUS — the priority case ✅ CLEAN
+
+The lightning-bolt prop caused a **white-shard glitch** in the original TRELLIS / first-Hunyuan attempts (an exploded white shard poked out of the forearm). The **matte-prepass Hunyuan zeus is clean**: no white-base artifact, coherent gold armor / red cape / white robe, and the lightning bolt renders as a modest thin white bolt held in-hand — clearly better than the TRELLIS baseline. **Ships as Hunyuan.**
+Preview: `zeus/preview.hunyuan.png` (source `tools/aeonrift_3d_hq/out/zeus/preview.png`).
 
 ---
 
-## Generated champions (21) — PASS / FLAG
+## Shipped as Hunyuan — PASS (25)
 
-### PASS — shipped as Hunyuan (11)
+**First pass, unchanged (11):** achilles, athena, bellona, brackmoor, dregmaw, freyja, hades, horus-skyfall-talon, isis-mother-of-magic, janus, loki.
+
+**Matte era (14):**
 | Champion | Faction | Verdict |
 |---|---|---|
-| achilles | Greek | PASS — clean Spartan; spear, shield, cape, helm all coherent |
-| athena | Greek | PASS — wings + owl staff + shield captured; minor: lower legs slightly pink/under-shaded |
-| bellona | Roman | PASS — plumed helm, cape, sword, armor all clean |
-| brackmoor | Tide | PASS — twin-trident sea-demon; minor ice shards at feet |
-| dregmaw | Umbral | PASS — spiked maw monster; minor white base patches |
-| freyja | Norse | PASS — excellent; fur-collared cloak, gold trim |
-| hades | Greek | PASS — antlered gold-and-blue armor; minor white ground blob at cape base |
-| horus | Egyptian | PASS — falcon head, full wings, gold collar; clean oval base |
-| isis | Egyptian | PASS — excellent; ankh staff, golden wings, sun disk |
-| janus | Roman | PASS — clean general; red cape, gold armor, sword |
-| loki | Norse | PASS — excellent; antlered green-and-gold armor, sword, cape |
+| lumisel | Tide | PASS — matte fixed the diorama-box; clean nymph on a lily-pad base (**flipped from TRELLIS**) |
+| medusa | Greek | PASS — clean gorgon, on-model green snake-hair + coiled serpent tail (**flipped from TRELLIS**) |
+| mercury | Roman | PASS — winged messenger-warrior; shield, staff, feathered wings all coherent |
+| neptune | Roman | PASS — trident, plumed helm, gold armor; minor pink skin under-shading |
+| odin | Norse | PASS — excellent; twin ravens, fur cape, staff; minor white cape-tip |
+| pyromancer | Ember | PASS — excellent; hooded fire-mage, textured flame aura on a fiery base disc |
+| quorvane | Umbral | PASS — clean hooded cloak + ornate staff (hollow-hood is stylistic) |
+| sporeveil | Verdant | PASS — excellent; mushroom-wizard, wide hat, dripping spore-staffs |
+| toran | Ember | PASS* — dark robe + fiery base excellent (*face reads as shadowed void under topknot — see FLAG note) |
+| tyr | Norse | PASS — crystalline ice-warrior; shield, fur mantle (white fur reads as fur) |
+| ullr | Norse | PASS — clean ice-hunter; winged helm, ice bow, fur ruff |
+| vanguard | Roman | PASS — clean Spartan; plumed helm, gold armor, black shield; tiny white foot-patch |
+| vulcan | Roman | PASS — excellent smith; plumed helm, war-hammer, red cape; minor coppery base-plate |
+| ysmera | Ember | PASS — excellent; dark gown with molten-ember cracks, flowing train; no artifacts |
 
-### FLAG — defect noted, still shipped as Hunyuan (6)
-*(TRELLIS baseline is comparably flawed, so Hunyuan is not "clearly worse" — kept per Hunyuan-default rule.)*
+## Shipped as Hunyuan — FLAG (defect noted, still shipped) (13)
+
+*(Kept per Hunyuan-default rule: the TRELLIS baseline is comparably flawed, so Hunyuan is not "clearly worse.")*
+
+**First pass, unchanged (6):** anubis-warden-of-scales (thumbs-up hand), artemis (skirt cloth-shards), cyranth (white backing-plane), kaeza (white shards + melted bow), korrathil (white ghost-sheets), mars (pink ground-plate shards).
+
+**Matte era (7):**
 | Champion | Faction | FLAG reason | Why still Hunyuan |
 |---|---|---|---|
-| anubis-warden-of-scales | Egyptian | Right hand frozen in a **thumbs-up** gesture (the exact artifact called out in the brief) | Otherwise high-fidelity; body/scales/props clean |
-| artemis | Greek | Torn/melted **cloth shards** on skirt hem; left arm crosses the face awkwardly | TRELLIS artemis has a melted bow + stringy hair — a wash |
-| cyranth | Tide | Flat **white backing-sheet plane** reconstructed behind the figure | TRELLIS cyranth has a melted-out hole through the torso — worse |
-| kaeza | Ember | Floating **white backing-sheet shards** + melted bow ribbon | TRELLIS kaeza's bow is fully exploded into flying shards — a wash |
-| korrathil | Umbral | **White untextured ghost-sheets** haloing the tentacles + base flame sheet | TRELLIS korrathil has a large white melted blob in the torso — a wash |
-| mars | Roman | Flat **pink ground-plate shards** under each foot + small gray shard by sword tip | Body/armor excellent; artifact confined to the base |
+| veyl | Tide | Thin **white untextured edge-fringing** on fins/blades | TRELLIS veyl has a white crotch/base blob — a wash |
+| xelphine | Umbral | Small **white melted base-blob** + pink hand-crystals | Strong hooded sorceress + moon-disc otherwise; TRELLIS comparable |
+| zeryth | Umbral | **White untextured melted base/hem** shards | TRELLIS zeryth has the same flared white-shard base — a wash |
+| nyxralla | Tide | **White untextured patches** on robe/staff | TRELLIS nyxralla has equal translucent/white ice bits — a wash |
+| petalsong | Verdant | **White stringy shards** on harp-strings + veil | Dress/figure clean; artifact confined to props |
+| set-lord-of-chaos | Egyptian | **Torn white/orange cloth shards** on right hip-sash | Body/tattoos clean and on-model |
+| toran | Ember | **Featureless dark void** where the face should be (shadowed) | Robe + molten base excellent |
 
-### FLAG — Hunyuan clearly worse → reverted to TRELLIS (4)
-| Champion | Faction | FLAG reason | Decision |
+## Reverted to TRELLIS — Hunyuan clearly worse (9)
+
+*(Matte pre-pass reduced but did not eliminate a dominant white artifact; the TRELLIS baseline is clearly cleaner.)*
+
+| Champion | Faction | Hunyuan FLAG | Decision |
 |---|---|---|---|
-| bastet-claws-of-the-hunt | Egyptian | Figure planted on a **large melted white slab/board**; dominates the silhouette | TRELLIS bastet is clean and well-textured → **keep TRELLIS** |
-| gorehoof | Verdant | **Large white untextured backing sheet** behind the head + torn sheets at the base | TRELLIS gorehoof is clean and appealing → **keep TRELLIS** |
-| lumisel | Tide | Figure trapped inside an **L-shaped diorama box** (floor + wall planes); lowest detail of the batch (3.8 MB) | TRELLIS lumisel is clean with a nice lily base → **keep TRELLIS** |
-| medusa | Greek | **Huge white melted shroud** engulfs the whole back of the figure | TRELLIS medusa is clean naga with coiled tail → **keep TRELLIS** |
+| bastet-claws-of-the-hunt | Egyptian | Residual **white base-plate** under the feet | TRELLIS clean cat-woman → **keep TRELLIS** |
+| gorehoof | Verdant | **White untextured melt** on antlers + lower legs | TRELLIS clean deer-demon → **keep TRELLIS** |
+| ra-radiant-dawn | Egyptian | Sun-disc reconstructed as a flat **white square billboard** + white wing | TRELLIS renders a proper glowing sun disc + clean wings → **keep TRELLIS** |
+| thornquill | Verdant | Thorn-bow **exploded into white shards** (both sides) | TRELLIS clean brown thorn-bow → **keep TRELLIS** |
+| sentinel | Umbral | **White base-plate** + white cape-shards | TRELLIS clean gunner, magenta cape, dark base → **keep TRELLIS** |
+| thor | Norse | Large flat **white untextured cape** + hole in the hammer | TRELLIS clean red/pink cape → **keep TRELLIS** |
+| mosscloak | Verdant | **White base-plate** under the feet | TRELLIS clean plant-beast → **keep TRELLIS** |
+| vashka | Umbral | Prominent **floating white banner billboard** upper-right | TRELLIS clean armor + small orange torch → **keep TRELLIS** |
+| nerreth | Umbral | **White flame-sheet billboard** behind the head | TRELLIS clean golden-flame head + detailed body → **keep TRELLIS** |
 
 ---
 
-## Not regenerated — TRELLIS fallback due to exhausted credit (26)
+## Recurring Hunyuan failure mode & the matte fix
 
-These were **never sent to Hunyuan** (the account ran out of credit at champion 22). They ship on their existing TRELLIS `model.glb` unchanged. Not a quality verdict — regenerate these first when credit is available.
-
-`mercury` (hit the 402 mid-attempt), `mosscloak`, `neptune`, `nerreth`, `nyxralla`, `odin`, `petalsong`, `pyromancer`, `quorvane`, `ra-radiant-dawn`, `sentinel`, `set-lord-of-chaos`, `sporeveil`, `thor`, `thornquill`, `toran`, `tyr`, `ullr`, `vanguard`, `vashka`, `veyl`, `vulcan`, `xelphine`, `ysmera`, `zeryth`, `zeus`.
-
-> Note: **zeus** (whose lightning-bolt prop-glitch was the motivating example in the brief) was **not** regenerated — it remains on TRELLIS. It is in the follow-up queue.
-
----
-
-## Recurring Hunyuan failure mode
-
-The dominant artifact across the flagged champions is a **flat white/untextured "backing sheet" or base slab** — Hunyuan reconstructing the light background of the concept `reference.png` as real geometry. It is worst on references with large bright negative space (bastet, lumisel, medusa, gorehoof) and merely cosmetic where the character fills the frame. A background-matting / alpha pre-pass on the reference before the next run would likely eliminate most FLAGs.
+The dominant first-pass artifact was a **flat white "backing sheet" / base slab** — Hunyuan reconstructing the bright background of the concept `reference.png` as real geometry. The **background-matte pre-pass** (subject on neutral `#808080`) eliminated it for the large majority: most champions now render as a clean subject on the dark preview background with no base slab. It persists only where a **complex prop or backdrop** (a sun disc, a thorny bow, a flame aura, a banner) sits in bright negative space and gets reconstructed as an untextured white billboard/shard — those 9 are the TRELLIS reverts above. Zeus, the motivating prop-glitch case, came out clean.

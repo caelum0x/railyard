@@ -3,14 +3,14 @@ AssetManifest(
     champion: "Neptune",
     archetype: "mage",
     faction: "Roman",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 1922072,
-            blake3: "f0402b0837fa71513a4daa6f8889a3c3185fafd31652e68744bcba6b313f3064",
+            bytes: 6379360,
+            blake3: "bd7f15fd8cc26dc01fce478795139775644a737f239d89db7f7560c3f8b37da1",
         ),
         "reference": AssetEntry(
             path: "reference.png",

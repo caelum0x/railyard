@@ -3,14 +3,14 @@ AssetManifest(
     champion: "Zeus",
     archetype: "mage",
     faction: "Greek",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 2982140,
-            blake3: "6375e75b2abb1513886b4e423878d97220c9886c9e81bb7e351898899ebb9a76",
+            bytes: 7361616,
+            blake3: "6afc01129f167079bcd4555b07b3cf003c5649c0bbdff0774abc468e8bbba4e5",
         ),
         "reference": AssetEntry(
             path: "reference.png",

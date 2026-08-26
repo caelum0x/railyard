@@ -3,14 +3,14 @@ AssetManifest(
     champion: "Xelphine",
     archetype: "mage",
     faction: "Umbral",
-    generator: "ai-3d",
-    model_source: "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+    generator: "hunyuan3d-2.1",
+    model_source: "ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f",
     assets: {
         "model": AssetEntry(
             path: "model.glb",
             format: "model/gltf-binary",
-            bytes: 2121280,
-            blake3: "cdef7d743915c708a958342d52c732d8c4f4654afbf4db5999a216a22e09f4f2",
+            bytes: 6239488,
+            blake3: "12549e13b832d94e6849053e17c6ede7f4ba66754fba7394ec815e0c865f5624",
         ),
         "reference": AssetEntry(
             path: "reference.png",

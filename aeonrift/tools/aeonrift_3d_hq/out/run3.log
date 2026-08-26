@@ -1,0 +1,15 @@
+[12:48:39] resolved ndreca/hunyuan3d-2.1:895e514f953d39e8b5bfb859df9313481ad3fa3a8631e5c54c7e5c9c85a6aa9f
+[12:48:39] 6 champions to process
+[12:48:39] [1/6] veyl: generating... (ref=reference.matte.png)
+[12:53:55]     ok tris=40000 bytes=6398888 predict_time=136.6s spend=$12.42
+[12:54:06] [2/6] vulcan: generating... (ref=reference.matte.png)
+[12:56:13]     ok tris=40000 bytes=6065376 predict_time=116.9s spend=$12.69
+[12:56:24] [3/6] xelphine: generating... (ref=reference.matte.png)
+[12:58:41]     ok tris=40000 bytes=6239488 predict_time=127.6s spend=$12.96
+[12:58:52] [4/6] ysmera: generating... (ref=reference.matte.png)
+[13:01:01]     ok tris=40000 bytes=5859868 predict_time=119.2s spend=$13.23
+[13:01:12] [5/6] zeryth: generating... (ref=reference.matte.png)
+[13:03:24]     ok tris=40000 bytes=6771000 predict_time=127.2s spend=$13.50
+[13:03:35] [6/6] zeus: generating... (ref=reference.matte.png)
+[13:05:47]     ok tris=40000 bytes=7361616 predict_time=121.6s spend=$13.77
+[13:05:47] DONE. ok=47/6 new=6 spend~$13.77
