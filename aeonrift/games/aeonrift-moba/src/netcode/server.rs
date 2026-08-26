@@ -8,8 +8,9 @@
 use bevy::prelude::*;
 use lightyear::prelude::server::*;
 use lightyear::prelude::*;
+use lightyear_deterministic_replication::Deterministic;
 
-use super::protocol::{NetChampion, NetPlayer};
+use super::protocol::{NetChampion, NetPlayer, SimStateHash};
 use super::shared::{server_addr, SimNet, CHAMPION_ID};
 
 /// How often the server flushes replication updates to clients.
@@ -72,10 +73,17 @@ fn handle_connected(
         .champion(CHAMPION_ID)
         .map(|c| (c.pos.x, c.pos.y, c.health.current, c.team))
         .unwrap_or((0.0, 0.0, 0, 0));
+    let hash = sim::state_hash(&sim.world);
 
     let entity = commands
         .spawn((
             NetChampion { x, y, hp, team },
+            // The checksum-bound determinism fingerprint (see `protocol::SimStateHash`).
+            SimStateHash(hash),
+            // Opt this authoritative champion into lightyear's checksum archetype set;
+            // without this marker `ChecksumReceivePlugin` would hash nothing and every
+            // client checksum would be compared against an empty (0) history.
+            Deterministic,
             NetPlayer(client_id.to_bits()),
             // Server-authoritative replication + client-side prediction for the
             // controlling client (= aeonrift's predict/reconcile, now over UDP).

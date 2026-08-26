@@ -12,7 +12,7 @@ use lightyear::prelude::input::native::ActionState;
 
 use sim::{state_hash, step, EntityId, Input, World};
 
-use super::protocol::{MoveInput, NetChampion, ProtocolPlugin};
+use super::protocol::{MoveInput, NetChampion, ProtocolPlugin, SimStateHash};
 
 /// The champion id every connected peer drives in this single-champion demo.
 pub const CHAMPION_ID: EntityId = 0;
@@ -68,12 +68,12 @@ impl Plugin for SharedPlugin {
 /// into its replicated [`NetChampion`] component. Updates [`SimChecksum`].
 fn sim_step_system(
     mut sim: ResMut<SimNet>,
-    mut champs: Query<(&ActionState<MoveInput>, &mut NetChampion)>,
+    mut champs: Query<(&ActionState<MoveInput>, &mut NetChampion, &mut SimStateHash)>,
     mut checksum: ResMut<SimChecksum>,
 ) {
     // Build the deterministic input slice (champion 0 in this single-champ demo).
     let mut inputs: Vec<Input> = Vec::new();
-    for (action, _) in &champs {
+    for (action, _, _) in &champs {
         if let Some(input) = action.0.to_sim(CHAMPION_ID) {
             inputs.push(input);
         }
@@ -81,15 +81,22 @@ fn sim_step_system(
 
     // The untouched deterministic kernel advances the world one fixed tick.
     step(&mut sim.world, &inputs);
-    checksum.0 = state_hash(&sim.world);
+    let hash = state_hash(&sim.world);
+    checksum.0 = hash;
 
-    // Mirror authoritative champion state into the replicated component.
+    // Mirror authoritative champion state into the replicated component AND publish
+    // the per-tick determinism fingerprint into the checksum-bound `SimStateHash`
+    // component, so lightyear's per-tick checksum XOR is computed over `state_hash`
+    // (on the server: the authoritative hash; on the client: the predicted hash that
+    // lightyear records into `PredictionHistory<SimStateHash>` for the confirmed-tick
+    // comparison).
     if let Some(c) = sim.world.champion(CHAMPION_ID) {
-        for (_, mut net) in &mut champs {
+        for (_, mut net, mut sim_hash) in &mut champs {
             net.x = c.pos.x;
             net.y = c.pos.y;
             net.hp = c.health.current;
             net.team = c.team;
+            sim_hash.0 = hash;
         }
     }
 }
