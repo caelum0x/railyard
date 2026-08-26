@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anubis Slice — Cel Ink Outline: Old vs New vs EEVEE Proxy</title>
+<style>
+  :root {
+    --stage: #3a4050;
+    --ink: #14161c;
+    --panel: #1b1e26;
+    --line: #2c313d;
+    --text: #e7e9ee;
+    --muted: #9aa2b1;
+    --accent: #f2c14e;
+    --old: #d9704e;
+    --new: #6ec27a;
+    --target: #6ea8d9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0e1014; color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    padding: 32px 28px 20px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #14171e, #0e1014);
+  }
+  h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: .2px; }
+  header p { margin: 4px 0; color: var(--muted); max-width: 980px; }
+  main { padding: 24px 28px 64px; }
+  .legend { display:flex; gap:18px; flex-wrap:wrap; margin: 14px 0 4px; }
+  .chip { display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
+  .dot { width:11px; height:11px; border-radius:3px; display:inline-block; }
+  .dot.old { background: var(--old); }
+  .dot.new { background: var(--new); }
+  .dot.target { background: var(--target); }
+
+  section.row { margin-top: 30px; }
+  .row h2 { font-size: 16px; margin: 0 0 12px; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .cell {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;
+  }
+  .cap {
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--line);
+  }
+  .cap .tag { font-weight: 600; }
+  .cap.old  .tag { color: var(--old); }
+  .cap.new  .tag { color: var(--new); }
+  .cap.target .tag { color: var(--target); }
+  .cap .sub { color: var(--muted); font-size: 12px; }
+  .imgwrap { background: var(--stage); aspect-ratio: 1 / 1; }
+  .imgwrap img { display:block; width:100%; height:100%; object-fit: contain; }
+  .imgwrap.blackstage { background: #0d0e12; }
+
+  .notes {
+    margin-top: 44px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 22px 26px;
+  }
+  .notes h2 { margin: 0 0 12px; font-size: 18px; }
+  .notes h3 { margin: 20px 0 6px; font-size: 14px; color: var(--accent); text-transform: uppercase; letter-spacing: .6px; }
+  .notes ul { margin: 6px 0 0; padding-left: 20px; }
+  .notes li { margin: 5px 0; }
+  .verdict { border-left: 3px solid var(--accent); padding: 12px 16px; background: #20242e; border-radius: 0 8px 8px 0; margin-top: 8px; }
+  code { background:#20242e; padding: 1px 6px; border-radius: 5px; font-size: 12.5px; color:#d7c9a0; }
+  .close { color: var(--new); font-weight:600; }
+  .short { color: var(--old); font-weight:600; }
+  footer { color: var(--muted); font-size: 12px; padding: 0 28px 40px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Anubis Vertical Slice — In-Engine Cel Ink Outline</h1>
+  <p>Goal: replace the soft in-engine outline (which read as a bloom rim-light) with a true inked,
+     constant-width, high-contrast silhouette matching the EEVEE-proxy flat-cel + Freestyle-ink look.
+     All frames rendered <strong>fully headless on Metal</strong> (no window, no screencapture) via
+     render-to-Image → <code>Screenshot::image</code> → <code>save_to_disk</code>.</p>
+  <div class="legend">
+    <span class="chip"><span class="dot old"></span>OLD in-engine (soft / bloom rim)</span>
+    <span class="chip"><span class="dot new"></span>NEW in-engine (crisp ink)</span>
+    <span class="chip"><span class="dot target"></span>EEVEE proxy (target)</span>
+  </div>
+</header>
+
+<main>
+
+  <section class="row">
+    <h2>Idle — front (frame 000)</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="cap old"><span class="tag">OLD in-engine</span><span class="sub">soft, near-black stage</span></div>
+        <div class="imgwrap blackstage"><img src="outline_assets/old_idle_000.png" alt="old idle front"></div>
+      </div>
+      <div class="cell">
+        <div class="cap new"><span class="tag">NEW in-engine</span><span class="sub">crisp ink, neutral stage</span></div>
+        <div class="imgwrap"><img src="outline_assets/new_idle_000.png" alt="new idle front"></div>
+      </div>
+      <div class="cell">
+        <div class="cap target"><span class="tag">EEVEE proxy</span><span class="sub">Freestyle ink target</span></div>
+        <div class="imgwrap"><img src="outline_assets/proxy_idle_000.png" alt="proxy idle front"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="row">
+    <h2>Idle — 3/4 turntable (frame 009)</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="cap old"><span class="tag">OLD in-engine</span><span class="sub">soft, near-black stage</span></div>
+        <div class="imgwrap blackstage"><img src="outline_assets/old_idle_009.png" alt="old idle 3/4"></div>
+      </div>
+      <div class="cell">
+        <div class="cap new"><span class="tag">NEW in-engine</span><span class="sub">crisp ink, neutral stage</span></div>
+        <div class="imgwrap"><img src="outline_assets/new_idle_009.png" alt="new idle 3/4"></div>
+      </div>
+      <div class="cell">
+        <div class="cap target"><span class="tag">EEVEE proxy</span><span class="sub">Freestyle ink target</span></div>
+        <div class="imgwrap"><img src="outline_assets/proxy_idle_009.png" alt="proxy idle 3/4"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="row">
+    <h2>Walk — mid-stride (frame 009)</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="cap old"><span class="tag">OLD in-engine</span><span class="sub">soft, near-black stage</span></div>
+        <div class="imgwrap blackstage"><img src="outline_assets/old_walk_009.png" alt="old walk"></div>
+      </div>
+      <div class="cell">
+        <div class="cap new"><span class="tag">NEW in-engine</span><span class="sub">crisp ink, neutral stage</span></div>
+        <div class="imgwrap"><img src="outline_assets/new_walk_009.png" alt="new walk"></div>
+      </div>
+      <div class="cell">
+        <div class="cap target"><span class="tag">EEVEE proxy</span><span class="sub">Freestyle ink target</span></div>
+        <div class="imgwrap"><img src="outline_assets/proxy_walk_009.png" alt="proxy walk"></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="notes">
+    <h2>What changed &amp; which technique won</h2>
+
+    <h3>Diagnosis — why the old outline read as bloom, not ink</h3>
+    <ul>
+      <li><strong>Dark-on-dark:</strong> the ink colour was already near-black (<code>0.02,0.02,0.04</code>)
+          but the stage was near-black too (<code>ClearColor 0.075,0.078,0.094</code>), so the silhouette
+          line had almost zero contrast against the background and effectively vanished.</li>
+      <li><strong>Bloom washed the rim:</strong> <code>Bloom::OLD_SCHOOL</code> at full strength bloomed the
+          bright parametric fresnel rim (<code>rim_color 1.0,0.82,0.5</code>, <code>mix 1.0</code>) into a fuzzy
+          white halo hugging the silhouette — that glow, not the ink, was what the eye picked up as an "outline".</li>
+      <li><strong>Filmic crush:</strong> AgX tonemapping desaturated and darkened the flats, flattening
+          contrast further so nothing on the model read as a hard inked edge.</li>
+    </ul>
+
+    <h3>Fix — tuned <code>bevy_mod_outline</code> (EXTRUDE_VERTEX), not a hand-rolled hull</h3>
+    <ul>
+      <li><strong>Neutral mid-tone stage:</strong> <code>ClearColor 0.30,0.33,0.40</code> — the dark ink now
+          reads with high contrast, exactly like the proxy's slate background.</li>
+      <li><strong>Ink outline:</strong> constant-width screen-space <code>OutlineVolume { width: 4.0,
+          colour: 0.02,0.02,0.03 }</code>. Because <code>bevy_mod_outline</code>'s EXTRUDE_VERTEX pass <em>is</em>
+          a normal-extruded dark shell (the standard inverted-hull toon-ink technique), tuning it was enough —
+          no separate hull pass was needed.</li>
+      <li><strong>Bloom demoted:</strong> intensity <code>0.15 → 0.025</code>, so the HDR pipeline stays but the
+          glow no longer masquerades as a line.</li>
+      <li><strong>Fresnel rim kept but subdued:</strong> dim/sharp sheen (<code>rim_color 0.34,0.33,0.28</code>,
+          <code>fresnel_power 6.0</code>, <code>mix 0.4</code>) — retains the mtoon rim per spec without blooming
+          into a white halo.</li>
+      <li><strong>Flatter tonemap:</strong> <code>AgX → Reinhard</code> to preserve the saturated cel flats
+          (red kilt / gold / navy) instead of filmic desaturation.</li>
+      <li>The mtoon banded cel diffuse (<code>shading_toony 0.97</code>) is unchanged.</li>
+    </ul>
+
+    <h3>Honest read — does the in-engine now match the proxy?</h3>
+    <div class="verdict">
+      <p><span class="close">Silhouette ink: yes — matched.</span> The outer contour is now a crisp,
+      constant-width, high-contrast dark ink line on a neutral stage from every turntable angle. Side-by-side
+      it reads as the same <em>inked-cel</em> language as the EEVEE proxy, and the old bloom-rim artifact is gone.
+      The flat saturated cel fills also now line up with the proxy's palette.</p>
+      <p><span class="short">Where it still falls short:</span> the proxy's <strong>interior</strong> Freestyle
+      lines — eye/brow slits, muzzle contour, anatomical/muscle creases, kilt fold lines — are <em>not</em>
+      reproduced. <code>bevy_mod_outline</code> inks the silhouette (and creased edges) only; interior detail
+      in-engine comes from cel banding + texture, not ink. So the character reads as inked at the outline but
+      is smoother/less line-detailed inside the silhouette than the proxy. Additionally, the extruded ink can
+      look slightly thick/uneven at hard mesh seams (ears, scale-pan rims) versus Freestyle's perfectly even
+      stroke. Closing the interior-line gap would need a second pass (depth/normal edge-detection post-process
+      or baked ink texture), which was out of scope here.</p>
+    </div>
+  </div>
+
+</main>
+<footer>
+  Rendered headless (Bevy 0.19, Metal, no window). NEW frames: 36 idle + 36 walk turntable at
+  <code>slice/frames/new/</code>. Source: <code>slice/bevy_render/src/main.rs</code>.
+</footer>
+</body>
+</html>

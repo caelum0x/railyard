@@ -91,7 +91,9 @@ fn main() {
         std::time::Duration::from_secs_f32(1.0 / 60.0),
     ))
     .add_plugins((MtoonPlugin, OutlinePlugin::EXTRUDE_VERTEX))
-    .insert_resource(ClearColor(Color::srgb(0.075, 0.078, 0.094)))
+    // NEUTRAL mid-tone slate stage (matches EEVEE proxy ~#3a404e) so the dark ink
+    // silhouette reads with high contrast instead of vanishing dark-on-dark.
+    .insert_resource(ClearColor(Color::srgb(0.30, 0.33, 0.40)))
     .insert_resource(Cfg { out_dir, tag, clip, frames })
     .insert_resource(GlbFile(file_name))
     .init_resource::<Progress>()
@@ -127,9 +129,13 @@ fn setup(
         Camera::default(),
         RenderTarget::from(target),
         Hdr,
-        Tonemapping::AgX,
-        Bloom::OLD_SCHOOL,
-        AmbientLight { color: Color::srgb(0.6, 0.7, 0.95), brightness: 260.0, ..default() },
+        // Flat, near-neutral tonemap: preserve saturated cel flats (red kilt / gold /
+        // navy) like the proxy instead of AgX's filmic desaturation + crush.
+        Tonemapping::Reinhard,
+        // Keep an HDR bloom but at a whisper so it no longer washes the silhouette
+        // into a glowing rim-light. Ink must read as ink, not bloom.
+        Bloom { intensity: 0.025, ..Bloom::OLD_SCHOOL },
+        AmbientLight { color: Color::srgb(0.72, 0.78, 0.95), brightness: 180.0, ..default() },
         Transform::from_xyz(0.0, 0.03, 1.95).looking_at(Vec3::new(0.0, 0.0, 0.0), Vec3::Y),
     ));
 
@@ -189,11 +195,12 @@ fn swap_materials(
             shading_toony_factor: 0.97,
             shading_shift_factor: -0.08,
             gi_equalization_factor: 0.75,
-            // parametric fresnel rim (League-ish glow)
-            parametric_rim_color: Color::srgb(1.0, 0.82, 0.5),
-            parametric_rim_fresnel_power: 2.8,
-            parametric_rim_lift_factor: 0.10,
-            rim_lighting_mix_factor: 1.0,
+            // parametric fresnel rim — KEPT, but a subtle sharp sheen (thin, dim) so it
+            // no longer blooms into a fuzzy white halo that masquerades as an outline.
+            parametric_rim_color: Color::srgb(0.34, 0.33, 0.28),
+            parametric_rim_fresnel_power: 6.0,
+            parametric_rim_lift_factor: 0.0,
+            rim_lighting_mix_factor: 0.4,
             // outline handled by bevy_mod_outline, not mtoon's own
             outline_mode: VrmOutlineMode::None,
             double_sided: false,
@@ -203,10 +210,12 @@ fn swap_materials(
             .entity(e)
             .remove::<MeshMaterial3d<StandardMaterial>>()
             .insert(MeshMaterial3d(m))
+            // Constant-width dark ink silhouette (screen-space px). Near-black, fully
+            // opaque; on the mid-tone stage this reads as a crisp inked line.
             .insert(OutlineVolume {
                 visible: true,
-                width: 6.0,
-                colour: Color::srgb(0.02, 0.02, 0.04),
+                width: 4.0,
+                colour: Color::srgb(0.02, 0.02, 0.03),
             });
     }
     progress.mats_done = true;
