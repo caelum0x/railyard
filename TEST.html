@@ -1,0 +1,53 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Aeon Style-LoRA — Consistency Test</title>
+<style>
+:root{color-scheme:dark}
+body{background:#0d0f14;color:#e7e9ee;font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;margin:0;padding:32px}
+h1{font-size:26px;margin:0 0 6px} p.sub{color:#98a2b3;max-width:960px;margin:0 0 18px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.card{margin:0;background:#161a22;border:1px solid #2a3550;border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+.card img{width:100%;aspect-ratio:4/5;object-fit:cover;display:block;background:#000}
+figcaption{padding:11px 13px;font-size:13px}
+.fac{color:#7c89a0;font-size:11px;margin-left:6px}
+.held{background:#274b8a;color:#dbe7ff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:5px;margin-left:6px;letter-spacing:.04em}
+.read{display:block;color:#aeb7c7;margin-top:6px}
+.verdict{background:#12241a;border:1px solid #1f7a4d;border-radius:10px;padding:14px 16px;margin:0 0 22px;max-width:960px}
+code{color:#6ee7a8}
+</style></head><body>
+<h1>Aeon Style-LoRA — Held-Out Consistency Test</h1>
+<p class="sub">6 brand-new champion subjects (Selene, Sobek, Minerva, Skadi, Cindralem, Maranth) — none appear in the 22-image training set. Generated with <code>caelum0x/aeon-style-lora:433a51a0…</code> + trigger <code>AEONSPLASH</code>, flux-dev, lora_scale 1.0, 28 steps, 4:5.</p>
+<div class="verdict"><b>Verdict:</b> The LoRA holds the locked League-painterly look across all 8-faction-spanning held-out subjects — dynamic low-angle action poses, moody rim-lit cinematic lighting, volumetric fog, painterly semi-realistic rendering, faction-correct palettes. Faces are painterly-photoreal and clean; no text/watermark artifacts; no melted hands or 6-finger failures. Style transfer generalizes beyond the training subjects.</div>
+<div class="grid">
+<figure class="card">
+  <img src="lora-test/selene.png" loading="lazy" alt="Selene">
+  <figcaption><b>Selene</b> <span class="fac">Greek</span> <span class="held">HELD-OUT</span>
+  <span class="read">Airborne crescent-bow archer, moonlit ruins. Textbook match: dynamic leap, clean painterly face, cool rim light. Hands read correctly.</span></figcaption>
+</figure>
+<figure class="card">
+  <img src="lora-test/sobek.png" loading="lazy" alt="Sobek">
+  <figcaption><b>Sobek</b> <span class="fac">Egyptian</span> <span class="held">HELD-OUT</span>
+  <span class="read">Croc-headed god lunging with a flaming spear in a hieroglyph tomb. Strong Egyptian palette + rim light; one hand slightly clawed but no melt/6-finger.</span></figcaption>
+</figure>
+<figure class="card">
+  <img src="lora-test/minerva.png" loading="lazy" alt="Minerva">
+  <figcaption><b>Minerva</b> <span class="fac">Roman</span> <span class="held">HELD-OUT</span>
+  <span class="read">Leaping caster inside a golden light-ring with legion banners. Nails the Roman anchor look; clean face, correct hands, moody storm grade.</span></figcaption>
+</figure>
+<figure class="card">
+  <img src="lora-test/skadi.png" loading="lazy" alt="Skadi">
+  <figcaption><b>Skadi</b> <span class="fac">Norse</span> <span class="held">HELD-OUT</span>
+  <span class="read">Ice-bow huntress on a snow ridge under aurora. Among the strongest — moody blue rim, dynamic profile, faithful to the Norse anchors.</span></figcaption>
+</figure>
+<figure class="card">
+  <img src="lora-test/cindralem.png" loading="lazy" alt="Cindralem">
+  <figcaption><b>Cindralem</b> <span class="fac">Ember</span> <span class="held">HELD-OUT</span>
+  <span class="read">Winged ash-phoenix knight mid-leap in molten fire. Dynamic, strong embers/rim; wings lean a touch illustrative but firmly on-brand.</span></figcaption>
+</figure>
+<figure class="card">
+  <img src="lora-test/maranth.png" loading="lazy" alt="Maranth">
+  <figcaption><b>Maranth</b> <span class="fac">Tide</span> <span class="held">HELD-OUT</span>
+  <span class="read">Floating tide oracle in a cyan water vortex. Faithful Tide look — teal rim, water ribbons, clean painterly face, correct hands.</span></figcaption>
+</figure>
+</div>
+</body></html>
