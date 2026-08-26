@@ -1,0 +1,8 @@
+# Never commit secrets or the local venv / logs.
+.venv/
+*.env
+.env
+.env.local
+gen.log
+__pycache__/
+*.pyc
