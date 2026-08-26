@@ -174,8 +174,11 @@ fn handle_action_input(
         }
         let deploy = Deploy::new(HUMAN, card, lane);
         match try_deploy(&mut battle.state, deploy) {
-            Ok(_) => {
+            Ok(id) => {
                 let name = battle.state.decks[HUMAN as usize][card].name().to_string();
+                if let Some(slug) = super::game::slug_for_card(card) {
+                    battle.record_unit(id, slug);
+                }
                 status.set(format!("Deployed {name} -> lane {}", lane + 1));
                 selection.card = None;
             }

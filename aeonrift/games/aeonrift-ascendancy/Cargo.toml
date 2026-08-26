@@ -36,6 +36,15 @@ name = "cards-client"
 path = "src/bin/cards-client.rs"
 required-features = ["client"]
 
+# Headless OFFSCREEN render of the polished client to PNG frames + a CLIENT-POLISH.html
+# contact sheet: textured board units + ability-cast VFX, rendered to an image target
+# with no window and no screen capture (see src/bin/client-frames.rs).
+#   cargo run -p aeonrift-ascendancy --features client --bin client-frames
+[[bin]]
+name = "client-frames"
+path = "src/bin/client-frames.rs"
+required-features = ["client"]
+
 [features]
 default = []
 # Enables the Bevy view over the deterministic rules core. Also pulls the

@@ -3,7 +3,9 @@
 //! so they are spawned once and merely re-styled each frame from the match state —
 //! all values (elixir current/max, card names/costs) are read from the `cards` core.
 
-use bevy::camera::ScalingMode;
+use bevy::camera::{Hdr, ScalingMode};
+use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 
 use super::game::{
@@ -43,6 +45,14 @@ pub fn setup(mut commands: Commands, options: Res<RunOptions>, asset_server: Res
     // visible on any screen aspect (portrait phone or desktop window).
     commands.spawn((
         Camera2d,
+        // HDR (the `Hdr` marker) is required for bloom: the VFX bursts use over-bright
+        // (>1.0) colors so the bloom pass blooms them into a readable glow.
+        Hdr,
+        Tonemapping::TonyMcMapface,
+        Bloom {
+            intensity: 0.45,
+            ..Bloom::default()
+        },
         Projection::from(OrthographicProjection {
             scaling_mode: ScalingMode::FixedVertical {
                 viewport_height: VIEW_HEIGHT,

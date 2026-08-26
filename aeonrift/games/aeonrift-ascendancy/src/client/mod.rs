@@ -27,6 +27,7 @@ pub mod input;
 pub mod render;
 pub mod screens;
 pub mod tick;
+pub mod vfx;
 
 use bevy::app::AppExit;
 use bevy::prelude::*;
@@ -96,6 +97,7 @@ fn run_windowed(options: RunOptions) {
         .insert_resource(options)
         .init_resource::<Selection>()
         .init_resource::<StatusMessage>()
+        .init_resource::<vfx::CastTracker>()
         // Action-based input VIEW (leafwing-input-manager): keyboard/touch card
         // verbs alongside the existing pointer flow. Deterministic core untouched.
         .add_plugins(CardInputPlugin)
@@ -105,7 +107,13 @@ fn run_windowed(options: RunOptions) {
             Update,
             (
                 input::handle_input,
-                render::draw_battle,
+                // Board units: textured face sprites + faction frame / HP overlays.
+                render::sync_unit_sprites,
+                render::draw_field,
+                render::draw_unit_overlays,
+                // Ability-cast VFX: spawn a burst per new skillshot, then animate.
+                vfx::spawn_cast_vfx,
+                vfx::animate_vfx,
                 hud::update_hand,
                 hud::update_elixir,
                 hud::update_bases,
