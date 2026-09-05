@@ -1,0 +1,22 @@
+[package]
+name = "rago-clickhouse"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Rago ClickHouse event store — same aggregator-facing read scope as the Postgres store"
+
+[dependencies]
+rago-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+reqwest = { workspace = true, features = ["rustls-tls"] }
+
+[dev-dependencies]
+rago-billing.workspace = true
+tokio = { workspace = true }
+rust_decimal_macros.workspace = true

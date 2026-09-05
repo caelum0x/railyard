@@ -1,0 +1,60 @@
+# Rago — a self-contained billing service (Lago-compatible).
+#
+#   docker compose up --build
+#
+# Boots Postgres, the consolidated `rago-server` (REST + GraphQL API + the
+# scheduler/worker daemon in one process), and an optional ClickHouse event
+# store. The API listens on :3000; embedded migrations run automatically on
+# boot.
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: rago
+    ports:
+      # Host port is overridable so the stack can coexist with another local
+      # Postgres: RAGO_PG_PORT=5439 docker compose up -d postgres
+      - "${RAGO_PG_PORT:-5432}:5432"
+    volumes:
+      - rago_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rago:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/rago
+      RAGO_API_ADDR: 0.0.0.0:3000
+      # Dashboard admin JWT signing secret — required (release builds refuse
+      # to boot without it). Generate one with: openssl rand -hex 32
+      RAGO_JWT_SECRET: "${RAGO_JWT_SECRET:?set RAGO_JWT_SECRET (generate with: openssl rand -hex 32)}"
+      RAGO_TICK_SECS: "15"
+      RAGO_RATE_LIMIT: "6000"
+      RUST_LOG: info
+      CLICKHOUSE_URL: http://clickhouse:8123
+    ports:
+      - "3000:3000"
+
+  # Optional: the ClickHouse event store (event ingestion at parity with Postgres).
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    profiles: ["clickhouse"]
+    environment:
+      CLICKHOUSE_DB: rago
+    ports:
+      - "8123:8123"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+volumes:
+  rago_pgdata:

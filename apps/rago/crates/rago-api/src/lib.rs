@@ -1,0 +1,311 @@
+//! # rago-api
+//!
+//! REST surface for Rago — a faithful port of Lago's `api/v1` controllers on
+//! axum, wired to [`rago_db`] repositories and the [`rago_billing`] engine.
+//!
+//! * Bearer API-key auth ([`auth`]) gates every `/api/v1` route against the
+//!   `api_keys` table — no bypass.
+//! * Handlers ([`handlers`]) implement customers, billable metrics, plans (+
+//!   charges), subscriptions (create/terminate), events (validate+create),
+//!   subscription billing → invoice, invoices, wallets + wallet transactions
+//!   (top-up), coupons, and credit notes.
+//! * Responses use Lago's root-wrapped envelopes and `V1::*Serializer` shapes
+//!   ([`serializers`]); errors use the `Api::ApiErrors` envelope ([`error`]).
+
+pub mod analytics;
+pub mod auth;
+pub mod breadth;
+pub mod catalog_v2;
+pub mod crud;
+pub mod customer_lists;
+pub mod emit;
+pub mod error;
+pub mod graphql;
+pub mod handlers;
+pub mod integrations;
+pub mod observability;
+pub mod pagination;
+pub mod payments;
+pub mod phase14;
+pub mod phase15;
+pub mod resources;
+pub mod serializers;
+pub mod state;
+pub mod subs;
+pub mod usage;
+pub mod webhooks;
+
+use axum::routing::{get, post, put};
+use axum::{Json, Router};
+use chrono::Utc;
+use rago_core::enums::{AggregationType, ChargeModel};
+use rago_core::models::{BillableMetric, Event};
+use rago_core::money::Currency;
+use rago_billing::aggregation;
+use rago_billing::charge_models::{self, PricingStructure};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use uuid::Uuid;
+
+pub use state::AppState;
+
+/// Build the application router with database-backed state.
+pub fn router(state: AppState) -> Router {
+    let v1 = Router::new()
+        .route("/events", post(handlers::create_event).get(breadth::list_events))
+        .route("/customers", post(handlers::create_customer).get(handlers::list_customers))
+        .route("/customers/:external_id", get(handlers::show_customer).delete(crud::destroy_customer))
+        .route("/customers/:external_id/subscriptions", get(crud::customer_subscriptions))
+        .route("/customers/:external_id/invoices", get(crud::customer_invoices))
+        .route("/customers/:external_id/wallets", get(crud::customer_wallets))
+        .route("/customers/:external_id/portal_url", get(crud::customer_portal_url))
+        .route("/customers/:external_id/checkout_url", post(crud::customer_checkout_url))
+        .route("/customers/:external_id/applied_coupons", get(customer_lists::customer_applied_coupons))
+        .route("/customers/:external_id/credit_notes", get(customer_lists::customer_credit_notes))
+        .route("/customers/:external_id/payments", get(customer_lists::customer_payments))
+        .route("/billable_metrics", post(handlers::create_billable_metric).get(crud::list_billable_metrics))
+        .route("/billable_metrics/evaluate_expression", post(crud::evaluate_expression))
+        .route("/billable_metrics/:code", get(crud::show_billable_metric).put(crud::update_billable_metric).delete(crud::destroy_billable_metric))
+        .route("/plans", post(handlers::create_plan).get(crud::list_plans))
+        .route("/plans/:code", get(handlers::show_plan).put(crud::update_plan).delete(crud::destroy_plan))
+        .route("/plans/:code/entitlements", get(handlers::list_plan_entitlements))
+        .route("/plans/:code/charges", post(crud::create_plan_charge))
+        .route("/plans/:code/charges/:id", put(crud::update_plan_charge).delete(crud::destroy_plan_charge))
+        .route("/entitlements", post(handlers::create_entitlement))
+        .route("/subscriptions", post(handlers::create_subscription).get(breadth::list_subscriptions))
+        .route("/subscriptions/:external_id", get(subs::show_subscription).put(subs::update_subscription).delete(handlers::terminate_subscription))
+        .route("/subscriptions/:external_id/invoices", post(handlers::bill_subscription))
+        .route("/subscriptions/:external_id/lifetime_usage", get(subs::subscription_lifetime_usage))
+        .route("/subscriptions/:external_id/entitlements", post(handlers::create_subscription_entitlement).get(handlers::resolve_subscription_entitlements))
+        .route("/subscriptions/:external_id/alerts", post(subs::create_alert).get(subs::list_alerts))
+        .route("/subscriptions/:external_id/alerts/:code", get(subs::show_alert).put(subs::update_alert).delete(subs::destroy_alert))
+        .route("/subscriptions/:external_id/usage_alerts", post(phase14::create_usage_alert).get(phase14::list_usage_alerts))
+        .route("/customers/:external_customer_id/current_usage", get(usage::current_usage))
+        .route("/customers/:external_customer_id/projected_usage", get(usage::projected_usage))
+        .route("/customers/:external_customer_id/past_usage", get(usage::past_usage))
+        .route("/invoices", get(breadth::list_invoices).post(breadth::create_one_off_invoice))
+        .route("/add_ons", post(breadth::create_add_on).get(crud::list_add_ons))
+        .route("/add_ons/:code", get(crud::show_add_on).put(crud::update_add_on).delete(crud::destroy_add_on))
+        .route("/quotes", post(breadth::create_quote))
+        .route("/quotes/:id/accept", post(breadth::accept_quote))
+        .route("/wallets/:id/recurring_rules", post(breadth::create_wallet_recurring_rule))
+        .route("/data_exports", post(breadth::create_data_export))
+        .route("/data_exports/:id", get(breadth::show_data_export))
+        .route("/data_exports/:id/download", get(breadth::download_data_export))
+        .route("/emails", get(breadth::list_captured_emails))
+        .route("/invoices/:id", get(handlers::show_invoice))
+        .route("/invoices/:id/download", get(handlers::download_invoice_pdf))
+        .route("/invoices/:id/download.xml", get(handlers::download_invoice_xml))
+        .route("/invoices/:id/apply_provider_taxes", post(integrations::apply_provider_taxes_to_invoice))
+        .route("/invoices/:id/refund", post(handlers::refund_invoice))
+        .route("/invoices/:id/void", post(subs::void_invoice))
+        .route("/invoices/:id/finalize", put(subs::finalize_invoice))
+        .route("/invoices/:id/refresh", put(subs::refresh_invoice))
+        .route("/invoices/:id/lose_dispute", post(subs::lose_dispute))
+        .route("/invoices/:id/resend_email", post(subs::resend_invoice_email))
+        .route("/invoices/:id/sync_salesforce_id", put(subs::sync_salesforce_id))
+        .route("/invoices/:id/retry", post(subs::retry_invoice))
+        .route("/invoices/:id/retry_payment", post(subs::retry_payment))
+        .route("/invoices/:id/payment_url", post(subs::invoice_payment_url))
+        .route("/activity_logs", get(handlers::list_activity_logs))
+        .route("/credit_notes", post(handlers::create_credit_note).get(subs::list_credit_notes))
+        .route("/wallets", post(handlers::create_wallet).get(crud::list_wallets))
+        .route("/wallets/:id", get(handlers::show_wallet).put(crud::update_wallet).delete(crud::terminate_wallet))
+        .route("/wallet_transactions", post(handlers::create_wallet_transaction))
+        .route("/coupons", post(handlers::create_coupon).get(crud::list_coupons))
+        .route("/coupons/:code", get(crud::show_coupon).put(crud::update_coupon).delete(crud::destroy_coupon))
+        .route("/applied_coupons", post(handlers::create_applied_coupon).get(customer_lists::list_applied_coupons))
+        .route("/credit_notes/:id", get(handlers::show_credit_note).put(subs::update_credit_note))
+        .route("/credit_notes/:id/download", get(phase14::download_credit_note_pdf))
+        .route("/credit_notes/:id/download_xml", post(subs::download_credit_note_xml))
+        .route("/credit_notes/:id/void", put(subs::void_credit_note))
+        .route("/credit_notes/:id/resend_email", post(subs::resend_credit_note_email))
+        .route("/credit_notes/estimate", post(handlers::estimate_credit_note))
+        .route("/invoices/:id/receipt", get(phase14::download_payment_receipt_pdf))
+        .route("/invoices/:id/sync_accounting", post(phase14::sync_invoice_accounting))
+        .route("/customers/:external_id/sync_crm", post(phase14::sync_customer_crm))
+        .route("/integrations", post(phase14::create_integration))
+        .route("/integrations/:id/refresh", post(phase14::refresh_integration))
+        .route("/customers/:external_customer_id/lifetime_usage", get(phase15::lifetime_usage))
+        .route("/dunning_campaigns", post(phase15::create_dunning_campaign).get(phase15::list_dunning_campaigns))
+        .route("/fees/estimate", post(estimate_fee))
+        // --- new resources: taxes, webhook endpoints, billing entities, orgs, features
+        .route("/taxes", post(resources::create_tax).get(resources::list_taxes))
+        .route("/taxes/:code", get(resources::show_tax).put(resources::update_tax).delete(resources::destroy_tax))
+        .route("/webhook_endpoints", post(resources::create_webhook_endpoint).get(resources::list_webhook_endpoints))
+        .route("/webhook_endpoints/:id", get(resources::show_webhook_endpoint).put(resources::update_webhook_endpoint).delete(resources::destroy_webhook_endpoint))
+        .route("/billing_entities", post(resources::create_billing_entity).get(resources::list_billing_entities))
+        .route("/billing_entities/:code", get(resources::show_billing_entity).put(resources::update_billing_entity))
+        .route("/organizations", get(resources::show_organization).put(resources::update_organization))
+        .route("/features", post(resources::create_feature).get(resources::list_features))
+        .route("/features/:code", get(resources::show_feature).put(resources::update_feature).delete(resources::destroy_feature))
+        // --- payments, payment requests, payment receipts
+        .route("/payments", post(payments::create_payment).get(payments::list_payments))
+        .route("/payments/:id", get(payments::show_payment))
+        .route("/payment_requests", post(payments::create_payment_request).get(payments::list_payment_requests))
+        .route("/payment_requests/:id", get(payments::show_payment_request))
+        .route("/payment_receipts", get(payments::list_payment_receipts))
+        .route("/payment_receipts/:invoice_id/resend_email", post(payments::resend_payment_receipt))
+        // --- v1 analytics (data API)
+        .route("/analytics/gross_revenue", get(phase15::v2_gross_revenue))
+        .route("/analytics/mrr", get(phase15::v2_mrr))
+        .route("/analytics/overdue_balance", get(phase15::v2_overdue_balance))
+        .route("/analytics/invoice_collection", get(phase15::v2_invoice_collection))
+        .route("/analytics/invoiced_usage", get(analytics::v1_invoiced_usage));
+
+    let v2 = Router::new()
+        .route("/events/batch", post(phase15::v2_events_batch))
+        .route("/events/estimate_fees", post(estimate_fee))
+        .route("/analytics/gross_revenue", get(phase15::v2_gross_revenue))
+        .route("/analytics/mrr", get(phase15::v2_mrr))
+        .route("/analytics/overdue_balance", get(phase15::v2_overdue_balance))
+        .route("/analytics/invoice_collection", get(phase15::v2_invoice_collection))
+        .route("/analytics/invoiced_usage", get(analytics::v1_invoiced_usage))
+        // --- v2 catalog: products, categories, rate cards (+rates), plan applied rate cards + phases
+        .route("/products", post(catalog_v2::create_product).get(catalog_v2::list_products))
+        .route("/products/:id", get(catalog_v2::show_product).put(catalog_v2::update_product).delete(catalog_v2::destroy_product))
+        .route("/product_categories", post(catalog_v2::create_product_category).get(catalog_v2::list_product_categories))
+        .route("/rate_cards", post(catalog_v2::create_rate_card).get(catalog_v2::list_rate_cards))
+        .route("/rate_cards/:id", get(catalog_v2::show_rate_card).put(catalog_v2::update_rate_card).delete(catalog_v2::destroy_rate_card))
+        .route("/rate_cards/:id/rates", post(catalog_v2::create_rate_card_rate).get(catalog_v2::list_rate_card_rates))
+        .route("/plans/:code/applied_rate_cards", post(catalog_v2::create_applied_rate_card).get(catalog_v2::list_applied_rate_cards))
+        .route("/applied_rate_cards/:id/rate_phases", post(catalog_v2::create_rate_phase).get(catalog_v2::list_rate_phases));
+
+    Router::new()
+        .route("/health", get(health))
+        .route("/metrics", get(observability::metrics_handler))
+        .route(
+            "/graphql",
+            get(graphql::graphql_playground).post(graphql::graphql_handler),
+        )
+        .route("/webhooks/stripe/:organization_id", post(webhooks::stripe_webhook))
+        .route("/webhooks/gocardless/:organization_id", post(webhooks::gocardless_webhook))
+        .route("/webhooks/adyen/:organization_id", post(webhooks::adyen_webhook))
+        .nest("/api/v1", v1)
+        .nest("/api/v2", v2)
+        // Observability + protection middleware (applied to every route).
+        .layer(axum::middleware::from_fn(observability::track_metrics))
+        .layer(axum::middleware::from_fn(observability::rate_limit))
+        .with_state(state)
+}
+
+async fn health() -> Json<Value> {
+    Json(json!({ "status": "ok", "service": "rago-api" }))
+}
+
+// --- fees/estimate: drives the billing engine without persistence -----------
+
+#[derive(Debug, Deserialize)]
+pub struct EstimateRequest {
+    pub aggregation_type: i32,
+    pub field_name: Option<String>,
+    pub charge_model: i32,
+    pub properties: Value,
+    #[serde(default = "default_currency")]
+    pub currency: String,
+    #[serde(default)]
+    pub events: Vec<EstimateEvent>,
+}
+fn default_currency() -> String {
+    "USD".to_string()
+}
+#[derive(Debug, Deserialize)]
+pub struct EstimateEvent {
+    pub properties: Value,
+}
+#[derive(Debug, Serialize)]
+pub struct EstimateResponse {
+    pub units: String,
+    pub amount: String,
+    pub unit_amount: String,
+    pub amount_details: Value,
+    pub events_count: i64,
+}
+
+async fn estimate_fee(
+    Json(req): Json<EstimateRequest>,
+) -> Result<Json<EstimateResponse>, error::ApiError> {
+    let aggregation_type = AggregationType::try_from(req.aggregation_type)
+        .map_err(|e| error::ApiError::validation("aggregation_type", &e.to_string()))?;
+    let charge_model = ChargeModel::try_from(req.charge_model)
+        .map_err(|e| error::ApiError::validation("charge_model", &e.to_string()))?;
+    let currency = Currency::new(&req.currency);
+    let now = Utc::now();
+
+    let metric = BillableMetric {
+        id: Uuid::nil(),
+        organization_id: Uuid::nil(),
+        name: "estimate".into(),
+        code: "estimate".into(),
+        description: None,
+        aggregation_type,
+        field_name: req.field_name.clone(),
+        recurring: false,
+        expression: None,
+        rounding_function: None,
+        rounding_precision: None,
+        created_at: now,
+        updated_at: now,
+        deleted_at: None,
+    };
+    let events: Vec<Event> = req
+        .events
+        .into_iter()
+        .map(|e| Event {
+            id: Uuid::new_v4(),
+            organization_id: Uuid::nil(),
+            customer_id: None,
+            subscription_id: None,
+            transaction_id: Uuid::new_v4().to_string(),
+            code: "estimate".into(),
+            properties: e.properties,
+            external_customer_id: None,
+            external_subscription_id: None,
+            timestamp: None,
+            precise_total_amount_cents: None,
+            created_at: now,
+            updated_at: now,
+            deleted_at: None,
+            persisted: true,
+        })
+        .collect();
+
+    let free_events = prop_i64(&req.properties, "free_units_per_events");
+    let free_total = prop_decimal(&req.properties, "free_units_per_total_aggregation");
+    let agg = aggregation::aggregate(&metric, &events, free_events, free_total)?;
+
+    let ps = PricingStructure {
+        charge_model,
+        properties: req.properties,
+        prorated: false,
+        accepts_target_wallet: false,
+        currency,
+    };
+    let cmr = charge_models::compute(&ps, &agg)?;
+    Ok(Json(EstimateResponse {
+        units: cmr.units.to_string(),
+        amount: cmr.amount.to_string(),
+        unit_amount: cmr.unit_amount.to_string(),
+        amount_details: cmr.amount_details,
+        events_count: cmr.count,
+    }))
+}
+
+fn prop_i64(props: &Value, key: &str) -> i64 {
+    match props.get(key) {
+        Some(Value::Number(n)) => n.as_i64().unwrap_or(0),
+        Some(Value::String(s)) => s.trim().parse().unwrap_or(0),
+        _ => 0,
+    }
+}
+fn prop_decimal(props: &Value, key: &str) -> rust_decimal::Decimal {
+    use std::str::FromStr;
+    match props.get(key) {
+        Some(Value::String(s)) => rust_decimal::Decimal::from_str(s.trim()).unwrap_or_default(),
+        Some(Value::Number(n)) => n
+            .as_f64()
+            .and_then(rust_decimal::Decimal::from_f64_retain)
+            .unwrap_or_default(),
+        _ => rust_decimal::Decimal::default(),
+    }
+}

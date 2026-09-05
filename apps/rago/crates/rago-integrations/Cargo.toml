@@ -1,0 +1,29 @@
+[package]
+name = "rago-integrations"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Rago payment providers (Stripe) + outbound webhooks, over an injectable HTTP transport"
+
+[features]
+default = []
+# The live reqwest-backed HTTP transport (owner-gated: needs real provider keys).
+live = ["dep:reqwest"]
+
+[dependencies]
+rago-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
+async-trait.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+base64.workspace = true
+reqwest = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

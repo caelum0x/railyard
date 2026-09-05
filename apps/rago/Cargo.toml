@@ -1,0 +1,101 @@
+# apps/rago — Rust port of Lago (getlago/lago).
+#
+# Multi-crate workspace. Ports two Lago subsystems:
+#   * events-processor  — the Go high-throughput Kafka events pipeline (already ported).
+#   * lago-api          — the Ruby on Rails billing engine (in progress), split into:
+#       rago-core     domain models, enums, value types, money/currency
+#       rago-db       sqlx Postgres persistence + migrations
+#       rago-billing  the billing services: aggregation, charge models, fees, invoices
+#       rago-api      REST v1/v2 (axum)
+#       rago-jobs     background jobs
+#
+# Build the billing engine crates:  cargo build   (default-members)
+# Build the Kafka pipeline:          cargo build -p rago
+[workspace]
+resolver = "2"
+members = [
+    "crates/events-processor",
+    "crates/rago-core",
+    "crates/rago-db",
+    "crates/rago-clickhouse",
+    "crates/rago-documents",
+    "crates/rago-mail",
+    "crates/rago-billing",
+    "crates/rago-integrations",
+    "crates/rago-graphql",
+    "crates/rago-api",
+    "crates/rago-jobs",
+]
+# `cargo build` at the root compiles the billing engine crates. The events-processor
+# (heavy rdkafka/librdkafka + OpenTelemetry build) is built explicitly with `-p rago`.
+default-members = [
+    "crates/rago-core",
+    "crates/rago-db",
+    "crates/rago-clickhouse",
+    "crates/rago-documents",
+    "crates/rago-mail",
+    "crates/rago-billing",
+    "crates/rago-integrations",
+    "crates/rago-graphql",
+    "crates/rago-api",
+    "crates/rago-jobs",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.80"
+
+[workspace.dependencies]
+# money — NEVER f64 for currency. Lago uses Ruby BigDecimal; we use rust_decimal.
+rust_decimal = { version = "1.36", features = ["serde-with-str", "maths"] }
+rust_decimal_macros = "1.36"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+anyhow = "1"
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["full"] }
+
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+    "json",
+    "rust_decimal",
+    "macros",
+    "migrate",
+] }
+
+axum = "0.7"
+tower = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-trait = "0.1"
+
+# GraphQL (dashboard API). Pinned to the axum-0.7-compatible line to match the
+# workspace axum version (async-graphql-axum >= 7.0.12 moves to axum 0.8).
+async-graphql = "=7.0.11"
+async-graphql-axum = "=7.0.11"
+
+# Payments/webhooks adapters
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# Live SMTP email transport (owner-gated behind the `live` feature)
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "builder", "hostname"] }
+
+# Internal crates
+rago-core = { path = "crates/rago-core" }
+rago-db = { path = "crates/rago-db" }
+rago-billing = { path = "crates/rago-billing" }
+rago-integrations = { path = "crates/rago-integrations" }
+rago-graphql = { path = "crates/rago-graphql" }
+rago-documents = { path = "crates/rago-documents" }
+rago-mail = { path = "crates/rago-mail" }
+rago-jobs = { path = "crates/rago-jobs" }

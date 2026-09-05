@@ -1,0 +1,53 @@
+[package]
+name = "rago-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Rago REST API (axum) — Lago v1/v2 endpoints"
+
+[features]
+default = []
+# Live transports: real reqwest HTTP + SMTP email (owner-gated; needs keys).
+live = ["rago-integrations/live", "rago-mail/live"]
+# Opt-in Postgres-backed #[sqlx::test] suites (need DATABASE_URL; see README
+# "Running the tests"). Plain `cargo test` skips them.
+pg-tests = []
+
+[lib]
+name = "rago_api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rago-api"
+path = "src/main.rs"
+
+# Single supervising binary: boots the API + the scheduler/worker daemon.
+[[bin]]
+name = "rago-server"
+path = "src/bin/rago_server.rs"
+
+[dependencies]
+rago-core.workspace = true
+rago-billing.workspace = true
+rago-db.workspace = true
+rago-graphql.workspace = true
+rago-integrations.workspace = true
+rago-documents.workspace = true
+rago-mail.workspace = true
+rago-jobs.workspace = true
+async-graphql.workspace = true
+async-graphql-axum.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tower.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rust_decimal.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+sqlx.workspace = true

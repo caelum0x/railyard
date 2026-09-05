@@ -1,0 +1,31 @@
+[package]
+name = "rago-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Rago persistence: sqlx Postgres repositories + migrations for the Lago billing schema"
+
+[dependencies]
+rago-core.workspace = true
+sqlx.workspace = true
+rust_decimal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+# Live-Postgres aggregator parity suite (tests/aggregator_parity.rs): fetches
+# events through the repo, then aggregates via rago-billing to compare against
+# Lago's asserted numbers. rago-billing depends only on rago-core, so this adds
+# no dependency cycle.
+rago-billing.workspace = true
+rust_decimal_macros.workspace = true
+
+[features]
+# Opt-in Postgres-backed #[sqlx::test] suites (need DATABASE_URL; see README
+# "Running the tests"). Plain `cargo test` skips them.
+pg-tests = []
