@@ -14,7 +14,9 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: rago
     ports:
-      - "5432:5432"
+      # Host port is overridable so the stack can coexist with another local
+      # Postgres: RAGO_PG_PORT=5439 docker compose up -d postgres
+      - "${RAGO_PG_PORT:-5432}:5432"
     volumes:
       - rago_pgdata:/var/lib/postgresql/data
     healthcheck:
