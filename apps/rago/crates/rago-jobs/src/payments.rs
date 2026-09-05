@@ -36,10 +36,32 @@ pub async fn charge_invoice<T: HttpTransport>(
     invoice: &Invoice,
     provider_customer_id: &str,
 ) -> Result<PayableStatus, JobError> {
+    let payment_id = deterministic_payment_id(invoice.id);
+
+    // App-level re-charge guard. The stable Stripe idempotency key only dedupes
+    // within Stripe's ~24h idempotency window — a billing re-run later than
+    // that would mint a brand-new PaymentIntent for an invoice that was already
+    // charged. If a payment for this invoice is already recorded, never call
+    // the provider again unless the recorded attempt FAILED (a failed charge is
+    // legitimately retried by dunning; anything else — succeeded, pending,
+    // refunded — must not be re-charged).
+    if let Some((_, _, status, _, _)) = db
+        .list_payments(invoice.id)
+        .await?
+        .into_iter()
+        .find(|row| row.0 == payment_id)
+    {
+        match status.as_str() {
+            "failed" => {} // dunning retry allowed
+            "succeeded" => return Ok(PayableStatus::Succeeded),
+            _ => return Ok(PayableStatus::Pending),
+        }
+    }
+
     let provider = StripeProvider::new(stripe_secret_key, transport);
 
     let req = PaymentRequest {
-        payment_id: deterministic_payment_id(invoice.id),
+        payment_id,
         invoice_id: invoice.id,
         customer_id: invoice.customer_id.unwrap_or_default(),
         provider_customer_id: provider_customer_id.to_string(),

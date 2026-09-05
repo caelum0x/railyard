@@ -1020,15 +1020,23 @@ impl Db {
     ) -> Result<()> {
         // `id` is derived deterministically from the invoice (see
         // `rago_jobs::payments::deterministic_payment_id`), so a scheduler/job
-        // re-run for the same invoice reuses the same primary key. `ON CONFLICT
-        // DO NOTHING` makes the write idempotent — a re-charge attempt records no
-        // duplicate payment row (Stripe already deduped the charge via the stable
-        // idempotency key `payment-<id>`).
+        // re-run for the same invoice reuses the same primary key: at most one
+        // payments row per logical payment. `ON CONFLICT (id) DO UPDATE` keeps
+        // the write idempotent (replaying an identical outcome is a no-op)
+        // while letting a legitimate dunning retry of a FAILED charge record
+        // its new provider payment id + outcome — with `DO NOTHING` the retry's
+        // PaymentIntent id was never stored, so incoming provider webhooks
+        // could not match the payment. Re-charging a non-failed payment is
+        // prevented upstream by the guard in `rago_jobs::payments::charge_invoice`.
         sqlx::query(
             "INSERT INTO payments (id, organization_id, invoice_id, provider, provider_payment_id, \
              provider_status, status, amount_cents, amount_currency, created_at, updated_at) \
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now(), now()) \
-             ON CONFLICT (id) DO NOTHING",
+             ON CONFLICT (id) DO UPDATE SET \
+                 provider_payment_id = EXCLUDED.provider_payment_id, \
+                 provider_status = EXCLUDED.provider_status, \
+                 status = EXCLUDED.status, \
+                 updated_at = now()",
         )
         .bind(id).bind(organization_id).bind(invoice_id).bind(provider)
         .bind(provider_payment_id).bind(provider_status).bind(status)

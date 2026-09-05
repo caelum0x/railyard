@@ -5,9 +5,11 @@
 //! Charge-level retry idempotency (audit fix #1), through the real
 //! `payments::charge_invoice` path against a migrated Postgres.
 //!
-//! Retrying a charge for the SAME invoice must send Stripe the SAME
-//! `Idempotency-Key` (so Stripe dedupes the charge) and must record exactly
-//! one `payments` row (the `ON CONFLICT (id) DO NOTHING` insert is idempotent).
+//! Retrying a charge for the SAME invoice must never reach the provider a
+//! second time once a non-failed payment is recorded (the app-level guard —
+//! Stripe's idempotency keys expire after ~24h, so the key alone is not
+//! enough), must use the stable derived `Idempotency-Key` when it does call
+//! Stripe, and must record exactly one `payments` row.
 
 use chrono::{NaiveDate, Utc};
 use rago_core::enums::{InvoiceStatus, InvoiceType, PaymentStatus};
@@ -79,18 +81,17 @@ async fn double_charge_invoice_reuses_key_and_records_single_payment(pool: PgPoo
     assert_eq!(first, PayableStatus::Succeeded);
     assert_eq!(second, PayableStatus::Succeeded);
 
-    // (a) Both Stripe requests carry the IDENTICAL deterministic key, so Stripe
-    // dedupes the charge server-side — the CRITICAL double-charge fix.
+    // (a) Only the FIRST attempt reaches the provider. The recorded succeeded
+    // payment short-circuits the re-run before any provider call — the CRITICAL
+    // double-charge fix (Stripe's idempotency key alone expires after ~24h, so
+    // a late re-run would otherwise mint a fresh PaymentIntent).
     let requests = transport.requests();
-    assert_eq!(requests.len(), 2, "both attempts reach the provider");
+    assert_eq!(requests.len(), 1, "re-run never reaches the provider");
     let expected = format!("payment-{}", deterministic_payment_id(invoice.id));
     let key1 = idempotency_key(&requests[0].headers).expect("first request has Idempotency-Key");
-    let key2 = idempotency_key(&requests[1].headers).expect("second request has Idempotency-Key");
     assert_eq!(key1, expected, "key derives from the invoice id");
-    assert_eq!(key1, key2, "retry reuses the same Idempotency-Key");
 
-    // (b) Exactly one payments row — the second insert hits
-    // `ON CONFLICT (id) DO NOTHING` on the deterministic primary key.
+    // (b) Exactly one payments row on the deterministic primary key.
     let payments: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM payments WHERE invoice_id = $1")
         .bind(invoice.id)
         .fetch_one(&db.pool)
@@ -109,6 +110,62 @@ async fn double_charge_invoice_reuses_key_and_records_single_payment(pool: PgPoo
         PaymentStatus::Succeeded.as_i32(),
         "invoice marked succeeded"
     );
+}
+
+/// A FAILED charge is legitimately retried (dunning): the retry reaches the
+/// provider again and the payments row is updated in place with the new
+/// provider payment id + outcome (one row, final status `succeeded`).
+#[sqlx::test(migrations = "../rago-db/migrations")]
+async fn failed_charge_retries_and_records_new_outcome(pool: PgPool) {
+    let db = Db::new(pool);
+    let org = Uuid::new_v4();
+    let customer = Uuid::new_v4();
+
+    let invoice = finalized_invoice(org, customer);
+    db.insert_invoice(&invoice).await.unwrap();
+
+    // First attempt: card declined. Second attempt: succeeds with a NEW intent.
+    let transport = MockTransport::scripted(
+        vec![Ok(rago_integrations::HttpResponse {
+            status: 200,
+            body: r#"{"id":"pi_fail_1","status":"requires_payment_method"}"#.into(),
+        })],
+        rago_integrations::HttpResponse {
+            status: 200,
+            body: r#"{"id":"pi_retry_2","status":"succeeded"}"#.into(),
+        },
+    );
+
+    let first = charge_invoice(&db, &transport, "sk_test_x", &invoice, "cus_1")
+        .await
+        .unwrap();
+    assert_eq!(first, PayableStatus::Failed);
+
+    let second = charge_invoice(&db, &transport, "sk_test_x", &invoice, "cus_1")
+        .await
+        .unwrap();
+    assert_eq!(second, PayableStatus::Succeeded, "failed charge may be retried");
+    assert_eq!(transport.requests().len(), 2, "retry of a FAILED charge reaches the provider");
+
+    // Still exactly one payments row, now reflecting the retry's outcome so an
+    // incoming provider webhook for `pi_retry_2` can match the payment.
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT provider_payment_id, status FROM payments WHERE invoice_id = $1",
+    )
+    .bind(invoice.id)
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1, "retry updates the row in place");
+    assert_eq!(rows[0].0, "pi_retry_2", "new provider payment id recorded");
+    assert_eq!(rows[0].1, "succeeded", "final status recorded");
+
+    // A third run is short-circuited: the invoice is paid, no provider call.
+    let third = charge_invoice(&db, &transport, "sk_test_x", &invoice, "cus_1")
+        .await
+        .unwrap();
+    assert_eq!(third, PayableStatus::Succeeded);
+    assert_eq!(transport.requests().len(), 2, "paid invoice is never re-charged");
 }
 
 /// Distinct invoices must not share a key (a collision would wrongly dedupe a
