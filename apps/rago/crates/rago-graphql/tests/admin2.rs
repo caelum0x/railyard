@@ -1,3 +1,7 @@
+// Postgres-backed suite: opt in with `--features pg-tests` and DATABASE_URL set
+// (see README "Running the tests"). A plain `cargo test` skips this file.
+#![cfg(feature = "pg-tests")]
+
 //! Live-DB schema-execution tests for the slice-2 admin surface: one-off/batch
 //! invoices, usage-monitoring alerts, billing entities, invoice custom sections,
 //! adjusted fees, fixed charges, subscription entitlements, and credit-note item

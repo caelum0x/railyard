@@ -1,3 +1,7 @@
+// Postgres-backed suite: opt in with `--features pg-tests` and DATABASE_URL set
+// (see README "Running the tests"). A plain `cargo test` skips this file.
+#![cfg(feature = "pg-tests")]
+
 //! Live-DB tests for slice-5: quotes/orders, AI + finance assistant, data
 //! exports, SSO login shape, tax retries, adjusted-fee revert, and data_api_*
 //! analytics. Runs on an isolated migrated Postgres via

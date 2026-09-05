@@ -1,3 +1,7 @@
+// Postgres-backed suite: opt in with `--features pg-tests` and DATABASE_URL set
+// (see README "Running the tests"). A plain `cargo test` skips this file.
+#![cfg(feature = "pg-tests")]
+
 //! Money-correctness idempotency guards (audit fixes #2 and #3), proven against
 //! a real Postgres via `#[sqlx::test]` (each test runs on an isolated, migrated
 //! database). These are the DB-layer guarantees the billing/event paths rely on:

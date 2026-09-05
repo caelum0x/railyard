@@ -1,3 +1,7 @@
+// Postgres-backed suite: opt in with `--features pg-tests` and DATABASE_URL set
+// (see README "Running the tests"). A plain `cargo test` skips this file.
+#![cfg(feature = "pg-tests")]
+
 //! Live-Postgres aggregator parity suite.
 //!
 //! Rago's charge-model math is locked to Lago by a pure-fixture parity suite.

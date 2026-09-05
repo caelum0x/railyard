@@ -1,3 +1,7 @@
+// Postgres-backed suite: opt in with `--features pg-tests` and DATABASE_URL set
+// (see README "Running the tests"). A plain `cargo test` skips this file.
+#![cfg(feature = "pg-tests")]
+
 //! End-to-end re-bill idempotency (audit fix #3), through the real
 //! `bill_subscription::perform` path against a migrated Postgres.
 //!

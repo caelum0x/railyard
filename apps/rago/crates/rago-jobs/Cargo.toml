@@ -39,3 +39,8 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 sqlx.workspace = true
+
+[features]
+# Opt-in Postgres-backed #[sqlx::test] suites (need DATABASE_URL; see README
+# "Running the tests"). Plain `cargo test` skips them.
+pg-tests = []

@@ -1,3 +1,7 @@
+// Postgres-backed suite: opt in with `--features pg-tests` and DATABASE_URL set
+// (see README "Running the tests"). A plain `cargo test` skips this file.
+#![cfg(feature = "pg-tests")]
+
 //! Clock-job parity tests, each against an isolated migrated Postgres
 //! (`#[sqlx::test]`). They prove every sweep acts only on the rows it should and
 //! that the money-affecting jobs (free-trial biller, interval wallet top-ups)

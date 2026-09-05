@@ -1,3 +1,7 @@
+// Postgres-backed suite: opt in with `--features pg-tests` and DATABASE_URL set
+// (see README "Running the tests"). A plain `cargo test` skips this file.
+#![cfg(feature = "pg-tests")]
+
 //! Live-Postgres parity for the two newly-closed aggregation gaps:
 //!
 //!   * **prorated_unique_count** — `BillableMetrics::ProratedAggregations::

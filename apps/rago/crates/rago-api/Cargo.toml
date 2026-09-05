@@ -10,6 +10,9 @@ description = "Rago REST API (axum) — Lago v1/v2 endpoints"
 default = []
 # Live transports: real reqwest HTTP + SMTP email (owner-gated; needs keys).
 live = ["rago-integrations/live", "rago-mail/live"]
+# Opt-in Postgres-backed #[sqlx::test] suites (need DATABASE_URL; see README
+# "Running the tests"). Plain `cargo test` skips them.
+pg-tests = []
 
 [lib]
 name = "rago_api"

@@ -24,3 +24,8 @@ tokio.workspace = true
 # no dependency cycle.
 rago-billing.workspace = true
 rust_decimal_macros.workspace = true
+
+[features]
+# Opt-in Postgres-backed #[sqlx::test] suites (need DATABASE_URL; see README
+# "Running the tests"). Plain `cargo test` skips them.
+pg-tests = []

@@ -108,9 +108,44 @@ crates/
 ```bash
 cargo build --workspace --release       # whole product
 cargo build --features live --bin rago-server   # live transports
-cargo test --workspace                   # unit + integration tests
+cargo test --workspace                   # DB-less tests (pg suites skipped)
 cargo clippy --workspace                 # lints
 ```
+
+## Running the tests
+
+### Fast gate — no database needed
+
+```bash
+cargo test --workspace          # unit + in-memory integration tests
+cargo test --workspace --lib    # unit tests only (fastest)
+```
+
+The Postgres-backed suites are gated behind the opt-in `pg-tests` cargo
+feature, so a plain `cargo test` skips them cleanly instead of panicking on a
+missing `DATABASE_URL`.
+
+### Full gate — real Postgres (`#[sqlx::test]`)
+
+The money-correctness suites (idempotency guards, re-bill guard, charge-retry
+dedupe, aggregator parity, GraphQL admin, REST CRUD) run against a real,
+per-test isolated + migrated Postgres:
+
+```bash
+colima start                                    # macOS: bring up Docker first
+docker compose up -d postgres                   # postgres:17 on :5432
+export DATABASE_URL=postgres://postgres:postgres@localhost:5432/rago
+cargo test --workspace --features pg-tests      # everything, incl. pg suites
+```
+
+Notes:
+
+* If another Postgres already owns `:5432`, pick a free host port:
+  `RAGO_PG_PORT=5439 docker compose up -d postgres` and point `DATABASE_URL`
+  at `localhost:5439`.
+* `#[sqlx::test]` creates a fresh migrated database per test, so the connected
+  user needs `CREATEDB` rights — the compose `postgres` superuser is fine.
+* Per-crate runs also work: `cargo test -p rago-jobs -F pg-tests`.
 
 ## Status
 

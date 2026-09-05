@@ -26,3 +26,8 @@ sha2.workspace = true
 tokio.workspace = true
 sqlx.workspace = true
 rust_decimal_macros.workspace = true
+
+[features]
+# Opt-in Postgres-backed #[sqlx::test] suites (need DATABASE_URL; see README
+# "Running the tests"). Plain `cargo test` skips them.
+pg-tests = []

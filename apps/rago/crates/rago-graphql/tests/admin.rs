@@ -1,3 +1,7 @@
+// Postgres-backed suite: opt in with `--features pg-tests` and DATABASE_URL set
+// (see README "Running the tests"). A plain `cargo test` skips this file.
+#![cfg(feature = "pg-tests")]
+
 //! Live-DB schema-execution tests for the GraphQL dashboard admin CRUD surface.
 //!
 //! Each test runs on an isolated, migrated Postgres via

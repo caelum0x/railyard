@@ -1,3 +1,7 @@
+// Postgres-backed suite: opt in with `--features pg-tests` and DATABASE_URL set
+// (see README "Running the tests"). A plain `cargo test` skips this file.
+#![cfg(feature = "pg-tests")]
+
 //! Live-DB tests for slice-4: catalog v2 + auth/RBAC. Auth tests exercise the
 //! real argon2 hash/verify + JWT round-trip: register→login, wrong-password
 //! rejection, invite→accept→membership, password reset. Runs on an isolated

@@ -1,3 +1,7 @@
+// Postgres-backed suite: opt in with `--features pg-tests` and DATABASE_URL set
+// (see README "Running the tests"). A plain `cargo test` skips this file.
+#![cfg(feature = "pg-tests")]
+
 //! Charge-level retry idempotency (audit fix #1), through the real
 //! `payments::charge_invoice` path against a migrated Postgres.
 //!
