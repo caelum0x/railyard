@@ -1,0 +1,27 @@
+[package]
+name = "rago-mail"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Rago transactional email — builders + injectable transport (SMTP owner-gated)"
+
+[features]
+default = []
+# The live SMTP transport (owner-gated: needs real SMTP credentials).
+live = ["dep:lettre", "dep:tokio"]
+
+[dependencies]
+rago-core.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+lettre = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+rust_decimal_macros.workspace = true
+serde_json.workspace = true
+uuid.workspace = true

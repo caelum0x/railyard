@@ -1,0 +1,17 @@
+[package]
+name = "rago-documents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Rago document generation — invoice/credit-note PDF + XML e-invoicing"
+
+[dependencies]
+rago-core.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
