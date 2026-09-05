@@ -33,6 +33,9 @@ services:
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/rago
       RAGO_API_ADDR: 0.0.0.0:3000
+      # Dashboard admin JWT signing secret — required (release builds refuse
+      # to boot without it). Generate one with: openssl rand -hex 32
+      RAGO_JWT_SECRET: "${RAGO_JWT_SECRET:?set RAGO_JWT_SECRET (generate with: openssl rand -hex 32)}"
       RAGO_TICK_SECS: "15"
       RAGO_RATE_LIMIT: "6000"
       RUST_LOG: info

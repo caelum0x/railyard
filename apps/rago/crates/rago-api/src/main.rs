@@ -15,6 +15,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
+    // Fail fast on a missing JWT secret (release builds refuse the insecure
+    // development fallback) before accepting any traffic.
+    rago_graphql::auth::validate_jwt_config()?;
+
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/rago".into());
     let db = Db::connect(&database_url).await?;
