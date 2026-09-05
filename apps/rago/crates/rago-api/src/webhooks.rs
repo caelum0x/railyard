@@ -139,11 +139,26 @@ async fn sync_payment_status(
             return (StatusCode::INTERNAL_SERVER_ERROR, "db error".into());
         }
     };
-    let Some((payment_id, invoice_id, org_id)) = found else {
+    let Some((payment_id, invoice_id, org_id, current_status)) = found else {
         return (StatusCode::OK, "payment not found".into());
     };
     if org_id != organization_id {
         return (StatusCode::NOT_FOUND, "organization mismatch".into());
+    }
+
+    // Monotonic-status guard: provider events can arrive late or be replayed.
+    // A terminal state is never downgraded — a delayed `payment_failed` after
+    // `succeeded` must not flip a paid invoice back to failed, and nothing
+    // (success replay or failure) undoes a refund. `failed → succeeded` stays
+    // allowed (a successful retry), as does `succeeded → refunded`.
+    let downgrade = matches!(
+        (current_status.as_str(), status),
+        ("succeeded", IncomingStatus::Failed)
+            | ("refunded", IncomingStatus::Failed)
+            | ("refunded", IncomingStatus::Succeeded)
+    );
+    if downgrade {
+        return (StatusCode::OK, "ignored (terminal payment status)".into());
     }
 
     let _ = state.db.update_payment_status_by_provider_id(provider_payment_id, provider_status).await;

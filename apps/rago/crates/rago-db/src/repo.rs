@@ -2464,10 +2464,10 @@ impl Db {
     pub async fn find_payment_by_provider_id(
         &self,
         provider_payment_id: &str,
-    ) -> Result<Option<(Uuid, Uuid, Uuid)>> {
-        // returns (payment_id, invoice_id, organization_id)
+    ) -> Result<Option<(Uuid, Uuid, Uuid, String)>> {
+        // returns (payment_id, invoice_id, organization_id, status)
         let row = sqlx::query(
-            "SELECT id, invoice_id, organization_id FROM payments WHERE provider_payment_id = $1 LIMIT 1",
+            "SELECT id, invoice_id, organization_id, status FROM payments WHERE provider_payment_id = $1 LIMIT 1",
         )
         .bind(provider_payment_id)
         .fetch_optional(&self.pool)
@@ -2477,6 +2477,7 @@ impl Db {
                 r.get::<Uuid, _>("id"),
                 r.get::<Uuid, _>("invoice_id"),
                 r.get::<Uuid, _>("organization_id"),
+                r.get::<String, _>("status"),
             )
         }))
     }
