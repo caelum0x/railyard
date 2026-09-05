@@ -421,6 +421,17 @@ impl Db {
         Ok(row.map(|r| (r.get("id"), r.get("external_customer_id"), r.get("email"), r.get("amount_cents"), r.get("amount_currency"), r.get("payment_status"))))
     }
 
+    /// Find a payment request scoped to an organization — the tenant-safe
+    /// lookup for API handlers. A cross-org id resolves to `None`.
+    pub async fn find_payment_request_for_org(&self, org: Uuid, id: Uuid) -> Result<Option<PaymentRequestRow>> {
+        let row = sqlx::query("SELECT id, external_customer_id, email, amount_cents, amount_currency, payment_status FROM payment_requests WHERE id = $1 AND organization_id = $2")
+            .bind(id)
+            .bind(org)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|r| (r.get("id"), r.get("external_customer_id"), r.get("email"), r.get("amount_cents"), r.get("amount_currency"), r.get("payment_status"))))
+    }
+
     pub async fn list_payment_requests(&self, org: Uuid, external_customer_id: &str) -> Result<Vec<PaymentRequestRow>> {
         let rows = sqlx::query("SELECT id, external_customer_id, email, amount_cents, amount_currency, payment_status FROM payment_requests WHERE organization_id = $1 AND external_customer_id = $2 ORDER BY created_at DESC")
             .bind(org)

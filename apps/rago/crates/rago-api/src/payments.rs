@@ -14,6 +14,18 @@ use crate::error::{ApiError, ApiResult};
 use crate::handlers::{i64_of, req_s, s, wrapped};
 use crate::state::AppState;
 
+// ---- org scoping -----------------------------------------------------------
+
+/// Load an invoice owned by the authenticated organization. Cross-tenant ids
+/// answer `404` (never `403`) so the existence of another org's invoice does
+/// not leak — mirrors the GraphQL layer's org filter.
+async fn find_org_invoice(st: &AppState, org: Uuid, invoice_id: Uuid) -> ApiResult<rago_core::models::Invoice> {
+    st.db
+        .find_invoice_for_org(org, invoice_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("invoice".into()))
+}
+
 // ---- payments --------------------------------------------------------------
 
 fn payment_json(r: &rago_db::PaymentRow) -> Value {
@@ -37,7 +49,7 @@ pub async fn create_payment(
     let p = wrapped(&body, "payment");
     let invoice_id = Uuid::parse_str(&req_s(p, "invoice_id")?)
         .map_err(|_| ApiError::validation("invoice_id", "value_is_invalid"))?;
-    let invoice = st.db.find_invoice(invoice_id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
+    let invoice = find_org_invoice(&st, org, invoice_id).await?;
     let amount_cents = i64_of(p, "amount_cents").unwrap_or(invoice.total_amount_cents);
     let currency = s(p, "amount_currency").unwrap_or_else(|| invoice.currency().code());
     let provider = s(p, "payment_provider_type").unwrap_or_else(|| "manual".into());
@@ -68,9 +80,10 @@ pub struct PaymentIndexQuery {
 /// `GET /payments?invoice_id=` — payments recorded against an invoice.
 pub async fn list_payments(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Query(q): Query<PaymentIndexQuery>,
 ) -> ApiResult<Json<Value>> {
+    find_org_invoice(&st, auth.organization.id, q.invoice_id).await?;
     let payments = st.db.list_payments(q.invoice_id).await?;
     Ok(Json(json!({ "payments": payments.iter().map(payment_json).collect::<Vec<_>>() })))
 }
@@ -78,10 +91,11 @@ pub async fn list_payments(
 /// `GET /payments/:id?invoice_id=` — a single payment (scoped to its invoice).
 pub async fn show_payment(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Path(id): Path<Uuid>,
     Query(q): Query<PaymentIndexQuery>,
 ) -> ApiResult<Json<Value>> {
+    find_org_invoice(&st, auth.organization.id, q.invoice_id).await?;
     let payments = st.db.list_payments(q.invoice_id).await?;
     let payment = payments.iter().find(|r| r.0 == id).ok_or_else(|| ApiError::NotFound("payment".into()))?;
     Ok(Json(json!({ "payment": payment_json(payment) })))
@@ -149,10 +163,14 @@ pub async fn list_payment_requests(
 /// `GET /payment_requests/:id`.
 pub async fn show_payment_request(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let row = st.db.find_payment_request(id).await?.ok_or_else(|| ApiError::NotFound("payment_request".into()))?;
+    let row = st
+        .db
+        .find_payment_request_for_org(auth.organization.id, id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("payment_request".into()))?;
     Ok(Json(json!({ "payment_request": payment_request_json(&row) })))
 }
 
@@ -162,9 +180,10 @@ pub async fn show_payment_request(
 /// (honest partial: receipts are derived from recorded payments).
 pub async fn list_payment_receipts(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Query(q): Query<PaymentIndexQuery>,
 ) -> ApiResult<Json<Value>> {
+    find_org_invoice(&st, auth.organization.id, q.invoice_id).await?;
     let payments = st.db.list_payments(q.invoice_id).await?;
     let receipts: Vec<Value> = payments
         .iter()
@@ -177,10 +196,10 @@ pub async fn list_payment_receipts(
 /// payment-receipt email through the injectable transport.
 pub async fn resend_payment_receipt(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Path(invoice_id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let invoice = st.db.find_invoice(invoice_id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
+    let invoice = find_org_invoice(&st, auth.organization.id, invoice_id).await?;
     let to = match invoice.customer_id {
         Some(cid) => st.db.find_customer(cid).await?.and_then(|c| c.email),
         None => None,

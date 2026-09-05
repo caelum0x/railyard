@@ -717,6 +717,18 @@ impl Db {
         row.as_ref().map(mapping::invoice).transpose()
     }
 
+    /// Find an invoice scoped to an organization — the tenant-safe lookup for
+    /// API handlers. A cross-org id resolves to `None` (indistinguishable from
+    /// a nonexistent invoice, so existence never leaks).
+    pub async fn find_invoice_for_org(&self, organization_id: Uuid, id: Uuid) -> Result<Option<Invoice>> {
+        let row = sqlx::query("SELECT * FROM invoices WHERE id = $1 AND organization_id = $2")
+            .bind(id)
+            .bind(organization_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.as_ref().map(mapping::invoice).transpose()
+    }
+
     pub async fn fees_for_invoice(&self, invoice_id: Uuid) -> Result<Vec<Fee>> {
         let rows = sqlx::query("SELECT * FROM fees WHERE invoice_id = $1 ORDER BY created_at ASC")
             .bind(invoice_id)
