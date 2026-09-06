@@ -26,6 +26,7 @@ pub mod commitments;
 pub mod credit_notes;
 pub mod dates;
 pub mod downgrade;
+pub mod dunning;
 pub mod error;
 pub mod events;
 pub mod fees;
