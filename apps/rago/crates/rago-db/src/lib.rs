@@ -12,6 +12,7 @@
 //! Queries are runtime (`sqlx::query`) so the crate builds without a live
 //! database; the domain math lives in `rago-billing`.
 
+pub mod dunning;
 pub mod error;
 pub mod graphql_admin;
 pub mod graphql_admin2;
@@ -21,11 +22,11 @@ pub mod graphql_admin5;
 pub mod mapping;
 pub mod repo;
 
+pub use dunning::{
+    DunningCampaignPolicy, DunningCandidate, DunningThresholdRow, OverdueInvoiceRow,
+};
 pub use error::{DbError, Result};
 pub use graphql_admin::{AddOnRow, DunningCampaignRow, WebhookRow};
-pub use graphql_admin5::{
-    AiConversationRow, AiMessageRow, OrderFormRow, OrderRow, QuoteRow, QuoteVersionRow,
-};
 pub use graphql_admin2::{
     AlertRow, AlertThresholdRow, BillingEntityRow, FeatureRow, FixedChargeRow,
     InvoiceCustomSectionRow, PaymentRow,
@@ -39,6 +40,9 @@ pub use graphql_admin4::{
     CommitmentRow, InviteRow, MembershipRow, PlanAppliedRateCardRow, PricingUnitRow,
     ProductCategoryRow, ProductFilterRow, ProductRow, RateCardRateRow, RateCardRow, RatePhaseRow,
     RoleRow, UserRow,
+};
+pub use graphql_admin5::{
+    AiConversationRow, AiMessageRow, OrderFormRow, OrderRow, QuoteRow, QuoteVersionRow,
 };
 pub use repo::{
     AnalyticsPoint, BilledInvoice, Db, InvoiceCollectionPoint, LeasedJob, RetryingWebhook,
