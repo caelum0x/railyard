@@ -113,7 +113,13 @@ fn invoice(org_id: Uuid, customer_id: Uuid) -> m::Invoice {
 
 // ---- request helper --------------------------------------------------------
 
-async fn call(app: &axum::Router, token: &str, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn call(
+    app: &axum::Router,
+    token: &str,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let mut builder = Request::builder()
         .method(method)
         .uri(uri)
@@ -125,23 +131,45 @@ async fn call(app: &axum::Router, token: &str, method: &str, uri: &str, body: Op
         }
         None => Body::empty(),
     };
-    let resp = app.clone().oneshot(builder.body(body).unwrap()).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(builder.body(body).unwrap())
+        .await
+        .unwrap();
     let status = resp.status();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-    let value: Value = if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap_or(Value::Null) };
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value: Value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+    };
     (status, value)
 }
 
 /// Seed two orgs (each with an api key), org A's customer + invoice, and
 /// return the router + db + both org models + org A's invoice.
-async fn setup(pool: PgPool) -> (axum::Router, Db, m::Organization, m::Organization, m::Invoice) {
+async fn setup(
+    pool: PgPool,
+) -> (
+    axum::Router,
+    Db,
+    m::Organization,
+    m::Organization,
+    m::Invoice,
+) {
     let db = Db::new(pool);
     let org_a = org("acme");
     let org_b = org("rival");
     db.insert_organization(&org_a).await.unwrap();
     db.insert_organization(&org_b).await.unwrap();
-    db.insert_api_key(&api_key(org_a.id, TOKEN_A)).await.unwrap();
-    db.insert_api_key(&api_key(org_b.id, TOKEN_B)).await.unwrap();
+    db.insert_api_key(&api_key(org_a.id, TOKEN_A))
+        .await
+        .unwrap();
+    db.insert_api_key(&api_key(org_b.id, TOKEN_B))
+        .await
+        .unwrap();
     let cust = customer(org_a.id, "cust-a");
     db.insert_customer(&cust).await.unwrap();
     let inv = invoice(org_a.id, cust.id);
@@ -158,7 +186,14 @@ async fn create_payment_rejects_cross_org_invoice(pool: PgPool) {
     let body = json!({ "payment": { "invoice_id": inv.id, "amount_cents": 1000, "amount_currency": "USD" } });
 
     // org B cannot record a payment against org A's invoice — 404, no row.
-    let (status, _) = call(&app, TOKEN_B, "POST", "/api/v1/payments", Some(body.clone())).await;
+    let (status, _) = call(
+        &app,
+        TOKEN_B,
+        "POST",
+        "/api/v1/payments",
+        Some(body.clone()),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(db.list_payments(inv.id).await.unwrap().len(), 0);
 
@@ -218,16 +253,36 @@ async fn payment_receipts_reject_cross_org_invoice(pool: PgPool) {
 
 #[sqlx::test(migrator = "rago_db::MIGRATOR")]
 async fn show_payment_request_rejects_cross_org_id(pool: PgPool) {
-    let (app, _db, _a, _b, _inv) = setup(pool).await;
-    let body = json!({ "payment_request": { "external_customer_id": "cust-a", "amount_cents": 4200 } });
-    let (status, resp) = call(&app, TOKEN_A, "POST", "/api/v1/payment_requests", Some(body)).await;
+    let (app, db, _a, _b, inv) = setup(pool).await;
+    // A payment request collects the customer's OVERDUE invoices (Lago computes
+    // the amount from them; it is not caller-supplied) — flag org A's 1000-cent
+    // invoice overdue so it is collectible.
+    sqlx::query("UPDATE invoices SET payment_overdue = true WHERE id = $1")
+        .bind(inv.id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let body = json!({ "payment_request": { "external_customer_id": "cust-a" } });
+    let (status, resp) = call(
+        &app,
+        TOKEN_A,
+        "POST",
+        "/api/v1/payment_requests",
+        Some(body),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{resp:?}");
-    let request_id = resp["payment_request"]["lago_id"].as_str().unwrap().to_string();
+    let request_id = resp["payment_request"]["lago_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // Amount is the overdue invoice total, net of credits.
+    assert_eq!(resp["payment_request"]["amount_cents"], 1000);
 
     let uri = format!("/api/v1/payment_requests/{request_id}");
     let (status, _) = call(&app, TOKEN_B, "GET", &uri, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, resp) = call(&app, TOKEN_A, "GET", &uri, None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(resp["payment_request"]["amount_cents"], 4200);
+    assert_eq!(resp["payment_request"]["amount_cents"], 1000);
 }

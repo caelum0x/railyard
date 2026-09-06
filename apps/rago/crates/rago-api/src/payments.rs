@@ -19,7 +19,11 @@ use crate::state::AppState;
 /// Load an invoice owned by the authenticated organization. Cross-tenant ids
 /// answer `404` (never `403`) so the existence of another org's invoice does
 /// not leak — mirrors the GraphQL layer's org filter.
-async fn find_org_invoice(st: &AppState, org: Uuid, invoice_id: Uuid) -> ApiResult<rago_core::models::Invoice> {
+async fn find_org_invoice(
+    st: &AppState,
+    org: Uuid,
+    invoice_id: Uuid,
+) -> ApiResult<rago_core::models::Invoice> {
     st.db
         .find_invoice_for_org(org, invoice_id)
         .await?
@@ -68,7 +72,11 @@ pub async fn create_payment(
         )
         .await?;
     let payments = st.db.list_payments(invoice_id).await?;
-    let created = payments.iter().find(|r| r.0 == id).map(payment_json).unwrap_or(Value::Null);
+    let created = payments
+        .iter()
+        .find(|r| r.0 == id)
+        .map(payment_json)
+        .unwrap_or(Value::Null);
     Ok(Json(json!({ "payment": created })))
 }
 
@@ -85,7 +93,9 @@ pub async fn list_payments(
 ) -> ApiResult<Json<Value>> {
     find_org_invoice(&st, auth.organization.id, q.invoice_id).await?;
     let payments = st.db.list_payments(q.invoice_id).await?;
-    Ok(Json(json!({ "payments": payments.iter().map(payment_json).collect::<Vec<_>>() })))
+    Ok(Json(
+        json!({ "payments": payments.iter().map(payment_json).collect::<Vec<_>>() }),
+    ))
 }
 
 /// `GET /payments/:id?invoice_id=` — a single payment (scoped to its invoice).
@@ -97,7 +107,10 @@ pub async fn show_payment(
 ) -> ApiResult<Json<Value>> {
     find_org_invoice(&st, auth.organization.id, q.invoice_id).await?;
     let payments = st.db.list_payments(q.invoice_id).await?;
-    let payment = payments.iter().find(|r| r.0 == id).ok_or_else(|| ApiError::NotFound("payment".into()))?;
+    let payment = payments
+        .iter()
+        .find(|r| r.0 == id)
+        .ok_or_else(|| ApiError::NotFound("payment".into()))?;
     Ok(Json(json!({ "payment": payment_json(payment) })))
 }
 
@@ -115,34 +128,129 @@ fn payment_request_json(r: &rago_db::PaymentRequestRow) -> Value {
     })
 }
 
-/// `POST /payment_requests` — create a payment request for a customer's
-/// overdue balance.
+/// `POST /payment_requests` — create a payment request over a customer's
+/// overdue invoices.
+///
+/// Ports `PaymentRequests::CreateService`: resolve the customer, gather their
+/// overdue invoices in the target currency (optionally narrowed to explicit
+/// `lago_invoice_ids`), enforce the preconditions (non-empty, all overdue,
+/// single currency), price the net amount (Σ owed − credit-note offset), link
+/// the invoices, and emit `payment_request.created`. The provider charge itself
+/// is worker-driven (the dunning sweep), mirroring Lago's async
+/// `PaymentRequests::Payments::CreateService.call_async`.
 pub async fn create_payment_request(
     State(st): State<AppState>,
     auth: Authed,
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
+    use rago_billing::dunning::{build_payment_request, OverdueInvoice, PaymentRequestError};
+
     let org = auth.organization.id;
     let p = wrapped(&body, "payment_request");
     let external_customer_id = req_s(p, "external_customer_id")?;
-    let customer = st.db.find_customer_by_external_id(org, &external_customer_id).await?;
-    let email = s(p, "email").or_else(|| customer.as_ref().and_then(|c| c.email.clone()));
-    let amount_cents = i64_of(p, "amount_cents").unwrap_or(0);
-    let currency = s(p, "amount_currency").or_else(|| customer.as_ref().and_then(|c| c.currency.clone()));
+    let customer = st
+        .db
+        .find_customer_by_external_id(org, &external_customer_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("customer".into()))?;
+    let email = s(p, "email").or_else(|| customer.email.clone());
+
+    // Resolve the target currency: explicit → customer default → the sole
+    // currency of the customer's overdue balances (else a mixed-currency batch
+    // is rejected by the preconditions below).
+    let balances = st.db.customer_overdue_balances(org, customer.id).await?;
+    let currency = s(p, "amount_currency")
+        .or_else(|| customer.currency.clone())
+        .or_else(|| {
+            if balances.len() == 1 {
+                balances.keys().next().cloned()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| ApiError::validation("amount_currency", "value_is_mandatory"))?;
+
+    // Overdue invoices in that currency, optionally narrowed to explicit ids.
+    let mut rows = st
+        .db
+        .overdue_invoices_for_currency(org, customer.id, &currency)
+        .await?;
+    if let Some(ids) = explicit_invoice_ids(p) {
+        rows.retain(|r| ids.contains(&r.id));
+    }
+    let invoices: Vec<OverdueInvoice> = rows
+        .iter()
+        .map(|r| OverdueInvoice {
+            id: r.id,
+            currency: currency.clone(),
+            total_amount_cents: r.total_amount_cents,
+            total_paid_amount_cents: 0,
+            credit_note_offset_cents: r.credit_note_offset_cents,
+            payment_overdue: true,
+        })
+        .collect();
+
+    let plan = build_payment_request(&invoices).map_err(|e| match e {
+        PaymentRequestError::NoInvoices => ApiError::NotFound("invoice".into()),
+        PaymentRequestError::InvoicesNotOverdue => {
+            ApiError::validation("base", "invoices_not_overdue")
+        }
+        PaymentRequestError::DifferentCurrencies => {
+            ApiError::validation("base", "invoices_have_different_currencies")
+        }
+    })?;
+
     let id = Uuid::new_v4();
     let row = st
         .db
         .insert_payment_request(
             id,
             org,
-            customer.as_ref().map(|c| c.id),
+            Some(customer.id),
             &external_customer_id,
             email.as_deref(),
-            amount_cents,
-            currency.as_deref(),
+            plan.amount_cents,
+            Some(&plan.currency),
         )
         .await?;
-    Ok(Json(json!({ "payment_request": payment_request_json(&row) })))
+    for invoice_id in &plan.invoice_ids {
+        st.db
+            .insert_payment_request_applied_invoice(Uuid::new_v4(), id, *invoice_id, org)
+            .await?;
+    }
+
+    // `payment_request.created` — persisted pending for the delivery worker
+    // (the API has no outbound transport). No-op when the org has no endpoint.
+    let _ = rago_jobs::webhook_emit::record_webhook(
+        &st.db,
+        org,
+        rago_integrations::webhooks::WebhookKind::PaymentRequestCreated,
+        json!({
+            "lago_id": id,
+            "external_customer_id": external_customer_id,
+            "email": email,
+            "amount_cents": plan.amount_cents,
+            "amount_currency": plan.currency,
+            "payment_status": "pending",
+            "lago_invoice_ids": plan.invoice_ids,
+        }),
+    )
+    .await;
+
+    Ok(Json(
+        json!({ "payment_request": payment_request_json(&row) }),
+    ))
+}
+
+/// Parse an optional `lago_invoice_ids` array from the request body.
+fn explicit_invoice_ids(p: &Value) -> Option<Vec<Uuid>> {
+    let arr = p.get("lago_invoice_ids")?.as_array()?;
+    Some(
+        arr.iter()
+            .filter_map(|v| v.as_str())
+            .filter_map(|s| Uuid::parse_str(s).ok())
+            .collect(),
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,8 +264,13 @@ pub async fn list_payment_requests(
     auth: Authed,
     Query(q): Query<PaymentRequestIndexQuery>,
 ) -> ApiResult<Json<Value>> {
-    let rows = st.db.list_payment_requests(auth.organization.id, &q.external_customer_id).await?;
-    Ok(Json(json!({ "payment_requests": rows.iter().map(payment_request_json).collect::<Vec<_>>() })))
+    let rows = st
+        .db
+        .list_payment_requests(auth.organization.id, &q.external_customer_id)
+        .await?;
+    Ok(Json(
+        json!({ "payment_requests": rows.iter().map(payment_request_json).collect::<Vec<_>>() }),
+    ))
 }
 
 /// `GET /payment_requests/:id`.
@@ -171,7 +284,9 @@ pub async fn show_payment_request(
         .find_payment_request_for_org(auth.organization.id, id)
         .await?
         .ok_or_else(|| ApiError::NotFound("payment_request".into()))?;
-    Ok(Json(json!({ "payment_request": payment_request_json(&row) })))
+    Ok(Json(
+        json!({ "payment_request": payment_request_json(&row) }),
+    ))
 }
 
 // ---- payment receipts ------------------------------------------------------
@@ -204,7 +319,12 @@ pub async fn resend_payment_receipt(
         Some(cid) => st.db.find_customer(cid).await?.and_then(|c| c.email),
         None => None,
     };
-    let email = rago_mail::builders::payment_receipt_email(&invoice, to.as_deref().unwrap_or("billing@customer.example"));
+    let email = rago_mail::builders::payment_receipt_email(
+        &invoice,
+        to.as_deref().unwrap_or("billing@customer.example"),
+    );
     let _ = st.mailer.send(&email).await;
-    Ok(Json(json!({ "payment_receipt": { "lago_invoice_id": invoice.id, "email_resent": true } })))
+    Ok(Json(
+        json!({ "payment_receipt": { "lago_invoice_id": invoice.id, "email_resent": true } }),
+    ))
 }

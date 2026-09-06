@@ -134,7 +134,12 @@ async fn setup(pool: PgPool) -> (axum::Router, Db, m::Organization) {
 
 // ---- request helper --------------------------------------------------------
 
-async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn call(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let mut builder = Request::builder()
         .method(method)
         .uri(uri)
@@ -146,10 +151,20 @@ async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Value>) 
         }
         None => Body::empty(),
     };
-    let resp = app.clone().oneshot(builder.body(body).unwrap()).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(builder.body(body).unwrap())
+        .await
+        .unwrap();
     let status = resp.status();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-    let value: Value = if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap_or(Value::Null) };
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value: Value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+    };
     (status, value)
 }
 
@@ -159,7 +174,13 @@ async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Value>) 
 async fn tax_crud(pool: PgPool) {
     let (app, db, org) = setup(pool).await;
 
-    let (status, body) = call(&app, "POST", "/api/v1/taxes", Some(json!({ "tax": { "name": "VAT", "code": "vat", "rate": 20.0 } }))).await;
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/v1/taxes",
+        Some(json!({ "tax": { "name": "VAT", "code": "vat", "rate": 20.0 } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["tax"]["code"], "vat");
     assert_eq!(body["tax"]["rate"], 20.0);
@@ -169,10 +190,23 @@ async fn tax_crud(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["taxes"].as_array().unwrap().len(), 1);
 
-    let (status, body) = call(&app, "PUT", "/api/v1/taxes/vat", Some(json!({ "tax": { "rate": 18.5 } }))).await;
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/api/v1/taxes/vat",
+        Some(json!({ "tax": { "rate": 18.5 } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["tax"]["rate"], 18.5);
-    assert_eq!(db.find_tax_by_code(org.id, "vat").await.unwrap().unwrap().rate, 18.5);
+    assert_eq!(
+        db.find_tax_by_code(org.id, "vat")
+            .await
+            .unwrap()
+            .unwrap()
+            .rate,
+        18.5
+    );
 
     let (status, _) = call(&app, "DELETE", "/api/v1/taxes/vat", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -185,16 +219,37 @@ async fn tax_crud(pool: PgPool) {
 async fn webhook_endpoint_crud(pool: PgPool) {
     let (app, db, org) = setup(pool).await;
 
-    let (status, body) = call(&app, "POST", "/api/v1/webhook_endpoints", Some(json!({ "webhook_endpoint": { "webhook_url": "https://hook.test/a" } }))).await;
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/v1/webhook_endpoints",
+        Some(json!({ "webhook_endpoint": { "webhook_url": "https://hook.test/a" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    let id = body["webhook_endpoint"]["lago_id"].as_str().unwrap().to_string();
-    assert_eq!(body["webhook_endpoint"]["webhook_url"], "https://hook.test/a");
+    let id = body["webhook_endpoint"]["lago_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        body["webhook_endpoint"]["webhook_url"],
+        "https://hook.test/a"
+    );
     assert_eq!(db.list_webhook_endpoints(org.id).await.unwrap().len(), 1);
 
     let uri = format!("/api/v1/webhook_endpoints/{id}");
-    let (status, body) = call(&app, "PUT", &uri, Some(json!({ "webhook_endpoint": { "webhook_url": "https://hook.test/b" } }))).await;
+    let (status, body) = call(
+        &app,
+        "PUT",
+        &uri,
+        Some(json!({ "webhook_endpoint": { "webhook_url": "https://hook.test/b" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["webhook_endpoint"]["webhook_url"], "https://hook.test/b");
+    assert_eq!(
+        body["webhook_endpoint"]["webhook_url"],
+        "https://hook.test/b"
+    );
 
     let (status, _) = call(&app, "DELETE", &uri, None).await;
     assert_eq!(status, StatusCode::OK);
@@ -212,7 +267,13 @@ async fn billing_entity_and_org(pool: PgPool) {
     assert_eq!(body["billing_entity"]["code"], "eu");
     assert_eq!(db.list_billing_entities(org.id).await.unwrap().len(), 1);
 
-    let (status, body) = call(&app, "PUT", "/api/v1/billing_entities/eu", Some(json!({ "billing_entity": { "name": "EU GmbH" } }))).await;
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/api/v1/billing_entities/eu",
+        Some(json!({ "billing_entity": { "name": "EU GmbH" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["billing_entity"]["name"], "EU GmbH");
 
@@ -220,7 +281,13 @@ async fn billing_entity_and_org(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["organization"]["name"], "Acme");
 
-    let (status, body) = call(&app, "PUT", "/api/v1/organizations", Some(json!({ "organization": { "name": "Acme Inc" } }))).await;
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/api/v1/organizations",
+        Some(json!({ "organization": { "name": "Acme Inc" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["organization"]["name"], "Acme Inc");
 }
@@ -232,7 +299,9 @@ async fn plan_update_destroy_and_charges(pool: PgPool) {
     let (app, db, org) = setup(pool).await;
     let pl = plan(org.id, "starter");
     db.insert_plan(&pl).await.unwrap();
-    db.insert_billable_metric(&metric(org.id, "api_calls")).await.unwrap();
+    db.insert_billable_metric(&metric(org.id, "api_calls"))
+        .await
+        .unwrap();
 
     // index
     let (status, body) = call(&app, "GET", "/api/v1/plans", None).await;
@@ -240,21 +309,45 @@ async fn plan_update_destroy_and_charges(pool: PgPool) {
     assert_eq!(body["plans"].as_array().unwrap().len(), 1);
 
     // update
-    let (status, body) = call(&app, "PUT", "/api/v1/plans/starter", Some(json!({ "plan": { "name": "Starter+", "amount_cents": 2500 } }))).await;
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/api/v1/plans/starter",
+        Some(json!({ "plan": { "name": "Starter+", "amount_cents": 2500 } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["plan"]["name"], "Starter+");
-    assert_eq!(db.find_plan_by_code(org.id, "starter").await.unwrap().unwrap().amount_cents, Some(2500));
+    assert_eq!(
+        db.find_plan_by_code(org.id, "starter")
+            .await
+            .unwrap()
+            .unwrap()
+            .amount_cents,
+        Some(2500)
+    );
 
     // add a charge
     let (status, body) = call(&app, "POST", "/api/v1/plans/starter/charges", Some(json!({ "charge": { "billable_metric_code": "api_calls", "charge_model": "standard", "properties": { "amount": "0.01" } } }))).await;
     assert_eq!(status, StatusCode::OK);
     let charge_id = body["charge"]["lago_id"].as_str().unwrap().to_string();
-    let plan_id = db.find_plan_by_code(org.id, "starter").await.unwrap().unwrap().id;
+    let plan_id = db
+        .find_plan_by_code(org.id, "starter")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
     assert_eq!(db.charges_for_plan(plan_id).await.unwrap().len(), 1);
 
     // update the charge
     let uri = format!("/api/v1/plans/starter/charges/{charge_id}");
-    let (status, _) = call(&app, "PUT", &uri, Some(json!({ "charge": { "min_amount_cents": 500 } }))).await;
+    let (status, _) = call(
+        &app,
+        "PUT",
+        &uri,
+        Some(json!({ "charge": { "min_amount_cents": 500 } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     // destroy the charge
@@ -265,7 +358,11 @@ async fn plan_update_destroy_and_charges(pool: PgPool) {
     // destroy the plan
     let (status, _) = call(&app, "DELETE", "/api/v1/plans/starter", None).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(db.find_plan_by_code(org.id, "starter").await.unwrap().is_none());
+    assert!(db
+        .find_plan_by_code(org.id, "starter")
+        .await
+        .unwrap()
+        .is_none());
 }
 
 // ---- billable metrics ------------------------------------------------------
@@ -273,7 +370,9 @@ async fn plan_update_destroy_and_charges(pool: PgPool) {
 #[sqlx::test(migrator = "rago_db::MIGRATOR")]
 async fn billable_metric_crud(pool: PgPool) {
     let (app, db, org) = setup(pool).await;
-    db.insert_billable_metric(&metric(org.id, "api_calls")).await.unwrap();
+    db.insert_billable_metric(&metric(org.id, "api_calls"))
+        .await
+        .unwrap();
 
     let (status, body) = call(&app, "GET", "/api/v1/billable_metrics", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -283,13 +382,23 @@ async fn billable_metric_crud(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["billable_metric"]["code"], "api_calls");
 
-    let (status, body) = call(&app, "PUT", "/api/v1/billable_metrics/api_calls", Some(json!({ "billable_metric": { "name": "Requests" } }))).await;
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/api/v1/billable_metrics/api_calls",
+        Some(json!({ "billable_metric": { "name": "Requests" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["billable_metric"]["name"], "Requests");
 
     let (status, _) = call(&app, "DELETE", "/api/v1/billable_metrics/api_calls", None).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(db.find_metric_by_code(org.id, "api_calls").await.unwrap().is_none());
+    assert!(db
+        .find_metric_by_code(org.id, "api_calls")
+        .await
+        .unwrap()
+        .is_none());
 }
 
 // ---- coupons ---------------------------------------------------------------
@@ -300,19 +409,33 @@ async fn coupon_crud(pool: PgPool) {
 
     let (status, _) = call(&app, "POST", "/api/v1/coupons", Some(json!({ "coupon": { "name": "Welcome", "code": "welcome", "coupon_type": "fixed_amount", "amount_cents": 500, "amount_currency": "USD" } }))).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(db.find_coupon_by_code(org.id, "welcome").await.unwrap().is_some());
+    assert!(db
+        .find_coupon_by_code(org.id, "welcome")
+        .await
+        .unwrap()
+        .is_some());
 
     let (status, body) = call(&app, "GET", "/api/v1/coupons", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["coupons"].as_array().unwrap().len(), 1);
 
-    let (status, body) = call(&app, "PUT", "/api/v1/coupons/welcome", Some(json!({ "coupon": { "name": "Welcome!" } }))).await;
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/api/v1/coupons/welcome",
+        Some(json!({ "coupon": { "name": "Welcome!" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["coupon"]["name"], "Welcome!");
 
     let (status, _) = call(&app, "DELETE", "/api/v1/coupons/welcome", None).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(db.find_coupon_by_code(org.id, "welcome").await.unwrap().is_none());
+    assert!(db
+        .find_coupon_by_code(org.id, "welcome")
+        .await
+        .unwrap()
+        .is_none());
 }
 
 // ---- customer destroy + nested ---------------------------------------------
@@ -356,7 +479,11 @@ async fn customer_destroy_and_nested(pool: PgPool) {
 
     let (status, _) = call(&app, "DELETE", "/api/v1/customers/cust-1", None).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(db.find_customer_by_external_id(org.id, "cust-1").await.unwrap().is_none());
+    assert!(db
+        .find_customer_by_external_id(org.id, "cust-1")
+        .await
+        .unwrap()
+        .is_none());
 }
 
 // ---- subscription update/show + alerts CRUD --------------------------------
@@ -394,7 +521,13 @@ async fn subscription_update_and_alerts(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["subscription"]["external_id"], "sub-1");
 
-    let (status, body) = call(&app, "PUT", "/api/v1/subscriptions/sub-1", Some(json!({ "subscription": { "name": "New" } }))).await;
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/api/v1/subscriptions/sub-1",
+        Some(json!({ "subscription": { "name": "New" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["subscription"]["name"], "New");
 
@@ -408,11 +541,23 @@ async fn subscription_update_and_alerts(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["alerts"].as_array().unwrap().len(), 1);
 
-    let (status, body) = call(&app, "PUT", "/api/v1/subscriptions/sub-1/alerts/warn", Some(json!({ "alert": { "name": "Warn80" } }))).await;
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/api/v1/subscriptions/sub-1/alerts/warn",
+        Some(json!({ "alert": { "name": "Warn80" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["alert"]["name"], "Warn80");
 
-    let (status, _) = call(&app, "DELETE", "/api/v1/subscriptions/sub-1/alerts/warn", None).await;
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        "/api/v1/subscriptions/sub-1/alerts/warn",
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let (status, body) = call(&app, "GET", "/api/v1/subscriptions/sub-1/alerts", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -465,7 +610,15 @@ async fn invoice_actions(pool: PgPool) {
     let (status, body) = call(&app, "PUT", &format!("{uri_base}/finalize"), None).await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
     assert_eq!(body["invoice"]["status"], "finalized");
-    assert_eq!(db.find_invoice(inv.id).await.unwrap().unwrap().status.as_str(), "finalized");
+    assert_eq!(
+        db.find_invoice(inv.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status
+            .as_str(),
+        "finalized"
+    );
 
     // refresh (recompute totals)
     let (status, _) = call(&app, "PUT", &format!("{uri_base}/refresh"), None).await;
@@ -502,13 +655,39 @@ async fn payments_and_requests(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["payments"].as_array().unwrap().len(), 1);
 
-    let (status, _) = call(&app, "GET", &format!("/api/v1/payments/{payment_id}?invoice_id={}", inv.id), None).await;
+    let (status, _) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/payments/{payment_id}?invoice_id={}", inv.id),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
-    let (status, body) = call(&app, "POST", "/api/v1/payment_requests", Some(json!({ "payment_request": { "external_customer_id": "cust-1", "amount_cents": 4200 } }))).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["payment_request"]["amount_cents"], 4200);
-    let (status, body) = call(&app, "GET", "/api/v1/payment_requests?external_customer_id=cust-1", None).await;
+    // A payment request collects the customer's overdue invoices and computes
+    // the amount from them (Lago `PaymentRequests::CreateService`). Finalize +
+    // flag the 1000-cent invoice overdue so it is collectible.
+    sqlx::query("UPDATE invoices SET status = 1, payment_overdue = true WHERE id = $1")
+        .bind(inv.id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/v1/payment_requests",
+        Some(json!({ "payment_request": { "external_customer_id": "cust-1" } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["payment_request"]["amount_cents"], 1000);
+    let (status, body) = call(
+        &app,
+        "GET",
+        "/api/v1/payment_requests?external_customer_id=cust-1",
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["payment_requests"].as_array().unwrap().len(), 1);
 }
@@ -520,7 +699,13 @@ async fn v2_catalog(pool: PgPool) {
     let (app, db, org) = setup(pool).await;
 
     // product
-    let (status, body) = call(&app, "POST", "/api/v2/products", Some(json!({ "product": { "code": "seats", "name": "Seats" } }))).await;
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/v2/products",
+        Some(json!({ "product": { "code": "seats", "name": "Seats" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
     let product_id = body["product"]["lago_id"].as_str().unwrap().to_string();
     assert_eq!(db.list_products(org.id).await.unwrap().len(), 1);
@@ -531,22 +716,55 @@ async fn v2_catalog(pool: PgPool) {
     let rate_card_id = body["rate_card"]["lago_id"].as_str().unwrap().to_string();
 
     // rate
-    let (status, _) = call(&app, "POST", &format!("/api/v2/rate_cards/{rate_card_id}/rates"), Some(json!({ "rate": { "charge_model": "standard", "properties": { "amount": "1.00" } } }))).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v2/rate_cards/{rate_card_id}/rates"),
+        Some(json!({ "rate": { "charge_model": "standard", "properties": { "amount": "1.00" } } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, body) = call(&app, "GET", &format!("/api/v2/rate_cards/{rate_card_id}/rates"), None).await;
+    let (status, body) = call(
+        &app,
+        "GET",
+        &format!("/api/v2/rate_cards/{rate_card_id}/rates"),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["rates"].as_array().unwrap().len(), 1);
 
     // plan applied rate card + rate phase
     let pl = plan(org.id, "starter");
     db.insert_plan(&pl).await.unwrap();
-    let (status, body) = call(&app, "POST", "/api/v2/plans/starter/applied_rate_cards", Some(json!({ "applied_rate_card": { "rate_card_id": rate_card_id } }))).await;
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/v2/plans/starter/applied_rate_cards",
+        Some(json!({ "applied_rate_card": { "rate_card_id": rate_card_id } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
-    let applied_id = body["applied_rate_card"]["lago_id"].as_str().unwrap().to_string();
+    let applied_id = body["applied_rate_card"]["lago_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
-    let (status, _) = call(&app, "POST", &format!("/api/v2/applied_rate_cards/{applied_id}/rate_phases"), Some(json!({ "rate_phase": { "code": "phase-1", "position": 1 } }))).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v2/applied_rate_cards/{applied_id}/rate_phases"),
+        Some(json!({ "rate_phase": { "code": "phase-1", "position": 1 } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, body) = call(&app, "GET", &format!("/api/v2/applied_rate_cards/{applied_id}/rate_phases"), None).await;
+    let (status, body) = call(
+        &app,
+        "GET",
+        &format!("/api/v2/applied_rate_cards/{applied_id}/rate_phases"),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["rate_phases"].as_array().unwrap().len(), 1);
 }
@@ -559,19 +777,33 @@ async fn add_on_crud(pool: PgPool) {
 
     let (status, _) = call(&app, "POST", "/api/v1/add_ons", Some(json!({ "add_on": { "name": "Setup", "code": "setup", "amount_cents": 5000, "amount_currency": "USD" } }))).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(db.find_add_on_by_code(org.id, "setup").await.unwrap().is_some());
+    assert!(db
+        .find_add_on_by_code(org.id, "setup")
+        .await
+        .unwrap()
+        .is_some());
 
     let (status, body) = call(&app, "GET", "/api/v1/add_ons", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["add_ons"].as_array().unwrap().len(), 1);
 
-    let (status, body) = call(&app, "PUT", "/api/v1/add_ons/setup", Some(json!({ "add_on": { "amount_cents": 7500 } }))).await;
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/api/v1/add_ons/setup",
+        Some(json!({ "add_on": { "amount_cents": 7500 } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["add_on"]["amount_cents"], 7500);
 
     let (status, _) = call(&app, "DELETE", "/api/v1/add_ons/setup", None).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(db.find_add_on_by_code(org.id, "setup").await.unwrap().is_none());
+    assert!(db
+        .find_add_on_by_code(org.id, "setup")
+        .await
+        .unwrap()
+        .is_none());
 }
 
 // ---- wallets index/update/terminate ----------------------------------------
@@ -586,15 +818,33 @@ async fn wallet_index_update_terminate(pool: PgPool) {
     assert_eq!(status, StatusCode::OK, "{body:?}");
     let wallet_id = body["wallet"]["lago_id"].as_str().unwrap().to_string();
 
-    let (status, body) = call(&app, "GET", "/api/v1/wallets?external_customer_id=cust-1", None).await;
+    let (status, body) = call(
+        &app,
+        "GET",
+        "/api/v1/wallets?external_customer_id=cust-1",
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["wallets"].as_array().unwrap().len(), 1);
 
-    let (status, body) = call(&app, "PUT", &format!("/api/v1/wallets/{wallet_id}"), Some(json!({ "wallet": { "name": "Prepaid" } }))).await;
+    let (status, body) = call(
+        &app,
+        "PUT",
+        &format!("/api/v1/wallets/{wallet_id}"),
+        Some(json!({ "wallet": { "name": "Prepaid" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["wallet"]["name"], "Prepaid");
 
-    let (status, body) = call(&app, "DELETE", &format!("/api/v1/wallets/{wallet_id}"), None).await;
+    let (status, body) = call(
+        &app,
+        "DELETE",
+        &format!("/api/v1/wallets/{wallet_id}"),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["wallet"]["status"], "terminated");
 }
@@ -607,7 +857,11 @@ async fn features_and_analytics(pool: PgPool) {
 
     let (status, body) = call(&app, "POST", "/api/v1/features", Some(json!({ "feature": { "code": "seats", "name": "Seats", "privileges": [{ "code": "max", "value_type": "integer" }] } }))).await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
-    assert!(db.find_feature_by_code(org.id, "seats").await.unwrap().is_some());
+    assert!(db
+        .find_feature_by_code(org.id, "seats")
+        .await
+        .unwrap()
+        .is_some());
 
     let (status, body) = call(&app, "GET", "/api/v1/features", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -618,7 +872,13 @@ async fn features_and_analytics(pool: PgPool) {
     assert_eq!(body["feature"]["code"], "seats");
 
     // analytics endpoints resolve (empty aggregates on a fresh org)
-    for path in ["gross_revenue", "mrr", "overdue_balance", "invoice_collection", "invoiced_usage"] {
+    for path in [
+        "gross_revenue",
+        "mrr",
+        "overdue_balance",
+        "invoice_collection",
+        "invoiced_usage",
+    ] {
         let (status, _) = call(&app, "GET", &format!("/api/v1/analytics/{path}"), None).await;
         assert_eq!(status, StatusCode::OK, "analytics/{path}");
     }
@@ -673,11 +933,23 @@ async fn credit_note_index_and_void(pool: PgPool) {
     assert_eq!(status, StatusCode::OK, "{body:?}");
     let cn_id = body["credit_note"]["lago_id"].as_str().unwrap().to_string();
 
-    let (status, body) = call(&app, "GET", &format!("/api/v1/credit_notes?invoice_id={}", inv.id), None).await;
+    let (status, body) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/credit_notes?invoice_id={}", inv.id),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["credit_notes"].as_array().unwrap().len(), 1);
 
-    let (status, _) = call(&app, "PUT", &format!("/api/v1/credit_notes/{cn_id}/void"), None).await;
+    let (status, _) = call(
+        &app,
+        "PUT",
+        &format!("/api/v1/credit_notes/{cn_id}/void"),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 }
 
@@ -702,13 +974,31 @@ async fn applied_coupons_index(pool: PgPool) {
     assert_eq!(body["applied_coupons"][0]["external_customer_id"], "cust-1");
 
     // nested customer-scoped index + org-scoped filter both scope to the customer
-    let (status, body) = call(&app, "GET", "/api/v1/customers/cust-1/applied_coupons", None).await;
+    let (status, body) = call(
+        &app,
+        "GET",
+        "/api/v1/customers/cust-1/applied_coupons",
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["applied_coupons"].as_array().unwrap().len(), 1);
-    let (status, body) = call(&app, "GET", "/api/v1/applied_coupons?external_customer_id=cust-1", None).await;
+    let (status, body) = call(
+        &app,
+        "GET",
+        "/api/v1/applied_coupons?external_customer_id=cust-1",
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["applied_coupons"].as_array().unwrap().len(), 1);
-    assert_eq!(db.list_applied_coupons(org.id, Some(c.id)).await.unwrap().len(), 1);
+    assert_eq!(
+        db.list_applied_coupons(org.id, Some(c.id))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 // ---- customer-scoped credit notes + payments -------------------------------
@@ -778,10 +1068,22 @@ async fn customer_scoped_credit_notes_and_payments(pool: PgPool) {
 async fn feature_update_and_destroy(pool: PgPool) {
     let (app, db, org) = setup(pool).await;
 
-    let (status, _) = call(&app, "POST", "/api/v1/features", Some(json!({ "feature": { "code": "seats", "name": "Seats" } }))).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/v1/features",
+        Some(json!({ "feature": { "code": "seats", "name": "Seats" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
-    let (status, body) = call(&app, "PUT", "/api/v1/features/seats", Some(json!({ "feature": { "name": "Seats+", "description": "seat entitlement" } }))).await;
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/api/v1/features/seats",
+        Some(json!({ "feature": { "name": "Seats+", "description": "seat entitlement" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["feature"]["name"], "Seats+");
     let (_, _, name, desc) = db.find_feature(org.id, "seats").await.unwrap().unwrap();
@@ -790,7 +1092,11 @@ async fn feature_update_and_destroy(pool: PgPool) {
 
     let (status, _) = call(&app, "DELETE", "/api/v1/features/seats", None).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(db.find_feature_by_code(org.id, "seats").await.unwrap().is_none());
+    assert!(db
+        .find_feature_by_code(org.id, "seats")
+        .await
+        .unwrap()
+        .is_none());
 }
 
 // ---- projected + past usage (reuse the usage engine) -----------------------
@@ -825,17 +1131,35 @@ async fn projected_and_past_usage(pool: PgPool) {
     db.insert_subscription(&sub).await.unwrap();
 
     // projected_usage reuses the current-usage engine + adds the projection block
-    let (status, body) = call(&app, "GET", "/api/v1/customers/cust-1/projected_usage?external_subscription_id=sub-1", None).await;
+    let (status, body) = call(
+        &app,
+        "GET",
+        "/api/v1/customers/cust-1/projected_usage?external_subscription_id=sub-1",
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
     assert!(body["customer_projected_usage"].is_object());
     assert!(body["customer_projected_usage"]["projected_amount_cents"].is_number());
     assert_eq!(body["customer_projected_usage"]["currency"], "USD");
 
     // past_usage: no finalized periods yet → empty collection, 200
-    let (status, body) = call(&app, "GET", "/api/v1/customers/cust-1/past_usage?external_subscription_id=sub-1", None).await;
+    let (status, body) = call(
+        &app,
+        "GET",
+        "/api/v1/customers/cust-1/past_usage?external_subscription_id=sub-1",
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
     assert_eq!(body["usage_periods"].as_array().unwrap().len(), 0);
-    assert_eq!(db.subscription_past_usage_periods(sub.id).await.unwrap().len(), 0);
+    assert_eq!(
+        db.subscription_past_usage_periods(sub.id)
+            .await
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 // ---- webhook emit at REST trigger points -----------------------------------
@@ -845,26 +1169,112 @@ async fn rest_handlers_emit_webhooks_endpoint_gated(pool: PgPool) {
     let (app, db, org) = setup(pool).await;
 
     // No endpoint configured → customer.created emit is a no-op.
-    let (status, _) = call(&app, "POST", "/api/v1/customers", Some(json!({ "customer": { "external_id": "cust-noop" } }))).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/v1/customers",
+        Some(json!({ "customer": { "external_id": "cust-noop" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let recent = db.recent_webhooks(org.id, 50).await.unwrap();
-    assert!(!recent.iter().any(|(t, _, _)| t == "customer.created"), "no endpoint → no webhook row");
+    assert!(
+        !recent.iter().any(|(t, _, _)| t == "customer.created"),
+        "no endpoint → no webhook row"
+    );
 
     // Configure an endpoint; create fires customer.created, re-post fires
     // customer.updated (upsert), and feature create fires feature.created.
-    db.insert_webhook_endpoint_returning(org.id, "https://hook.test/a").await.unwrap();
+    db.insert_webhook_endpoint_returning(org.id, "https://hook.test/a")
+        .await
+        .unwrap();
 
-    let (status, _) = call(&app, "POST", "/api/v1/customers", Some(json!({ "customer": { "external_id": "cust-1", "name": "Acme" } }))).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/v1/customers",
+        Some(json!({ "customer": { "external_id": "cust-1", "name": "Acme" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _) = call(&app, "POST", "/api/v1/customers", Some(json!({ "customer": { "external_id": "cust-1", "name": "Acme Renamed" } }))).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/v1/customers",
+        Some(json!({ "customer": { "external_id": "cust-1", "name": "Acme Renamed" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _) = call(&app, "POST", "/api/v1/features", Some(json!({ "feature": { "code": "seats", "name": "Seats" } }))).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/v1/features",
+        Some(json!({ "feature": { "code": "seats", "name": "Seats" } })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     let recent = db.recent_webhooks(org.id, 50).await.unwrap();
-    assert!(recent.iter().any(|(t, s, _)| t == "customer.created" && s == "pending"), "customer.created row: {recent:?}");
-    assert!(recent.iter().any(|(t, s, _)| t == "customer.updated" && s == "pending"), "customer.updated row: {recent:?}");
-    assert!(recent.iter().any(|(t, s, _)| t == "feature.created" && s == "pending"), "feature.created row: {recent:?}");
+    assert!(
+        recent
+            .iter()
+            .any(|(t, s, _)| t == "customer.created" && s == "pending"),
+        "customer.created row: {recent:?}"
+    );
+    assert!(
+        recent
+            .iter()
+            .any(|(t, s, _)| t == "customer.updated" && s == "pending"),
+        "customer.updated row: {recent:?}"
+    );
+    assert!(
+        recent
+            .iter()
+            .any(|(t, s, _)| t == "feature.created" && s == "pending"),
+        "feature.created row: {recent:?}"
+    );
+}
+
+// ---- dunning campaigns + thresholds ----------------------------------------
+
+#[sqlx::test(migrator = "rago_db::MIGRATOR")]
+async fn dunning_campaign_with_thresholds_round_trips(pool: PgPool) {
+    let (app, _db, _org) = setup(pool).await;
+
+    // Create a campaign carrying per-currency thresholds.
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/v1/dunning_campaigns",
+        Some(json!({ "dunning_campaign": {
+            "name": "Default", "code": "default",
+            "max_attempts": 3, "days_between_attempts": 7,
+            "applied_to_organization": true,
+            "thresholds": [
+                { "currency": "USD", "amount_cents": 5000 },
+                { "currency": "EUR", "amount_cents": 10000 }
+            ]
+        }})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(
+        body["dunning_campaign"]["thresholds"].as_array().unwrap().len(),
+        2
+    );
+
+    // List echoes the persisted thresholds.
+    let (status, body) = call(&app, "GET", "/api/v1/dunning_campaigns", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let campaigns = body["dunning_campaigns"].as_array().unwrap();
+    assert_eq!(campaigns.len(), 1);
+    let thresholds = campaigns[0]["thresholds"].as_array().unwrap();
+    assert_eq!(thresholds.len(), 2);
+    // Ordered by amount_cents ascending (see `dunning_campaign_thresholds`).
+    assert_eq!(thresholds[0]["currency"], "USD");
+    assert_eq!(thresholds[0]["amount_cents"], 5000);
+    assert_eq!(thresholds[1]["currency"], "EUR");
+    assert_eq!(thresholds[1]["amount_cents"], 10000);
 }
 
 // ---- auth guard ------------------------------------------------------------
@@ -874,7 +1284,13 @@ async fn unauthenticated_is_rejected(pool: PgPool) {
     let (app, _db, _org) = setup(pool).await;
     let resp = app
         .clone()
-        .oneshot(Request::builder().method("GET").uri("/api/v1/taxes").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/taxes")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
