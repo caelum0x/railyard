@@ -23,6 +23,7 @@ pub mod bill_subscription;
 pub mod clock;
 pub mod crons;
 pub mod data_export;
+pub mod dunning;
 pub mod payments;
 pub mod queue;
 pub mod scheduler;
@@ -30,10 +31,15 @@ pub mod webhook_delivery;
 pub mod webhook_emit;
 
 pub use bill_subscription::perform as bill_subscription;
-pub use clock::{run_all as run_all_clocks, run_due as run_due_clocks, Cadence, ClockJobId, ClockReport};
+pub use clock::{
+    run_all as run_all_clocks, run_due as run_due_clocks, Cadence, ClockJobId, ClockReport,
+};
 pub use crons::{run_dunning, run_subscription_crons, CronReport};
 pub use data_export::JOB_DATA_EXPORT;
-pub use queue::{drain, enqueue_billing_cycle, redeliver_due_webhooks, run_one, JOB_BILL_SUBSCRIPTION};
+pub use dunning::{process_dunning_campaigns, DunningConfig, DunningReport};
+pub use queue::{
+    drain, enqueue_billing_cycle, redeliver_due_webhooks, run_one, JOB_BILL_SUBSCRIPTION,
+};
 pub use scheduler::{run_billing_cycle, CycleReport, SchedulerConfig};
 
 /// Errors surfaced by the jobs/scheduler runtime.

@@ -47,14 +47,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "enqueue-one" => {
             let org = Uuid::from_str(&std::env::var("RAGO_ORG")?)?;
             let ext = std::env::var("RAGO_SUB_EXTERNAL")?;
-            let fail_until: i64 = std::env::var("RAGO_FAIL_UNTIL").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+            let fail_until: i64 = std::env::var("RAGO_FAIL_UNTIL")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
             let payload = json!({
                 "organization_id": org.to_string(),
                 "subscription_external_id": ext,
                 "billing_date": billing_date.format("%Y-%m-%d").to_string(),
                 "simulate_failure_until_attempt": fail_until,
             });
-            let id = db.enqueue_job(rago_jobs::JOB_BILL_SUBSCRIPTION, &payload, chrono::Utc::now().naive_utc(), 5).await?;
+            let id = db
+                .enqueue_job(
+                    rago_jobs::JOB_BILL_SUBSCRIPTION,
+                    &payload,
+                    chrono::Utc::now().naive_utc(),
+                    5,
+                )
+                .await?;
             println!("ENQUEUED job {id} (fail_until={fail_until})");
         }
         "work" => {
@@ -74,23 +84,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("REDELIVERED {n} webhooks");
         }
         "dunning" => {
-            let n = rago_jobs::run_dunning(&db).await?;
-            println!("DUNNING flagged_overdue={n}");
+            let transport = MockTransport::always(200, "{}");
+            let cfg = rago_jobs::DunningConfig::from_env();
+            let r = rago_jobs::run_dunning(&db, &transport, &cfg).await?;
+            println!(
+                "DUNNING flagged_overdue={} evaluated={} requests={} charged={} finished={}",
+                r.invoices_marked_overdue,
+                r.customers_evaluated,
+                r.payment_requests_created,
+                r.invoices_charged,
+                r.campaigns_finished
+            );
         }
         "daemon" => {
             // Long-running worker: each tick runs crons + dunning, drains the
             // job queue, and re-delivers due webhooks.
-            let interval = std::env::var("RAGO_TICK_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(5u64);
+            let interval = std::env::var("RAGO_TICK_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(5u64);
             let transport = MockTransport::always(200, "{}");
+            let dunning_cfg = rago_jobs::DunningConfig::from_env();
             tracing::info!(interval, "worker daemon started");
             loop {
                 let crons = rago_jobs::run_subscription_crons(&db).await?;
-                let dunned = rago_jobs::run_dunning(&db).await?;
+                let dunned = rago_jobs::run_dunning(&db, &transport, &dunning_cfg).await?;
                 let jobs = rago_jobs::drain(&db, "daemon").await?;
                 let hooks = rago_jobs::redeliver_due_webhooks(&db, &transport).await?;
                 tracing::info!(
-                    activated = crons.activated, terminated = crons.terminated,
-                    dunned, jobs, hooks, "daemon tick"
+                    activated = crons.activated,
+                    terminated = crons.terminated,
+                    dunned = dunned.invoices_marked_overdue,
+                    requests = dunned.payment_requests_created,
+                    jobs,
+                    hooks,
+                    "daemon tick"
                 );
                 tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
             }

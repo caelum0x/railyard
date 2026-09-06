@@ -44,8 +44,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Background scheduler/worker daemon.
     let worker_db = db.clone();
     let daemon = tokio::spawn(async move {
-        let interval: u64 = std::env::var("RAGO_TICK_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(15);
-        let billing_hour: u32 = std::env::var("RAGO_BILLING_HOUR").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let interval: u64 = std::env::var("RAGO_TICK_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(15);
+        let billing_hour: u32 = std::env::var("RAGO_BILLING_HOUR")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         loop {
             if let Err(e) = tick(&worker_db, billing_hour).await {
                 tracing::error!(error = %e, "daemon tick failed");
@@ -73,7 +79,10 @@ async fn tick(db: &Db, billing_hour: u32) -> Result<(), Box<dyn std::error::Erro
     use chrono::{Timelike, Utc};
 
     let crons = rago_jobs::run_subscription_crons(db).await?;
-    let dunned = rago_jobs::run_dunning(db).await?;
+    let dunning_transport = webhook_transport();
+    let dunning_cfg = rago_jobs::DunningConfig::from_env();
+    let dunning = rago_jobs::run_dunning(db, &dunning_transport, &dunning_cfg).await?;
+    let dunned = dunning.invoices_marked_overdue;
     let jobs = rago_jobs::drain(db, "rago-server").await?;
 
     // Enqueue + run the billing cycle once at the configured hour.
@@ -87,8 +96,12 @@ async fn tick(db: &Db, billing_hour: u32) -> Result<(), Box<dyn std::error::Erro
     let hooks = rago_jobs::redeliver_due_webhooks(db, &transport).await?;
 
     tracing::info!(
-        activated = crons.activated, terminated = crons.terminated,
-        dunned, jobs, hooks, "daemon tick"
+        activated = crons.activated,
+        terminated = crons.terminated,
+        dunned,
+        jobs,
+        hooks,
+        "daemon tick"
     );
     Ok(())
 }

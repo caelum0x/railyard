@@ -4,9 +4,11 @@
 //! ExpireIncompleteSubscriptions, FreeTrialSubscriptionsBiller,
 //! FinalizeInvoices}Job` as idempotent SQL sweeps run each tick.
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use rago_db::Db;
+use rago_integrations::HttpTransport;
 
+use crate::dunning::{process_dunning_campaigns, DunningConfig, DunningReport};
 use crate::JobError;
 
 /// What a cron tick transitioned.
@@ -27,7 +29,9 @@ pub async fn run_subscription_crons(db: &Db) -> Result<CronReport, JobError> {
     Ok(CronReport {
         activated: db.activate_due_subscriptions(now).await?,
         terminated: db.terminate_ended_subscriptions(now).await?,
-        expired_incomplete: db.expire_incomplete_subscriptions(incomplete_cutoff).await?,
+        expired_incomplete: db
+            .expire_incomplete_subscriptions(incomplete_cutoff)
+            .await?,
         free_trials_ended: db.end_free_trials(now).await?,
     })
 }
@@ -37,9 +41,25 @@ pub async fn finalize_invoices(db: &Db, organization_id: uuid::Uuid) -> Result<u
     Ok(db.finalize_draft_invoices(organization_id).await?)
 }
 
-/// `Clock::MarkInvoicesAsPaymentOverdueJob` + `ProcessDunningCampaignsJob` —
-/// flag finalized, unpaid invoices as overdue for dunning. Returns the number
-/// newly flagged.
-pub async fn run_dunning(db: &Db) -> Result<u64, JobError> {
-    Ok(db.mark_payment_overdue(Utc::now().naive_utc()).await?)
+/// `Clock::MarkInvoicesAsPaymentOverdueJob` + `Clock::ProcessDunningCampaignsJob`
+/// — the failed-payment recovery tick.
+///
+/// First flags finalized, unpaid invoices past due as overdue
+/// (`mark_payment_overdue`), then runs the full campaign sweep over them
+/// ([`process_dunning_campaigns`]): evaluate each eligible customer, create +
+/// charge a payment request per fired threshold, and emit
+/// `dunning_campaign.finished` when a campaign is exhausted. Marking is kept
+/// here (in addition to the standalone `MarkInvoicesAsPaymentOverdue` clock job)
+/// so the worker/server daemons — which do not run the clock registry — remain
+/// self-sufficient.
+pub async fn run_dunning<T: HttpTransport>(
+    db: &Db,
+    transport: &T,
+    cfg: &DunningConfig,
+) -> Result<DunningReport, JobError> {
+    let now: DateTime<Utc> = Utc::now();
+    let flagged = db.mark_payment_overdue(now.naive_utc()).await?;
+    let mut report = process_dunning_campaigns(db, transport, cfg, now).await?;
+    report.invoices_marked_overdue = flagged;
+    Ok(report)
 }
