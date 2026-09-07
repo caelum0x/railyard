@@ -18,10 +18,11 @@ reqwest = { workspace = true }
 # The public `mint::fake` test-support transport polls with `tokio::time::sleep`
 # in its `wait_for` helper, so tokio is a normal (not dev-only) dependency.
 tokio = { workspace = true }
-# NB: the workspace `uuid` only enables the `v7` feature, but the ported ledger
-# mints v4 ids (`Uuid::new_v4`). Declare `uuid` directly with `v4` rather than
-# inheriting `uuid = { workspace = true }`, or the crate will not compile.
-uuid = { version = "1.22.0", features = ["v4", "serde"] }
+uuid = { workspace = true }
+# Compatibility import alias backed by Relay's owned AITP wire crate.
+aitp-client = { package = "relay-aitp-wire", path = "../relay-aitp-wire" }
+ed25519-dalek = "2"
+hex = "0.4"
 
 [dev-dependencies]
 tokio = { workspace = true }

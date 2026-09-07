@@ -45,9 +45,10 @@ pub struct Challenge {
 }
 
 /// The signed `AITP-Authorization` the caller retries with (SPEC §5.2). Note the
-/// amount field is `amount_micros` (NOT `amount`) and there is deliberately NO
-/// `currency` and NO `scheme` field — the scheme is fixed by the challenge the
-/// server issued for this `nonce`.
+/// amount field is `amount_micros` (NOT `amount`). The scheme is echoed from the
+/// challenge and included in the signed intent so independently-operated 402
+/// issuers (Relay/Turnstile) can settle through Mint without Mint owning their
+/// process-local challenge state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Authorization {
     /// Paying account (`acct_…`).
@@ -62,6 +63,8 @@ pub struct Authorization {
     pub resource: String,
     /// Echoes the challenge expiry (unix millis).
     pub expiry: i64,
+    /// Echoes the challenge settlement scheme and is covered by `op_hash`.
+    pub scheme: Scheme,
     /// Idempotency key threaded into the ledger op (SPEC §5.4).
     pub idempotency_key: String,
     /// Id of the payer key that produced `sig` (resolved via `PayerKeys`).

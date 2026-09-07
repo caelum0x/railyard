@@ -152,6 +152,7 @@ impl PaymentsConfig {
                 .with_api_key(g("USDC_RPC_URL"))
                 .with_extra("rpc_url", g("USDC_RPC_URL"))
                 .with_extra("token_contract", g("USDC_TOKEN_CONTRACT"))
+                .with_extra("commerce_api_key", g("COINBASE_COMMERCE_API_KEY"))
                 .with_webhook_secret(g("COINBASE_COMMERCE_WEBHOOK_SECRET")),
         );
         providers.insert(

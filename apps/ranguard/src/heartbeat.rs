@@ -6,6 +6,12 @@
 //! strictly increasing counter, a naive replay of a captured heartbeat is
 //! rejected, and a forged heartbeat (wrong shared key) fails the MAC check.
 //!
+//! Both sides advance their rolling chain ONLY on acceptance: the server does so
+//! inside `verify`, and the client does so via `commit` after it learns the
+//! heartbeat was accepted (mirroring an acknowledgement). This keeps the two
+//! chains in lockstep — a dropped or rejected heartbeat advances neither side, so
+//! an honest client never permanently desyncs.
+//!
 //! SCOPE: this is a local shared-secret demo of anti-replay. It is NOT a
 //! network security protocol and provides no confidentiality.
 
@@ -115,7 +121,10 @@ impl Server {
             _ => return Outcome::RejectedBadNonce,
         }
         // Recompute the expected tag over the current chain value.
-        let expected = hmac_sha256(&self.key, &message(hb.counter, &hb.nonce, &self.rolling_prev));
+        let expected = hmac_sha256(
+            &self.key,
+            &message(hb.counter, &hb.nonce, &self.rolling_prev),
+        );
         if !constant_time_eq(&expected, &hb.tag) {
             return Outcome::RejectedBadMac;
         }
@@ -141,18 +150,31 @@ impl Client {
         }
     }
 
-    /// Answer a challenge, advancing the client's local chain to match server.
-    pub fn respond(&mut self, challenge: &Challenge) -> Heartbeat {
+    /// Compute a response to a challenge over the client's current chain value.
+    ///
+    /// This is pure: it does NOT advance the client's rolling chain. The chain
+    /// only moves forward once the server confirms acceptance (see `commit`),
+    /// which is what keeps client and server chains in lockstep even if this
+    /// heartbeat is dropped in transit or rejected.
+    pub fn respond(&self, challenge: &Challenge) -> Heartbeat {
         let tag = hmac_sha256(
             &self.key,
             &message(challenge.counter, &challenge.nonce, &self.rolling_prev),
         );
-        self.rolling_prev = tag;
         Heartbeat {
             counter: challenge.counter,
             nonce: challenge.nonce,
             tag,
         }
+    }
+
+    /// Advance the client's rolling chain after the server accepted `hb`.
+    ///
+    /// Mirrors receiving an acknowledgement. Call this ONLY when the server
+    /// returned `Outcome::Accepted` for `hb`; the server advances its own chain
+    /// to the same value inside `verify`, so the two stay synchronized.
+    pub fn commit(&mut self, hb: &Heartbeat) {
+        self.rolling_prev = hb.tag;
     }
 }
 
@@ -169,6 +191,7 @@ mod tests {
             let ch = server.issue_challenge();
             let hb = client.respond(&ch);
             assert_eq!(server.verify(&hb), Outcome::Accepted);
+            client.commit(&hb);
         }
     }
 
@@ -181,10 +204,13 @@ mod tests {
         let ch1 = server.issue_challenge();
         let hb1 = client.respond(&ch1);
         assert_eq!(server.verify(&hb1), Outcome::Accepted);
+        client.commit(&hb1);
 
         // Advance the conversation legitimately.
         let ch2 = server.issue_challenge();
-        let _hb2 = client.respond(&ch2);
+        let hb2 = client.respond(&ch2);
+        assert_eq!(server.verify(&hb2), Outcome::Accepted);
+        client.commit(&hb2);
 
         // Attacker re-sends the old, already-accepted heartbeat.
         assert_eq!(server.verify(&hb1), Outcome::RejectedStaleCounter);
@@ -194,7 +220,7 @@ mod tests {
     fn forged_heartbeat_wrong_key_is_rejected() {
         let key = b"shared-secret";
         let mut server = Server::new(key, 99);
-        let mut attacker = Client::new(b"WRONG-key");
+        let attacker = Client::new(b"WRONG-key");
 
         let ch = server.issue_challenge();
         let forged = attacker.respond(&ch); // correct counter+nonce, bad tag
@@ -205,10 +231,45 @@ mod tests {
     fn tampered_nonce_is_rejected() {
         let key = b"shared-secret";
         let mut server = Server::new(key, 1);
-        let mut client = Client::new(key);
+        let client = Client::new(key);
         let ch = server.issue_challenge();
         let mut hb = client.respond(&ch);
         hb.nonce[0] ^= 0xFF; // flip the nonce
         assert_eq!(server.verify(&hb), Outcome::RejectedBadNonce);
+    }
+
+    // Invariant: because both sides advance the rolling chain ONLY on acceptance,
+    // a dropped or rejected heartbeat must not permanently desync an honest
+    // client. The client keeps its chain until the server acknowledges.
+    #[test]
+    fn dropped_or_rejected_heartbeat_does_not_desync_honest_client() {
+        let key = b"shared-secret";
+        let mut server = Server::new(key, 2024);
+        let mut client = Client::new(key);
+
+        // Round 1: accepted normally.
+        let ch1 = server.issue_challenge();
+        let hb1 = client.respond(&ch1);
+        assert_eq!(server.verify(&hb1), Outcome::Accepted);
+        client.commit(&hb1);
+
+        // Round 2: heartbeat is "dropped" — the server never sees it, so the
+        // client correctly does NOT commit its chain.
+        let ch2 = server.issue_challenge();
+        let _dropped = client.respond(&ch2);
+
+        // Round 3: a tampered heartbeat is rejected; again the client does not
+        // commit, so its chain is unchanged.
+        let ch3 = server.issue_challenge();
+        let mut bad = client.respond(&ch3);
+        bad.nonce[0] ^= 0xFF;
+        assert_eq!(server.verify(&bad), Outcome::RejectedBadNonce);
+
+        // Round 4: the honest client must still be accepted despite the earlier
+        // drop and rejection — no permanent desync.
+        let ch4 = server.issue_challenge();
+        let hb4 = client.respond(&ch4);
+        assert_eq!(server.verify(&hb4), Outcome::Accepted);
+        client.commit(&hb4);
     }
 }

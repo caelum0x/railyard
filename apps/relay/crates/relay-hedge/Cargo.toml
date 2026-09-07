@@ -12,6 +12,8 @@ serde = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
 thiserror = { workspace = true }
+schemars = { workspace = true }
+ts-rs = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

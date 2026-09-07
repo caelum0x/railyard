@@ -32,7 +32,7 @@ pub mod transport;
 pub use decision::EnforcementDecision;
 pub use error::AbacusError;
 pub use estimate::CostEstimate;
-pub use hold_store::{Clock, HoldRecord, HoldStore, ManualClock, SystemClock};
+pub use hold_store::{Clock, HoldReceiptContext, HoldRecord, HoldStore, ManualClock, SystemClock};
 pub use identity::{AgentIdentity, BudgetPolicy, BudgetRepo, FundingPath};
 pub use ids::{AccountId, AgentId, Ait1Address, BudgetId, RunId};
 pub use money::{Micros, MICROS_PER_USD};

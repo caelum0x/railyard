@@ -4,11 +4,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
-use ledgerline::mint::MintClient;
-use ledgerline::outbox::MemoryOutbox;
+use ledgerline::mint::{MintClient, MintSettlement};
+use ledgerline::outbox::{OutboxStore, PostgresOutbox};
+use ledgerline::recovery::{spawn_recovery_worker, RecoveryConfig};
 use ledgerline::server::{build_router, AppState};
-use ledgerline::settle::{SettlementCoordinator, SystemClock};
-use ledgerline::store::PostgresStore;
+use ledgerline::settle::{Clock, SettlementCoordinator, SystemClock};
+use ledgerline::store::{EventStore, PostgresStore};
 
 struct Config {
     bind_addr: SocketAddr,
@@ -38,9 +39,11 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
     let config = Config::from_env()?;
 
-    let store = PostgresStore::connect(&config.database_url)
-        .await
-        .context("connecting to Ledgerline Postgres")?;
+    let store = Arc::new(
+        PostgresStore::connect(&config.database_url)
+            .await
+            .context("connecting to Ledgerline Postgres")?,
+    );
     store
         .migrate()
         .await
@@ -49,14 +52,33 @@ async fn main() -> anyhow::Result<()> {
     // The coordinator drives the hold+capture+COGS trio through a durable outbox
     // so a mid-sequence failure is atomic-or-compensated, never half-settled.
     let mint_ops = Arc::new(MintClient::new(config.mint_base, config.mint_api_key));
-    let coordinator = SettlementCoordinator::new(
+    let outbox: Arc<dyn OutboxStore> = Arc::new(PostgresOutbox::new(store.pool().clone()));
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let coordinator = Arc::new(SettlementCoordinator::new(
         mint_ops,
-        Arc::new(MemoryOutbox::new()),
-        Arc::new(SystemClock),
+        outbox.clone(),
+        clock.clone(),
+    ));
+
+    // Autonomous recovery: on a fixed cadence, finish (or compensate) any saga a
+    // crash left durably incomplete, and backfill the margin projection for any
+    // settled-but-unprojected request — all without waiting for a new inbound
+    // retry. Every money step is idempotency-keyed and the projection write is
+    // idempotent, so this never double-charges or double-projects. The handle
+    // lives for the process lifetime.
+    let settler: Arc<dyn MintSettlement> = coordinator.clone();
+    let event_store: Arc<dyn EventStore> = store.clone();
+    let _recovery = spawn_recovery_worker(
+        settler,
+        event_store.clone(),
+        outbox,
+        clock,
+        RecoveryConfig::default(),
     );
+
     let state = AppState {
-        mint: Arc::new(coordinator),
-        store: Arc::new(store),
+        mint: coordinator,
+        store: event_store,
         api_key: Arc::from(config.ledgerline_api_key),
     };
     let listener = tokio::net::TcpListener::bind(config.bind_addr)

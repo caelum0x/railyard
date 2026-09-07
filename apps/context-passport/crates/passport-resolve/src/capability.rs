@@ -63,7 +63,7 @@ pub fn capability(provider: &str, modality: Modality) -> ProviderCapability {
             }
         }
         Modality::Video => {
-            if p.contains("heygen") {
+            if is_enrolled_avatar_provider(&p) {
                 IdentityMechanism::AvatarEnrollment
             } else {
                 IdentityMechanism::Reference
@@ -71,6 +71,18 @@ pub fn capability(provider: &str, modality: Modality) -> ProviderCapability {
         }
     };
     ProviderCapability { mechanism }
+}
+
+/// Family-B enrolled-avatar hosts (talking-head avatars minted per provider).
+/// Per VISION/ARCHITECTURE these are HeyGen and Hedra; any other host defaults to
+/// portable first-frame reference. Matched as a substring so vendor-suffixed ids
+/// (`heygen-avatar`, `hedra-live`) still route to enrollment.
+const ENROLLED_AVATAR_PROVIDERS: [&str; 2] = ["heygen", "hedra"];
+
+fn is_enrolled_avatar_provider(provider: &str) -> bool {
+    ENROLLED_AVATAR_PROVIDERS
+        .iter()
+        .any(|name| provider.contains(name))
 }
 
 #[cfg(test)]
@@ -93,5 +105,16 @@ mod tests {
     fn heygen_video_and_lora_image_need_artifacts() {
         assert!(capability("heygen", Modality::Video).requires_artifact());
         assert!(capability("replicate-lora", Modality::Image).requires_artifact());
+    }
+
+    #[test]
+    fn hedra_video_is_avatar_enrollment_like_heygen() {
+        // Hedra is a Family-B enrolled-avatar host (VISION/ARCHITECTURE); it must
+        // not silently degrade to portable reference.
+        assert_eq!(
+            capability("hedra", Modality::Video).mechanism,
+            IdentityMechanism::AvatarEnrollment
+        );
+        assert!(capability("hedra-live", Modality::Video).requires_artifact());
     }
 }

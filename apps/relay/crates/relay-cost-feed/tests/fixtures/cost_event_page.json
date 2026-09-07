@@ -1,0 +1,36 @@
+{
+  "data": {
+    "items": [
+      {
+        "event": {
+          "schema_version": 1,
+          "event_id": "018f7e23-7b55-7d9a-8000-000000000002",
+          "request_id": "018f7e23-7b55-7d9a-8000-000000000002",
+          "owner_principal": "acct_relay_owner",
+          "model": "openai/gpt-4o",
+          "route": "open_ai_chat_completions",
+          "usage": {
+            "input_tokens": 1000,
+            "output_tokens": 500,
+            "total_tokens": 1500,
+            "provider_cost_micros": 7500
+          },
+          "authorized_micros": 10000,
+          "charged_micros": 7500,
+          "provider_cost_micros": 7500,
+          "overage_capped": false,
+          "receipt_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+          "settled_at_ms": 1700000000458
+        },
+        "attempts": 2,
+        "next_attempt_at_ms": 1700000001458,
+        "lease_owner": null,
+        "lease_expires_at_ms": null,
+        "published_at_ms": null,
+        "dead_lettered_at_ms": null,
+        "last_error": "consumer temporarily unavailable"
+      }
+    ],
+    "next_cursor": "018f7e23-7b55-7d9a-8000-000000000002"
+  }
+}

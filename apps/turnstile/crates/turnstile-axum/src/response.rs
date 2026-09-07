@@ -13,7 +13,9 @@ use turnstile_core::TurnstileError;
 const H_CHALLENGE: &str = "aitp-challenge";
 const H_VERSION: &str = "aitp-version";
 const H_RECEIPT: &str = "aitp-receipt";
+const H_REQUEST_ID: &str = "aitp-request-id";
 const H_ERROR: &str = "aitp-error";
+const H_SETTLEMENT: &str = "aitp-settlement";
 
 fn header_name(name: &'static str) -> HeaderName {
     HeaderName::from_static(name)
@@ -32,6 +34,9 @@ pub fn challenge(challenge: &PaymentChallenge) -> Response {
         header_name(H_VERSION),
         HeaderValue::from_static(AITP_VERSION),
     );
+    if let Ok(value) = HeaderValue::from_str(&challenge.nonce) {
+        headers.insert(header_name(H_REQUEST_ID), value);
+    }
     resp
 }
 
@@ -61,6 +66,48 @@ pub fn unavailable(error: &TurnstileError) -> Response {
     resp
 }
 
+/// Replace an application success with a truthful service failure when its
+/// capture could not be confirmed. The durable journal will replay capture;
+/// returning the handler's `2xx` here would falsely claim payment completion.
+pub fn settlement_unavailable(error: &TurnstileError, request_id: Option<&str>) -> Response {
+    let mut response = (
+        StatusCode::SERVICE_UNAVAILABLE,
+        "payment settlement pending\n",
+    )
+        .into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header_name(H_VERSION),
+        HeaderValue::from_static(AITP_VERSION),
+    );
+    headers.insert(
+        header_name(H_SETTLEMENT),
+        HeaderValue::from_static("capture_pending"),
+    );
+    if let Ok(value) = HeaderValue::from_str(&error.to_string()) {
+        headers.insert(header_name(H_ERROR), value);
+    }
+    attach_request_id(response, request_id)
+}
+
+/// Mark an existing application error when release is durable but not yet
+/// confirmed by Mint. Recovery will only replay release.
+pub fn mark_release_pending(mut response: Response, error: &TurnstileError) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(
+        header_name(H_VERSION),
+        HeaderValue::from_static(AITP_VERSION),
+    );
+    headers.insert(
+        header_name(H_SETTLEMENT),
+        HeaderValue::from_static("release_pending"),
+    );
+    if let Ok(value) = HeaderValue::from_str(&error.to_string()) {
+        headers.insert(header_name(H_ERROR), value);
+    }
+    response
+}
+
 /// Attach an `AITP-Receipt` (when a capture produced one) and the protocol
 /// version to a successful handler response.
 pub fn attach_receipt(mut resp: Response, receipt: Option<Receipt>) -> Response {
@@ -77,4 +124,16 @@ pub fn attach_receipt(mut resp: Response, receipt: Option<Receipt>) -> Response 
         HeaderValue::from_static(AITP_VERSION),
     );
     resp
+}
+
+/// Attach the request correlation derived from the authorization nonce.
+pub fn attach_request_id(mut response: Response, request_id: Option<&str>) -> Response {
+    if let Some(request_id) = request_id {
+        if let Ok(value) = HeaderValue::from_str(request_id) {
+            response
+                .headers_mut()
+                .insert(header_name(H_REQUEST_ID), value);
+        }
+    }
+    response
 }

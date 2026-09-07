@@ -21,6 +21,7 @@ impl ProviderAdapter for ImageAdapter {
             PassportAssets::Character(c) => {
                 p.reference_images = c.face_refs.clone();
                 p.lora_ref = c.lora_ref.clone();
+                p.embedding_ref = c.embedding_ref.clone();
                 p.style_prompt = join([c.style.as_deref(), c.wardrobe.as_deref()]);
             }
             PassportAssets::Brand(b) => {

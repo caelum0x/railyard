@@ -120,15 +120,17 @@ impl ProviderRegistry {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use passport_core::{CharacterAssets, PassportAssets, Rights, VersionStatus};
+    use passport_core::{
+        BrandAssets, CharacterAssets, PassportAssets, PersonaAssets, Rights, VersionStatus,
+    };
 
-    fn locked_character(assets: CharacterAssets) -> PassportVersion {
+    fn locked_version(assets: PassportAssets) -> PassportVersion {
         let now = Utc::now();
         PassportVersion {
             passport_id: "psp_1".into(),
             version: 1,
             status: VersionStatus::Locked,
-            assets: PassportAssets::Character(assets),
+            assets,
             rights: Rights::default(),
             content_digest: None,
             created_at: now,
@@ -137,12 +139,17 @@ mod tests {
         }
     }
 
+    fn locked_character(assets: CharacterAssets) -> PassportVersion {
+        locked_version(PassportAssets::Character(assets))
+    }
+
     fn full() -> CharacterAssets {
         CharacterAssets {
             face_refs: vec!["face_a".into(), "face_b".into()],
             voice_id: Some("eleven-42".into()),
             avatar_ref: Some("avatar_x".into()),
             lora_ref: Some("lora_y".into()),
+            embedding_ref: Some("embed_z".into()),
             style: Some("cinematic".into()),
             personality: Some("warm".into()),
             wardrobe: Some("denim".into()),
@@ -150,13 +157,14 @@ mod tests {
     }
 
     #[test]
-    fn image_maps_faces_and_lora() {
+    fn image_maps_faces_lora_and_embedding() {
         let r = ProviderRegistry::default();
         let p = r
             .resolve(&locked_character(full()), "runway", Modality::Image)
             .unwrap();
         assert_eq!(p.reference_images, vec!["face_a", "face_b"]);
         assert_eq!(p.lora_ref.as_deref(), Some("lora_y"));
+        assert_eq!(p.embedding_ref.as_deref(), Some("embed_z"));
     }
 
     #[test]
@@ -220,5 +228,118 @@ mod tests {
             r.resolve(&locked_character(full()), "stability", Modality::Image),
             Err(PassportError::ResolveUnavailable { .. })
         ));
+    }
+
+    #[test]
+    fn missing_hedra_avatar_is_needs_artifact() {
+        // Hedra is Family B like HeyGen: absent avatar must fail closed, not
+        // silently fall back to face references.
+        let mut assets = full();
+        assets.avatar_ref = None;
+        let r = ProviderRegistry::default();
+        assert!(matches!(
+            r.resolve(&locked_character(assets), "hedra", Modality::Video),
+            Err(PassportError::NeedsArtifact { .. })
+        ));
+    }
+
+    #[test]
+    fn brand_image_maps_logo_watermark_and_palette() {
+        let assets = PassportAssets::Brand(BrandAssets {
+            logo_ref: Some("logo_1".into()),
+            watermark_ref: Some("wm_1".into()),
+            palette: vec!["#000".into(), "#fff".into()],
+            typography: Some("grotesk".into()),
+            voice_tone: Some("bold".into()),
+        });
+        let p = ProviderRegistry::default()
+            .resolve(&locked_version(assets), "runway", Modality::Image)
+            .unwrap();
+        assert_eq!(p.reference_images, vec!["logo_1", "wm_1"]);
+        assert_eq!(p.extra.get("palette").map(String::as_str), Some("#000,#fff"));
+        assert_eq!(p.style_prompt.as_deref(), Some("grotesk, bold"));
+    }
+
+    #[test]
+    fn persona_text_maps_audience_language_and_hooks() {
+        let assets = PassportAssets::Persona(PersonaAssets {
+            audience: Some("gen-z founders".into()),
+            language: Some("en".into()),
+            platform: Some("tiktok".into()),
+            hooks: vec!["stop scrolling".into(), "here is why".into()],
+        });
+        let p = ProviderRegistry::default()
+            .resolve(&locked_version(assets), "gpt-4", Modality::Text)
+            .unwrap();
+        assert_eq!(p.extra.get("language").map(String::as_str), Some("en"));
+        assert!(p
+            .text_directives
+            .contains(&"audience: gen-z founders".to_string()));
+        assert!(p
+            .text_directives
+            .contains(&"hook: stop scrolling".to_string()));
+    }
+
+    #[test]
+    fn persona_video_maps_platform_extra() {
+        let assets = PassportAssets::Persona(PersonaAssets {
+            platform: Some("reels".into()),
+            ..Default::default()
+        });
+        let p = ProviderRegistry::default()
+            .resolve(&locked_version(assets), "runway", Modality::Video)
+            .unwrap();
+        assert_eq!(p.extra.get("platform").map(String::as_str), Some("reels"));
+    }
+
+    #[test]
+    fn empty_payload_is_resolve_unavailable() {
+        // A locked-but-blank persona yields nothing usable for image → the
+        // fail-closed empty-payload branch (distinct from capability-unsupported).
+        let assets = PassportAssets::Persona(PersonaAssets::default());
+        assert!(matches!(
+            ProviderRegistry::default().resolve(
+                &locked_version(assets),
+                "runway",
+                Modality::Image
+            ),
+            Err(PassportError::ResolveUnavailable { .. })
+        ));
+    }
+
+    #[test]
+    fn override_adapter_is_used_for_its_provider_and_modality() {
+        struct StampAdapter;
+        impl ProviderAdapter for StampAdapter {
+            fn build(
+                &self,
+                version: &PassportVersion,
+                provider: &str,
+                modality: Modality,
+            ) -> ConditioningPayload {
+                let mut p = ConditioningPayload::base(
+                    &version.passport_id,
+                    version.version,
+                    provider,
+                    modality,
+                );
+                p.text_directives.push("override".into());
+                p
+            }
+        }
+        let r = ProviderRegistry::default().with_override(
+            "runway",
+            Modality::Image,
+            Box::new(StampAdapter),
+        );
+        let p = r
+            .resolve(&locked_character(full()), "RunWay", Modality::Image)
+            .unwrap();
+        assert_eq!(p.text_directives, vec!["override".to_string()]);
+        // A different modality still uses the default adapter.
+        let d = r
+            .resolve(&locked_character(full()), "runway", Modality::Video)
+            .unwrap();
+        assert!(d.text_directives.is_empty());
     }
 }

@@ -21,9 +21,20 @@
 //!   callers get one interface over loose **or** packed objects. This is the
 //!   OSS-fork strategy — the highest-cost from-scratch subsystem is reused, not
 //!   rewritten, while `rit` keeps ownership of the loose path.
-//! - [`refs`] — `HEAD`, loose refs, symbolic refs, and `packed-refs`.
+//! - [`refs`] — `HEAD`, loose refs, symbolic refs, `packed-refs`, and atomic CAS updates.
+//! - [`wire`] — binary-safe pkt-line framing, receive-pack command/capability
+//!   parsing, pack-boundary detection, and report-status encoding.
+//! - [`fsck`] / [`receive`] — gitoxide-backed full/thin pack validation,
+//!   bounded overlay-graph verification, and isolated decoded-object quarantine
+//!   before immutable publication + one ref CAS.
+//! - [`receive_pack`] — ref advertisement plus a complete one-ref receive-pack
+//!   application boundary used by the CLI's stateful stdin/stdout server.
+//! - [`index`] / [`worktree`] — verified index v2/v3 reads, atomic Git-compatible
+//!   v2 mutation, recursive ignore-aware `add`, `write-tree`, and safe tracked status.
 //! - [`repo`] — the porcelain-ish [`Repository`] API: `hash-object`, `cat-file`,
-//!   `rev-parse`, tree/commit traversal, and `log`.
+//!   `rev-parse`, tree/commit traversal, `log`, transactional `checkout-tree`,
+//!   and explicit index-to-worktree `restore`. Materialization preflights all
+//!   collisions before mutation and never follows a symlink outside the worktree.
 //!
 //! ## Compatibility
 //!
@@ -33,34 +44,72 @@
 //!
 //! ## Deferred (per PLAN)
 //!
-//! The index/worktree, the smart wire protocol, merge/rebase, SHA-256
+//! File/directory type-transition checkout, native Rust upload-pack/fetch,
+//! Smart-HTTP/SSH listeners, multi-ref atomic receive, SHA-256
 //! repositories, SHA-1 collision detection (sha1dc), and the entire forge layer
-//! are out of scope for this slice. Packfile **reads** are now covered by
-//! adopting gitoxide (see [`pack`]); pack **writing** remains deferred.
+//! remain out of scope for this slice. A single-base three-way [`merge`]
+//! (merge-base, tree merge, and content merge) is implemented and exported as a
+//! library API but is intentionally not wired into the CLI; recursive
+//! (multi-base/criss-cross) merge and rebase remain deferred — [`merge_commits`]
+//! fails closed on a criss-cross history rather than guessing a base. Packfile reads and received full/thin pack
+//! decoding adopt gitoxide (see [`pack`] and [`receive`]); clone/fetch currently
+//! uses an explicit installed-Git upload-pack bridge. Rit retains limits,
+//! quarantine, connectivity, publication, and ref-policy ownership.
 
 pub mod blob;
 pub mod commit;
+pub mod diff;
 pub mod error;
+pub mod fsck;
 pub mod headers;
+pub mod index;
+pub mod merge;
 pub mod object;
 pub mod odb;
 pub mod oid;
 pub mod pack;
+pub mod receive;
+pub mod receive_pack;
 pub mod refs;
 pub mod repo;
+pub mod server;
 pub mod signature;
 pub mod tag;
 pub mod tree;
+pub mod upload_pack;
+pub mod wire;
+pub mod worktree;
 
 pub use blob::Blob;
 pub use commit::Commit;
+pub use diff::{diff_trees, ChangeKind, TreeChange};
 pub use error::{ForgeError, Result};
+pub use fsck::{
+    check_connectivity, is_ancestor, ConnectivityLimits, ConnectivityReport, ObjectReader,
+};
+pub use index::{Index, IndexEntry};
+pub use merge::{merge_base, merge_bases, merge_commits, merge_trees, MergeOutcome};
 pub use object::{hash_content, parse_loose, Object, ObjectType};
 pub use odb::Odb;
 pub use oid::ObjectId;
 pub use pack::PackStore;
-pub use refs::{RefTarget, Refs};
+pub use receive::{ReceiveLimits, ReceiveObject, ReceiveOutcome, ReceiveTransaction, RefUpdate};
+pub use receive_pack::{
+    advertise_receive_pack, execute_receive_pack, DeletedRef, ReceivePackExecution,
+    ReceivePackPolicy, RECEIVE_PACK_CAPABILITIES,
+};
+pub use refs::{validate_refname, RefTarget, Refs};
 pub use repo::Repository;
+pub use server::{dumb_info_refs, objects_info_packs, update_server_info};
 pub use signature::Signature;
 pub use tag::Tag;
 pub use tree::{Tree, TreeEntry};
+pub use upload_pack::{
+    advertise_upload_pack, generate_pack, parse_fetch_request, reachable_objects, upload_pack_v0,
+    FetchRequest, UPLOAD_PACK_CAPABILITIES,
+};
+pub use wire::{
+    decode_packet_lines, encode_packet_line, encode_receive_status, parse_receive_pack_request,
+    PacketLine, PacketLineLimits, ReceivePackCommand, ReceivePackRequest, ReceiveStatus,
+};
+pub use worktree::{StatusEntry, WorktreeState};

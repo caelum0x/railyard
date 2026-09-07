@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use mint_reserve::{FakeRamp, Ramp};
 
+use crate::card::Checkout;
 use crate::card::{CreemRamp, PayPalRamp, PolarRamp, StripeRamp};
 use crate::composite::CompositeRamp;
 use crate::config::{PaymentsConfig, ProviderConfig};
@@ -22,6 +23,7 @@ use crate::event::{DepositEvent, WebhookError};
 use crate::http::{Headers, HttpTransport};
 use crate::iap::{AdaptyRamp, RevenueCatRamp};
 use crate::provider::ProviderId;
+use crate::PaymentError;
 
 /// The startup provider table injected into `mint-server`'s `AppState`.
 pub struct PaymentRegistry {
@@ -31,6 +33,7 @@ pub struct PaymentRegistry {
     /// The shared transport, retained so the async (transport-backed) PayPal
     /// webhook verification can be dispatched from [`PaymentRegistry::verify_webhook`].
     transport: Arc<dyn HttpTransport>,
+    active_configs: HashMap<ProviderId, ProviderConfig>,
 }
 
 impl PaymentRegistry {
@@ -65,7 +68,69 @@ impl PaymentRegistry {
             webhook_secrets,
             composite,
             transport,
+            active_configs: cfg
+                .iter()
+                .filter(|provider| provider.is_active())
+                .map(|provider| (provider.provider, provider.clone()))
+                .collect(),
         }
+    }
+
+    /// Create a provider-hosted checkout bound to a Mint account. The later
+    /// signed webhook carries that account id back and deposits directly into
+    /// Mint; callers never credit a parallel application ledger.
+    pub async fn create_checkout(
+        &self,
+        provider: ProviderId,
+        account_id: &str,
+        amount_micros: i64,
+    ) -> Result<Checkout, PaymentError> {
+        let cfg = self
+            .active_configs
+            .get(&provider)
+            .cloned()
+            .ok_or(PaymentError::NotConfigured(provider))?;
+        let checkout = match provider {
+            ProviderId::Stripe => {
+                StripeRamp::new(self.transport.clone(), cfg)
+                    .create_checkout(account_id, amount_micros)
+                    .await?
+            }
+            ProviderId::Creem => {
+                CreemRamp::new(self.transport.clone(), cfg)
+                    .create_checkout(account_id, amount_micros)
+                    .await?
+            }
+            ProviderId::Polar => {
+                PolarRamp::new(self.transport.clone(), cfg)
+                    .create_checkout(account_id, amount_micros)
+                    .await?
+            }
+            ProviderId::PayPal => {
+                PayPalRamp::new(self.transport.clone(), cfg)
+                    .create_checkout(account_id, amount_micros)
+                    .await?
+            }
+            ProviderId::Usdc => {
+                UsdcRamp::new(self.transport.clone(), cfg)
+                    .create_charge(account_id, amount_micros)
+                    .await?
+            }
+            ProviderId::Iyzico => {
+                IyzicoRamp::new(self.transport.clone(), cfg)
+                    .initialize_checkout(account_id, amount_micros)
+                    .await?
+            }
+            ProviderId::RevenueCat | ProviderId::Adapty => {
+                return Err(PaymentError::NotConfigured(provider));
+            }
+        };
+        if checkout.checkout_id.trim().is_empty() || checkout.checkout_url.trim().is_empty() {
+            return Err(PaymentError::Transport(
+                "provider returned an incomplete checkout".into(),
+            ));
+        }
+        Ok(checkout)
     }
 
     /// Verify a provider webhook over its RAW bytes and, on success, return the
@@ -135,5 +200,63 @@ fn build_ramp(cfg: ProviderConfig, transport: Arc<dyn HttpTransport>) -> Arc<dyn
         ProviderId::Adapty => Arc::new(AdaptyRamp::new(transport, cfg)),
         ProviderId::Usdc => Arc::new(UsdcRamp::new(transport, cfg)),
         ProviderId::Iyzico => Arc::new(IyzicoRamp::new(transport, cfg)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use async_trait::async_trait;
+
+    use super::*;
+    use crate::http::{HttpResponse, TransportError};
+
+    #[derive(Default)]
+    struct CheckoutTransport {
+        bodies: Mutex<Vec<Vec<u8>>>,
+    }
+
+    #[async_trait]
+    impl HttpTransport for CheckoutTransport {
+        async fn get(
+            &self,
+            _url: &str,
+            _headers: &[(String, String)],
+        ) -> Result<HttpResponse, TransportError> {
+            Err(TransportError("unexpected get".into()))
+        }
+
+        async fn post_json(
+            &self,
+            _url: &str,
+            _headers: &[(String, String)],
+            body: &[u8],
+        ) -> Result<HttpResponse, TransportError> {
+            self.bodies.lock().unwrap().push(body.to_vec());
+            Ok(HttpResponse {
+                status: 200,
+                body: br#"{"id":"checkout_1","checkout_url":"https://pay.test/1"}"#.to_vec(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn checkout_binds_mint_account_in_provider_metadata() {
+        let config = PaymentsConfig::from_lookup(|key| {
+            (key == "CREEM_API_KEY").then(|| "creem_test".to_string())
+        });
+        let transport = Arc::new(CheckoutTransport::default());
+        let registry = PaymentRegistry::from_config(config, transport.clone());
+
+        let checkout = registry
+            .create_checkout(ProviderId::Creem, "acct_user", 5_000_000)
+            .await
+            .unwrap();
+        assert_eq!(checkout.checkout_id, "checkout_1");
+        let bodies = transport.bodies.lock().unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bodies[0]).unwrap();
+        assert_eq!(body["metadata"]["account_id"], "acct_user");
+        assert_eq!(body["amount"], 500);
     }
 }

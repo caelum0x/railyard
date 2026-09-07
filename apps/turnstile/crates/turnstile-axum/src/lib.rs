@@ -29,6 +29,8 @@
 pub mod extractor;
 pub mod middleware;
 pub mod response;
+pub mod status;
 
 pub use extractor::{PaidContext, PaidRequest};
 pub use middleware::admit;
+pub use status::{settlement_status, SettlementStatus};

@@ -113,6 +113,9 @@ export class VendClient {
     getApp(appId) {
         return this.control(`/v1/customer/apps/${segment(appId)}`, "GET");
     }
+    createFundingCheckout(appId, provider, amountMicros) {
+        return this.control(`/v1/customer/apps/${segment(appId)}/funding-checkout`, "POST", { provider, amount_micros: amountMicros });
+    }
     createApp(input) {
         return this.control("/v1/customer/apps", "POST", input);
     }

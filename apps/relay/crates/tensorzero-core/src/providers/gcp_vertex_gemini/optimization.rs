@@ -229,6 +229,7 @@ pub fn convert_to_optimizer_status(
                     timeouts: TimeoutsConfig::default(),
                     skip_relay: None,
                     namespace: None,
+                    hedge: None,
                 }),
             }
         }

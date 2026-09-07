@@ -11,13 +11,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::stream::{FuturesUnordered, StreamExt};
+use tokio::time::Instant;
 
 use crate::config::HedgeConfig;
 
 /// A boxed, in-flight attempt future. Resolving to `Ok` makes this attempt a
 /// candidate winner; the same shape works for non-streaming (resolves at full
 /// response) and streaming (resolves at first chunk / TTFT) races.
-pub type BoxAttempt<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
+pub type BoxAttempt<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
 
 /// One hedge attempt against a single endpoint.
 ///
@@ -26,7 +27,7 @@ pub type BoxAttempt<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
 ///     cost), and
 ///   * a staggered attempt only fires its upstream call after its delay, so a
 ///     fast primary can win before any hedge is sent.
-pub struct Attempt<T, E> {
+pub struct Attempt<'a, T, E> {
     /// Endpoint identifier (the routing/provider name). Carried through so the
     /// winner and each accumulated error stay attributable.
     pub endpoint: Arc<str>,
@@ -34,10 +35,10 @@ pub struct Attempt<T, E> {
     /// only for the concurrent cost cap; never a ledger charge.
     pub worst_case_cost_micros: u64,
     /// Deferred factory producing the in-flight future.
-    pub launch: Box<dyn FnOnce() -> BoxAttempt<T, E> + Send>,
+    pub launch: Box<dyn FnOnce() -> BoxAttempt<'a, T, E> + Send + 'a>,
 }
 
-impl<T, E> Attempt<T, E> {
+impl<'a, T, E> Attempt<'a, T, E> {
     /// Convenience constructor from any `FnOnce` returning a `Send` future.
     pub fn new<F, Fut>(
         endpoint: impl Into<Arc<str>>,
@@ -45,8 +46,8 @@ impl<T, E> Attempt<T, E> {
         launch: F,
     ) -> Self
     where
-        F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = Result<T, E>> + Send + 'static,
+        F: FnOnce() -> Fut + Send + 'a,
+        Fut: Future<Output = Result<T, E>> + Send + 'a,
     {
         Self {
             endpoint: endpoint.into(),
@@ -57,7 +58,7 @@ impl<T, E> Attempt<T, E> {
 }
 
 /// The single winning result of a race.
-pub struct HedgeOutcome<T> {
+pub struct HedgeOutcome<T, E> {
     /// The endpoint whose attempt won (first `Ok`).
     pub winner: Arc<str>,
     /// The winning value — the ONLY value the race yields. All losers dropped.
@@ -67,6 +68,9 @@ pub struct HedgeOutcome<T> {
     /// `true` iff the concurrent (`FuturesUnordered`) path ran. `false` on the
     /// sequential path taken when `max_concurrency <= 1`.
     pub raced: bool,
+    /// Failures that completed before the winner, retained for provider-health
+    /// accounting and raw-response observability.
+    pub errors: Vec<(Arc<str>, E)>,
 }
 
 /// Failure of a whole race.
@@ -90,13 +94,13 @@ pub enum HedgeError<E> {
 ///   the pre-existing behavior and takes NO `FuturesUnordered` branch.
 /// * otherwise => concurrent race of up to `max_concurrency` attempts, honoring
 ///   `stagger_ms` and `max_cost_micros`, with a sequential tail refill.
-pub async fn race<T, E>(
-    attempts: Vec<Attempt<T, E>>,
+pub async fn race<'a, T, E>(
+    attempts: Vec<Attempt<'a, T, E>>,
     cfg: &HedgeConfig,
-) -> Result<HedgeOutcome<T>, HedgeError<E>>
+) -> Result<HedgeOutcome<T, E>, HedgeError<E>>
 where
-    T: Send + 'static,
-    E: Send + 'static,
+    T: Send + 'a,
+    E: Send + 'a,
 {
     if attempts.is_empty() {
         return Err(HedgeError::NoAttempts);
@@ -108,21 +112,22 @@ where
 }
 
 /// The untouched fallback: one attempt at a time, first `Ok` wins.
-async fn sequential<T, E>(attempts: Vec<Attempt<T, E>>) -> Result<HedgeOutcome<T>, HedgeError<E>> {
+async fn sequential<T, E>(
+    attempts: Vec<Attempt<'_, T, E>>,
+) -> Result<HedgeOutcome<T, E>, HedgeError<E>> {
     let mut errors = Vec::new();
-    let mut launched = 0usize;
-    for attempt in attempts {
+    for (index, attempt) in attempts.into_iter().enumerate() {
         let Attempt {
             endpoint, launch, ..
         } = attempt;
-        launched += 1;
         match launch().await {
             Ok(value) => {
                 return Ok(HedgeOutcome {
                     winner: endpoint,
                     value,
-                    launched,
+                    launched: index + 1,
                     raced: false,
+                    errors,
                 });
             }
             Err(e) => errors.push((endpoint, e)),
@@ -133,25 +138,36 @@ async fn sequential<T, E>(attempts: Vec<Attempt<T, E>>) -> Result<HedgeOutcome<T
 
 /// Each in-flight wrapper future carries its endpoint and committed cost so we
 /// can attribute the result and release the cost slot on failure.
-type Wrapped<T, E> = Pin<Box<dyn Future<Output = (Arc<str>, u64, Result<T, E>)> + Send>>;
+type Wrapped<'a, T, E> = Pin<Box<dyn Future<Output = (Arc<str>, u64, Result<T, E>)> + Send + 'a>>;
 
-async fn raced<T, E>(
-    attempts: Vec<Attempt<T, E>>,
+#[derive(Clone, Copy)]
+struct LaunchPolicy {
+    concurrency: usize,
+    cap: Option<u64>,
+    stagger: Option<Duration>,
+    race_started: Instant,
+}
+
+async fn raced<'a, T, E>(
+    attempts: Vec<Attempt<'a, T, E>>,
     cfg: &HedgeConfig,
-) -> Result<HedgeOutcome<T>, HedgeError<E>>
+) -> Result<HedgeOutcome<T, E>, HedgeError<E>>
 where
-    T: Send + 'static,
-    E: Send + 'static,
+    T: Send + 'a,
+    E: Send + 'a,
 {
-    let concurrency = cfg.effective_concurrency();
-    let cap = cfg.max_cost_micros;
-    let stagger = cfg
-        .stagger_ms
-        .filter(|&ms| ms > 0)
-        .map(Duration::from_millis);
+    let policy = LaunchPolicy {
+        concurrency: cfg.effective_concurrency(),
+        cap: cfg.max_cost_micros,
+        stagger: cfg
+            .stagger_ms
+            .filter(|&ms| ms > 0)
+            .map(Duration::from_millis),
+        race_started: Instant::now(),
+    };
 
-    let mut pending: VecDeque<Attempt<T, E>> = attempts.into();
-    let mut inflight: FuturesUnordered<Wrapped<T, E>> = FuturesUnordered::new();
+    let mut pending: VecDeque<Attempt<'a, T, E>> = attempts.into();
+    let mut inflight: FuturesUnordered<Wrapped<'a, T, E>> = FuturesUnordered::new();
     let mut errors: Vec<(Arc<str>, E)> = Vec::new();
     let mut launched = 0usize;
     let mut cost_committed: u64 = 0;
@@ -161,9 +177,7 @@ where
         &mut inflight,
         &mut cost_committed,
         &mut launched,
-        concurrency,
-        cap,
-        stagger,
+        policy,
     );
 
     while let Some((endpoint, cost, result)) = inflight.next().await {
@@ -177,6 +191,7 @@ where
                     value,
                     launched,
                     raced: true,
+                    errors,
                 });
             }
             Err(e) => {
@@ -189,9 +204,7 @@ where
                     &mut inflight,
                     &mut cost_committed,
                     &mut launched,
-                    concurrency,
-                    cap,
-                    stagger,
+                    policy,
                 );
             }
         }
@@ -203,28 +216,28 @@ where
 /// Launch attempts until the concurrency window is full or the cost cap blocks
 /// the next one. The very first attempt of a race always launches (even over
 /// the cap) so a request never silently runs zero attempts.
-fn fill<T, E>(
-    pending: &mut VecDeque<Attempt<T, E>>,
-    inflight: &mut FuturesUnordered<Wrapped<T, E>>,
+fn fill<'a, T, E>(
+    pending: &mut VecDeque<Attempt<'a, T, E>>,
+    inflight: &mut FuturesUnordered<Wrapped<'a, T, E>>,
     cost_committed: &mut u64,
     launched: &mut usize,
-    concurrency: usize,
-    cap: Option<u64>,
-    stagger: Option<Duration>,
+    policy: LaunchPolicy,
 ) where
-    T: Send + 'static,
-    E: Send + 'static,
+    T: Send + 'a,
+    E: Send + 'a,
 {
-    while inflight.len() < concurrency {
+    while inflight.len() < policy.concurrency {
         let Some(next) = pending.front() else {
             break;
         };
         let is_first = *launched == 0;
+        let is_only_active_attempt = inflight.is_empty();
         // Cost cap: don't launch attempt k if it would push committed
-        // worst-case spend over the cap. The first attempt is exempt so we
-        // always degrade to at least a single (sequential) attempt.
-        if !is_first {
-            if let Some(cap) = cap {
+        // worst-case spend over the cap. The first attempt, or the next attempt
+        // after every prior one has failed, is exempt so the cap restricts
+        // concurrency without disabling sequential fallback.
+        if !is_first && !is_only_active_attempt {
+            if let Some(cap) = policy.cap {
                 if cost_committed.saturating_add(next.worst_case_cost_micros) > cap {
                     break;
                 }
@@ -242,13 +255,22 @@ fn fill<T, E>(
         *cost_committed = cost_committed.saturating_add(worst_case_cost_micros);
         *launched += 1;
 
-        // Stagger every attempt after the very first, so a fast primary can win
-        // before a hedge's upstream call is even fired.
-        let delay = if is_first { None } else { stagger };
+        // Give every secondary a distinct absolute launch deadline measured
+        // from the beginning of the race. This prevents all backups from
+        // bursting at the same instant and avoids adding another full delay
+        // when a failed attempt causes the tail to be refilled later.
+        let launch_at = if is_first {
+            None
+        } else {
+            policy.stagger.map(|interval| {
+                let ordinal = u32::try_from(*launched - 1).unwrap_or(u32::MAX);
+                policy.race_started + interval.saturating_mul(ordinal)
+            })
+        };
         let ep = endpoint.clone();
-        let wrapped: Wrapped<T, E> = Box::pin(async move {
-            if let Some(d) = delay {
-                tokio::time::sleep(d).await;
+        let wrapped: Wrapped<'a, T, E> = Box::pin(async move {
+            if let Some(deadline) = launch_at {
+                tokio::time::sleep_until(deadline).await;
             }
             let result = launch().await;
             (ep, worst_case_cost_micros, result)

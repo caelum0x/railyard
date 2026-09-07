@@ -33,7 +33,8 @@ pub use ports::{
 };
 pub use records::{KeyScope, KeyStatus, SubKeyRecord};
 pub use transport::{
-    parse_usage, CaptureRequest, CaptureResponse, HoldRequest, HoldResponse, HoldStatus, HoldView,
-    MintBalance, MintTransport, RelayByteStream, RelayRequest, RelayResponse, RelayStreamResponse,
-    RelayTransport, ReleaseRequest, ReleaseResponse, TransferRequest, TransferResponse, Usage,
+    parse_usage, CaptureRequest, CaptureResponse, CheckoutRequest, CheckoutResponse, HoldRequest,
+    HoldResponse, HoldStatus, HoldView, MintBalance, MintTransport, RelayByteStream, RelayRequest,
+    RelayResponse, RelayStreamResponse, RelayTransport, ReleaseRequest, ReleaseResponse,
+    TransferRequest, TransferResponse, Usage,
 };

@@ -106,6 +106,7 @@ pub(crate) async fn run(
         platform_fee_micros: estimated_charge.platform_fee_micros,
         tenant_net_micros: estimated_charge.tenant_net_micros,
         outcome: UsageOutcome::Pending,
+        settlement_proof: None,
         utc_day,
     };
     if let Err(error) = state

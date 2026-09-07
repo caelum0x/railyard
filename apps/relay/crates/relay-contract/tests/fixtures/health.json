@@ -1,0 +1,7 @@
+{
+  "gateway": "ok",
+  "clickhouse": "ok",
+  "postgres": "ok",
+  "valkey": "ok",
+  "valkey_cache": "ok"
+}

@@ -24,8 +24,26 @@ use crate::usage::Usage;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reservation {
     pub job_id: JobId,
+    /// Authenticated Relay tenant that owns the request and its evidence.
+    /// This is deliberately distinct from `account_id`: an AITP payer may fund
+    /// a request made by a different authenticated Relay principal.
+    pub owner_principal: AccountId,
+    /// Account that is actually reserved/debited by the billing backend.
     pub account_id: AccountId,
     pub estimate_micros: Micros,
+    /// Exact amount held by the backend. This can exceed the Relay estimate
+    /// when a payer signs a larger AITP authorization and is the authoritative
+    /// amount that a failure release must return.
+    pub held_amount_micros: Micros,
+    /// Durable backend hold identity. Mint-backed reservations always carry the
+    /// returned `hold_id`; local ledgers do not need one.
+    pub backend_reference: Option<String>,
+    /// Immutable terminal payee captured with the reservation. This prevents a
+    /// configuration change during restart recovery from rewriting capture.
+    pub settlement_payee: Option<AccountId>,
+    /// Opaque durable-outbox fencing token. Billing backends ignore it; the
+    /// gateway requires it for execution lease renewal and terminal selection.
+    pub execution_lease: Option<uuid::Uuid>,
 }
 
 /// The authoritative billed amount for a completed job is carried on the usage
@@ -94,8 +112,13 @@ impl Ledger {
             }),
             ReserveOutcome::Reserved => Ok(Reservation {
                 job_id: job,
+                owner_principal: account_id.clone(),
                 account_id: account_id.clone(),
                 estimate_micros: estimate,
+                held_amount_micros: estimate,
+                backend_reference: None,
+                settlement_payee: None,
+                execution_lease: None,
             }),
         }
     }
@@ -338,6 +361,10 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the test joins every spawned reserve task before returning"
+    )]
     async fn racing_reserves_cannot_both_overspend() {
         let s = store();
         let acct = AccountId::new("a");
@@ -539,8 +566,13 @@ mod tests {
         let l = ledger(&s);
         let phantom = Reservation {
             job_id: JobId::new(),
+            owner_principal: acct.clone(),
             account_id: acct.clone(),
             estimate_micros: Micros::new(1_000_000),
+            held_amount_micros: Micros::new(1_000_000),
+            backend_reference: None,
+            settlement_payee: None,
+            execution_lease: None,
         };
         let err = l.settle(&phantom, usage(1), model()).await.unwrap_err();
         assert!(matches!(err, BillingError::UnknownReservation(_)));
@@ -553,8 +585,13 @@ mod tests {
         let l = ledger(&s);
         let phantom = Reservation {
             job_id: JobId::new(),
+            owner_principal: acct.clone(),
             account_id: acct,
             estimate_micros: Micros::new(1_000_000),
+            held_amount_micros: Micros::new(1_000_000),
+            backend_reference: None,
+            settlement_payee: None,
+            execution_lease: None,
         };
         let err = l.release(&phantom).await.unwrap_err();
         assert!(matches!(err, BillingError::UnknownReservation(_)));

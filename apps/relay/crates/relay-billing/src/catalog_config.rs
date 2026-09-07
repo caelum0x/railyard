@@ -20,8 +20,8 @@
 //!
 //! Prices are quoted exactly as the embedded [`crate::catalog`] quotes them:
 //! **integer micro-USD per 1,000,000 tokens** (i.e. `usd_per_1M * 1_000_000`).
-//! They are converted to the engine's per-token unit with the same half-up
-//! rounding via [`crate::catalog::per_token_micros`]. There is no float anywhere.
+//! The engine retains that exact scale and rounds only the final request charge
+//! to an integer microdollar. There is no float anywhere.
 //!
 //! ## Format (JSON)
 //!
@@ -51,7 +51,7 @@ use std::path::Path;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::catalog::{per_token_micros, price_table};
+use crate::catalog::price_table;
 use crate::domain::ModelId;
 use crate::pricing::{ModelPrice, PriceTable};
 
@@ -99,11 +99,11 @@ pub struct PriceRow {
 }
 
 impl PriceRow {
-    /// Convert this per-1M list price into the engine's per-token [`ModelPrice`].
+    /// Convert this per-1M list price into the engine's exact [`ModelPrice`].
     fn to_model_price(self) -> ModelPrice {
         ModelPrice::new(
-            per_token_micros(self.input_micro_usd_per_million),
-            per_token_micros(self.output_micro_usd_per_million),
+            self.input_micro_usd_per_million,
+            self.output_micro_usd_per_million,
         )
     }
 
@@ -131,7 +131,8 @@ impl PriceRow {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelEntry {
-    /// Raw (un-namespaced) `provider/model` id, exactly as a client sends it.
+    /// Raw `provider/model` id or its TensorZero concrete-model selector alias.
+    /// Both normalize to one authoritative catalog key.
     pub model: String,
     /// Prompt/input list price, micro-USD per 1,000,000 tokens.
     pub input_micro_usd_per_million: i64,
@@ -167,14 +168,15 @@ impl PriceCatalogConfig {
         if let Some(default) = self.default {
             default.validate("default")?;
         }
-        let mut seen: HashSet<&str> = HashSet::new();
+        let mut seen: HashSet<ModelId> = HashSet::new();
         for entry in &self.models {
             let id = entry.model.trim();
             if id.is_empty() {
                 return Err(CatalogConfigError::EmptyModelId);
             }
             entry.price_row().validate(id)?;
-            if !seen.insert(id) {
+            let canonical = ModelId::from_tensorzero_selector(id);
+            if !seen.insert(canonical.clone()) {
                 return Err(CatalogConfigError::DuplicateModel(id.to_string()));
             }
         }
@@ -195,7 +197,7 @@ impl PriceCatalogConfig {
         let mut table = price_table(default);
         for entry in &self.models {
             table.insert(
-                ModelId::namespace(entry.model.trim()),
+                ModelId::from_tensorzero_selector(entry.model.trim()),
                 entry.price_row().to_model_price(),
             );
         }
@@ -240,7 +242,7 @@ mod tests {
 
     fn default_price() -> ModelPrice {
         // Mirrors the gateway's conservative default ($10 / $30 per 1M).
-        ModelPrice::new(10, 30)
+        ModelPrice::new(10_000_000, 30_000_000)
     }
 
     fn model(raw: &str) -> ModelId {
@@ -260,10 +262,10 @@ mod tests {
 
         // acme/foo-1 is not in the embedded catalog; the config adds it.
         assert!(table.is_known(&model("acme/foo-1")));
-        // $5 / $15 per 1M -> 5 / 15 micro-USD per token.
+        // The exact provider-style per-million rates are retained.
         assert_eq!(
             table.price_for(&model("acme/foo-1")),
-            ModelPrice::new(5, 15)
+            ModelPrice::new(5_000_000, 15_000_000)
         );
         // 1000 * 5 + 500 * 15 = 5000 + 7500 = 12_500
         assert_eq!(
@@ -274,7 +276,7 @@ mod tests {
 
     #[test]
     fn config_overrides_an_embedded_catalog_model() {
-        // gpt-4o ships as (3, 10) in the embedded catalog; override it.
+        // gpt-4o ships as ($2.50/$10 per 1M); override it.
         let json = r#"
         {
           "models": [
@@ -284,12 +286,27 @@ mod tests {
         let table = parse(json).unwrap().into_price_table(default_price());
         assert_eq!(
             table.price_for(&model("openai/gpt-4o")),
-            ModelPrice::new(1, 2)
+            ModelPrice::new(1_000_000, 2_000_000)
         );
         // A catalog model NOT overridden keeps its embedded price.
         assert_eq!(
             table.price_for(&model("anthropic/claude-3-opus")),
-            ModelPrice::new(15, 75)
+            ModelPrice::new(15_000_000, 75_000_000)
+        );
+    }
+
+    #[test]
+    fn tensorzero_selector_override_targets_the_canonical_catalog_model() {
+        let json = r#"
+        {
+          "models": [
+            { "model": "tensorzero::model_name::openai::gpt-4o", "input_micro_usd_per_million": 7000000, "output_micro_usd_per_million": 17000000 }
+          ]
+        }"#;
+        let table = parse(json).unwrap().into_price_table(default_price());
+        assert_eq!(
+            table.price_for(&model("openai/gpt-4o")),
+            ModelPrice::new(7_000_000, 17_000_000)
         );
     }
 
@@ -310,7 +327,10 @@ mod tests {
         let table = parse(json).unwrap().into_price_table(default_price());
         let unknown = model("nobody/knows-me");
         // Resolved default is the config's $20 / $40, not the fallback $10 / $30.
-        assert_eq!(table.price_for(&unknown), ModelPrice::new(20, 40));
+        assert_eq!(
+            table.price_for(&unknown),
+            ModelPrice::new(20_000_000, 40_000_000)
+        );
     }
 
     #[test]
@@ -344,6 +364,23 @@ mod tests {
         assert_eq!(
             parse(json).unwrap_err(),
             CatalogConfigError::DuplicateModel("acme/foo-1".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_rejects_duplicate_tensorzero_aliases_after_canonicalization() {
+        let json = r#"
+        {
+          "models": [
+            { "model": "openai/gpt-4o", "input_micro_usd_per_million": 1000000, "output_micro_usd_per_million": 1000000 },
+            { "model": "tensorzero::model_name::openai::gpt-4o", "input_micro_usd_per_million": 2000000, "output_micro_usd_per_million": 2000000 }
+          ]
+        }"#;
+        assert_eq!(
+            parse(json).unwrap_err(),
+            CatalogConfigError::DuplicateModel(
+                "tensorzero::model_name::openai::gpt-4o".to_string()
+            )
         );
     }
 
@@ -387,7 +424,10 @@ mod tests {
         std::fs::write(&path, json).expect("write temp catalog");
 
         let table = load_from_path(&path, default_price()).expect("load catalog");
-        assert_eq!(table.price_for(&model("acme/bar-9")), ModelPrice::new(2, 6));
+        assert_eq!(
+            table.price_for(&model("acme/bar-9")),
+            ModelPrice::new(2_000_000, 6_000_000)
+        );
 
         let _ = std::fs::remove_file(&path);
     }

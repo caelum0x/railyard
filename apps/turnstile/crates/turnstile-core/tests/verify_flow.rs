@@ -10,8 +10,9 @@
 
 use std::sync::{Arc, Mutex};
 
+use aitp_client::codec::encode_receipt;
 use aitp_client::transport::{HttpRequest, HttpResponse, HttpTransport};
-use aitp_client::{AmountMicros, HoldRef, PayError, PaymentAuthorization, Scheme};
+use aitp_client::{AmountMicros, HoldRef, PayError, PaymentAuthorization, Receipt, Scheme};
 use async_trait::async_trait;
 use turnstile_core::{MintVerifier, PaymentVerifier, TurnstileError};
 
@@ -35,7 +36,8 @@ impl FakeMintTransport {
             address: json_ok(r#"{"success":true,"data":{"account_id":"acct_payee"}}"#),
             capture: json_ok(
                 r#"{"success":true,"data":{"first_seq":7,"captured_micros":3900,"holder_balance":{"available_micros":96100}}}"#,
-            ),
+            )
+            .with_header("aitp-receipt", encoded_capture_receipt()),
             release: json_ok(r#"{"success":true,"data":{}}"#),
         }
     }
@@ -79,6 +81,20 @@ fn json_err(status: u16, body: &str) -> HttpResponse {
     HttpResponse::new(status, body.as_bytes().to_vec())
 }
 
+fn encoded_capture_receipt() -> String {
+    encode_receipt(&Receipt {
+        seq: 7,
+        op: "hold.capture".to_string(),
+        op_hash: "11".repeat(32),
+        amount_micros: AmountMicros(3900),
+        balance_after_micros: AmountMicros(96_100),
+        prev_hash: "22".repeat(32),
+        hash: "33".repeat(32),
+        sig: "44".repeat(64),
+    })
+    .unwrap()
+}
+
 fn sample_auth() -> PaymentAuthorization {
     PaymentAuthorization {
         payer: "acct_payer".into(),
@@ -87,6 +103,7 @@ fn sample_auth() -> PaymentAuthorization {
         nonce: "9f2c".into(),
         resource: "POST /v1/echo".into(),
         expiry: 9_999_999_999_999,
+        scheme: aitp_client::Scheme::Hold,
         idempotency_key: "aitp:9f2c".into(),
         pubkey_id: "key_1".into(),
         op_hash: "deadbeef".into(),
@@ -170,6 +187,9 @@ async fn capture_resolves_payee_then_captures_actual() {
         .unwrap();
     assert_eq!(receipt.amount_micros, AmountMicros(3900));
     assert_eq!(receipt.balance_after_micros, AmountMicros(96_100));
+    assert_eq!(receipt.op_hash, "11".repeat(32));
+    assert_eq!(receipt.hash, "33".repeat(32));
+    assert_eq!(receipt.sig, "44".repeat(64));
 
     let rec = fake.recorded();
     // Address resolution first...

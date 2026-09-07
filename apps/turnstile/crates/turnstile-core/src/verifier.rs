@@ -22,6 +22,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use aitp_client::codec::{decode_receipt, HEADER_RECEIPT};
 use aitp_client::transport::{HttpRequest, HttpResponse, HttpTransport};
 use aitp_client::{AmountMicros, HoldRef, PayError, PaymentAuthorization, Receipt, Scheme};
 use async_trait::async_trait;
@@ -48,10 +49,8 @@ pub trait PaymentVerifier: Send + Sync {
     /// Forward `auth` to the settlement rail for server-side verify + settle.
     async fn verify(&self, auth: &PaymentAuthorization) -> Result<VerifiedHold, TurnstileError>;
 
-    /// Capture `actual` against a hold — the SUCCESS path. The returned
-    /// [`Receipt`] is LOSSY (the capture route sends no `AITP-Receipt`): `seq`,
-    /// `amount_micros`, `balance_after_micros` are authoritative; the hash/sig
-    /// fields are empty.
+    /// Capture `actual` against a hold — the SUCCESS path. Returns Mint's exact
+    /// signed, hash-linked settlement receipt.
     async fn capture(
         &self,
         hold: &HoldRef,
@@ -169,19 +168,12 @@ impl PaymentVerifier for MintVerifier {
                 body,
             ))
             .await?;
-        let env: Envelope<HoldReceiptData> = parse_json(&resp.body)?;
-
-        Ok(Receipt {
-            seq: env.data.first_seq,
-            op: "hold.capture".to_string(),
-            // Capture route sends no AITP-Receipt: hash/sig fields are unknown.
-            op_hash: String::new(),
-            amount_micros: AmountMicros(env.data.captured_micros),
-            balance_after_micros: AmountMicros(env.data.holder_balance.available_micros),
-            prev_hash: String::new(),
-            hash: String::new(),
-            sig: String::new(),
-        })
+        let encoded = resp.header(HEADER_RECEIPT).ok_or_else(|| {
+            TurnstileError::Pay(PayError::Codec(
+                "capture response missing AITP-Receipt header".to_string(),
+            ))
+        })?;
+        decode_receipt(encoded).map_err(TurnstileError::Pay)
     }
 
     async fn release(&self, hold: &HoldRef) -> Result<(), TurnstileError> {
@@ -315,23 +307,6 @@ struct VerifyData {
 #[derive(Debug, Deserialize)]
 struct AddressData {
     account_id: String,
-}
-
-/// `POST /v1/holds/:id/capture|release` → `data` (the `hold_receipt` view).
-#[derive(Debug, Default, Deserialize)]
-struct HoldReceiptData {
-    #[serde(default)]
-    first_seq: u64,
-    #[serde(default)]
-    captured_micros: i64,
-    #[serde(default)]
-    holder_balance: BalanceView,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct BalanceView {
-    #[serde(default)]
-    available_micros: i64,
 }
 
 /// `POST /v1/holds/:id/capture` request body.

@@ -15,20 +15,20 @@ use abacus_core::identity::{AgentIdentity, BudgetPolicy, BudgetRepo, FundingPath
 use abacus_core::ids::{AccountId, AgentId, Ait1Address, BudgetId, RunId};
 use abacus_core::receipt::{MintReceipt, ReceiptStore};
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
-struct AgentConfigFile {
+pub(crate) struct AgentConfigFile {
     agents: Vec<ConfiguredAgent>,
 }
 
-#[derive(Debug, Deserialize)]
-struct ConfiguredAgent {
-    agent_id: AgentId,
-    agent_acct: AccountId,
-    treasury: AccountId,
-    payee: Ait1Address,
-    budget: BudgetPolicy,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct ConfiguredAgent {
+    pub(crate) agent_id: AgentId,
+    pub(crate) agent_acct: AccountId,
+    pub(crate) treasury: AccountId,
+    pub(crate) payee: Ait1Address,
+    pub(crate) budget: BudgetPolicy,
 }
 
 /// A restart-safe policy and receipt store intended for single-instance and
@@ -51,38 +51,7 @@ impl LocalStore {
         receipt_log_path: impl AsRef<Path>,
     ) -> Result<Self, AbacusError> {
         let config_path = agent_config_path.as_ref();
-        let config_bytes = std::fs::read(config_path).map_err(|error| {
-            AbacusError::Config(format!(
-                "reading agent config {}: {error}",
-                config_path.display()
-            ))
-        })?;
-        let config: AgentConfigFile = serde_json::from_slice(&config_bytes).map_err(|error| {
-            AbacusError::Config(format!(
-                "parsing agent config {}: {error}",
-                config_path.display()
-            ))
-        })?;
-
-        let mut agents = HashMap::with_capacity(config.agents.len());
-        for agent in config.agents {
-            validate_agent(&agent).map_err(|detail| {
-                AbacusError::Config(format!("{}: {detail}", config_path.display()))
-            })?;
-            let key = agent.agent_id.as_str().to_string();
-            if agents.insert(key.clone(), agent).is_some() {
-                return Err(AbacusError::Config(format!(
-                    "duplicate agent_id {key} in {}",
-                    config_path.display()
-                )));
-            }
-        }
-        if agents.is_empty() {
-            return Err(AbacusError::Config(format!(
-                "{} must configure at least one agent",
-                config_path.display()
-            )));
-        }
+        let agents = load_agent_config(config_path)?;
 
         let receipt_path = receipt_log_path.as_ref().to_path_buf();
         let by_hold = load_receipts(&receipt_path)?;
@@ -94,6 +63,45 @@ impl LocalStore {
             }),
         })
     }
+}
+
+pub(crate) fn load_agent_config(
+    config_path: &Path,
+) -> Result<HashMap<String, ConfiguredAgent>, AbacusError> {
+    let config_bytes = std::fs::read(config_path).map_err(|error| {
+        AbacusError::Config(format!(
+            "reading agent config {}: {error}",
+            config_path.display()
+        ))
+    })?;
+    let config: AgentConfigFile = serde_json::from_slice(&config_bytes).map_err(|error| {
+        AbacusError::Config(format!(
+            "parsing agent config {}: {error}",
+            config_path.display()
+        ))
+    })?;
+
+    let mut agents = HashMap::with_capacity(config.agents.len());
+    for agent in config.agents {
+        validate_agent(&agent).map_err(|detail| {
+            AbacusError::Config(format!("{}: {detail}", config_path.display()))
+        })?;
+        let key = agent.agent_id.as_str().to_string();
+        if agents.insert(key.clone(), agent).is_some() {
+            return Err(AbacusError::Config(format!(
+                "duplicate agent_id {key} in {}",
+                config_path.display()
+            )));
+        }
+    }
+    if agents.is_empty() {
+        return Err(AbacusError::Config(format!(
+            "{} must configure at least one agent",
+            config_path.display()
+        )));
+    }
+
+    Ok(agents)
 }
 
 fn validate_agent(agent: &ConfiguredAgent) -> Result<(), String> {
@@ -226,5 +234,20 @@ impl ReceiptStore for LocalStore {
             .lock()
             .map_err(|_| AbacusError::Storage("receipt log lock poisoned".to_string()))?;
         Ok(log.by_hold.get(hold_id).cloned())
+    }
+
+    async fn get_by_request_id(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<MintReceipt>, AbacusError> {
+        let log = self
+            .receipts
+            .lock()
+            .map_err(|_| AbacusError::Storage("receipt log lock poisoned".to_string()))?;
+        Ok(log
+            .by_hold
+            .values()
+            .find(|receipt| receipt.request_id == request_id)
+            .cloned())
     }
 }

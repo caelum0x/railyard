@@ -1,127 +1,122 @@
 # Relay Ruby SDK
 
-Native Ruby client for the **Relay** inference gateway (a TensorZero fork). It
-speaks the gateway's OpenAI-compatible HTTP surface directly — **no dependency
-on the `openai` gem**.
+Dependency-free Ruby 2.6+ client for Railyard Relay. It talks directly to
+Relay's OpenAI-compatible and native inference surfaces and uses only Ruby's
+standard library at runtime.
+
+## Paid inference
 
 ```ruby
 require "relay"
 
-client = Relay::Client.new(
-  base_url: "http://localhost:3000",     # gateway root
-  api_key:  ENV["RELAY_API_KEY"]         # sent as: Authorization: Bearer <key>
+relay = Relay::Client.new(
+  base_url: "https://relay.example",
+  api_key: ENV["RELAY_API_KEY"],
+  settlement_evidence_verifier: ->(evidence) {
+    mint_verifier.verify_attestation(evidence, pinned_mint_public_key)
+  }
+)
+
+completion = relay.paid_chat_completions(
+  {
+    model: Relay.model_target("openai::gpt-4o"),
+    messages: [{ role: "user", content: "Summarize this." }]
+  },
+  authorizer: ->(payment) { wallet.authorize_aitp(payment) }
 )
 ```
 
-Every request hits the gateway's OpenAI-compatible routes under
-`#{base_url}/openai/v1/...` with `Content-Type: application/json` and, when an
-`api_key` is set, `Authorization: Bearer <api_key>`.
+Paid helpers cover chat, chat streaming, native inference, embeddings, and
+batch creation. They perform exactly one `402 -> authorize -> retry` journey.
+A second challenge is returned as `Relay::PaymentRequiredError`; the SDK never
+loops or silently spends again. The signing implementation retains private
+keys—the Relay SDK receives only the authorization for that exact challenge.
+An already-settled replay is trusted only after this verifier approves Mint's
+signed attestation. Missing verification raises
+`Relay::UnverifiedSettlementEvidenceError`; rejection raises
+`Relay::InvalidSettlementEvidenceError`.
 
-## Chat completions (JSON)
+## Streaming and recovery
 
 ```ruby
-resp = client.chat_completions(
-  model:    Relay.model_target("gpt-4o-mini"),  # => "tensorzero::model_name::gpt-4o-mini"
-  messages: [{ role: "user", content: "Write a haiku about Ruby." }],
-  temperature: 0.7,
-  max_tokens: 128
+recovery_queue = []
+relay = Relay::Client.new(
+  base_url: "https://relay.example",
+  on_abandoned_stream: ->(request_id) { recovery_queue << request_id }
 )
 
-resp["choices"][0]["message"]["content"]
-resp["usage"]  # { "prompt_tokens" => .., "completion_tokens" => .., "total_tokens" => .. }
-```
-
-`:model` and `:messages` are required. Relay-specific keys such as
-`"tensorzero::episode_id"` pass through to the gateway untouched.
-
-## Chat completions (SSE streaming)
-
-Sets `stream: true` and requests usage in the final chunk
-(`stream_options.include_usage: true`). Each decoded chunk Hash is yielded; the
-SSE `[DONE]` sentinel terminates the stream.
-
-```ruby
-client.chat_completions_stream(
-  model:    Relay.model_target("gpt-4o-mini"),
-  messages: [{ role: "user", content: "Stream me a limerick." }]
-) do |chunk|
-  delta = chunk.dig("choices", 0, "delta", "content")
-  print delta if delta
-  # the final chunk carries "usage" when include_usage is on
+relay.paid_chat_completions_stream(params, authorizer: authorizer) do |chunk|
+  print chunk.dig("choices", 0, "delta", "content")
 end
 ```
 
-Without a block it returns an `Enumerator`:
+Relay withholds `[DONE]` until settlement intent is durable. If the consumer
+leaves before `[DONE]`, the callback receives Relay's authenticated request UUID
+synchronously. Put it on an application-owned queue and call
+`settlement_evidence(request_id)` later; do not do asynchronous network work in
+the callback. That method applies the configured verifier; only recovery code
+that performs its own validation should call
+`settlement_evidence_unverified(request_id)`. The client forces
+`stream_options.include_usage = true` so
+successful streams carry the usage needed for exact settlement.
+
+## Discovery and operations
 
 ```ruby
-stream = client.chat_completions_stream(model: "m", messages: msgs)
-first_chunk = stream.first
+health = relay.health # decoded on HTTP 200 and degraded HTTP 503
+catalog = relay.catalog
+quote = relay.quote(model: "openai/gpt-4o", input_tokens: 1_000, output_tokens: 500)
+
+page = relay.cost_events(state: "dead_lettered", limit: 50)
+relay.replay_cost_event(page.fetch("items").first.fetch("event").fetch("event_id"))
 ```
 
-## Models
+Supported request families:
 
-> **Gateway gap.** The Relay gateway exposes **no public list-models route**
-> (there is no `GET /openai/v1/models`). Rather than fabricate an OpenAI
-> `/v1/models` payload, `#models` returns the static list you configure at
-> construction.
+- `chat_completions` / `chat_completions_stream`
+- `embeddings`
+- `inference`
+- `batch_inference` / `batch_inference_status`
+- `status` / `health` / `catalog` / `quote`
+- `settlement_evidence`
+- `cost_event` / `cost_events` / `replay_cost_event`
+- `custom_json` for safe relative Relay extensions
+- `multipart` / `paid_multipart` for binary-safe relative upload endpoints
+
+Multipart forms preserve arbitrary bytes and are encoded once, so a paid retry
+replays the same boundary and body:
 
 ```ruby
-client = Relay::Client.new(base_url: url, known_models: ["gpt-4o-mini", "claude"])
-client.models # => ["gpt-4o-mini", "claude"]
-
-Relay.model_target("gpt-4o-mini")    # "tensorzero::model_name::gpt-4o-mini"
-Relay.function_target("summarize")   # "tensorzero::function_name::summarize"
+form = Relay::MultipartForm.new.file(
+  "file", "requests.jsonl", "application/jsonl", payload
+)
+relay.paid_multipart("v1/files", form, authorizer: authorizer)
 ```
 
-## Credits / balance
+`models` remains a backward-compatible local view of `known_models`; new code
+should use the live, billing-consistent `catalog`. `credits`/`balance` is also
+compatibility-only: it performs a `tensorzero::dryrun` availability probe and
+never invents a numeric balance.
 
-> **Gateway gap.** There is **no dedicated balance route**. Billing is an
-> optional gateway middleware whose only client-visible signal is a
-> `402 insufficient_credits` on inference. Rather than invent a balance number,
-> `#credits` / `#balance` probe that signal with a minimal chat completion.
+## Safety boundaries
 
-```ruby
-client.credits(probe_model: Relay.model_target("gpt-4o-mini"))
-# => { sufficient: true,  checked_via: "inference_probe" }
-# => { sufficient: false, checked_via: "inference_probe", type: "insufficient_credits", ... }
-```
-
-If `known_models` is configured, its first entry is used as the default probe
-model. A probe costs one (tiny, `max_tokens: 1`) inference.
-
-## Errors
-
-| HTTP | Raised                              |
-|------|-------------------------------------|
-| 401 / 403 | `Relay::AuthenticationError`   |
-| 402 (or `error.type == "insufficient_credits"`) | `Relay::InsufficientCreditsError` (< `Relay::BillingError`) |
-| 404 | `Relay::NotFoundError`              |
-| 429 | `Relay::RateLimitError`            |
-| 5xx | `Relay::ServerError`               |
-| other non-2xx | `Relay::APIError`         |
-
-All inherit from `Relay::APIError` (itself a `Relay::Error`) and carry
-`#status`, `#type`, `#code`, and `#body`.
-
-## Custom transport
-
-The client accepts any object responding to `#request` and `#stream`
-(see `Relay::NetHTTPTransport`). This is how the test suite runs with zero
-network access:
-
-```ruby
-Relay::Client.new(base_url: url, transport: MyTransport.new)
-```
+- Base URLs must be absolute HTTP(S) URLs without credentials, query, or fragment.
+- JSON responses and individual SSE events have configurable size bounds.
+- AITP challenges, authorizations, request IDs, and cursors are validated.
+- Streaming response metadata is observed before body consumption, so an early
+  consumer exit still hands the authoritative Relay request ID to recovery.
+- The standard transport wraps timeouts and socket failures in
+  `Relay::TransportError`.
 
 ## Development
 
 ```bash
-bundle install      # or just use the bundled minitest
-rake test
+ruby -Ilib -Itest test/client_test.rb
+ruby -Ilib -Itest test/product_test.rb
+gem build relay.gemspec
 ```
 
-Tests use an injected in-memory transport (`test/support/fake_transport.rb`) —
-no live gateway or `webmock` required.
+The tests use an injected in-memory transport and require no network or keys.
 
 ## License
 

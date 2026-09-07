@@ -435,6 +435,7 @@ async fn run_flow(
         platform_fee_micros: est_charge.platform_fee_micros,
         tenant_net_micros: est_charge.tenant_net_micros,
         outcome: UsageOutcome::Pending,
+        settlement_proof: None,
         utc_day,
     };
     if let Err(error) = state

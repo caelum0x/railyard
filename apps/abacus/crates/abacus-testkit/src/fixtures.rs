@@ -33,12 +33,27 @@ impl FakeBudgetRepo {
         }
     }
 
-    /// Seed a direct-hold agent against a treasury account.
+    /// Seed a direct-hold agent against a treasury account (generous local
+    /// per-request ceiling, so the Mint balance is the only binding constraint).
     pub fn with_direct_hold_agent(
         self,
         agent: &AgentId,
         treasury: &AccountId,
         payee: &Ait1Address,
+    ) -> Self {
+        self.with_capped_direct_hold_agent(agent, treasury, payee, Some(5_000_000))
+    }
+
+    /// Seed a direct-hold agent with an explicit local per-request ceiling
+    /// (`per_request_max_micros`). Pass a small `cap` to exercise the
+    /// defence-in-depth kill that must fire BEFORE any Mint call; pass `None` to
+    /// disable the local ceiling entirely.
+    pub fn with_capped_direct_hold_agent(
+        self,
+        agent: &AgentId,
+        treasury: &AccountId,
+        payee: &Ait1Address,
+        cap: Option<i64>,
     ) -> Self {
         let identity = AgentIdentity {
             agent_acct: AccountId::parse(&format!("acct_{}", &agent.as_str()[6..]))
@@ -50,7 +65,7 @@ impl FakeBudgetRepo {
                 budget_id: BudgetId::generate(),
                 funding_path: FundingPath::DirectHold,
                 allowance_id: None,
-                per_request_max_micros: Some(5_000_000),
+                per_request_max_micros: cap,
             },
         };
         self.identities
@@ -90,11 +105,7 @@ impl FakeBudgetRepo {
 
 #[async_trait]
 impl BudgetRepo for FakeBudgetRepo {
-    async fn resolve(
-        &self,
-        agent: &AgentId,
-        run: &RunId,
-    ) -> Result<AgentIdentity, AbacusError> {
+    async fn resolve(&self, agent: &AgentId, run: &RunId) -> Result<AgentIdentity, AbacusError> {
         let mut identity = self
             .identities
             .lock()
@@ -152,6 +163,19 @@ impl ReceiptStore for FakeReceiptStore {
     async fn get(&self, hold_id: &str) -> Result<Option<MintReceipt>, AbacusError> {
         Ok(self.by_hold.lock().unwrap().get(hold_id).cloned())
     }
+
+    async fn get_by_request_id(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<MintReceipt>, AbacusError> {
+        Ok(self
+            .by_hold
+            .lock()
+            .unwrap()
+            .values()
+            .find(|receipt| receipt.request_id == request_id)
+            .cloned())
+    }
 }
 
 #[cfg(test)]
@@ -178,12 +202,21 @@ mod tests {
             agent_id: AgentId::generate(),
             run_id: RunId::generate(),
             budget_id: BudgetId::generate(),
+            payer_account: "acct_treasury01".into(),
+            request_id: "request_1".into(),
             hold_id: "hold_1".into(),
             reserved_micros: 5_000,
             captured_micros: 3_000,
             balance_after_micros: 97_000,
             settlement_seq: 7,
             outcome: abacus_core::receipt::ReceiptOutcome::Captured,
+            settlement_proof: abacus_core::transport::SettlementProof {
+                sequence: 7,
+                operation: "hold.capture".into(),
+                operation_hash: "op_hash".into(),
+                receipt_hash: "receipt_hash".into(),
+                signature: "signature".into(),
+            },
         };
         store.record(&r).await.unwrap();
         assert_eq!(store.len(), 1);

@@ -5,7 +5,7 @@
 
 use crate::routes::build_api_routes;
 use axum::{
-    Router,
+    Extension, Router,
     extract::{DefaultBodyLimit, Request, State},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -52,9 +52,10 @@ pub async fn build_axum_router(
     };
 
     // Serve the MCP endpoint on the same port, respecting `base_path`.
-    let mcp_router = tensorzero_mcp::build_mcp_router(Arc::new(app_state.clone()), shutdown_token)
-        .await
-        .map_err(|e| Error::new(ErrorDetails::InternalError { message: e }))?;
+    let mcp_router =
+        tensorzero_mcp::build_mcp_router(Arc::new(app_state.clone()), shutdown_token.clone())
+            .await
+            .map_err(|e| Error::new(ErrorDetails::InternalError { message: e }))?;
     let mcp_path = if base_path.is_empty() {
         "/mcp".to_string()
     } else {
@@ -77,8 +78,73 @@ pub async fn build_axum_router(
     // durable, funded ledger) — the PRODUCTION backend. When `MINT_SERVER_URL` is
     // missing or invalid billing configuration aborts startup. Operators can
     // explicitly disable billing for local gateway development.
+    let config = app_state.config().load();
+    let catalog_runtime = build_catalog_runtime().await?;
+    router = router.layer(Extension(catalog_runtime.service.clone()));
+    let mut relay_health =
+        crate::relay_health::RelayHealthState::new(catalog_runtime.service.clone());
+    let cost_event_store: Arc<dyn relay_cost_feed::CostEventStore> = app_state
+        .postgres_connection_info()
+        .get_pool()
+        .cloned()
+        .map_or_else(
+            || Arc::new(relay_cost_feed::InMemoryCostEventStore::default()) as Arc<_>,
+            |pool| Arc::new(crate::cost_feed::PostgresCostEventStore::new(pool)) as Arc<_>,
+        );
+    router = router.layer(Extension(cost_event_store));
+
+    // Adaptive provider health is deliberately outside the hot request path:
+    // restore one validated checkpoint before serving, then persist consistent
+    // snapshots periodically and once more during graceful shutdown. The
+    // gateway can still serve without Postgres or after a checkpoint failure;
+    // this state optimizes routing but is never request or billing authority.
+    if let Some(pool) = app_state.postgres_connection_info().get_pool().cloned() {
+        match crate::provider_health_persistence::restore(&pool).await {
+            Ok(restored) if restored > 0 => {
+                tracing::info!(restored, "Restored Relay provider-health snapshots");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "Relay provider-health warm start unavailable; starting with neutral scores"
+                );
+            }
+        }
+
+        let persistence_shutdown = shutdown_token.clone();
+        app_state.deferred_tasks.spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // Avoid an immediate write of the just-restored state.
+            interval.tick().await;
+            loop {
+                tokio::select! {
+                    () = persistence_shutdown.cancelled() => {
+                        if let Err(error) = crate::provider_health_persistence::persist(&pool).await {
+                            tracing::warn!(error = %error, "Final Relay provider-health checkpoint failed");
+                        }
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        if let Err(error) = crate::provider_health_persistence::persist(&pool).await {
+                            tracing::warn!(error = %error, "Relay provider-health checkpoint failed");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     if crate::billing::billing_enabled() {
+        if !config.gateway.auth.enabled {
+            return Err(billing_config_error(
+                "RELAY_BILLING_ENABLED requires gateway authentication; unauthenticated inference cannot resolve a payer",
+            ));
+        }
         let ledger: Arc<dyn relay_billing::BillingLedger> = build_billing_ledger()?;
+        relay_health = relay_health.with_billing(ledger.clone());
+        validate_configured_catalog_routes(&catalog_runtime.service, &config).await?;
         // Model-aware pricing: a per-model price table seeded from the real
         // provider list-price catalog (`relay_billing::catalog`), so each model is
         // billed at its own accurate per-token micro-USD rate. Any model not in
@@ -90,21 +156,14 @@ pub async fn build_axum_router(
         // is overlaid on the embedded catalog and validated at startup, so a
         // malformed file fails closed rather than mispricing a money path. When
         // unset, the embedded catalog is used unchanged (backward-compatible).
-        // NOTE: `relay-hedge` is a separate workspace crate and is NOT wired into
-        // the request path yet (no dependent crate); integrating it is out of scope.
+        // Provider hedging and adaptive SLO routing are configured per model and
+        // execute inside TensorZero's provider dispatch before this middleware
+        // observes the single winning response.
         let default_price = crate::billing::default_model_price();
-        let price_table = match std::env::var("RELAY_PRICE_CATALOG_PATH")
-            .ok()
-            .map(|path| path.trim().to_string())
-            .filter(|path| !path.is_empty())
-        {
-            Some(path) => relay_billing::load_price_catalog(&path, default_price).map_err(|e| {
-                billing_config_error(format!(
-                    "failed to load RELAY_PRICE_CATALOG_PATH '{path}': {e}"
-                ))
-            })?,
-            None => relay_billing::catalog_price_table(default_price),
-        };
+        let price_table = catalog_runtime
+            .service
+            .billing_price_table(catalog_runtime.default_price.unwrap_or(default_price))
+            .await;
         let prices = Arc::new(price_table);
         let payee = std::env::var("RELAY_AITP_PAYEE")
             .ok()
@@ -113,19 +172,129 @@ pub async fn build_axum_router(
             .ok_or_else(|| {
                 billing_config_error("RELAY_BILLING_ENABLED requires RELAY_AITP_PAYEE")
             })?;
+        ledger
+            .validate_payee_address(&payee)
+            .await
+            .map_err(|error| {
+                billing_config_error(format!(
+                    "RELAY_AITP_PAYEE does not map to MINT_PAYEE_ACCOUNT: {error}"
+                ))
+            })?;
+        let evidence_pool = app_state
+            .postgres_connection_info()
+            .get_pool()
+            .cloned()
+            .ok_or_else(|| {
+                billing_config_error(
+                    "RELAY_BILLING_ENABLED requires Postgres for durable settlement evidence",
+                )
+            })?;
+        relay_storage_postgres::migrate(&evidence_pool)
+            .await
+            .map_err(|error| {
+                billing_config_error(format!(
+                    "failed to apply the restart-durable Relay schema: {error}"
+                ))
+            })?;
+        let evidence_store = Arc::new(
+            crate::settlement_evidence::PostgresSettlementEvidenceStore::new(evidence_pool.clone()),
+        );
+        let challenge_issuer = Arc::new(relay_aitp::ChallengeIssuer::new(
+            relay_aitp::ChallengePolicy {
+                payee: payee.clone(),
+                ttl_ms: crate::aitp::AITP_CHALLENGE_TTL_MS,
+                max_amount_micros: relay_contract::Microdollars::new(i64::MAX),
+            },
+            Arc::new(crate::aitp_challenge_store::PostgresChallengeStore::new(
+                evidence_pool.clone(),
+            )),
+            Arc::new(relay_aitp::SystemClock),
+            Arc::new(relay_aitp::UuidNonceSource),
+        ));
+        let challenge_cleanup = challenge_issuer.clone();
+        let challenge_cleanup_shutdown = shutdown_token.clone();
+        app_state.deferred_tasks.spawn(async move {
+            const RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
+            const BATCH_SIZE: usize = 1_000;
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3_600));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // Consume Tokio's immediate first tick; cleanup itself runs now.
+            interval.tick().await;
+            // Cleanup on startup, hourly, and once during graceful shutdown.
+            loop {
+                let cutoff = relay_billing::now_ms().saturating_sub(RETENTION_MS);
+                if let Err(error) = challenge_cleanup.purge_before(cutoff, BATCH_SIZE).await {
+                    tracing::warn!(error = %error, "Relay AITP retention cleanup failed");
+                }
+                tokio::select! {
+                    () = challenge_cleanup_shutdown.cancelled() => {
+                        let cutoff = relay_billing::now_ms().saturating_sub(RETENTION_MS);
+                        if let Err(error) = challenge_cleanup.purge_before(cutoff, BATCH_SIZE).await {
+                            tracing::warn!(error = %error, "Final Relay AITP retention cleanup failed");
+                        }
+                        break;
+                    },
+                    _ = interval.tick() => {}
+                }
+            }
+        });
+        crate::cost_feed::start_if_configured(
+            evidence_pool.clone(),
+            app_state.deferred_tasks.clone(),
+            shutdown_token.clone(),
+        )
+        .map_err(|error| {
+            billing_config_error(format!("failed to initialize Relay cost feed: {error}"))
+        })?;
+        let coordinator = Arc::new(
+            crate::settlement_outbox::DurableBillingCoordinator::postgres(
+                ledger.clone(),
+                evidence_pool,
+            ),
+        );
+        coordinator.recover_once(100).await.map_err(|error| {
+            billing_config_error(format!("Relay billing recovery failed at startup: {error}"))
+        })?;
+        let recovery = coordinator.clone();
+        let recovery_shutdown = shutdown_token.clone();
+        app_state.deferred_tasks.spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    () = recovery_shutdown.cancelled() => {
+                        // One final bounded reconciliation pass drains commands
+                        // staged by requests that completed during shutdown.
+                        if let Err(error) = recovery.recover_once(100).await {
+                            tracing::error!(error = %error, "Final Relay billing recovery pass failed");
+                        }
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        if let Err(error) = recovery.recover_once(100).await {
+                            tracing::error!(error = %error, "Relay billing recovery pass failed");
+                        }
+                    }
+                }
+            }
+        });
         let billing_state = crate::billing::BillingState::new(
             ledger,
             crate::billing::EstimatePolicy::default(),
             prices,
             payee,
-        );
+        )
+        .with_evidence_store(evidence_store)
+        .with_challenge_issuer(challenge_issuer)
+        .with_coordinator(coordinator)
+        .with_deferred_tasks(app_state.deferred_tasks.clone());
         router = router.layer(middleware::from_fn_with_state(
             billing_state,
             crate::billing::billing_middleware,
         ));
     }
+    router = router.layer(Extension(relay_health));
 
-    let config = app_state.config().load();
     if config.gateway.auth.enabled {
         let state = TensorzeroAuthMiddlewareState::new(TensorzeroAuthMiddlewareStateInner {
             unauthenticated_routes: UNAUTHENTICATED_ROUTES,
@@ -151,7 +320,9 @@ pub async fn build_axum_router(
     // increase the default body limit from 2MB to 100MB
     let final_router = router
         .layer(axum::middleware::from_fn(add_version_header))
-        .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(
+            crate::billing::MAX_REQUEST_BODY_BYTES,
+        ))
         // Accept encoded requests and transparently decompress them.
         // Supported encodings: gzip, br, zstd.
         .layer(RequestDecompressionLayer::new())
@@ -166,6 +337,38 @@ pub async fn build_axum_router(
         ))
         .with_state(app_state.clone());
     Ok((final_router, in_flight_requests_data))
+}
+
+async fn validate_configured_catalog_routes(
+    catalog: &relay_catalog::CatalogService,
+    config: &tensorzero_core::config::Config,
+) -> Result<(), Error> {
+    let model_routes = config
+        .models
+        .table
+        .keys()
+        .map(|name| format!("tensorzero::model_name::{name}"));
+    let embedding_routes = config
+        .embedding_models
+        .table
+        .keys()
+        .map(|name| format!("tensorzero::model_name::{name}"));
+    // TensorZero injects reserved built-in helper functions. They are not
+    // operator-callable retail routes and therefore do not belong in Relay's
+    // operator price catalog.
+    let function_routes = config
+        .functions
+        .keys()
+        .filter(|name| !name.starts_with("tensorzero::"))
+        .map(|name| format!("tensorzero::function_name::{name}"));
+    catalog
+        .validate_configured_routes(model_routes.chain(embedding_routes).chain(function_routes))
+        .await
+        .map_err(|error| {
+            billing_config_error(format!(
+                "Relay catalog does not cover the configured inference surface: {error}"
+            ))
+        })
 }
 
 /// Build the PRODUCTION billing engine behind the `Arc<dyn BillingLedger>` seam.
@@ -201,7 +404,47 @@ fn build_billing_ledger() -> Result<Arc<dyn relay_billing::BillingLedger>, Error
         .map(|p| p.trim().to_string())
         .filter(|p| !p.is_empty());
 
-    match relay_billing::MintLedger::with_reqwest(&url, api_key, payee, payer) {
+    #[derive(serde::Deserialize)]
+    struct VerificationKeyConfig {
+        key_id: String,
+        public_key_hex: String,
+    }
+    let raw_keys = std::env::var("MINT_VERIFICATION_KEYS_JSON")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            billing_config_error(
+                "RELAY_BILLING_ENABLED requires MINT_VERIFICATION_KEYS_JSON with pinned Ed25519 keys",
+            )
+        })?;
+    let configured: Vec<VerificationKeyConfig> =
+        serde_json::from_str(&raw_keys).map_err(|error| {
+            billing_config_error(format!("invalid MINT_VERIFICATION_KEYS_JSON: {error}"))
+        })?;
+    let mut verification_keys = Vec::with_capacity(configured.len());
+    for configured_key in configured {
+        if configured_key.key_id.trim().is_empty() {
+            return Err(billing_config_error(
+                "MINT_VERIFICATION_KEYS_JSON key_id cannot be empty",
+            ));
+        }
+        let bytes = hex::decode(configured_key.public_key_hex.trim()).map_err(|error| {
+            billing_config_error(format!("invalid Mint verification key hex: {error}"))
+        })?;
+        let bytes: [u8; 32] = bytes.try_into().map_err(|_| {
+            billing_config_error("Mint verification public keys must decode to 32 bytes")
+        })?;
+        verification_keys.push((configured_key.key_id, bytes));
+    }
+
+    match relay_billing::MintLedger::with_reqwest_verified(
+        &url,
+        api_key,
+        payee,
+        payer,
+        verification_keys,
+    ) {
         Ok(ledger) => {
             tracing::info!(mint_server_url = %url, "relay-billing settling on mint-server");
             Ok(Arc::new(ledger))
@@ -216,6 +459,84 @@ fn billing_config_error(message: impl Into<String>) -> Error {
     Error::new(ErrorDetails::Config {
         message: message.into(),
     })
+}
+
+struct CatalogRuntime {
+    service: Arc<relay_catalog::CatalogService>,
+    default_price: Option<relay_billing::ModelPrice>,
+}
+
+async fn build_catalog_runtime() -> Result<CatalogRuntime, Error> {
+    let catalog_path = nonempty_env("RELAY_CATALOG_PATH");
+    let legacy_path = nonempty_env("RELAY_PRICE_CATALOG_PATH");
+    if catalog_path.is_some() && legacy_path.is_some() {
+        return Err(billing_config_error(
+            "set only one of RELAY_CATALOG_PATH or RELAY_PRICE_CATALOG_PATH",
+        ));
+    }
+    let generated_at_ms = relay_billing::now_ms();
+    if let Some(path) = catalog_path {
+        let json = std::fs::read_to_string(&path).map_err(|error| {
+            billing_config_error(format!(
+                "failed to read RELAY_CATALOG_PATH '{path}': {error}"
+            ))
+        })?;
+        let service = relay_catalog::CatalogService::initialize(Arc::new(
+            relay_catalog::JsonCatalogSource::new(json),
+        ))
+        .await
+        .map_err(|error| {
+            billing_config_error(format!("failed to initialize Relay catalog: {error}"))
+        })?;
+        return Ok(CatalogRuntime {
+            service: Arc::new(service),
+            default_price: None,
+        });
+    }
+    if let Some(path) = legacy_path {
+        let json = std::fs::read_to_string(&path).map_err(|error| {
+            billing_config_error(format!(
+                "failed to read RELAY_PRICE_CATALOG_PATH '{path}': {error}"
+            ))
+        })?;
+        let config = relay_billing::catalog_config::parse(&json).map_err(|error| {
+            billing_config_error(format!(
+                "failed to load RELAY_PRICE_CATALOG_PATH '{path}': {error}"
+            ))
+        })?;
+        let default_price = config.default.map(|price| {
+            relay_billing::ModelPrice::new(
+                price.input_micro_usd_per_million,
+                price.output_micro_usd_per_million,
+            )
+        });
+        let service =
+            relay_catalog::CatalogService::builtin_with_price_overrides(generated_at_ms, &config)
+                .await
+                .map_err(|error| {
+                    billing_config_error(format!("failed to initialize Relay catalog: {error}"))
+                })?;
+        return Ok(CatalogRuntime {
+            service: Arc::new(service),
+            default_price,
+        });
+    }
+    let service = relay_catalog::CatalogService::builtin(generated_at_ms)
+        .await
+        .map_err(|error| {
+            billing_config_error(format!("failed to initialize Relay catalog: {error}"))
+        })?;
+    Ok(CatalogRuntime {
+        service: Arc::new(service),
+        default_price: None,
+    })
+}
+
+fn nonempty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 /// Routes that should not require authentication

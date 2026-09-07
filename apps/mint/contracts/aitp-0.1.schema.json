@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://railyard.dev/contracts/aitp-0.1.schema.json",
+  "title": "AITP-402 0.1 wire contract",
+  "$defs": {
+    "scheme": {"enum": ["aitp-hold", "aitp-transfer"]},
+    "challenge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payee", "amount_micros", "currency", "resource", "nonce", "expiry", "scheme"],
+      "properties": {
+        "payee": {"type": "string", "minLength": 1},
+        "amount_micros": {"type": "integer", "minimum": 0},
+        "currency": {"const": "AIT"},
+        "resource": {"type": "string", "minLength": 1},
+        "nonce": {"type": "string", "minLength": 1},
+        "expiry": {"type": "integer"},
+        "scheme": {"$ref": "#/$defs/scheme"}
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payer", "payee", "amount_micros", "nonce", "resource", "expiry", "scheme", "idempotency_key", "pubkey_id", "op_hash", "sig"],
+      "properties": {
+        "payer": {"type": "string", "minLength": 1},
+        "payee": {"type": "string", "minLength": 1},
+        "amount_micros": {"type": "integer", "minimum": 0},
+        "nonce": {"type": "string", "minLength": 1},
+        "resource": {"type": "string", "minLength": 1},
+        "expiry": {"type": "integer"},
+        "scheme": {"$ref": "#/$defs/scheme"},
+        "idempotency_key": {"type": "string", "minLength": 1},
+        "pubkey_id": {"type": "string", "minLength": 1},
+        "op_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sig": {"type": "string", "minLength": 1}
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seq", "op", "op_hash", "amount_micros", "balance_after_micros", "prev_hash", "hash", "sig"],
+      "properties": {
+        "seq": {"type": "integer", "minimum": 0},
+        "op": {"type": "string"},
+        "op_hash": {"type": "string"},
+        "amount_micros": {"type": "integer", "minimum": 0},
+        "balance_after_micros": {"type": "integer", "minimum": 0},
+        "prev_hash": {"type": "string"},
+        "hash": {"type": "string"},
+        "sig": {"type": "string"}
+      }
+    }
+  }
+}

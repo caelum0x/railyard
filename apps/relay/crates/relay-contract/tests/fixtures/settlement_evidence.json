@@ -1,0 +1,20 @@
+{
+  "data": {
+    "request_id": "018f7e23-7b55-7d9a-8000-000000000001",
+    "principal": "acct_relay_owner",
+    "receipt": {
+      "sequence": 52,
+      "operation": "hold.capture",
+      "operation_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "amount_micros": 2500,
+      "receipt_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "signature": "33333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "attestation": {
+      "format": "mint-hold-settlement-attestation-v1",
+      "signer_key_id": "mint-key-1"
+    },
+    "verified_at_ms": 1700000000457,
+    "settled_at_ms": 1700000000458
+  }
+}

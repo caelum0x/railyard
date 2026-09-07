@@ -1,0 +1,7 @@
+{
+  "error": {
+    "message": "requested Relay model was not found",
+    "type": "relay_catalog_error",
+    "code": "relay_model_not_found"
+  }
+}

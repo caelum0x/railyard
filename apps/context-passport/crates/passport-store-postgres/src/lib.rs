@@ -46,6 +46,15 @@ impl PassportStore for PostgresStore {
     ) -> Result<CreateOutcome, PassportError> {
         let mut tx = self.pool.begin().await.map_err(storage_error)?;
 
+        // Insert the passport (and its head version) BEFORE claiming the
+        // idempotency key: `passport_idempotency.passport_id` has an immediate
+        // FK to `passports(id)`, so the claim would violate the constraint if the
+        // passport did not yet exist. On a losing race the claim's `ON CONFLICT
+        // DO NOTHING` returns 0 rows and the rollback below discards this
+        // speculative passport + version, leaving no duplicate.
+        insert_passport(&mut tx, passport).await?;
+        insert_version(&mut tx, head).await?;
+
         let claimed = sqlx::query(
             "INSERT INTO passport_idempotency (idempotency_key, passport_id) VALUES ($1, $2) \
              ON CONFLICT (idempotency_key) DO NOTHING",
@@ -82,8 +91,6 @@ impl PassportStore for PostgresStore {
             });
         }
 
-        insert_passport(&mut tx, passport).await?;
-        insert_version(&mut tx, head).await?;
         tx.commit().await.map_err(storage_error)?;
         Ok(CreateOutcome {
             passport: passport.clone(),
@@ -224,7 +231,7 @@ impl ProvenanceLog for PostgresStore {
     async fn record(&self, record: &GenerationRecord) -> Result<(), PassportError> {
         let snapshot = serde_json::to_value(record)
             .map_err(|e| PassportError::Storage(format!("generation serialize: {e}")))?;
-        sqlx::query(
+        let result = sqlx::query(
             "INSERT INTO passport_generations (id, passport_id, snapshot, created_at) \
              VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING",
         )
@@ -235,6 +242,17 @@ impl ProvenanceLog for PostgresStore {
         .execute(&self.pool)
         .await
         .map_err(storage_error)?;
+        if result.rows_affected() == 0 {
+            let row = sqlx::query("SELECT snapshot FROM passport_generations WHERE id = $1")
+                .bind(&record.id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(storage_error)?;
+            let existing = row_to_generation(&row)?;
+            if existing != *record {
+                return Err(PassportError::IdempotencyConflict);
+            }
+        }
         Ok(())
     }
 
@@ -248,6 +266,15 @@ impl ProvenanceLog for PostgresStore {
         .await
         .map_err(storage_error)?;
         rows.iter().map(row_to_generation).collect()
+    }
+
+    async fn get(&self, id: &str) -> Result<Option<GenerationRecord>, PassportError> {
+        let row = sqlx::query("SELECT snapshot FROM passport_generations WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(storage_error)?;
+        row.as_ref().map(row_to_generation).transpose()
     }
 }
 

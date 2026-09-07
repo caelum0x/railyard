@@ -1,4 +1,4 @@
-# Context Passport — Character Lock Passport
+# Identity Lock — Versioned AI Character and Brand Identity
 
 **Status: runnable Sx0 product slice (multi-crate Rust workspace).** A
 provider-agnostic, versioned, **lockable** identity for an AI character / brand /
@@ -8,7 +8,12 @@ any other rail spend.
 
 The full thesis is in [`VISION.md`](./VISION.md); the architecture, crate split,
 and rail-integration plan are in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
-`PLAN.md` is the superseded OAuth-identity concept, kept for history.
+This product is **Identity Lock**, not Context Passport. `PLAN.md` describes the
+separate, approved Context Passport concept for user-owned structured context,
+field-level consent, and OAuth authorization-code + PKCE portability. Keeping
+the plan beside this legacy directory does not make those OAuth capabilities
+part of Identity Lock; they require a separately named service and threat-model
+gate before implementation.
 
 ## Standalone workspace
 
@@ -32,16 +37,16 @@ on `passport-server`.
 | `passport-provenance` | C2PA-aligned `GenerationRecord` (frozen rights snapshot), a `ProvenanceLog` port + in-memory impl, and a `to_c2pa_manifest` exporter |
 | `passport-store` | `MemoryStore` implementing both persistence ports (tests / embedded demos) |
 | `passport-store-postgres` | Neon/Postgres `PostgresStore` via the sqlx runtime API (compiles with no `DATABASE_URL`) + migrations |
-| `passport-relay-client` | real reqwest `RelayConditioningSink` — submits resolved conditioning to Relay |
-| `passport-mint-client` | real reqwest `MintMeter` — settles passport-conditioned generations on Mint |
-| `passport-server` | axum API + `PassportService` wiring store + provenance + Relay + Mint from env |
+| `passport-relay-client` | real reqwest `RelayConditioningSink` — submits conditioning and requires request-correlated signed Mint evidence on Relay's successful response |
+| `passport-mint-client` | legacy standalone `MintMeter` adapter retained for compatibility; it is not used by the generation path |
+| `passport-server` | axum API + `PassportService` wiring store + provenance + receipted Relay from env |
 | `passport-testkit` | `FakeRelay` / `FakeMint` transport fakes for tests |
 
 ## The core loop (Sx0)
 
 `create → edit (draft) → lock (immutable + content-addressed) → version (fork
 from a locked one) → resolve(provider, modality) → generate AS passport
-(Relay + provenance + Mint) → audit`.
+(Relay's single AITP settlement + signed provenance) → audit`.
 
 Two facts drive the design (from the provider research):
 
@@ -69,7 +74,7 @@ Two facts drive the design (from the provider research):
 | `POST /v1/passports/:id/versions` | `X-API-Key` | Branch a new draft from the locked head |
 | `GET /v1/passports/:id/versions/:v` | `X-API-Key` | Fetch a specific version |
 | `POST /v1/passports/:id/resolve` | `X-API-Key` | Resolve a locked version → provider `ConditioningPayload` |
-| `POST /v1/passports/:id/generate` | `X-API-Key` | Generate AS this passport via Relay; record provenance; meter Mint |
+| `POST /v1/passports/:id/generate` | `X-API-Key` | Generate via Relay; require principal/request-correlated signed settlement evidence; record it in provenance |
 | `GET /v1/passports/:id/generations` | `X-API-Key` | Provenance: assets conditioned by this passport |
 
 ## Run locally
@@ -79,7 +84,6 @@ cd apps/context-passport
 DATABASE_URL='postgres://postgres:postgres@localhost:5432/passport' \
 PASSPORT_API_KEY='passport-client-key' \
 RELAY_BASE='http://127.0.0.1:3000' RELAY_API_KEY='relay-secret' \
-MINT_BASE='http://127.0.0.1:8080'  MINT_API_KEY='mint-secret' \
 cargo run -p passport-server
 ```
 
@@ -94,7 +98,6 @@ credentials.
 | `DATABASE_URL` | yes | Postgres DSN for passport metadata, versions, provenance |
 | `PASSPORT_API_KEY` | yes | Credential clients send as `X-API-Key` |
 | `RELAY_BASE` / `RELAY_API_KEY` | yes | Relay gateway base URL + key |
-| `MINT_BASE` / `MINT_API_KEY` | yes | Mint settlement base URL + key |
 | `PASSPORT_BIND_ADDR` | no | Listener; default `0.0.0.0:8095` |
 | `RUST_LOG` | no | Tracing filter; default `info` |
 
@@ -110,9 +113,9 @@ cargo test
 ## Sx0 boundary (documented extension points)
 
 The resolver contract, capability routing, versioning/lock integrity, provenance,
-and the Relay/Mint seams are real and tested with fakes. Deferred to Sx1+ (see
-`ARCHITECTURE.md`): the live Relay conditioning endpoint contract and the Mint
-metering endpoint; the per-provider `provider_artifacts` minting/registry
+and the Relay settlement/provenance seam is real and tested with fakes. Deferred
+to Sx1+ (see `ARCHITECTURE.md`): live provider-specific Relay conditioning; the
+per-provider `provider_artifacts` minting/registry
 subsystem; Ed25519 signing + Merkle anchoring of locked versions and a real C2PA
 JUMBF exporter; `passport_grants` cross-product access control; and the Vend /
 Turnstile / Abacus / agent-runtime distribution surfaces.

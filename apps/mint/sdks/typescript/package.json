@@ -1,0 +1,23 @@
+{
+  "name": "@railyard/mint-sdk",
+  "version": "0.1.0",
+  "description": "Mint settlement API and AITP-402 client",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {"node": ">=20"},
+  "devDependencies": {"typescript": "^5.7.2"},
+  "license": "MIT"
+}

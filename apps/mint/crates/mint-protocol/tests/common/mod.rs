@@ -1,6 +1,6 @@
 //! Deterministic test harness for the AITP-402 handshake: `FixedClock` +
 //! `FixedSigner` (receipts) + a distinct `Ed25519Signer` (payer) + `InMemoryStore`
-//! + `InMemoryNonceStore` + `InMemoryPayerKeys`. No live network, no randomness.
+//! + `InMemoryPayerKeys`. No live network, no randomness.
 
 #![allow(dead_code)]
 
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use mint_ledger::{
     AccountId, AccountKind, Address, Ed25519Signer, FixedSigner, InMemoryStore, Ledger, Micros,
 };
-use mint_protocol::{Aitp402, InMemoryNonceStore, InMemoryPayerKeys};
+use mint_protocol::{Aitp402, InMemoryPayerKeys};
 use mint_store::FixedClock;
 
 /// The genesis test timestamp (unix ms).
@@ -26,7 +26,7 @@ pub const PAYER_SEED: [u8; 32] = [
 pub const PAYER_KEY_ID: &str = "payer-key-1";
 
 /// The concrete state-machine type under test.
-pub type Proto = Aitp402<InMemoryStore, Arc<FixedClock>, InMemoryPayerKeys, InMemoryNonceStore>;
+pub type Proto = Aitp402<InMemoryStore, Arc<FixedClock>, InMemoryPayerKeys>;
 
 /// A wired-up settlement engine plus the identities a test drives it with.
 pub struct Harness {
@@ -73,8 +73,7 @@ pub async fn setup() -> Harness {
 
     let payer_signer = Ed25519Signer::from_seed(PAYER_SEED, PAYER_KEY_ID);
     let keys = InMemoryPayerKeys::with_payer_signer(payer.as_str(), &payer_signer);
-    let nonces = InMemoryNonceStore::new(clock.clone());
-    let proto = Aitp402::new(ledger, clock.clone(), keys, nonces);
+    let proto = Aitp402::new(ledger, clock.clone(), keys);
 
     Harness {
         proto,

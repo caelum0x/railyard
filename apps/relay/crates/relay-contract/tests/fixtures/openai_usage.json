@@ -1,0 +1,10 @@
+{
+  "id": "chatcmpl_relay_fixture",
+  "choices": [],
+  "usage": {
+    "prompt_tokens": 1000,
+    "completion_tokens": 500,
+    "total_tokens": 1500,
+    "tensorzero_cost": 0.0075
+  }
+}

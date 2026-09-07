@@ -177,5 +177,19 @@ fn build_meta_observability_routes(
             get(move || std::future::ready(metrics_handle.render())),
         )
         .route("/status", get(endpoints::status::status_handler))
-        .route("/health", get(endpoints::status::health_handler))
+        .route("/health", get(crate::relay_health::health_handler))
+        .route("/v1/relay/catalog", get(crate::catalog::catalog_handler))
+        .route("/v1/relay/quotes", post(crate::catalog::quote_handler))
+        .route(
+            "/v1/billing/cost-events",
+            get(crate::cost_feed::list_cost_events_handler),
+        )
+        .route(
+            "/v1/billing/cost-events/{event_id}",
+            get(crate::cost_feed::inspect_cost_event_handler),
+        )
+        .route(
+            "/v1/billing/cost-events/{event_id}/replay",
+            post(crate::cost_feed::replay_cost_event_handler),
+        )
 }

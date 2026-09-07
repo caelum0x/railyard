@@ -1,0 +1,9 @@
+{
+  "payee": "ait1qrelay",
+  "amount_micros": 7500,
+  "currency": "AIT",
+  "resource": "POST /openai/v1/chat/completions#openai/gpt-4o@018f7e23-7b55-7d9a-8000-000000000001",
+  "nonce": "018f7e23-7b55-7d9a-8000-000000000002",
+  "expiry": 1800000000000,
+  "scheme": "aitp-hold"
+}

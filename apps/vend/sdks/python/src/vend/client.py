@@ -164,6 +164,16 @@ class VendClient:
     def get_app(self, app_id: str) -> dict[str, Any]:
         return self._control(f"/v1/customer/apps/{_segment(app_id)}", "GET")
 
+    def create_funding_checkout(
+        self, app_id: str, provider: str, amount_micros: int
+    ) -> dict[str, Any]:
+        """Deposit directly into the app's Mint reserve via hosted checkout."""
+        return self._control(
+            f"/v1/customer/apps/{_segment(app_id)}/funding-checkout",
+            "POST",
+            {"provider": provider, "amount_micros": amount_micros},
+        )
+
     def create_app(self, app: JsonObject) -> dict[str, Any]:
         return self._control("/v1/customer/apps", "POST", app)
 

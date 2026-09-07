@@ -1,4 +1,4 @@
--- Character Lock Passport storage. Passport heads, immutable versions, and
+-- Identity Lock storage. Passport heads, immutable versions, and
 -- generation provenance. Versions and generations keep a JSONB snapshot of the
 -- full typed record (assets + rights + content digest) alongside scalar columns
 -- used for querying, so the identity shape evolves without a migration per field.

@@ -1,98 +1,133 @@
 # @relay/sdk
 
-Native JavaScript/TypeScript client for the **Relay** inference gateway. It
-wraps the gateway's OpenAI-compatible HTTP surface directly (no `openai`
-dependency) using the global `fetch`.
+Native JavaScript/TypeScript client for Railyard Relay. It uses the platform
+`fetch` implementation and has no runtime dependencies.
 
 ## Install
 
 ```bash
-pnpm add @relay/sdk   # or npm install @relay/sdk
+pnpm add @relay/sdk
 ```
 
-## Usage
+Node 18+, modern browsers, React Native, and Expo runtimes with `fetch`,
+`ReadableStream`, `TextEncoder`, and `TextDecoder` are supported.
+
+## Paid inference
 
 ```ts
 import { RelayClient } from "@relay/sdk";
 
-const client = new RelayClient({
-  baseUrl: "http://localhost:3000", // gateway root
+const relay = new RelayClient({
+  baseUrl: process.env.RELAY_URL!,
   apiKey: process.env.RELAY_API_KEY,
-  knownModels: ["gpt-4o-mini"],
+  settlementEvidenceVerifier: (evidence) =>
+    mintVerifier.verifyAttestation(evidence, pinnedMintPublicKey),
 });
 
-// Non-streaming chat completion.
-const res = await client.chatCompletions({
-  model: "tensorzero::model_name::gpt-4o-mini",
-  messages: [{ role: "user", content: "Hello" }],
-});
-console.log(res.choices[0].message.content, res.usage);
+const completion = await relay.paidChatCompletions(
+  {
+    model: "tensorzero::model_name::openai::gpt-4o",
+    messages: [{ role: "user", content: "Summarize this." }],
+  },
+  {
+    // Private keys stay in the wallet/signer implementation. The SDK only
+    // receives the encoded authorization returned for this exact challenge.
+    authorize: (payment) => wallet.authorizeAitp(payment),
+  },
+);
+```
 
-// Streaming chat completion (async iterator over SSE deltas).
-for await (const chunk of client.chatCompletionsStream({
-  model: "tensorzero::model_name::gpt-4o-mini",
-  messages: [{ role: "user", content: "Stream please" }],
-})) {
-  process.stdout.write(chunk.choices[0]?.delta.content ?? "");
-  if (chunk.usage) console.log("\nusage:", chunk.usage);
+The paid methods perform exactly one `402 → authorize → retry` journey. A
+second challenge is returned as `PaymentRequiredError`; the SDK never loops or
+silently spends again. Paid helpers cover chat, chat streaming, native
+inference, embeddings, batch creation, and binary multipart extension calls.
+
+```ts
+const form = new MultipartForm()
+  .text("purpose", "batch")
+  .file("file", "requests.jsonl", "application/jsonl", bytes);
+await relay.paidMultipart("v1/files", form, authorizer);
+```
+
+Multipart bodies are encoded once and replayed byte-for-byte after a payment
+challenge, including the original boundary.
+
+A `409 request_already_settled` is promoted to `AlreadySettledError` only after
+`settlementEvidenceVerifier` approves Mint's signed attestation. Without a
+verifier it is `UnverifiedSettlementEvidenceError`; a rejected signature is
+`InvalidSettlementEvidenceError`. The verifier must use caller-pinned Mint key
+material, never a key learned from the evidence itself.
+
+## Streaming and recovery
+
+```ts
+const abandoned: string[] = [];
+const relay = new RelayClient({
+  baseUrl: "https://relay.example",
+  apiKey: "…",
+  onAbandonedStream: (requestId) => abandoned.push(requestId),
+});
+
+for await (const chunk of relay.paidChatCompletionsStream(params, authorizer)) {
+  // consume chunks
 }
 ```
 
-## API
+Relay withholds `[DONE]` until settlement intent is durable. If a consumer
+drops a stream before `[DONE]`, the callback receives the authenticated request
+ID synchronously. Put it on an application-owned queue and later call
+`settlementEvidence(requestId)`, which applies the configured verifier; do not
+perform asynchronous I/O in the callback itself. Recovery systems that already
+own a verifier pipeline may call the explicitly unsafe
+`settlementEvidenceUnverified(requestId)` and must validate before marking the
+request settled.
 
-### `new RelayClient({ baseUrl, apiKey?, fetch?, knownModels?, timeoutMs? })`
+## Discovery and operations
 
-- `baseUrl` — gateway root; chat calls hit `${baseUrl}/openai/v1/chat/completions`.
-- `apiKey` — sent as `Authorization: Bearer <apiKey>` when set.
-- `fetch` — inject a custom fetch (used by the test suite; defaults to global `fetch`).
-- `knownModels` — catalog returned by `models()` (see caveat below).
+```ts
+const status = await relay.status();
+const health = await relay.health(); // typed body on both HTTP 200 and 503
+const catalog = await relay.catalog();
+const quote = await relay.quote({
+  model: "openai/gpt-4o",
+  input_tokens: 1_000,
+  output_tokens: 500,
+});
 
-### `chatCompletions(params) => Promise<ChatCompletion>`
-
-POST with `stream:false`; returns the parsed OpenAI-compatible response.
-`model` and a non-empty `messages` array are required. Relay-native params are
-passed through under the `tensorzero::*` namespace (e.g. `tensorzero::episode_id`).
-
-### `chatCompletionsStream(params) => AsyncGenerator<ChatCompletionChunk>`
-
-POST with `stream:true` and `stream_options.include_usage:true`. Yields typed
-delta chunks parsed from the `text/event-stream` body and stops at `data: [DONE]`.
-The terminal chunk carries `usage`.
-
-### `models() => RelayModel[]`
-
-Returns the `knownModels` catalog annotated with each target's Relay address
-(`tensorzero::model_name::*`).
-
-> **Gateway gap:** Relay exposes **no** public list-models route. `models()`
-> therefore reflects the catalog you supply rather than fabricating an OpenAI
-> `/v1/models` payload from the network.
-
-### `credits(probeModel) => Promise<CreditStatus>` / `balance(probeModel)`
-
-Reads credit *availability*.
-
-> **Gateway gap:** Relay exposes **no** `/credits` or `/balance` route. Billing
-> is enforced by middleware that returns `402 { error: { type: "insufficient_credits" } }`
-> on inference. `credits()` issues a minimal probe inference (`max_tokens:1`) and
-> normalizes the result: `hasCredits:false` on a 402, otherwise `hasCredits:true`.
-> `balance` is always `null` — no numeric balance is invented.
-
-## Errors
-
-Non-2xx responses throw a typed error:
-
-- `402` / `insufficient_credits` → `InsufficientCreditsError`
-- `401` / `403` → `AuthError`
-- anything else → `RelayApiError`
-
-All carry `.status`, `.type`, `.code`, and the raw `.body`.
-
-## Testing
-
-Tests use a mocked `fetch` (no live gateway):
-
-```bash
-pnpm install
-pnpm test
+const deadLetters = await relay.costEvents({
+  state: "dead_lettered",
+  limit: 50,
+});
+await relay.replayCostEvent(deadLetters.items[0].event.event_id);
 ```
+
+Cost-event inspection, listing, and replay are principal-scoped by the Relay
+API key. Listing uses a bounded `limit` (1–100) and the returned
+`next_cursor` as the next page's `before` value.
+
+## Other request families
+
+- `chatCompletions` / `chatCompletionsStream`
+- `embeddings`
+- `inference`
+- `batchInference` / `batchInferenceStatus`
+- `settlementEvidence`
+- `costEvent` / `costEvents` / `replayCostEvent`
+- `status` / `health` / `catalog` / `quote`
+- `multipart` / `paidMultipart` for safe relative upload endpoints
+
+`models()` remains as a backward-compatible synchronous view of
+`knownModels`; new code should call `catalog()` for Relay's live,
+billing-consistent snapshot. `credits()` is also compatibility-only: it uses a
+dry-run availability probe and never invents a numeric balance.
+
+## Safety boundaries
+
+- Base URLs must be absolute HTTP(S) URLs without embedded credentials, query,
+  or fragment.
+- Redirects are rejected so authorization headers cannot cross origins.
+- JSON and SSE event sizes are bounded.
+- API keys and AITP authorizations are never exposed through a debug formatter.
+- AITP request IDs and operator pagination cursors must be UUIDs.
+
+Run `pnpm typecheck`, `pnpm test`, and `pnpm build` for the full local check.

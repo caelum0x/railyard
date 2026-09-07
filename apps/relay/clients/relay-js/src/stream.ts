@@ -10,6 +10,12 @@
 import type { ChatCompletionChunk } from "./types.js";
 
 const DONE_TOKEN = "[DONE]";
+const DEFAULT_MAX_EVENT_CHARS = 2 * 1024 * 1024;
+
+export interface StreamParseOptions {
+  maxEventChars?: number;
+  onDone?: () => void;
+}
 
 /**
  * Turn a byte stream (fetch Response.body) into decoded SSE data payloads.
@@ -18,26 +24,40 @@ const DONE_TOKEN = "[DONE]";
  */
 export async function* iterateSseData(
   stream: ReadableStream<Uint8Array>,
+  options: StreamParseOptions = {},
 ): AsyncGenerator<string, void, unknown> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const maxEventChars = options.maxEventChars ?? DEFAULT_MAX_EVENT_CHARS;
+  if (!Number.isSafeInteger(maxEventChars) || maxEventChars <= 0) {
+    throw new Error("Relay SSE event limit must be a positive safe integer");
+  }
 
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
+      if (buffer.length > maxEventChars && findSeparator(buffer) === -1) {
+        throw new Error(`Relay SSE event exceeded ${maxEventChars} characters`);
+      }
 
       // Frames are separated by a blank line. Handle both \n\n and \r\n\r\n.
       let sep = findSeparator(buffer);
       while (sep !== -1) {
         const rawFrame = buffer.slice(0, sep.index);
+        if (rawFrame.length > maxEventChars) {
+          throw new Error(`Relay SSE event exceeded ${maxEventChars} characters`);
+        }
         buffer = buffer.slice(sep.index + sep.length);
 
         const data = extractData(rawFrame);
         if (data !== null) {
-          if (data === DONE_TOKEN) return;
+          if (data === DONE_TOKEN) {
+            options.onDone?.();
+            return;
+          }
           yield data;
         }
         sep = findSeparator(buffer);
@@ -46,7 +66,12 @@ export async function* iterateSseData(
 
     // Flush any trailing frame that lacked a terminating blank line.
     const tail = extractData(buffer);
-    if (tail !== null && tail !== DONE_TOKEN) {
+    if (buffer.length > maxEventChars) {
+      throw new Error(`Relay SSE event exceeded ${maxEventChars} characters`);
+    }
+    if (tail === DONE_TOKEN) {
+      options.onDone?.();
+    } else if (tail !== null) {
       yield tail;
     }
   } finally {
@@ -59,8 +84,9 @@ export async function* iterateSseData(
  */
 export async function* parseChatCompletionStream(
   stream: ReadableStream<Uint8Array>,
+  options: StreamParseOptions = {},
 ): AsyncGenerator<ChatCompletionChunk, void, unknown> {
-  for await (const data of iterateSseData(stream)) {
+  for await (const data of iterateSseData(stream, options)) {
     let chunk: ChatCompletionChunk;
     try {
       chunk = JSON.parse(data) as ChatCompletionChunk;

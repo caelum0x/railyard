@@ -84,10 +84,30 @@ pub async fn perform(
         &[],
     )?;
 
+    // Apply prepaid wallet credit (after tax): draws the customer's wallet(s)
+    // down against this invoice and reduces its total, matching Lago's
+    // `AppliedPrepaidCreditsService` at invoice creation. The draw-down is only
+    // *persisted* on the winning re-bill reservation below, so it is applied
+    // exactly once per period.
+    let settlement =
+        crate::prepaid_settle::settle_prepaid(db, subscription.customer_id, &mut invoice, &fees)
+            .await?;
+    let prepaid = rago_db::PrepaidSettlement {
+        transactions: &settlement.transactions,
+        updated_wallets: &settlement.updated_wallets,
+    };
+
     // Persist behind the re-bill guard: billing the same subscription+period
     // twice yields exactly one invoice. A re-run returns the existing invoice.
     match db
-        .insert_subscription_invoice_guarded(&invoice, &fees, subscription.id, from, to)
+        .insert_subscription_invoice_with_prepaid_guarded(
+            &invoice,
+            &fees,
+            &prepaid,
+            subscription.id,
+            from,
+            to,
+        )
         .await?
     {
         rago_db::BilledInvoice::Created => Ok(BillingRun { invoice, fees }),

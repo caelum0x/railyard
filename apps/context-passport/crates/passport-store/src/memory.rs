@@ -162,7 +162,19 @@ impl PassportStore for MemoryStore {
 #[async_trait]
 impl ProvenanceLog for MemoryStore {
     async fn record(&self, record: &GenerationRecord) -> Result<(), PassportError> {
-        self.write()?.generations.push(record.clone());
+        let mut state = self.write()?;
+        if let Some(existing) = state
+            .generations
+            .iter()
+            .find(|existing| existing.id == record.id)
+        {
+            return if existing == record {
+                Ok(())
+            } else {
+                Err(PassportError::IdempotencyConflict)
+            };
+        }
+        state.generations.push(record.clone());
         Ok(())
     }
 
@@ -176,5 +188,14 @@ impl ProvenanceLog for MemoryStore {
             .collect();
         out.sort_by_key(|r| std::cmp::Reverse(r.created_at));
         Ok(out)
+    }
+
+    async fn get(&self, id: &str) -> Result<Option<GenerationRecord>, PassportError> {
+        Ok(self
+            .read()?
+            .generations
+            .iter()
+            .find(|r| r.id == id)
+            .cloned())
     }
 }

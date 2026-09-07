@@ -3747,8 +3747,7 @@ async fn test_relay_no_warn_when_skip_relay_set() {
 async fn test_local_mistral_config_parses_and_routes_to_local_provider() {
     use crate::model::ProviderConfig;
 
-    let config_str =
-        include_str!("../../../../examples/local-mistral/config/tensorzero.toml");
+    let config_str = include_str!("../../../../examples/local-mistral/config/tensorzero.toml");
     let table: toml::Table =
         toml::from_str(config_str).expect("shipped local-mistral config should parse as TOML");
 

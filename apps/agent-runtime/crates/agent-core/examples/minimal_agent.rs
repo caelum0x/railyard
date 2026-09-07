@@ -39,7 +39,8 @@ async fn main() {
         "ait1qprovider_receive_addr",
         AmountMicros(4_200), // µ$ — never floats
         "POST /openai/v1/chat/completions#tensorzero::model_name::openai::gpt-4o-mini",
-    );
+    )
+    .expect("valid priced route");
 
     let agent = RuntimeAgent::paid(
         model,

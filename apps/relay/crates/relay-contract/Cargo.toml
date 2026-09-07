@@ -1,0 +1,22 @@
+[package]
+name = "relay-contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Stable public wire contract for the Railyard Relay"
+
+[dependencies]
+base64 = "0.22"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ts-rs.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+googletest.workspace = true
+
+[lints]
+workspace = true

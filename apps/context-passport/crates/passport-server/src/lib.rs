@@ -1,4 +1,4 @@
-//! Character Lock Passport server: thin axum handlers over `PassportService`.
+//! Identity Lock server: thin axum handlers over `PassportService`.
 
 pub mod auth;
 pub mod dto;

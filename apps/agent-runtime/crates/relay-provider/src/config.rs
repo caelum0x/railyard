@@ -7,6 +7,10 @@
 //!   2. the `model` field MUST be prefixed `tensorzero::model_name::<model>`
 //!      (or `tensorzero::function_name::<fn>`), else Relay returns 400.
 
+use aitp_client::{AmountMicros, AuthorizationPolicy};
+
+use crate::error::RelayError;
+
 /// Path segment rig's openai Chat Completions client appends is
 /// `/chat/completions`, so the configured base URL must end at `/openai/v1`.
 pub const OPENAI_COMPAT_SUFFIX: &str = "/openai/v1";
@@ -55,5 +59,58 @@ impl RelayConfig {
             api_key: api_key.into(),
             model: format!("{FUNCTION_NAME_PREFIX}{}", function.as_ref()),
         }
+    }
+
+    /// Build the fail-closed policy for automatic AITP 402 authorization.
+    ///
+    /// The signed challenge must target this exact Relay chat-completions path
+    /// and configured model/function, the operator-pinned payee, and an amount
+    /// no greater than the caller's per-request limit.
+    pub fn payment_policy(
+        &self,
+        expected_payee: impl Into<String>,
+        max_amount_micros: AmountMicros,
+    ) -> Result<AuthorizationPolicy, RelayError> {
+        if max_amount_micros.get() <= 0 {
+            return Err(RelayError::Build(
+                "Relay payment limit must be positive".into(),
+            ));
+        }
+        let base = url::Url::parse(&self.base_url)
+            .map_err(|error| RelayError::Build(format!("invalid Relay base URL: {error}")))?;
+        if !matches!(base.scheme(), "http" | "https") || base.host_str().is_none() {
+            return Err(RelayError::Build(
+                "Relay base URL must be absolute http(s)".into(),
+            ));
+        }
+        let base_path = base.path().trim_end_matches('/');
+        let path = format!("{base_path}/chat/completions");
+        let model = billing_model_id(&self.model);
+        Ok(AuthorizationPolicy::new(
+            expected_payee,
+            format!("POST {path}#{model}@"),
+            max_amount_micros,
+        ))
+    }
+}
+
+fn billing_model_id(selector: &str) -> String {
+    let candidate = match selector.strip_prefix(MODEL_NAME_PREFIX) {
+        Some(model) => model,
+        None if selector.starts_with(FUNCTION_NAME_PREFIX) => {
+            return format!("openrouter/{selector}");
+        }
+        None => selector,
+    };
+    let normalized = match candidate.split_once("::") {
+        Some((provider, model)) if !provider.is_empty() && !model.is_empty() => {
+            format!("{provider}/{model}")
+        }
+        _ => candidate.to_string(),
+    };
+    if normalized.starts_with("openrouter/") {
+        normalized
+    } else {
+        format!("openrouter/{normalized}")
     }
 }

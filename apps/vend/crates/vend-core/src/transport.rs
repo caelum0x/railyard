@@ -72,6 +72,18 @@ pub struct CaptureRequest {
 pub struct CaptureResponse {
     /// Amount actually captured, in µ$.
     pub captured_micros: i64,
+    #[serde(default)]
+    pub proof: SettlementProof,
+}
+
+/// Signed, hash-linked evidence returned by Mint for a terminal hold operation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementProof {
+    pub sequence: u64,
+    pub operation: String,
+    pub operation_hash: String,
+    pub receipt_hash: String,
+    pub signature: String,
 }
 
 /// Release an unused hold (any non-2xx / aborted stream / panic path).
@@ -83,7 +95,10 @@ pub struct ReleaseRequest {
 
 /// Result of a release.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReleaseResponse {}
+pub struct ReleaseResponse {
+    #[serde(default)]
+    pub proof: SettlementProof,
+}
 
 /// Exact `POST /v1/transfers` request accepted by mint-server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,10 +129,30 @@ pub struct TransferResponse {
     pub idempotent_replay: bool,
 }
 
+/// Customer-selected hosted funding provider for a Mint account.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckoutRequest {
+    pub provider: String,
+    pub account_id: String,
+    pub amount_micros: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CheckoutResponse {
+    pub provider: String,
+    pub checkout_id: String,
+    pub checkout_url: String,
+    pub deposit_ref: String,
+    pub account_id: String,
+    pub amount_micros: i64,
+}
+
 /// The Mint data-plane seam. Object-safe (async_trait boxes the futures) so it
 /// can be stored as `Arc<dyn MintTransport>` in the server state.
 #[async_trait]
 pub trait MintTransport: Send + Sync {
+    /// `POST /v1/checkouts` — hosted on-ramp depositing into a Mint account.
+    async fn create_checkout(&self, req: CheckoutRequest) -> Result<CheckoutResponse, VendError>;
     /// `POST /v1/holds` — reserve `amount_micros` against `account_id`.
     async fn create_hold(&self, req: HoldRequest) -> Result<HoldResponse, VendError>;
     /// `GET /v1/holds/:id` — read Mint's authoritative hold projection.

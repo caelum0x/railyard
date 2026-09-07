@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use abacus_core::error::AbacusError;
 use abacus_core::transport::{
     Allowance, AllowanceSpend, AllowanceSpendReceipt, Capture, CaptureReceipt, Hold, HoldReceipt,
-    MintTransport, Release, ReleaseReceipt,
+    MintTransport, Release, ReleaseReceipt, SettlementProof,
 };
 
 /// Every mutating transport call, captured in order for assertions.
@@ -121,7 +121,13 @@ impl LedgerFakeMint {
 
     /// Current available balance for an account.
     pub fn balance(&self, account: &str) -> i64 {
-        *self.inner.lock().unwrap().balances.get(account).unwrap_or(&0)
+        *self
+            .inner
+            .lock()
+            .unwrap()
+            .balances
+            .get(account)
+            .unwrap_or(&0)
     }
 
     /// Remaining allowance headroom (`limit - spent`, floored at 0).
@@ -201,7 +207,11 @@ impl MintTransport for LedgerFakeMint {
             amount: req.amount_micros,
             to: req.payee.clone(),
         });
-        let rec = l.holds.get(hold_id).cloned().ok_or(AbacusError::HoldNotFound)?;
+        let rec = l
+            .holds
+            .get(hold_id)
+            .cloned()
+            .ok_or(AbacusError::HoldNotFound)?;
         if req.amount_micros > rec.amount {
             return Err(AbacusError::CaptureExceedsHold);
         }
@@ -210,10 +220,14 @@ impl MintTransport for LedgerFakeMint {
             let refund = rec.amount - req.amount_micros;
             let bal = *l.balances.get(&rec.account).unwrap_or(&0);
             l.balances.insert(rec.account.clone(), bal + refund);
-            // The captured amount permanently draws down the allowance, if any.
+            // Finalize the allowance draw-down. `spend_allowance` already reserved
+            // the FULL `rec.amount` against `spent`; capture converts that reserve
+            // to the actual by returning the unused remainder — so only the captured
+            // amount stays drawn down (spent -= (rec.amount - captured)). Adding the
+            // captured amount here instead would double-count the reservation.
             if let Some(aid) = &rec.allowance_id {
                 if let Some(a) = l.allowances.get_mut(aid) {
-                    a.spent += req.amount_micros;
+                    a.spent -= refund;
                 }
             }
             if let Some(h) = l.holds.get_mut(hold_id) {
@@ -227,6 +241,13 @@ impl MintTransport for LedgerFakeMint {
             captured_micros: req.amount_micros,
             balance_after_micros: balance_after,
             settlement_seq: seq,
+            proof: SettlementProof {
+                sequence: seq,
+                operation: "hold.capture".into(),
+                operation_hash: format!("fake-op-{seq}"),
+                receipt_hash: format!("fake-receipt-{seq}"),
+                signature: format!("fake-signature-{seq}"),
+            },
         })
     }
 
@@ -239,7 +260,11 @@ impl MintTransport for LedgerFakeMint {
         l.calls.push(Call::Release {
             hold_id: hold_id.to_string(),
         });
-        let rec = l.holds.get(hold_id).cloned().ok_or(AbacusError::HoldNotFound)?;
+        let rec = l
+            .holds
+            .get(hold_id)
+            .cloned()
+            .ok_or(AbacusError::HoldNotFound)?;
         if !rec.settled {
             // Reservation returns in full; allowance headroom is restored because
             // an allowance-backed hold only draws `spent` on CAPTURE.
@@ -254,8 +279,17 @@ impl MintTransport for LedgerFakeMint {
                 h.settled = true;
             }
         }
+        l.seq += 1;
+        let sequence = l.seq;
         Ok(ReleaseReceipt {
             released_micros: rec.amount,
+            proof: SettlementProof {
+                sequence,
+                operation: "hold.release".into(),
+                operation_hash: format!("fake-op-{sequence}"),
+                receipt_hash: format!("fake-receipt-{sequence}"),
+                signature: format!("fake-signature-{sequence}"),
+            },
         })
     }
 
@@ -411,6 +445,68 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, AbacusError::AllowanceExceeded);
+    }
+
+    // Reserve → capture on an allowance draws the ceiling down by the CAPTURED
+    // amount only — never the reserved ceiling. The reservation raised `spent` by
+    // the full reserve; capture must return the unused remainder so `remaining`
+    // reflects just the actual spend (regression against the double-count that left
+    // both the reservation and the capture drawn down).
+    #[tokio::test]
+    async fn allowance_capture_draws_down_only_the_actual() {
+        let mint = LedgerFakeMint::new().with_allowance("alw_x", 10_000, 0);
+        let spend = mint
+            .spend_allowance(AllowanceSpend {
+                allowance_id: "alw_x".into(),
+                amount_micros: 1_200,
+                payee: "ait1qpayee".into(),
+                idem_key: "s1".into(),
+            })
+            .await
+            .unwrap();
+        // Reserved the full ceiling slice up front.
+        assert_eq!(mint.allowance_remaining("alw_x"), 8_800);
+
+        mint.capture_hold(
+            spend.hold_id.as_deref().unwrap(),
+            Capture {
+                amount_micros: 750,
+                payee: "ait1qpayee".into(),
+                idem_key: "s1".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+        // Only the 750 actual stays drawn down: 10_000 - 750 = 9_250.
+        assert_eq!(mint.allowance_remaining("alw_x"), 9_250);
+    }
+
+    // Releasing an allowance reservation restores the ceiling in full — no spend.
+    #[tokio::test]
+    async fn allowance_release_restores_full_ceiling() {
+        let mint = LedgerFakeMint::new().with_allowance("alw_x", 10_000, 0);
+        let spend = mint
+            .spend_allowance(AllowanceSpend {
+                allowance_id: "alw_x".into(),
+                amount_micros: 1_200,
+                payee: "ait1qpayee".into(),
+                idem_key: "s1".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(mint.allowance_remaining("alw_x"), 8_800);
+
+        mint.release_hold(
+            spend.hold_id.as_deref().unwrap(),
+            Release {
+                idem_key: "s1".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(mint.allowance_remaining("alw_x"), 10_000);
     }
 
     #[tokio::test]

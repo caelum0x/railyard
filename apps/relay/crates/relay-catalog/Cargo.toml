@@ -1,0 +1,23 @@
+[package]
+name = "relay-catalog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Refreshable model catalog, capabilities, and exact quotes for Relay"
+
+[dependencies]
+async-trait.workspace = true
+relay-billing = { path = "../relay-billing" }
+relay-contract = { path = "../relay-contract" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+ts-rs.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true

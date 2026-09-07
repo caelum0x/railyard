@@ -1,0 +1,36 @@
+[package]
+name = "rithub-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "axum HTTP service: the forge JSON API plus a smart + dumb HTTP git server (clone, fetch, push) that hosts rit-backed repositories."
+
+[[bin]]
+name = "rithub-server"
+path = "src/main.rs"
+
+[dependencies]
+rithub-core.workspace = true
+rithub-git.workspace = true
+tokio.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+time.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+hmac = "0.12"
+sha2 = "0.10"
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+russh = "0.45"
+russh-keys = "0.45"
+async-trait = "0.1"

@@ -97,10 +97,11 @@ pub async fn settle(
     mint: &dyn MintTransport,
     receipts: &dyn ReceiptStore,
     identity: &AgentIdentity,
+    request_id: &str,
     guard: &mut HoldGuard,
     terminal: Terminal,
 ) -> Result<SettleOutcome, AbacusError> {
-    let (outcome, receipt_outcome, captured, balance_after, seq) = match terminal {
+    let (outcome, receipt_outcome, captured, balance_after, seq, proof) = match terminal {
         Terminal::Capture { actual_micros } => {
             // Clamp the capture to the reserved hold. Mint rejects any capture
             // that exceeds the held amount with `CaptureExceedsHold`; letting
@@ -137,17 +138,26 @@ pub async fn settle(
                 cap.captured_micros,
                 cap.balance_after_micros,
                 cap.settlement_seq,
+                cap.proof,
             )
         }
         Terminal::Release => {
-            mint.release_hold(
-                guard.hold_id(),
-                Release {
-                    idem_key: guard.idem_key().to_string(),
-                },
+            let release = mint
+                .release_hold(
+                    guard.hold_id(),
+                    Release {
+                        idem_key: guard.idem_key().to_string(),
+                    },
+                )
+                .await?;
+            (
+                SettleOutcome::Released,
+                ReceiptOutcome::Released,
+                0,
+                0,
+                release.proof.sequence,
+                release.proof,
             )
-            .await?;
-            (SettleOutcome::Released, ReceiptOutcome::Released, 0, 0, 0)
         }
     };
 
@@ -155,12 +165,15 @@ pub async fn settle(
         agent_id: identity_agent_id(identity),
         run_id: identity.run_id.clone(),
         budget_id: identity.budget.budget_id.clone(),
+        payer_account: identity.treasury.as_str().to_string(),
+        request_id: request_id.to_string(),
         hold_id: guard.hold_id().to_string(),
         reserved_micros: guard.reserved_micros,
         captured_micros: captured,
         balance_after_micros: balance_after,
         settlement_seq: seq,
         outcome: receipt_outcome,
+        settlement_proof: proof,
     };
     receipts.record(&receipt).await?;
 
@@ -187,8 +200,8 @@ fn identity_agent_id(identity: &AgentIdentity) -> abacus_core::ids::AgentId {
 mod tests {
     use super::*;
 
-    use abacus_core::ids::{AccountId, Ait1Address, BudgetId, RunId};
     use abacus_core::identity::{BudgetPolicy, FundingPath};
+    use abacus_core::ids::{AccountId, Ait1Address, BudgetId, RunId};
     use abacus_core::transport::Hold;
     use abacus_testkit::fake_mint::Call;
     use abacus_testkit::{FakeReceiptStore, LedgerFakeMint};
@@ -245,6 +258,7 @@ mod tests {
             &mint,
             &receipts,
             &id,
+            "request_over_reserve",
             &mut guard,
             Terminal::Capture {
                 actual_micros: 6_500,
@@ -280,6 +294,7 @@ mod tests {
             &mint,
             &receipts,
             &id,
+            "request_under_reserve",
             &mut guard,
             Terminal::Capture {
                 actual_micros: 2_500,

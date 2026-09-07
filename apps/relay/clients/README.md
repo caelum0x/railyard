@@ -13,21 +13,24 @@ Models and functions are addressed via the `model` field using Relay's
 | Directory     | Language              | Package        | Status |
 |---------------|-----------------------|----------------|--------|
 | `relay-js`    | JavaScript/TypeScript | `@relay/sdk`   | Real client + tests |
+| `relay-python`| Python                | `railyard-relay` | Real sync/async client + tests |
 | `relay-ruby`  | Ruby                  | `relay`        | Real client + tests |
 | `openai-node` | JavaScript/TypeScript | (OpenAI SDK)   | Interop example |
 | `openai-go`   | Go                    | (OpenAI SDK)   | Interop example |
 
-Both `relay-js` and `relay-ruby` implement:
+The first-party JavaScript, Python, and Ruby SDKs implement:
 
 - **chat** — non-streaming chat completions (`chatCompletions` / `chat_completions`)
 - **stream** — SSE streaming chat completions with `stream_options.include_usage`
   (`chatCompletionsStream` / `chat_completions_stream`)
-- **models** — returns the configured `knownModels` catalog annotated with Relay
-  targets (the gateway exposes no public list-models route)
-- **credits/balance** — probes the billing middleware's `402 insufficient_credits`
-  signal with a minimal inference (the gateway exposes no dedicated balance route)
+- **paid inference** — typed AITP challenge decoding and exactly one authorized retry
+- **discovery** — live catalog, exact quote, status, and typed degraded health
+- **operations** — settlement evidence and principal-scoped cost-event inspection/replay
+- **multipart** — binary-safe upload forms and byte-identical paid retries
+- **compatibility** — local known-models and dry-run availability probes without
+  fabricating catalog or balance data
 
-Both map non-2xx responses to a typed error hierarchy (insufficient-credits, auth,
+They map non-2xx responses to a typed error hierarchy (payment-required, auth,
 not-found, rate-limit, server, generic API errors) and pass through
 `tensorzero::*` extension params untouched.
 

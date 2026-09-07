@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AbacusError;
 use crate::ids::{AgentId, BudgetId, RunId};
+use crate::transport::SettlementProof;
 
 /// How a receipted request terminated on the money path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +33,10 @@ pub struct MintReceipt {
     pub run_id: RunId,
     /// Budget the spend drew against.
     pub budget_id: BudgetId,
+    /// Principal whose Mint balance funded the request.
+    pub payer_account: String,
+    /// Stable request correlation key shared with Relay/Mint/Ledgerline.
+    pub request_id: String,
     /// The Mint hold that backed the reservation.
     pub hold_id: String,
     /// Amount reserved on the hold (`est_max`), in µ$.
@@ -44,6 +49,8 @@ pub struct MintReceipt {
     pub settlement_seq: u64,
     /// Terminal outcome.
     pub outcome: ReceiptOutcome,
+    /// Mint's signed, hash-linked evidence for capture or release.
+    pub settlement_proof: SettlementProof,
 }
 
 /// The receipt system-of-record. Object-safe for `Arc<dyn ReceiptStore>`.
@@ -55,6 +62,16 @@ pub trait ReceiptStore: Send + Sync {
 
     /// Fetch a receipt by its backing hold id, if present.
     async fn get(&self, hold_id: &str) -> Result<Option<MintReceipt>, AbacusError>;
+
+    /// Fetch a receipt by the stable cross-system `request_id` a caller supplies
+    /// (the `x-request-id` correlation shared with Relay/Mint/Ledgerline). This
+    /// is the audit key a client actually holds after a proxied request, so the
+    /// receipt system-of-record can be queried without knowing the internal Mint
+    /// hold id.
+    async fn get_by_request_id(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<MintReceipt>, AbacusError>;
 }
 
 #[cfg(test)]
@@ -67,12 +84,21 @@ mod tests {
             agent_id: AgentId::generate(),
             run_id: RunId::generate(),
             budget_id: BudgetId::generate(),
+            payer_account: "acct_treasury".into(),
+            request_id: "request_1".into(),
             hold_id: "hold_1".into(),
             reserved_micros: 5_000,
             captured_micros: 3_200,
             balance_after_micros: 96_800,
             settlement_seq: 42,
             outcome: ReceiptOutcome::Captured,
+            settlement_proof: SettlementProof {
+                sequence: 42,
+                operation: "hold.capture".into(),
+                operation_hash: "op_hash".into(),
+                receipt_hash: "receipt_hash".into(),
+                signature: "signature".into(),
+            },
         };
         let json = serde_json::to_string(&r).unwrap();
         assert!(json.contains(r#""outcome":"captured""#));

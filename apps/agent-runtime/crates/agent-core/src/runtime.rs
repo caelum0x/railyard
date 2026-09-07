@@ -4,10 +4,11 @@
 use std::sync::Arc;
 
 use aitp_client::PaymentGateway;
-use rig_agent::{Agent, AgentBuilder};
+use rig_core::agent::{Agent, AgentBuilder};
 use rig_core::completion::CompletionModel;
 
 use crate::paid::{PaidCompletionModel, PricedRoute};
+use crate::reconcile::CaptureReconciler;
 
 /// Minimal agent configuration shared by the economy apps.
 #[derive(Debug, Clone, Default)]
@@ -21,7 +22,7 @@ pub struct RuntimeConfig {
 }
 
 impl RuntimeConfig {
-    fn apply(&self, mut builder: AgentBuilder) -> AgentBuilder {
+    fn apply<M: CompletionModel>(&self, mut builder: AgentBuilder<M>) -> AgentBuilder<M> {
         if let Some(preamble) = &self.preamble {
             builder = builder.preamble(preamble);
         }
@@ -36,7 +37,7 @@ impl RuntimeConfig {
 }
 
 /// Build a plain agent over any completion model (no payment decoration).
-pub fn build_agent<M>(model: M, config: &RuntimeConfig) -> Agent
+pub fn build_agent<M>(model: M, config: &RuntimeConfig) -> Agent<M>
 where
     M: CompletionModel + 'static,
 {
@@ -49,11 +50,30 @@ pub fn build_paid_agent<M, P>(
     gateway: Arc<P>,
     route: PricedRoute,
     config: &RuntimeConfig,
-) -> Agent
+) -> Agent<PaidCompletionModel<M, P>>
+where
+    M: CompletionModel + 'static,
+    P: PaymentGateway + 'static,
+{
+    build_paid_agent_with_reconciler(model, gateway, route, config).0
+}
+
+/// Like [`build_paid_agent`], but also returns the shared capture-reconciliation
+/// queue so an operator using the builder (rather than the model directly) can
+/// drain owed captures on shutdown via
+/// [`CaptureReconciler::reconcile_now`](crate::reconcile::CaptureReconciler::reconcile_now)
+/// and inspect any dead-lettered, revenue-owed captures.
+pub fn build_paid_agent_with_reconciler<M, P>(
+    model: M,
+    gateway: Arc<P>,
+    route: PricedRoute,
+    config: &RuntimeConfig,
+) -> (Agent<PaidCompletionModel<M, P>>, Arc<CaptureReconciler<P>>)
 where
     M: CompletionModel + 'static,
     P: PaymentGateway + 'static,
 {
     let paid = PaidCompletionModel::new(model, gateway, route);
-    build_agent(paid, config)
+    let reconciler = paid.reconciler();
+    (build_agent(paid, config), reconciler)
 }

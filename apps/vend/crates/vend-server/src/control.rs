@@ -21,6 +21,7 @@ use vend_core::envelope::{ErrorEnvelope, SuccessEnvelope};
 use vend_core::error::VendError;
 use vend_core::ids::{AppId, SubKeyId, TenantId};
 use vend_core::money::MarkupPolicy;
+use vend_core::transport::{CheckoutRequest, MintTransport};
 use vend_keys::KeyEnv;
 use vend_store::{
     AuditActorKind, AuditOutcome, BootstrapConfig, ControlPlaneRepo, CreateApp, CreateAppKey,
@@ -115,6 +116,7 @@ struct ControlState {
     security_repo: Arc<dyn SecurityOpsRepo>,
     security_config: SecurityOpsConfig,
     customer_auth: CustomerAuthConfig,
+    mint: Arc<dyn MintTransport>,
 }
 
 #[derive(Clone)]
@@ -197,12 +199,14 @@ pub fn build_control_router(
     auth: AdminAuth,
     customer_auth: CustomerAuthConfig,
     security_config: SecurityOpsConfig,
+    mint: Arc<dyn MintTransport>,
 ) -> Router {
     let state = ControlState {
         repo,
         security_repo,
         security_config,
         customer_auth,
+        mint,
     };
     let admin = Router::new()
         .route("/v1/control/openapi.json", get(openapi))
@@ -246,6 +250,10 @@ pub fn build_control_router(
             get(customer_list_apps).post(customer_create_app),
         )
         .route("/v1/customer/apps/:app_id", get(customer_get_app))
+        .route(
+            "/v1/customer/apps/:app_id/funding-checkout",
+            post(customer_funding_checkout),
+        )
         .route(
             "/v1/customer/apps/:app_id/enabled",
             patch(customer_set_app_enabled),
@@ -410,7 +418,9 @@ fn audit_route_descriptor(method: &str, path: &str) -> Option<(String, String, O
         return None;
     }
     let segments: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
-    let (resource, marker) = if path.contains("/keys/") || path.ends_with("/keys") {
+    let (resource, marker) = if path.ends_with("/funding-checkout") {
+        ("funding_checkout", "apps")
+    } else if path.contains("/keys/") || path.ends_with("/keys") {
         ("provisioning_key", "keys")
     } else if path.contains("/users/") || path.ends_with("/users") {
         ("membership", "users")
@@ -943,6 +953,40 @@ async fn customer_get_app(
     Path(raw): Path<String>,
 ) -> Response {
     result(owned_app(&state, &principal, &raw).await)
+}
+
+#[derive(Deserialize)]
+struct FundingCheckoutRequest {
+    provider: String,
+    amount_micros: i64,
+}
+
+async fn customer_funding_checkout(
+    State(state): State<ControlState>,
+    Extension(principal): Extension<CustomerPrincipal>,
+    Path(raw): Path<String>,
+    Json(input): Json<FundingCheckoutRequest>,
+) -> Response {
+    if let Err(response) = require_role(&principal, CustomerRole::Admin) {
+        return response;
+    }
+    if input.amount_micros <= 0 || input.amount_micros % 10_000 != 0 {
+        return control_error(VendError::InvalidAmount);
+    }
+    let app = match owned_app(&state, &principal, &raw).await {
+        Ok(app) => app,
+        Err(error) => return control_error(error),
+    };
+    secret_result(
+        state
+            .mint
+            .create_checkout(CheckoutRequest {
+                provider: input.provider,
+                account_id: app.mint_account_id,
+                amount_micros: input.amount_micros,
+            })
+            .await,
+    )
 }
 
 async fn customer_set_app_enabled(

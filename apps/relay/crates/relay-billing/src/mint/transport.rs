@@ -99,6 +99,24 @@ impl HttpResponse {
         }
     }
 
+    /// Append a response header (name lowercased).
+    #[must_use]
+    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers
+            .push((name.into().to_ascii_lowercase(), value.into()));
+        self
+    }
+
+    /// Case-insensitive response-header lookup.
+    #[must_use]
+    pub fn header(&self, name: &str) -> Option<&str> {
+        let needle = name.to_ascii_lowercase();
+        self.headers
+            .iter()
+            .find(|(key, _)| *key == needle)
+            .map(|(_, value)| value.as_str())
+    }
+
     /// `true` for `2xx`.
     #[must_use]
     pub fn is_success(&self) -> bool {

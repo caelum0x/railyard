@@ -188,6 +188,7 @@ mod tests {
             revenue_account: "acct_revenue".into(),
             cogs_account: "acct_cogs".into(),
             provider_account: "acct_provider".into(),
+            source_settlement_receipt: None,
         }
     }
 

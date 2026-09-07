@@ -7,6 +7,8 @@
 use crate::error::{ForgeError, Result};
 use crate::oid::ObjectId;
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// A resolved-one-step reference value.
@@ -51,6 +53,9 @@ impl Refs {
 
     /// Resolve a ref name (full or shorthand) to an object id.
     pub fn resolve(&self, name: &str) -> Result<ObjectId> {
+        if name != "HEAD" && name.starts_with("refs/") {
+            validate_refname(name)?;
+        }
         self.resolve_depth(name, 0)
     }
 
@@ -94,11 +99,143 @@ impl Refs {
 
     /// Read one loose ref file, if present, one step (no recursion).
     fn read_loose_ref(&self, refname: &str) -> Result<Option<RefTarget>> {
+        validate_refname(refname)?;
         let path = self.git_dir.join(refname);
         match std::fs::read_to_string(&path) {
             Ok(raw) => Ok(Some(parse_ref_content(raw.trim())?)),
-            Err(_) => Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
         }
+    }
+
+    /// Atomically update a direct ref if it still has `expected` as its current
+    /// value. `None` means the ref must not exist. A `.lock` file serializes
+    /// writers; publishing is one fsync + rename + parent-directory fsync.
+    ///
+    /// Packed refs are supported: a successful update writes a loose ref that
+    /// shadows the packed value, matching Git's storage behavior.
+    pub fn compare_and_swap(
+        &self,
+        name: &str,
+        expected: Option<ObjectId>,
+        new: ObjectId,
+    ) -> Result<()> {
+        validate_refname(name)?;
+        let path = self.git_dir.join(name);
+        let parent = path
+            .parent()
+            .ok_or_else(|| ForgeError::UnsafePath(name.to_string()))?;
+        std::fs::create_dir_all(parent)?;
+        reject_symlink_components(&self.git_dir, parent)?;
+
+        let lock_path = PathBuf::from(format!("{}.lock", path.display()));
+        let mut lock = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(ForgeError::RefLocked(name.to_string()))
+            }
+            Err(error) => return Err(error.into()),
+        };
+
+        let result = (|| {
+            let actual = match self.resolve(name) {
+                Ok(oid) => Some(oid),
+                Err(ForgeError::InvalidRef(_)) => None,
+                Err(error) => return Err(error),
+            };
+            if actual != expected {
+                return Err(ForgeError::RefConflict {
+                    name: name.to_string(),
+                    expected: expected
+                        .map(|oid| oid.to_hex())
+                        .unwrap_or_else(|| "<missing>".into()),
+                    actual: actual
+                        .map(|oid| oid.to_hex())
+                        .unwrap_or_else(|| "<missing>".into()),
+                });
+            }
+
+            writeln!(lock, "{new}")?;
+            lock.sync_all()?;
+            std::fs::rename(&lock_path, &path)?;
+            std::fs::File::open(parent)?.sync_all()?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&lock_path);
+        }
+        result
+    }
+
+    /// Atomically remove one loose ref if it still resolves to `expected`.
+    ///
+    /// The lock and compare step use the same protocol as
+    /// [`compare_and_swap`](Self::compare_and_swap). A ref backed by
+    /// `packed-refs` fails closed: removing a loose shadow could reveal an older
+    /// packed value, and rewriting `packed-refs` belongs to a separate
+    /// multi-storage transaction rather than this one-file primitive.
+    pub fn compare_and_delete(&self, name: &str, expected: ObjectId) -> Result<()> {
+        validate_refname(name)?;
+        let path = self.git_dir.join(name);
+        let parent = path
+            .parent()
+            .ok_or_else(|| ForgeError::UnsafePath(name.to_string()))?;
+        std::fs::create_dir_all(parent)?;
+        reject_symlink_components(&self.git_dir, parent)?;
+        if std::fs::symlink_metadata(&path)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return Err(ForgeError::UnsafePath(path.display().to_string()));
+        }
+
+        let lock_path = PathBuf::from(format!("{}.lock", path.display()));
+        let lock = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(ForgeError::RefLocked(name.to_string()))
+            }
+            Err(error) => return Err(error.into()),
+        };
+
+        let result = (|| {
+            let actual = match self.resolve(name) {
+                Ok(oid) => Some(oid),
+                Err(ForgeError::InvalidRef(_)) => None,
+                Err(error) => return Err(error),
+            };
+            if actual != Some(expected) {
+                return Err(ForgeError::RefConflict {
+                    name: name.to_string(),
+                    expected: expected.to_hex(),
+                    actual: actual
+                        .map(|oid| oid.to_hex())
+                        .unwrap_or_else(|| "<missing>".into()),
+                });
+            }
+            if self.read_packed_refs()?.contains_key(name) {
+                return Err(ForgeError::ReceiveRejected(format!(
+                    "cannot safely delete packed ref {name} with the loose-ref transaction"
+                )));
+            }
+            std::fs::remove_file(&path)?;
+            std::fs::File::open(parent)?.sync_all()?;
+            Ok(())
+        })();
+        drop(lock);
+        let cleanup = std::fs::remove_file(&lock_path);
+        if result.is_ok() {
+            cleanup?;
+        }
+        result
     }
 
     /// Parse `.git/packed-refs` into a name -> oid map (peel lines ignored).
@@ -133,8 +270,6 @@ impl Refs {
             return vec![name.to_string()];
         }
         vec![
-            name.to_string(),
-            format!("refs/{name}"),
             format!("refs/tags/{name}"),
             format!("refs/heads/{name}"),
             format!("refs/remotes/{name}"),
@@ -152,6 +287,46 @@ fn parse_ref_content(content: &str) -> Result<RefTarget> {
     }
 }
 
+/// Conservative subset of `git check-ref-format`. Most importantly this keeps
+/// repository-controlled names inside `.git/refs` and reserves `.lock` for the
+/// transaction protocol.
+pub fn validate_refname(name: &str) -> Result<()> {
+    let invalid = !name.starts_with("refs/")
+        || name.ends_with('/')
+        || name.ends_with('.')
+        || name.ends_with(".lock")
+        || name.contains("..")
+        || name.contains("//")
+        || name.contains("@{")
+        || name
+            .bytes()
+            .any(|b| b <= b' ' || b == 0x7f || b"~^:?*[\\".contains(&b))
+        || name
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..");
+    if invalid {
+        return Err(ForgeError::InvalidRef(name.to_string()));
+    }
+    Ok(())
+}
+
+fn reject_symlink_components(root: &Path, target: &Path) -> Result<()> {
+    let relative = target
+        .strip_prefix(root)
+        .map_err(|_| ForgeError::UnsafePath(target.display().to_string()))?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        current.push(component);
+        if std::fs::symlink_metadata(&current)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return Err(ForgeError::UnsafePath(current.display().to_string()));
+        }
+    }
+    Ok(())
+}
+
 /// Recursively collect loose refs under `dir`, keyed by full ref name.
 fn collect_loose(root: &Path, dir: &Path, out: &mut HashMap<String, ObjectId>) -> Result<()> {
     let read_dir = match std::fs::read_dir(dir) {
@@ -160,6 +335,13 @@ fn collect_loose(root: &Path, dir: &Path, out: &mut HashMap<String, ObjectId>) -
     };
     for entry in read_dir.flatten() {
         let path = entry.path();
+        if entry
+            .file_type()
+            .map(|kind| kind.is_symlink())
+            .unwrap_or(true)
+        {
+            continue;
+        }
         if path.is_dir() {
             collect_loose(root, &path, out)?;
         } else if let Ok(raw) = std::fs::read_to_string(&path) {
@@ -178,6 +360,8 @@ fn collect_loose(root: &Path, dir: &Path, out: &mut HashMap<String, ObjectId>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
 
     #[test]
     fn parses_symbolic_head() {
@@ -190,5 +374,84 @@ mod tests {
         let hex = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
         let t = parse_ref_content(hex).unwrap();
         assert_eq!(t, RefTarget::Direct(ObjectId::from_hex(hex).unwrap()));
+    }
+
+    #[test]
+    fn rejects_ref_path_traversal() {
+        for name in [
+            "refs/heads/../../outside",
+            "../outside",
+            "refs/heads/x.lock",
+        ] {
+            assert!(validate_refname(name).is_err(), "accepted {name}");
+        }
+    }
+
+    #[test]
+    fn compare_and_swap_allows_only_one_concurrent_winner() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("refs/heads")).unwrap();
+        let old = ObjectId::from_hex("1111111111111111111111111111111111111111").unwrap();
+        let left = ObjectId::from_hex("2222222222222222222222222222222222222222").unwrap();
+        let right = ObjectId::from_hex("3333333333333333333333333333333333333333").unwrap();
+        std::fs::write(dir.path().join("refs/heads/main"), format!("{old}\n")).unwrap();
+
+        let root = Arc::new(dir.path().to_path_buf());
+        let barrier = Arc::new(Barrier::new(3));
+        let spawn = |next| {
+            let root = root.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                let refs = Refs::new(&root);
+                barrier.wait();
+                refs.compare_and_swap("refs/heads/main", Some(old), next)
+            })
+        };
+        let a = spawn(left);
+        let b = spawn(right);
+        barrier.wait();
+        let results = [a.join().unwrap(), b.join().unwrap()];
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        let actual = Refs::new(&root).resolve("refs/heads/main").unwrap();
+        assert!(actual == left || actual == right);
+        assert!(!dir.path().join("refs/heads/main.lock").exists());
+    }
+
+    #[test]
+    fn compare_and_delete_removes_only_the_expected_loose_ref() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("refs/heads")).unwrap();
+        let old = ObjectId::from_hex("1111111111111111111111111111111111111111").unwrap();
+        let wrong = ObjectId::from_hex("2222222222222222222222222222222222222222").unwrap();
+        std::fs::write(dir.path().join("refs/heads/main"), format!("{old}\n")).unwrap();
+        let refs = Refs::new(dir.path());
+
+        assert!(matches!(
+            refs.compare_and_delete("refs/heads/main", wrong),
+            Err(ForgeError::RefConflict { .. })
+        ));
+        assert_eq!(refs.resolve("refs/heads/main").unwrap(), old);
+        refs.compare_and_delete("refs/heads/main", old).unwrap();
+        assert!(refs.resolve("refs/heads/main").is_err());
+        assert!(!dir.path().join("refs/heads/main.lock").exists());
+    }
+
+    #[test]
+    fn compare_and_delete_refuses_a_packed_backing_value() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("refs/heads")).unwrap();
+        let old = ObjectId::from_hex("1111111111111111111111111111111111111111").unwrap();
+        std::fs::write(
+            dir.path().join("packed-refs"),
+            format!("# pack-refs with: peeled fully-peeled\n{old} refs/heads/main\n"),
+        )
+        .unwrap();
+        let refs = Refs::new(dir.path());
+        assert!(matches!(
+            refs.compare_and_delete("refs/heads/main", old),
+            Err(ForgeError::ReceiveRejected(_))
+        ));
+        assert_eq!(refs.resolve("refs/heads/main").unwrap(), old);
+        assert!(!dir.path().join("refs/heads/main.lock").exists());
     }
 }

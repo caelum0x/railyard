@@ -142,10 +142,22 @@ async fn write_response(sock: &mut TcpStream, status: u16, body: &str) -> std::i
         422 => "Unprocessable Entity",
         _ => "Status",
     };
+    // Successful terminal hold responses carry the same flat signed evidence
+    // header as mint-server. The client must use this as its canonical anchor,
+    // never derive a receipt locally from response fields.
+    const CAPTURE_RECEIPT: &str = "eyJzZXEiOjQyLCJvcCI6ImhvbGQuY2FwdHVyZSIsIm9wX2hhc2giOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiYW1vdW50X21pY3JvcyI6OTkwMDAwLCJiYWxhbmNlX2FmdGVyX21pY3JvcyI6NzAxMDAwMCwicHJldl9oYXNoIjoiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYiIsImhhc2giOiJjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjIiwic2lnIjoiZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUifQ";
+    const RELEASE_RECEIPT: &str = "eyJzZXEiOjksIm9wIjoiaG9sZC5yZWxlYXNlIiwib3BfaGFzaCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJhbW91bnRfbWljcm9zIjo5OTAwMDAsImJhbGFuY2VfYWZ0ZXJfbWljcm9zIjo3MDEwMDAwLCJwcmV2X2hhc2giOiJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiIiwiaGFzaCI6ImRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGQiLCJzaWciOiJlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZSJ9";
+    let receipt_header = if (200..300).contains(&status) && body.contains("\"status\":\"released\"")
+    {
+        format!("AITP-Receipt: {RELEASE_RECEIPT}\r\nAITP-Version: 1\r\n")
+    } else if (200..300).contains(&status) && body.contains("\"captured_micros\"") {
+        format!("AITP-Receipt: {CAPTURE_RECEIPT}\r\nAITP-Version: 1\r\n")
+    } else {
+        String::new()
+    };
     let resp = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\n{receipt_header}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(), body
     );
     sock.write_all(resp.as_bytes()).await?;
     sock.flush().await
@@ -217,7 +229,7 @@ async fn create_hold_posts_correct_request_and_parses_receipt() {
 }
 
 #[tokio::test]
-async fn capture_hold_parses_receipt_and_derives_receipt_id() {
+async fn capture_hold_uses_signed_receipt_as_entitlement_anchor() {
     let hold_id = "hold_00000000000000000000000007";
     let (base, log) = start_mock(|_req| {
         (
@@ -251,12 +263,11 @@ async fn capture_hold_parses_receipt_and_derives_receipt_id() {
     assert_eq!(receipt.balance_after_micros, 7_010_000);
     assert_eq!(receipt.settlement_seq, 42);
     assert!(!receipt.idempotent_replay);
-    // Deterministic, content-addressed, and identical to FakeMint's derivation.
-    let expected = format!(
-        "rcpt_{}",
-        &blake3::hash(format!("receipt:v1:{hold_id}:42").as_bytes()).to_hex()[..24]
-    );
-    assert_eq!(receipt.receipt_id, expected);
+    assert!(!receipt.receipt_id.is_empty());
+    assert_eq!(receipt.proof.operation, "hold.capture");
+    assert_eq!(receipt.proof.sequence, 42);
+    assert_eq!(receipt.proof.receipt_hash, receipt.receipt_id);
+    assert!(!receipt.proof.signature.is_empty());
 
     let reqs = log.lock().unwrap();
     let r = &reqs[0];
@@ -296,6 +307,7 @@ async fn release_hold_posts_idem_key_and_parses_replay_flag() {
         .expect("release_hold");
 
     assert!(receipt.idempotent_replay);
+    assert_eq!(receipt.proof.operation, "hold.release");
 
     let reqs = log.lock().unwrap();
     let r = &reqs[0];
@@ -361,7 +373,8 @@ async fn insufficient_funds_402_maps_to_insufficient_funds() {
 #[tokio::test]
 async fn terminal_hold_404_maps_to_hold_not_found() {
     // Mint collapses a distinct close of an already-terminal hold to hold_not_found.
-    let (base, _log) = start_mock(|_req| (404, err_envelope("hold_not_found", "no such hold"))).await;
+    let (base, _log) =
+        start_mock(|_req| (404, err_envelope("hold_not_found", "no such hold"))).await;
 
     let err = client(&base)
         .capture_hold(
@@ -498,9 +511,9 @@ async fn game_store_settles_a_purchase_over_http_end_to_end() {
 
     // Charged the exact catalog price and granted the pack.
     assert_eq!(out.charged_micros, 990_000);
-    assert_eq!(out.settlement_seq, 101);
+    assert_eq!(out.settlement_seq, 42);
     assert!(!out.idempotent_replay);
-    assert!(out.receipt_id.starts_with("rcpt_"));
+    assert_eq!(out.receipt_id, out.settlement_proof.receipt_hash);
 
     let inv = store.inventory("acct_player");
     assert_eq!(inv.packs.len(), 1);

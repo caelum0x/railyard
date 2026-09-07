@@ -15,6 +15,12 @@ pub const MICROS_PER_AIT: i64 = 1_000_000;
 #[serde(transparent)]
 pub struct AmountMicros(pub i64);
 
+impl Default for AmountMicros {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
 impl AmountMicros {
     pub const ZERO: AmountMicros = AmountMicros(0);
 

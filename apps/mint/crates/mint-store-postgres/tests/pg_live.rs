@@ -67,7 +67,7 @@ async fn transfer_conserves_and_rebuild_matches_live() {
     let op_hash = mint_core::op_hash(&serde_json::json!({
         "op": "transfer", "from": a.as_str(), "to": b.as_str(), "amount": 3_000_000
     }));
-    store
+    let first = store
         .commit_transfer(TransferCommit {
             from: a.clone(),
             to: b.clone(),
@@ -78,6 +78,25 @@ async fn transfer_conserves_and_rebuild_matches_live() {
         })
         .await
         .unwrap();
+
+    // `a` already has a Mint receipt while `b` does not, so their per-account
+    // receipt sequence numbers differ. Replay must still recover the original
+    // sender journal sequence and preserve the requested account roles.
+    let replay = store
+        .commit_transfer(TransferCommit {
+            from: a.clone(),
+            to: b.clone(),
+            amount: xfer_amount,
+            idem_key: "xfer-1".into(),
+            op_hash,
+            ref_: None,
+        })
+        .await
+        .unwrap();
+    assert!(replay.idempotent_replay);
+    assert_eq!(replay.first_seq, first.first_seq);
+    assert_eq!(replay.from_balance.account_id, a);
+    assert_eq!(replay.to_balance.account_id, b);
 
     // AP0 gate: rebuild == live projection.
     let live = store.get_balance(&b).await.unwrap();

@@ -1,0 +1,23 @@
+[package]
+name = "relay-cost-feed"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Durable at-least-once Relay cost-event outbox and publisher"
+
+[dependencies]
+async-trait.workspace = true
+relay-contract = { path = "../relay-contract" }
+serde.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+ts-rs.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

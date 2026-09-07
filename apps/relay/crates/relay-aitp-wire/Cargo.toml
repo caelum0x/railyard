@@ -1,0 +1,23 @@
+[package]
+name = "relay-aitp-wire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Relay-owned AITP authorization, receipt, and Mint attestation wire contract"
+
+[dependencies]
+base64 = "0.22"
+blake3 = "1"
+ed25519-dalek = "2"
+hex = "0.4"
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+thiserror.workspace = true
+
+[dev-dependencies]
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+
+[lints]
+workspace = true

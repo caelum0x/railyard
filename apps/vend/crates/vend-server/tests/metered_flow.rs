@@ -205,6 +205,14 @@ async fn happy_path_holds_then_captures_exact_actual() {
     assert_eq!(usage.charge_micros, 1_050);
     assert_eq!(usage.platform_fee_micros, 100);
     assert_eq!(usage.tenant_net_micros, 900);
+    let proof = usage
+        .settlement_proof
+        .expect("successful charge persists Mint settlement proof");
+    assert_eq!(proof.operation, "hold.capture");
+    assert!(proof.sequence > 0);
+    assert!(!proof.operation_hash.is_empty());
+    assert!(!proof.receipt_hash.is_empty());
+    assert!(!proof.signature.is_empty());
 
     // Balance dropped by exactly the captured price (not the estimate ceiling).
     assert_eq!(mint.balance(&account), start - 1_050);
@@ -507,6 +515,7 @@ async fn spend_cap_over_limit_rejected_before_hold() {
         platform_fee_micros: 0,
         tenant_net_micros: 0,
         outcome: UsageOutcome::Captured,
+        settlement_proof: None,
         utc_day,
     };
     store.record_pending(&prior).await.unwrap();

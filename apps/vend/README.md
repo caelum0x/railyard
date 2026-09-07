@@ -239,6 +239,13 @@ forces Relay's `tensorzero::dryrun` request field for that app. It does not clai
 that the selected upstream model provider has a zero-retention contract; provider
 retention remains an operator-owned routing/configuration decision.
 
+Authenticated tenant owners/admins can self-fund an app without receiving the
+Mint service key: `POST /v1/customer/apps/:app_id/funding-checkout` accepts a
+configured provider and a whole-cent `amount_micros`, asks Mint for a hosted
+checkout bound to that app's `mint_account_id`, and returns the redirect URL.
+The provider's signed webhook deposits directly into Mint; Vend never creates a
+competing local wallet credit.
+
 `VEND_MODELS`, `VEND_MARKUP_BPS`, `VEND_MIN_FEE_MICROS`,
 `VEND_PLATFORM_FEE_BPS`, and a positive `VEND_DAILY_CAP_MICROS` are explicit,
 required launch decisions. The bootstrap path supports `tenant_reserve` only.

@@ -19,6 +19,9 @@ pub const HEADER_VERSION: &str = "AITP-Version";
 pub const HEADER_CHALLENGE: &str = "AITP-Challenge";
 pub const HEADER_AUTHORIZATION: &str = "AITP-Authorization";
 pub const HEADER_RECEIPT: &str = "AITP-Receipt";
+/// Stable request correlation propagated across the initial request, 402,
+/// paid retry, and settlement response.
+pub const HEADER_REQUEST_ID: &str = "AITP-Request-ID";
 
 fn encode<T: Serialize>(value: &T) -> Result<String, PayError> {
     let json = serde_json::to_vec(value).map_err(|e| PayError::Codec(e.to_string()))?;

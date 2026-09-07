@@ -21,6 +21,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use aitp_client::PaymentChallenge;
 use async_trait::async_trait;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 
@@ -30,6 +31,11 @@ use crate::nonce::NonceStore;
 
 fn store_err(e: sqlx::Error) -> TurnstileError {
     TurnstileError::Storage(e.to_string())
+}
+
+fn decode_challenge(encoded: &str) -> Result<PaymentChallenge, TurnstileError> {
+    serde_json::from_str(encoded)
+        .map_err(|error| TurnstileError::Storage(format!("invalid stored challenge: {error}")))
 }
 
 /// A Postgres-backed [`NonceStore`]. Cheap to clone (wraps a connection pool).
@@ -79,34 +85,64 @@ impl PostgresNonceStore {
 
 #[async_trait]
 impl NonceStore for PostgresNonceStore {
-    async fn register(&self, nonce: &str, expiry_ms: i64) -> Result<(), TurnstileError> {
-        // Idempotent by nonce: re-issuing refreshes the expiry rather than
-        // failing on the primary key.
+    async fn register(&self, challenge: &PaymentChallenge) -> Result<(), TurnstileError> {
+        let encoded = serde_json::to_string(challenge)
+            .map_err(|error| TurnstileError::Storage(error.to_string()))?;
         sqlx::query(
-            "INSERT INTO turnstile_nonces (nonce, expiry_ms) VALUES ($1, $2) \
-             ON CONFLICT (nonce) DO UPDATE SET expiry_ms = EXCLUDED.expiry_ms",
+            "INSERT INTO turnstile_nonces (nonce, expiry_ms, challenge_json) \
+             VALUES ($1, $2, $3) ON CONFLICT (nonce) DO NOTHING",
         )
-        .bind(nonce)
-        .bind(expiry_ms)
+        .bind(&challenge.nonce)
+        .bind(challenge.expiry)
+        .bind(&encoded)
         .execute(&self.pool)
         .await
         .map_err(store_err)?;
-        Ok(())
+        match self.get(&challenge.nonce).await? {
+            Some(existing) if existing == *challenge => Ok(()),
+            Some(_) => Err(TurnstileError::ChallengeMismatch(
+                "nonce is already owned by another challenge".to_string(),
+            )),
+            None => Err(TurnstileError::Storage(
+                "challenge disappeared while registering".to_string(),
+            )),
+        }
     }
 
-    async fn consume(&self, nonce: &str, now_ms: i64) -> Result<(), TurnstileError> {
-        // Atomic single-use: the row is claimed by whoever wins the DELETE.
-        // A second consumer of the same nonce finds no row → replay.
-        let row: Option<(i64,)> =
-            sqlx::query_as("DELETE FROM turnstile_nonces WHERE nonce = $1 RETURNING expiry_ms")
+    async fn get(&self, nonce: &str) -> Result<Option<PaymentChallenge>, TurnstileError> {
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT challenge_json FROM turnstile_nonces WHERE nonce = $1")
                 .bind(nonce)
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(store_err)?;
         match row {
+            None => Ok(None),
+            Some((Some(encoded),)) => decode_challenge(&encoded).map(Some),
+            Some((None,)) => Err(TurnstileError::Storage(
+                "nonce has no persisted challenge ownership".to_string(),
+            )),
+        }
+    }
+
+    async fn consume(&self, nonce: &str, now_ms: i64) -> Result<PaymentChallenge, TurnstileError> {
+        // Atomic single-use: the row is claimed by whoever wins the DELETE.
+        // A second consumer of the same nonce finds no row → replay.
+        let row: Option<(i64, Option<String>)> = sqlx::query_as(
+            "DELETE FROM turnstile_nonces WHERE nonce = $1 \
+             RETURNING expiry_ms, challenge_json",
+        )
+        .bind(nonce)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(store_err)?;
+        match row {
             None => Err(TurnstileError::NonceReplayed(nonce.to_string())),
-            Some((expiry,)) if expiry < now_ms => Err(TurnstileError::NonceExpired),
-            Some(_) => Ok(()),
+            Some((expiry, _)) if expiry < now_ms => Err(TurnstileError::NonceExpired),
+            Some((_, Some(encoded))) => decode_challenge(&encoded),
+            Some((_, None)) => Err(TurnstileError::Storage(
+                "nonce has no persisted challenge ownership".to_string(),
+            )),
         }
     }
 
@@ -126,7 +162,10 @@ impl NonceStore for PostgresNonceStore {
 /// logged to stderr and retried on the next tick (expired nonces still fail
 /// closed on consume in the meantime).
 #[must_use]
-pub fn spawn_reaper(store: Arc<PostgresNonceStore>, every: Duration) -> tokio::task::JoinHandle<()> {
+pub fn spawn_reaper(
+    store: Arc<PostgresNonceStore>,
+    every: Duration,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(every);
         // Skip the immediate first tick; wait a full interval before the first sweep.

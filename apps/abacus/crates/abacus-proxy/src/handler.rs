@@ -18,8 +18,10 @@ use axum::Json;
 use abacus_core::decision::EnforcementDecision;
 use abacus_core::envelope::{ErrorEnvelope, SuccessEnvelope};
 use abacus_core::error::AbacusError;
+use abacus_core::hold_store::{Clock, HoldReceiptContext, HoldRecord, SystemClock};
 use abacus_core::ids::{AgentId, RunId};
 use abacus_core::money::Micros;
+use abacus_core::transport::Release;
 use abacus_core::transport::UpstreamRequest;
 
 use crate::enforce::enforce;
@@ -30,6 +32,8 @@ use crate::AppState;
 pub const AGENT_HEADER: &str = "x-abacus-agent";
 /// Header carrying the run/session id (`run_…`); a fresh one is minted if absent.
 pub const RUN_HEADER: &str = "x-abacus-run";
+/// Stable business request id shared with Relay/Mint/Passport/Ledgerline.
+pub const REQUEST_HEADER: &str = "x-request-id";
 
 /// The `POST /v1/proxy` edge handler.
 pub async fn proxy(
@@ -94,6 +98,18 @@ pub async fn run_flow(
     let request_key = header_str(headers, "idempotency-key")
         .map(str::to_string)
         .unwrap_or_else(|| ulid::Ulid::new().to_string());
+    let request_id = header_str(headers, REQUEST_HEADER)
+        .unwrap_or(&request_key)
+        .trim()
+        .to_string();
+    if request_id.is_empty()
+        || request_id.len() > 128
+        || !request_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(AbacusError::BadId);
+    }
     let idem_key = format!(
         "{}:{}:{}",
         run,
@@ -108,6 +124,44 @@ pub async fn run_flow(
             return Err(kill_to_error(&reason, status));
         }
     };
+
+    // Persist the reserve before a single upstream byte is sent. If tracking
+    // cannot be made durable, roll the Mint hold back and fail closed.
+    let hold_record = HoldRecord {
+        hold_id: reservation.hold_id.clone(),
+        idem_key: idem_key.clone(),
+        reserved_micros: reservation.reserved_micros,
+        created_at_ms: SystemClock.now_ms(),
+        deadline_ms: None,
+        receipt_context: Some(HoldReceiptContext {
+            agent_id: agent.clone(),
+            run_id: run.clone(),
+            budget_id: identity.budget.budget_id.clone(),
+            payer_account: identity.treasury.as_str().to_string(),
+            request_id: request_id.clone(),
+        }),
+    };
+    if let Err(store_error) = state.holds.create(hold_record).await {
+        // An idempotency conflict means another request already owns this hold.
+        // Never release it from the losing request; doing so would pull the
+        // reservation out from under the live owner. Other storage failures mean
+        // this newly-opened hold is untracked, so roll it back before returning.
+        if store_error != AbacusError::IdempotencyConflict {
+            if let Err(release_error) = state
+                .mint
+                .release_hold(
+                    &reservation.hold_id,
+                    Release {
+                        idem_key: idem_key.clone(),
+                    },
+                )
+                .await
+            {
+                tracing::error!(%release_error, "failed to roll back untracked Mint hold");
+            }
+        }
+        return Err(store_error);
+    }
 
     // Arm the RAII guard the instant the hold is open.
     let mut guard = HoldGuard::new(
@@ -150,10 +204,12 @@ pub async fn run_flow(
         state.mint.as_ref(),
         state.receipts.as_ref(),
         &identity,
+        &request_id,
         &mut guard,
         terminal,
     )
     .await?;
+    state.holds.remove(guard.hold_id()).await?;
 
     match (upstream_result, response_body) {
         (Ok(resp), _) => Ok(resp.body),

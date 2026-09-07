@@ -11,10 +11,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use aitp_client::codec::{decode_challenge, encode_authorization};
+use aitp_client::codec::{decode_challenge, encode_authorization, encode_receipt};
 use aitp_client::signer::{op_hash, op_hash_hex, AuthSigner, AuthorizationIntent, Ed25519Signer};
 use aitp_client::transport::{HttpRequest, HttpResponse, HttpTransport};
-use aitp_client::{AmountMicros, PayError, PaymentAuthorization, PaymentChallenge};
+use aitp_client::{AmountMicros, PayError, PaymentAuthorization, PaymentChallenge, Receipt};
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -61,7 +61,24 @@ impl HttpTransport for FakeMintTransport {
         } else {
             r#"{"success":true,"data":{}}"#
         };
-        Ok(HttpResponse::new(200, body.as_bytes().to_vec()))
+        let response = HttpResponse::new(200, body.as_bytes().to_vec());
+        if path.ends_with("/capture") {
+            let receipt = Receipt {
+                seq: 1,
+                op: "hold.capture".into(),
+                op_hash: "11".repeat(32),
+                amount_micros: AmountMicros(11),
+                balance_after_micros: AmountMicros(100),
+                prev_hash: "22".repeat(32),
+                hash: "33".repeat(32),
+                sig: "44".repeat(64),
+            };
+            return Ok(response.with_header(
+                "aitp-receipt",
+                encode_receipt(&receipt).expect("encode test receipt"),
+            ));
+        }
+        Ok(response)
     }
 }
 
@@ -113,6 +130,7 @@ fn sign_authorization(
         nonce: &ch.nonce,
         resource: &ch.resource,
         expiry: ch.expiry,
+        scheme: ch.scheme,
         idempotency_key: &idempotency_key,
     };
     let hash = op_hash(&intent);
@@ -123,6 +141,7 @@ fn sign_authorization(
         nonce: ch.nonce.clone(),
         resource: ch.resource.clone(),
         expiry: ch.expiry,
+        scheme: ch.scheme,
         idempotency_key,
         pubkey_id: signer.pubkey_id(),
         op_hash: op_hash_hex(&hash),

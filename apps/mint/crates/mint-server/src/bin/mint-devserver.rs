@@ -19,7 +19,7 @@
 //! Env:
 //! - `MINT_BIND_ADDR` — listen addr (default `127.0.0.1:8080`).
 //! - `MINT_API_KEY`   — required `X-API-Key` for all non-health routes
-//!                      (default `dev-mint-key` so a bare `cargo run` works).
+//!   (default `dev-mint-key` so a bare `cargo run` works).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -85,14 +85,23 @@ async fn main() -> anyhow::Result<()> {
 
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let signer: Arc<dyn Signer> = Arc::new(FixedSigner::new());
-    let store = InMemoryStore::with_clock_and_signer(clock.clone(), signer);
+    let store = InMemoryStore::with_clock_and_signer(clock.clone(), signer.clone());
 
     let ramp: Arc<dyn Ramp> = Arc::new(AutoConfirmRamp);
     // Permissive KYC so a dev redeem is possible; holds/captures do not need it.
     let kyc = Arc::new(FakeKycGate::new(KycTier::Verified, i64::MAX));
     let payer_keys = Arc::new(InMemoryPayerKeys::new());
 
-    let state = AppState::new(store, clock, ramp, kyc, payer_keys, api_key, "whsec_dev");
+    let state = AppState::new(
+        store,
+        clock,
+        ramp,
+        kyc,
+        payer_keys,
+        signer,
+        api_key,
+        "whsec_dev",
+    );
     let app = build_router(state);
 
     let listener = tokio::net::TcpListener::bind(bind)

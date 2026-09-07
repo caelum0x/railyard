@@ -13,6 +13,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::GameError;
 
+/// Authoritative proof emitted and signed by Mint for a terminal hold operation.
+/// Entitlements persist this whole projection, not a locally synthesized id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementProof {
+    pub sequence: u64,
+    pub operation: String,
+    pub operation_hash: String,
+    pub receipt_hash: String,
+    pub signature: String,
+}
+
 /// Open a reserve hold on Mint. `idem_key` is deterministic per purchase; the
 /// store applies the `:hold` / `:capture` / `:release` suffixes across the triple
 /// (identical to the abacus mint-client convention) so retries collapse in Mint.
@@ -60,6 +71,8 @@ pub struct CaptureReceipt {
     /// Content-addressed receipt id (`rcpt_…`) — the auditable anchor a pack's
     /// contents are derived from.
     pub receipt_id: String,
+    /// Signed Mint evidence backing this grant.
+    pub proof: SettlementProof,
     /// `true` when this was an idempotent replay (funds already captured once).
     pub idempotent_replay: bool,
 }
@@ -78,6 +91,8 @@ pub struct ReleaseReceipt {
     pub released_micros: i64,
     /// `true` when this was an idempotent replay.
     pub idempotent_replay: bool,
+    /// Signed Mint evidence proving the reservation was released.
+    pub proof: SettlementProof,
 }
 
 /// The Mint holds seam. Object-safe (async_trait boxes the futures) so a store
@@ -88,16 +103,8 @@ pub trait MintTransport: Send + Sync {
     async fn create_hold(&self, req: Hold) -> Result<HoldReceipt, GameError>;
 
     /// `POST /v1/holds/:id/capture` — settle the price to the revenue account.
-    async fn capture_hold(
-        &self,
-        hold_id: &str,
-        req: Capture,
-    ) -> Result<CaptureReceipt, GameError>;
+    async fn capture_hold(&self, hold_id: &str, req: Capture) -> Result<CaptureReceipt, GameError>;
 
     /// `POST /v1/holds/:id/release` — free the unfulfilled reservation.
-    async fn release_hold(
-        &self,
-        hold_id: &str,
-        req: Release,
-    ) -> Result<ReleaseReceipt, GameError>;
+    async fn release_hold(&self, hold_id: &str, req: Release) -> Result<ReleaseReceipt, GameError>;
 }

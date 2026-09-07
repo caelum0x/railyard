@@ -1,4 +1,4 @@
-# Character Lock Passport — standalone cargo workspace.
+# Identity Lock — standalone cargo workspace (legacy directory name).
 #
 # Deliberately NOT a member of the repo-root workspace (the root excludes
 # apps/context-passport) so it never enters the desktop GPUI/Metal build graph.
@@ -29,6 +29,7 @@ passport-store-postgres = { path = "crates/passport-store-postgres" }
 passport-relay-client = { path = "crates/passport-relay-client" }
 passport-mint-client = { path = "crates/passport-mint-client" }
 passport-testkit = { path = "crates/passport-testkit" }
+mint-protocol = { path = "../mint/crates/mint-protocol" }
 
 # ---- serde / domain ----
 serde = { version = "1", features = ["derive"] }

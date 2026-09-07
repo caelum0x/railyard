@@ -2,8 +2,9 @@
 
 Base agent runtime for the agent-economy apps (**Turnstile**, **Abacus**).
 Agents run inference through **RELAY** (our OpenAI-compatible TensorZero gateway)
-and pay via an **AITP-402** seam. Both an offline stub and the real
-`MintPaymentGateway` are implemented; callers choose the transport at wiring time.
+and pay via an **AITP-402** seam. Relay owns holds and exact token-usage
+settlement; the high-level Rig model signs one policy-approved `402` and retries
+the identical request once.
 
 ## Standalone workspace
 
@@ -15,33 +16,42 @@ This is its **own** cargo workspace and is listed in the repo-root `Cargo.toml`
 cd apps/agent-runtime && cargo check   # or cargo test
 ```
 
-Requires rustc >= 1.94 (see `rust-toolchain.toml`) because it path-depends on the
-edition-2024 vendored rig crates.
+Requires rustc >= 1.94 as pinned by this workspace's `rust-toolchain.toml`. Rig
+itself is the exact published open-source `rig-core` 0.39 dependency described
+below; there is no hidden local Rig checkout.
 
 ## Crates
 
 - **`aitp-client`** — the AITP-402 payment seam: wire/header codecs,
-  `StubPaymentGateway`, Ed25519 authorization signing, and a reqwest-backed
-  `MintPaymentGateway` for authorize→capture/release.
+  policy-gated Ed25519 authorization signing, one-shot `402` retry, an offline
+  stub, and a direct-Mint compatibility gateway.
 - **`relay-provider`** — `RelayModel`, a rig `CompletionModel` backed by Relay's
-  OpenAI-compatible Chat Completions API (genuinely reuses vendored `external/rig`).
-- **`agent-core`** — the runtime: `PaidCompletionModel` decorator wiring the
-  payment seam onto any model, plus `build_agent` / `build_paid_agent` helpers
-  that produce a rig `Agent`.
+  OpenAI-compatible Chat Completions API, including the AITP-aware Rig HTTP
+  backend.
+- **`agent-core`** — the runtime plus a clearly separate fixed-price direct
+  compatibility decorator. Relay-billed models use `RuntimeAgent::new`.
 
-## rig dependency
+The direct compatibility decorator supports both buffered and incremental Rig
+streams. It authorizes a hold before asking the provider to create a stream,
+captures the configured fixed price only after Rig yields a terminal provider
+response, and releases on provider error or missing terminal state. Dropping a
+consumer early schedules the same release on the current Tokio runtime. Once a
+terminal response is observed, the command becomes capture permanently: an
+ambiguous capture is retried idempotently and is never followed by release.
+This path is intentionally fixed-price; Relay-backed models continue to use
+Relay's model catalog and exact token-usage settlement instead.
 
-PATH deps on the vendored MIT copy under `external/rig`, declared in
-`[workspace.dependencies]`:
+## Rig open-source dependency
+
+The workspace pins published MIT-licensed `rig-core` 0.39 exactly:
 
 ```toml
-rig-core  = { path = "../../external/rig/crates/rig-core",  default-features = false, features = ["reqwest", "rustls"] }
-rig-agent = { path = "../../external/rig/crates/rig-agent", default-features = false, features = ["derive"] }
+rig-core = { version = "=0.39.0", default-features = false, features = ["reqwest", "rustls", "derive"] }
 ```
 
-`Agent`/`AgentBuilder`/`Prompt`/`Tool` live in `rig-agent` in 0.42; `rig-core`
-holds the model/provider/completion layer. Tests add the `test-utils` feature to
-pull in `MockCompletionModel` so nothing touches the network.
+The published crate supplies the agent, model/provider, completion and custom
+HTTP-backend seams. Tests add `test-utils` for `MockCompletionModel`; paid
+transport tests inject an in-memory Relay transport and never touch the network.
 
 ## Run it
 
@@ -50,28 +60,46 @@ cd apps/agent-runtime
 cargo run -p agent-core --example minimal_agent
 ```
 
-Run a real paid inference through Relay and Mint:
+Run a real dynamically metered inference through Relay and Mint:
 
 ```bash
 cd apps/agent-runtime
 RELAY_URL=http://127.0.0.1:3000/openai/v1 \
 RELAY_API_KEY=relay-secret \
 RELAY_MODEL=openai::gpt-4o-mini \
-MINT_SERVER_URL=http://127.0.0.1:8080 \
-MINT_API_KEY=mint-secret \
 MINT_PAYER_ACCOUNT=acct_customer \
 MINT_PAYER_KEY_ID=key_1 \
 MINT_PAYER_SIGNING_KEY='<64 hex chars>' \
+MINT_VERIFIER_KEY_ID=mint-settlement-2026-01 \
+MINT_VERIFIER_PUBLIC_KEY='<64 hex chars>' \
 AITP_PAYEE=ait1qprovider \
-AITP_PRICE_MICROS=4200 \
-AGENT_DIRECT_SETTLEMENT_ACK=1 \
+AITP_MAX_AMOUNT_MICROS=100000 \
 AGENT_PROMPT='Summarize today in one sentence.' \
 cargo run -p agent-core --example live_agent
 ```
 
 The command prints the derived public key to stderr; register that tuple in
-Mint's `MINT_PAYER_KEYS_JSON` before running. This example settles directly with
-Mint, so the selected Relay route/API key must not also apply Relay billing;
-`AGENT_DIRECT_SETTLEMENT_ACK=1` makes that operator decision explicit. The
-current limit is fixed operator-configured per-call pricing. Dynamic consumption
-of the Relay-issued 402 quote, tools, and multi-turn session policy remain work.
+Mint's payer-key store before running. Pin the settlement verifier id/public key
+from the Mint operator's trusted configuration; the evidence response's own key
+id is never used for trust discovery. The signer accepts only `AIT`, hold-mode
+challenges for the configured Relay path/model, pinned payee, and amount at or
+below `AITP_MAX_AMOUNT_MICROS`. Relay reserves that quote and captures its exact
+TensorZero usage; the client never calls Mint directly and never supplies a
+second price. The AITP-aware Rig backend supports buffered and genuinely
+incremental SSE Chat Completions. A paid stream reaches clean EOF only after a
+complete terminal usage frame and an authenticated, principal-scoped Relay
+settlement lookup returns a receipt whose exact Mint attestation verifies against
+that caller-pinned Ed25519 key. Missing usage/evidence, a body
+disconnect, an application-level error, or a second `402` fails closed without
+resubmitting inference. Completed stream proofs can be drained with
+`RelayModel::drain_payment_evidence`; the evidence owner and funding payer are
+kept as distinct identities. If a consumer drops before EOF, a bounded background
+reconciler polls Relay without resubmitting inference. Pending ids remain visible
+through `RelayModel::pending_payment_request_ids`, and shutdown/non-Tokio hosts
+can invoke `RelayModel::reconcile_payment_evidence`. `RuntimeAgent::stream`
+exposes Rig's high-level agent stream without bypassing this transport.
+
+The same paid backend now supports Rig multipart forms. It encodes once, fixes
+the boundary in `Content-Type`, and replays the byte-identical body through the
+same one-challenge retry. The target Relay route still has to exist and be
+covered by the caller's explicit resource policy.

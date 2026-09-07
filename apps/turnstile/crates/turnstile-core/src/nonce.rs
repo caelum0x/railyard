@@ -15,11 +15,12 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use aitp_client::PaymentChallenge;
 use async_trait::async_trait;
 
 use crate::error::TurnstileError;
 
-/// A store of live, single-use nonces keyed to their expiry (unix ms).
+/// A store of live, single-use challenges keyed by nonce.
 ///
 /// Implementors must be safe to share across request handlers. The default
 /// [`InMemoryNonceStore`] fits a single Turnstile process; the durable
@@ -27,17 +28,21 @@ use crate::error::TurnstileError;
 /// scaled fleet sharing one transactional store.
 #[async_trait]
 pub trait NonceStore: Send + Sync {
-    /// Record a freshly-issued nonce and the unix-ms time it expires.
+    /// Record the exact challenge that was sent to the caller.
     ///
-    /// Idempotent by `nonce`: re-registering the same nonce refreshes its expiry.
-    async fn register(&self, nonce: &str, expiry_ms: i64) -> Result<(), TurnstileError>;
+    /// Re-registering an identical challenge is idempotent. Reusing a nonce for
+    /// different challenge content is a fail-closed ownership conflict.
+    async fn register(&self, challenge: &PaymentChallenge) -> Result<(), TurnstileError>;
+
+    /// Fetch the exact issued challenge without consuming it.
+    async fn get(&self, nonce: &str) -> Result<Option<PaymentChallenge>, TurnstileError>;
 
     /// Consume a nonce exactly once. `Ok(())` only if it was registered, unused,
     /// and not yet expired; otherwise a replay/expiry [`TurnstileError`].
     ///
     /// The consume must be atomic: under concurrent requests bearing the same
     /// nonce, at most one may observe `Ok(())`.
-    async fn consume(&self, nonce: &str, now_ms: i64) -> Result<(), TurnstileError>;
+    async fn consume(&self, nonce: &str, now_ms: i64) -> Result<PaymentChallenge, TurnstileError>;
 
     /// Drop every nonce whose expiry is `< now_ms`. Returns the number removed so
     /// a reaper can report/observe its progress.
@@ -48,8 +53,8 @@ pub trait NonceStore: Send + Sync {
 /// single Turnstile instance and for tests.
 #[derive(Default)]
 pub struct InMemoryNonceStore {
-    /// nonce → expiry (unix ms).
-    inner: Mutex<HashMap<String, i64>>,
+    /// nonce → exact issued challenge.
+    inner: Mutex<HashMap<String, PaymentChallenge>>,
 }
 
 impl InMemoryNonceStore {
@@ -72,27 +77,43 @@ impl InMemoryNonceStore {
 
 #[async_trait]
 impl NonceStore for InMemoryNonceStore {
-    async fn register(&self, nonce: &str, expiry_ms: i64) -> Result<(), TurnstileError> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(nonce.to_string(), expiry_ms);
+    async fn register(&self, challenge: &PaymentChallenge) -> Result<(), TurnstileError> {
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.get(&challenge.nonce) {
+            Some(existing) if existing == challenge => return Ok(()),
+            Some(_) => {
+                return Err(TurnstileError::ChallengeMismatch(
+                    "nonce is already owned by another challenge".to_string(),
+                ))
+            }
+            None => {}
+        }
+        guard.insert(challenge.nonce.clone(), challenge.clone());
         Ok(())
     }
 
-    async fn consume(&self, nonce: &str, now_ms: i64) -> Result<(), TurnstileError> {
+    async fn get(&self, nonce: &str) -> Result<Option<PaymentChallenge>, TurnstileError> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(nonce)
+            .cloned())
+    }
+
+    async fn consume(&self, nonce: &str, now_ms: i64) -> Result<PaymentChallenge, TurnstileError> {
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         match guard.remove(nonce) {
             None => Err(TurnstileError::NonceReplayed(nonce.to_string())),
-            Some(expiry) if expiry < now_ms => Err(TurnstileError::NonceExpired),
-            Some(_) => Ok(()),
+            Some(challenge) if challenge.expiry < now_ms => Err(TurnstileError::NonceExpired),
+            Some(challenge) => Ok(challenge),
         }
     }
 
     async fn sweep(&self, now_ms: i64) -> Result<u64, TurnstileError> {
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let before = guard.len();
-        guard.retain(|_, expiry| *expiry >= now_ms);
+        guard.retain(|_, challenge| challenge.expiry >= now_ms);
         Ok((before - guard.len()) as u64)
     }
 }
@@ -101,10 +122,24 @@ impl NonceStore for InMemoryNonceStore {
 mod tests {
     use super::*;
 
+    fn challenge(nonce: &str, expiry: i64) -> PaymentChallenge {
+        PaymentChallenge {
+            payee: "ait1qpayee".into(),
+            amount_micros: aitp_client::AmountMicros(1_000),
+            currency: "AIT".into(),
+            resource: "POST /v1/echo".into(),
+            nonce: nonce.into(),
+            expiry,
+            scheme: aitp_client::Scheme::Hold,
+        }
+    }
+
     #[tokio::test]
     async fn consumes_a_live_nonce_exactly_once() {
         let store = InMemoryNonceStore::new();
-        store.register("abc", 1_000).await.unwrap();
+        let issued = challenge("abc", 1_000);
+        store.register(&issued).await.unwrap();
+        assert_eq!(store.get("abc").await.unwrap(), Some(issued));
         assert!(store.consume("abc", 500).await.is_ok());
         // Second use is a replay.
         assert!(matches!(
@@ -116,12 +151,12 @@ mod tests {
     #[tokio::test]
     async fn rejects_expired_nonce_and_sweeps() {
         let store = InMemoryNonceStore::new();
-        store.register("old", 100).await.unwrap();
+        store.register(&challenge("old", 100)).await.unwrap();
         assert!(matches!(
             store.consume("old", 200).await,
             Err(TurnstileError::NonceExpired)
         ));
-        store.register("gone", 100).await.unwrap();
+        store.register(&challenge("gone", 100)).await.unwrap();
         assert_eq!(store.sweep(200).await.unwrap(), 1);
         assert!(store.is_empty());
     }

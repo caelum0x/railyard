@@ -63,6 +63,8 @@ pub trait PassportStore: Send + Sync {
 /// not depend on the resolver.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelayGenerationRequest {
+    /// Principal that owns and pays for this conditioned generation.
+    pub principal: String,
     pub passport_id: String,
     pub version: i64,
     pub provider: String,
@@ -77,6 +79,26 @@ pub struct RelayGenerationResult {
     /// Optional content hash of the produced asset (for provenance hard-binding).
     #[serde(default)]
     pub asset_hash: Option<String>,
+    /// Correlated, signed settlement evidence returned by Relay/Mint.
+    #[serde(default)]
+    pub payment_evidence: Option<PaymentEvidence>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementReceiptProof {
+    pub sequence: u64,
+    pub operation: String,
+    pub operation_hash: String,
+    pub amount_micros: i64,
+    pub receipt_hash: String,
+    pub signature: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaymentEvidence {
+    pub request_id: String,
+    pub payer_account: String,
+    pub receipt: SettlementReceiptProof,
 }
 
 /// Transport seam to Relay (the provider fan-out gateway). Real reqwest impl in

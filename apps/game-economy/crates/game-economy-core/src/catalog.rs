@@ -147,6 +147,12 @@ impl Catalog {
         self.products.get(sku)
     }
 
+    /// Iterate every product in the catalog, ordered by SKU. Powers a storefront
+    /// discovery endpoint so a client can list what is for sale before buying.
+    pub fn products(&self) -> impl Iterator<Item = &Product> {
+        self.products.values()
+    }
+
     /// The candidate item names for a rarity (empty slice if unset).
     pub fn pool(&self, rarity: Rarity) -> &[String] {
         self.pools.get(&rarity).map(|v| v.as_slice()).unwrap_or(&[])

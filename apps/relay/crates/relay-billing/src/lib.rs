@@ -15,7 +15,7 @@
 //! * [`ledger`] — the [`Ledger`] reserve -> settle/release engine (ADR-0002:
 //!   success-only; settle is the ONLY debit path; failure nets exactly zero).
 //! * [`pricing`] / [`catalog`] — the per-model [`PriceTable`] and the real
-//!   provider list-price [`catalog`] that seeds it (integer micro-USD per token),
+//!   provider list-price [`catalog`] that seeds it (integer micro-USD per million tokens),
 //!   so each model is billed at its own rate with a conservative default
 //!   fallback — never one flat rate for every model.
 //! * [`catalog_config`] — the operator-supplied, validated file overlay that
@@ -26,6 +26,7 @@ pub mod catalog;
 pub mod catalog_config;
 pub mod domain;
 pub mod error;
+pub mod evidence;
 pub mod ledger;
 pub mod mint;
 pub mod money;
@@ -34,14 +35,19 @@ pub mod store;
 pub mod usage;
 
 // Flat re-exports for ergonomic downstream `use relay_billing::...`.
-pub use backend::BillingLedger;
-pub use catalog::price_table as catalog_price_table;
+pub use aitp_client;
+pub use backend::{BillingLedger, TerminalSettlement};
+pub use catalog::{price_table as catalog_price_table, BUILTIN_PRICES};
 pub use catalog_config::{
     load_from_path as load_price_catalog, CatalogConfigError, ModelEntry, PriceCatalogConfig,
     PriceRow,
 };
 pub use domain::{AccountId, ChatMessage, JobId, KeyId, ModelId, Role, OPENROUTER_PREFIX};
 pub use error::{BillingError, ProviderError, RelayError, Result};
+pub use evidence::{
+    InMemorySettlementEvidenceStore, SettlementEvidence, SettlementEvidenceStore,
+    SettlementReceiptProof,
+};
 pub use ledger::{cost_micros, Ledger, Reservation};
 pub use mint::transport::{
     HttpRequest, HttpResponse, HttpTransport, ReqwestTransport, TransportError,

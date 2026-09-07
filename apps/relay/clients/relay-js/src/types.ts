@@ -73,6 +73,176 @@ export interface Usage {
   total_tokens: number;
 }
 
+export interface AitpChallenge {
+  payee: string;
+  amount_micros: number;
+  currency: "AIT";
+  resource: string;
+  nonce: string;
+  expiry: number;
+  scheme: "aitp-hold";
+}
+
+export interface PaymentRequired {
+  challenge: AitpChallenge;
+  request_id?: string;
+  protocol_version?: string;
+}
+
+export interface AitpAuthorizer {
+  authorize(payment: PaymentRequired): string | Promise<string>;
+}
+
+/** Verify Mint's signed attestation using caller-pinned key material. */
+export type SettlementEvidenceVerifier = (
+  evidence: SettlementEvidence,
+) => boolean | Promise<boolean>;
+
+export interface GatewayStatus {
+  status: string;
+  version: string;
+  config_hash: string;
+}
+
+export interface GatewayHealth {
+  gateway: "ok" | "error";
+  clickhouse: "ok" | "error";
+  postgres: "ok" | "error";
+  valkey: "ok" | "error";
+  valkey_cache: "ok" | "error";
+  relay_catalog?: "ok" | "error";
+  relay_billing?: "ok" | "error" | "disabled";
+}
+
+export interface DataEnvelope<T> {
+  data: T;
+}
+
+export type PricingSource =
+  | "provider_list"
+  | "contract"
+  | "operator_override"
+  | "conservative_fallback";
+
+export interface ModelCapabilities {
+  chat: boolean;
+  embeddings: boolean;
+  tools: boolean;
+  vision: boolean;
+  json_schema: boolean;
+  streaming: boolean;
+  batch: boolean;
+}
+
+export interface ModelPrice {
+  input_micro_usd_per_million: number;
+  output_micro_usd_per_million: number;
+  source: PricingSource;
+}
+
+export interface CatalogModel {
+  id: string;
+  provider: string;
+  display_name: string;
+  aliases: string[];
+  capabilities: ModelCapabilities;
+  pricing: ModelPrice;
+  context_window_tokens?: number;
+  max_output_tokens?: number;
+  enabled: boolean;
+}
+
+export interface CatalogSnapshot {
+  schema_version: number;
+  revision: string;
+  generated_at_ms: number;
+  models: CatalogModel[];
+}
+
+export interface PriceQuoteRequest {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface PriceQuote extends PriceQuoteRequest {
+  amount_micros: number;
+  pricing: ModelPrice;
+  catalog_revision: string;
+}
+
+export interface SettlementReceiptProof {
+  sequence: number;
+  operation: string;
+  operation_hash: string;
+  amount_micros: number;
+  balance_after_micros?: number;
+  prev_hash?: string;
+  receipt_hash: string;
+  signature: string;
+}
+
+export interface SettlementEvidence {
+  request_id: string;
+  principal: string;
+  receipt: SettlementReceiptProof;
+  attestation?: unknown;
+  verified_at_ms?: number;
+  settled_at_ms: number;
+}
+
+export type InferenceRoute =
+  | "unknown"
+  | "native_inference"
+  | "open_ai_chat_completions"
+  | "open_ai_embeddings"
+  | "batch_inference";
+
+export interface CostEvent {
+  schema_version: number;
+  event_id: string;
+  request_id: string;
+  owner_principal: string;
+  model: string;
+  route: InferenceRoute;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    provider_cost_micros?: number;
+  };
+  authorized_micros: number;
+  charged_micros: number;
+  provider_cost_micros?: number;
+  overage_capped: boolean;
+  receipt_hash: string;
+  settled_at_ms: number;
+}
+
+export interface PendingCostEvent {
+  event: CostEvent;
+  attempts: number;
+  next_attempt_at_ms: number;
+  lease_owner: string | null;
+  lease_expires_at_ms: number | null;
+  published_at_ms: number | null;
+  dead_lettered_at_ms: number | null;
+  last_error: string | null;
+}
+
+export type CostEventState = "pending" | "published" | "dead_lettered";
+
+export interface CostEventListQuery {
+  state?: CostEventState;
+  before?: string;
+  limit?: number;
+}
+
+export interface CostEventPage {
+  items: PendingCostEvent[];
+  next_cursor: string | null;
+}
+
 export interface ChatCompletionChoice {
   index: number;
   finish_reason: FinishReason;

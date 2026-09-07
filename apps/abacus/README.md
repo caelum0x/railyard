@@ -5,9 +5,10 @@ the workspace suite passes: `abacus-core`, `abacus-mint-client`, `abacus-proxy`,
 `abacus-testkit`, and `abacus-upstream`. Validate from `apps/abacus` with
 `cargo test --workspace`.
 
-The `abacus-proxy` binary is runnable. It loads agent/budget policy from a JSON
-file, forwards to a real upstream, settles against a real Mint server, and writes
-idempotent receipt views to a restart-safe JSONL audit log:
+The `abacus-proxy` binary is runnable. It imports agent/budget policy from JSON,
+forwards to a real upstream, settles against a real Mint server, and projects
+idempotent receipt views into Postgres when configured (or a restart-safe JSONL
+audit log in explicit single-replica mode):
 
 ```bash
 cd apps/abacus
@@ -18,6 +19,7 @@ ABACUS_API_KEY=proxy-secret \
 UPSTREAM_BASE_URL=https://api.openai.com \
 ABACUS_AGENT_CONFIG=/tmp/abacus-agents.json \
 ABACUS_RECEIPT_LOG=/tmp/abacus-receipts.jsonl \
+ABACUS_DATABASE_URL=postgres://localhost/abacus \
 cargo run -p abacus-proxy
 ```
 
@@ -28,10 +30,15 @@ Clients call `POST /v1/proxy` with `X-API-Key`, `X-Abacus-Agent`, and the
 upstream `Authorization: Bearer ...` header. `ABACUS_BIND_ADDR` defaults to
 `0.0.0.0:8100`; `ABACUS_PROVIDER` defaults to `openai`.
 
-The file store is suitable for a single process and small deployments. The
-remaining scale blocker is a shared transactional policy/receipt store for
-multi-replica operation; Mint remains the authoritative money ledger in either
-mode.
+`ABACUS_DATABASE_URL` enables the shared, migrated Postgres product store:
+transactional policy import, signed receipt projection, and every open Mint
+hold. Recovery workers claim expired holds with leases; each persisted hold also
+carries its agent/run/budget/payer/request context. After an idempotent Mint
+release, Postgres deletes the worker-owned claim and projects the signed released
+receipt in one transaction, so a crash cannot leave money recovered but evidence
+silently absent. Without Postgres, atomic JSON snapshots remain restart-safe but
+policy, receipts, and recovery are explicitly single-replica. Mint remains the
+authoritative money ledger in either mode.
 
 **One-liner:** An inline reverse proxy that gives every autonomous agent a hard,
 cryptographically-receipted spend budget — and kills the request the microsecond it

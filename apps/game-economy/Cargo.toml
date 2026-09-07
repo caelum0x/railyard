@@ -34,6 +34,13 @@ blake3 = "1.8.5"
 # --- async runtime (tests) ---
 tokio = { version = "1.52.3", features = ["full"] }
 
+# --- HTTP server stack (game-economy-server binary) ---
+axum = "0.7"
+tower-http = { version = "0.6", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+
 # --- real HTTP Mint client (prod transport) ---
 # Mirrors apps/abacus's abacus-mint-client: rustls TLS, JSON bodies, no default
 # features so we never pull in native-tls / OpenSSL.
@@ -46,3 +53,5 @@ reqwest = { version = "0.12", default-features = false, features = [
 game-economy-core = { path = "crates/game-economy-core" }
 game-economy-testkit = { path = "crates/game-economy-testkit" }
 game-economy-mint-client = { path = "crates/game-economy-mint-client" }
+game-economy-store = { path = "crates/game-economy-store" }
+mint-protocol = { path = "../mint/crates/mint-protocol" }

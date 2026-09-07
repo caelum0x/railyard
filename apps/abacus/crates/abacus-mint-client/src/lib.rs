@@ -25,8 +25,9 @@ use serde::Deserialize;
 use abacus_core::error::AbacusError;
 use abacus_core::transport::{
     Allowance, AllowanceSpend, AllowanceSpendReceipt, Capture, CaptureReceipt, Hold, HoldReceipt,
-    MintTransport, Release, ReleaseReceipt,
+    MintTransport, Release, ReleaseReceipt, SettlementProof,
 };
+use aitp_client::codec::{decode_receipt, HEADER_RECEIPT};
 
 /// A configured client for one mint-server deployment.
 #[derive(Clone)]
@@ -82,11 +83,45 @@ impl MintClient {
         Self::decode(resp).await
     }
 
-    /// Send a JSON GET and decode the success `data` payload or map the error.
-    async fn get_json<T: for<'de> Deserialize<'de>>(
+    /// POST a terminal hold operation and require Mint's signed receipt header.
+    async fn post_json_receipted<B: serde::Serialize, T: for<'de> Deserialize<'de>>(
         &self,
         path: &str,
-    ) -> Result<T, AbacusError> {
+        body: &B,
+    ) -> Result<(T, SettlementProof), AbacusError> {
+        let resp = self
+            .http
+            .post(self.url(path))
+            .header("X-API-Key", &self.api_key)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| AbacusError::Transport(e.to_string()))?;
+        let encoded = resp
+            .headers()
+            .get(HEADER_RECEIPT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let data = Self::decode(resp).await?;
+        let encoded = encoded.ok_or_else(|| {
+            AbacusError::Transport("Mint terminal response missing AITP-Receipt".to_string())
+        })?;
+        let receipt = decode_receipt(&encoded)
+            .map_err(|error| AbacusError::Transport(format!("decode Mint receipt: {error}")))?;
+        Ok((
+            data,
+            SettlementProof {
+                sequence: receipt.seq,
+                operation: receipt.op,
+                operation_hash: receipt.op_hash,
+                receipt_hash: receipt.hash,
+                signature: receipt.sig,
+            },
+        ))
+    }
+
+    /// Send a JSON GET and decode the success `data` payload or map the error.
+    async fn get_json<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, AbacusError> {
         let resp = self
             .http
             .get(self.url(path))
@@ -170,7 +205,7 @@ fn map_error(status: u16, code: &str, message: String) -> AbacusError {
 
 #[derive(serde::Serialize)]
 struct HoldReq<'a> {
-    account_id: &'a str,
+    from: &'a str,
     amount_micros: i64,
     idem_key: String,
 }
@@ -202,16 +237,12 @@ struct AllowanceSpendReq<'a> {
 struct HoldData {
     #[serde(default)]
     hold_id: String,
-    #[serde(default)]
-    amount_micros: i64,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct CaptureData {
     #[serde(default)]
     captured_micros: i64,
-    #[serde(default)]
-    first_seq: u64,
     #[serde(default)]
     holder_balance: BalanceView,
 }
@@ -220,6 +251,8 @@ struct CaptureData {
 struct BalanceView {
     #[serde(default)]
     available_micros: i64,
+    #[serde(default)]
+    updated_seq: u64,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -257,7 +290,7 @@ impl MintTransport for MintClient {
             .post_json(
                 "/v1/holds",
                 &HoldReq {
-                    account_id: &req.account_id,
+                    from: &req.account_id,
                     amount_micros: req.amount_micros,
                     idem_key: format!("{}:hold", req.idem_key),
                 },
@@ -265,7 +298,9 @@ impl MintTransport for MintClient {
             .await?;
         Ok(HoldReceipt {
             hold_id: data.hold_id,
-            amount_micros: data.amount_micros,
+            // Mint's hold view returns state, not the original requested
+            // amount. The request is authoritative for the reservation size.
+            amount_micros: req.amount_micros,
         })
     }
 
@@ -277,8 +312,8 @@ impl MintTransport for MintClient {
         // Bridge the aitp-client gap #1: resolve the provider ait1… payee to the
         // acct_… the mint's `to` requires, immediately before capturing.
         let to = self.resolve_payee_account(&req.payee).await?;
-        let data: CaptureData = self
-            .post_json(
+        let (data, proof): (CaptureData, SettlementProof) = self
+            .post_json_receipted(
                 &format!("/v1/holds/{hold_id}/capture"),
                 &CaptureReq {
                     amount_micros: req.amount_micros,
@@ -287,10 +322,19 @@ impl MintTransport for MintClient {
                 },
             )
             .await?;
+        if proof.operation != "hold.capture"
+            || proof.sequence != data.holder_balance.updated_seq
+            || proof.sequence == 0
+        {
+            return Err(AbacusError::Transport(
+                "Mint capture receipt does not match capture response".to_string(),
+            ));
+        }
         Ok(CaptureReceipt {
             captured_micros: data.captured_micros,
             balance_after_micros: data.holder_balance.available_micros,
-            settlement_seq: data.first_seq,
+            settlement_seq: proof.sequence,
+            proof,
         })
     }
 
@@ -299,16 +343,22 @@ impl MintTransport for MintClient {
         hold_id: &str,
         req: Release,
     ) -> Result<ReleaseReceipt, AbacusError> {
-        let data: ReleaseData = self
-            .post_json(
+        let (data, proof): (ReleaseData, SettlementProof) = self
+            .post_json_receipted(
                 &format!("/v1/holds/{hold_id}/release"),
                 &ReleaseReq {
                     idem_key: format!("{}:release", req.idem_key),
                 },
             )
             .await?;
+        if proof.operation != "hold.release" || proof.sequence == 0 {
+            return Err(AbacusError::Transport(
+                "Mint release receipt does not match release response".to_string(),
+            ));
+        }
         Ok(ReleaseReceipt {
             released_micros: data.released_micros,
+            proof,
         })
     }
 
@@ -395,5 +445,18 @@ mod tests {
                 message: "kaboom".into(),
             }
         );
+    }
+
+    #[test]
+    fn hold_wire_uses_mints_from_field_and_preserves_reservation() {
+        let body = serde_json::to_value(HoldReq {
+            from: "acct_treasury",
+            amount_micros: 4_200,
+            idem_key: "request:hold".to_string(),
+        })
+        .unwrap();
+        assert_eq!(body["from"], "acct_treasury");
+        assert!(body.get("account_id").is_none());
+        assert_eq!(body["amount_micros"], 4_200);
     }
 }

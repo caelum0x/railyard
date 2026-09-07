@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::{Catalog, CardPackTier, Rarity};
+use crate::catalog::{CardPackTier, Catalog, Rarity};
 
 /// One item pulled from a pack (or bought outright).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

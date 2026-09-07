@@ -2,55 +2,49 @@
 
 use std::sync::Arc;
 
-use agent_core::aitp_client::{AmountMicros, Ed25519Signer, MintPaymentGateway};
+use agent_core::aitp_client::{AmountMicros, Ed25519Signer, SettlementEvidenceVerifier};
 use agent_core::relay_provider::{RelayConfig, RelayModel};
-use agent_core::{PricedRoute, RuntimeAgent, RuntimeConfig};
+use agent_core::{RuntimeAgent, RuntimeConfig};
 use anyhow::{bail, Context};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    if optional("AGENT_DIRECT_SETTLEMENT_ACK").as_deref() != Some("1") {
-        bail!(
-            "set AGENT_DIRECT_SETTLEMENT_ACK=1 after confirming this Relay route does not also \
-             apply Relay billing; otherwise the request could be charged twice"
-        );
-    }
     let relay_url = require("RELAY_URL")?;
     let relay_api_key = require("RELAY_API_KEY")?;
     let relay_model = require("RELAY_MODEL")?;
-    let mint_url = require("MINT_SERVER_URL")?;
-    let mint_api_key = require("MINT_API_KEY")?;
     let payer = require("MINT_PAYER_ACCOUNT")?;
     let payee = require("AITP_PAYEE")?;
     let key_id = require("MINT_PAYER_KEY_ID")?;
     let signing_seed = signing_seed()?;
-    let price = require("AITP_PRICE_MICROS")?
+    let verifier_key_id = require("MINT_VERIFIER_KEY_ID")?;
+    let verifier_public_key = key_bytes("MINT_VERIFIER_PUBLIC_KEY")?;
+    let max_amount = require("AITP_MAX_AMOUNT_MICROS")?
         .parse::<i64>()
-        .context("AITP_PRICE_MICROS must be an integer")?;
-    if price <= 0 {
-        bail!("AITP_PRICE_MICROS must be positive");
+        .context("AITP_MAX_AMOUNT_MICROS must be an integer")?;
+    if max_amount <= 0 {
+        bail!("AITP_MAX_AMOUNT_MICROS must be positive");
     }
 
     let signer = Arc::new(Ed25519Signer::from_seed(key_id.clone(), &signing_seed));
+    let evidence_verifier =
+        SettlementEvidenceVerifier::from_public_key_bytes(verifier_key_id, verifier_public_key)
+            .context("building pinned Mint settlement verifier")?;
     eprintln!(
         "Mint payer key registration: payer={payer} pubkey_id={key_id} public_key_hex={}",
         hex::encode(signer.verifying_key_bytes())
     );
-    let payment = Arc::new(
-        MintPaymentGateway::with_reqwest(mint_url, payer, mint_api_key, signer)
-            .context("building Mint payment gateway")?,
-    );
-    let relay = RelayModel::connect(&RelayConfig::model_name(
-        relay_url,
-        relay_api_key,
-        &relay_model,
-    ))
-    .context("building Relay model")?;
-    let resource = format!("POST /openai/v1/chat/completions#{relay_model}");
-    let agent = RuntimeAgent::paid(
+    let relay_config = RelayConfig::model_name(relay_url, relay_api_key, &relay_model);
+    let relay = RelayModel::connect_paid(
+        &relay_config,
+        payer,
+        payee,
+        AmountMicros(max_amount),
+        signer,
+        evidence_verifier,
+    )
+    .context("building policy-gated AITP Relay model")?;
+    let agent = RuntimeAgent::new(
         relay,
-        payment,
-        PricedRoute::new(payee, AmountMicros(price), resource),
         &RuntimeConfig {
             preamble: optional("AGENT_PREAMBLE"),
             temperature: parse_optional("AGENT_TEMPERATURE")?,
@@ -91,10 +85,14 @@ where
 }
 
 fn signing_seed() -> anyhow::Result<[u8; 32]> {
-    let encoded = require("MINT_PAYER_SIGNING_KEY")?;
-    let decoded = hex::decode(encoded).context("MINT_PAYER_SIGNING_KEY must be hex")?;
+    key_bytes("MINT_PAYER_SIGNING_KEY")
+}
+
+fn key_bytes(name: &str) -> anyhow::Result<[u8; 32]> {
+    let encoded = require(name)?;
+    let decoded = hex::decode(encoded).with_context(|| format!("{name} must be hex"))?;
     decoded
         .as_slice()
         .try_into()
-        .map_err(|_| anyhow::anyhow!("MINT_PAYER_SIGNING_KEY must decode to 32 bytes"))
+        .map_err(|_| anyhow::anyhow!("{name} must decode to 32 bytes"))
 }

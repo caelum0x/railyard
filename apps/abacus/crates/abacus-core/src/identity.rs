@@ -69,11 +69,7 @@ impl AgentIdentity {
 #[async_trait]
 pub trait BudgetRepo: Send + Sync {
     /// Resolve the spend identity + policy for an authenticated agent + run.
-    async fn resolve(
-        &self,
-        agent: &AgentId,
-        run: &RunId,
-    ) -> Result<AgentIdentity, AbacusError>;
+    async fn resolve(&self, agent: &AgentId, run: &RunId) -> Result<AgentIdentity, AbacusError>;
 }
 
 #[cfg(test)]

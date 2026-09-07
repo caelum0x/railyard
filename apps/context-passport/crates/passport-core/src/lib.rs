@@ -1,4 +1,4 @@
-//! Character Lock Passport domain kernel — pure types and invariants, no I/O.
+//! Identity Lock domain kernel — pure types and invariants, no I/O.
 //!
 //! A [`Passport`] is the durable identity aggregate; its locked asset fields
 //! live in immutable, content-addressed [`PassportVersion`]s. Editing a draft
@@ -28,8 +28,8 @@ pub use ids::{new_generation_id, new_passport_id};
 pub use kind::PassportKind;
 pub use passport::{CreatePassport, Passport, PassportFilter, PassportView};
 pub use ports::{
-    CreateOutcome, MintMeter, MintMeterRequest, MintMeterResult, PassportStore,
-    RelayConditioningSink, RelayGenerationRequest, RelayGenerationResult,
+    CreateOutcome, MintMeter, MintMeterRequest, MintMeterResult, PassportStore, PaymentEvidence,
+    RelayConditioningSink, RelayGenerationRequest, RelayGenerationResult, SettlementReceiptProof,
 };
 pub use rights::{ConsentBasis, DisclosureLevel, Rights};
 pub use version::{PassportVersion, VersionStatus};

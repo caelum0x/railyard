@@ -26,9 +26,7 @@ use vend_core::transport::{CaptureRequest, MintTransport, RelayResponse, Release
 pub mod payout;
 pub mod reap;
 pub use payout::{execute_payout, prepare_payout, PayoutConfig};
-pub use reap::{
-    classify_hold, past_ttl, reap_orphaned_hold, ReapAction, ReapCandidate, ReapOutcome,
-};
+pub use reap::{classify_hold, plan_attached_reap, AttachedReap, ReapAction};
 
 /// What the request's terminal state tells settlement to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,18 +158,25 @@ pub async fn settle(
             // remaining Pending row can be reconciled without re-capturing.
             guard.disarm();
             usage.mark_captured(charge_id, &actual).await?;
+            usage
+                .record_settlement_proof(charge_id, &receipt.proof)
+                .await?;
             SettleOutcome::Captured(actual.charge_micros)
         }
         Terminal::Release => {
-            mint.release_hold(
-                guard.hold_id(),
-                ReleaseRequest {
-                    idem_key: guard.release_idem_key(),
-                },
-            )
-            .await?;
+            let receipt = mint
+                .release_hold(
+                    guard.hold_id(),
+                    ReleaseRequest {
+                        idem_key: guard.release_idem_key(),
+                    },
+                )
+                .await?;
             guard.disarm();
             usage.mark_released(charge_id).await?;
+            usage
+                .record_settlement_proof(charge_id, &receipt.proof)
+                .await?;
             SettleOutcome::Released
         }
     };

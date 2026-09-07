@@ -25,6 +25,7 @@ pub mod crons;
 pub mod data_export;
 pub mod dunning;
 pub mod payments;
+pub mod prepaid_settle;
 pub mod queue;
 pub mod scheduler;
 pub mod webhook_delivery;

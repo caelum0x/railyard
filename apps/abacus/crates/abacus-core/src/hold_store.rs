@@ -35,9 +35,23 @@
 //! of this seam; this commit scopes the concrete work to abacus.
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::error::AbacusError;
+use crate::ids::{AgentId, BudgetId, RunId};
+use crate::receipt::{MintReceipt, ReceiptStore};
+
+/// Stable request/principal context required to turn a recovered Mint release
+/// into the same signed receipt projection as the normal terminal path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HoldReceiptContext {
+    pub agent_id: AgentId,
+    pub run_id: RunId,
+    pub budget_id: BudgetId,
+    pub payer_account: String,
+    pub request_id: String,
+}
 
 /// A wall-clock source, injected so the reaper is deterministic and testable
 /// WITHOUT real time. Production wires [`SystemClock`]; tests wire
@@ -100,7 +114,7 @@ impl Clock for ManualClock {
 /// / `spend_allowance` succeeds) and removed when the request settles. Any row
 /// that outlives its TTL / `deadline_ms` without being removed is, by definition,
 /// orphaned by a panicked or killed caller.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HoldRecord {
     /// The Mint hold id (`hold_…`) this row tracks.
     pub hold_id: String,
@@ -116,6 +130,10 @@ pub struct HoldRecord {
     /// the TTL: the hold is orphaned once `now >= deadline_ms` regardless of TTL.
     /// Use it for requests with a known upstream timeout budget.
     pub deadline_ms: Option<i64>,
+    /// Receipt identity captured before the upstream call. `None` is accepted
+    /// only for legacy snapshots created before receipted recovery existed.
+    #[serde(default)]
+    pub receipt_context: Option<HoldReceiptContext>,
 }
 
 impl HoldRecord {
@@ -150,6 +168,42 @@ pub trait HoldStore: Send + Sync {
     /// stable order so a reap sweep is deterministic.
     async fn list(&self) -> Result<Vec<HoldRecord>, AbacusError>;
 
+    /// Atomically lease expired holds to one recovery worker. A row with an
+    /// unexpired lease is invisible to other workers; an expired lease is
+    /// reclaimable after a crashed worker.
+    async fn claim_expired(
+        &self,
+        worker_id: &str,
+        now_ms: i64,
+        ttl_ms: i64,
+        lease_until_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<HoldRecord>, AbacusError>;
+
+    /// Delete a row only when it is still leased by `worker_id`.
+    async fn complete_claim(
+        &self,
+        hold_id: &str,
+        worker_id: &str,
+    ) -> Result<Option<HoldRecord>, AbacusError>;
+
+    /// Persist a recovered terminal receipt and delete the owned claim as one
+    /// shared-store transaction where supported. Single-replica stores use the
+    /// safe default ordering: receipt first, then claim deletion.
+    async fn complete_claim_with_receipt(
+        &self,
+        hold_id: &str,
+        worker_id: &str,
+        receipt: &MintReceipt,
+        receipts: &dyn ReceiptStore,
+    ) -> Result<Option<HoldRecord>, AbacusError> {
+        let removed = self.complete_claim(hold_id, worker_id).await?;
+        if removed.is_some() {
+            receipts.record(receipt).await?;
+        }
+        Ok(removed)
+    }
+
     /// Remove a tracked hold, returning the row that was removed (or `None` if it
     /// was already gone). A shared backend implements this as an atomic
     /// claim-and-delete so exactly one reaper releases each orphan.
@@ -167,6 +221,7 @@ mod tests {
             reserved_micros: 1_000,
             created_at_ms,
             deadline_ms,
+            receipt_context: None,
         }
     }
 

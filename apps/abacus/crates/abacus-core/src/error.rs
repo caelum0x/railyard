@@ -168,7 +168,13 @@ mod tests {
     #[test]
     fn codes_are_stable_snake_case() {
         assert_eq!(AbacusError::AllowanceExceeded.code(), "allowance_exceeded");
-        assert_eq!(AbacusError::CaptureExceedsHold.code(), "capture_exceeds_hold");
-        assert_eq!(AbacusError::PayoutLimitExceeded.code(), "payout_limit_exceeded");
+        assert_eq!(
+            AbacusError::CaptureExceedsHold.code(),
+            "capture_exceeds_hold"
+        );
+        assert_eq!(
+            AbacusError::PayoutLimitExceeded.code(),
+            "payout_limit_exceeded"
+        );
     }
 }

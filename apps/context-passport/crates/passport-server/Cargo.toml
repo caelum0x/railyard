@@ -3,10 +3,10 @@ name = "passport-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Character Lock Passport axum API + service: create/edit/lock/version, resolve, and generate-AS-passport wiring Relay + provenance + Mint."
+description = "Identity Lock axum API + service: create/edit/lock/version and receipted Relay generation provenance."
 
 [[bin]]
-name = "context-passport-server"
+name = "identity-lock-server"
 path = "src/main.rs"
 
 [dependencies]
@@ -16,8 +16,8 @@ passport-provenance = { workspace = true }
 passport-store = { workspace = true }
 passport-store-postgres = { workspace = true }
 passport-relay-client = { workspace = true }
-passport-mint-client = { workspace = true }
 
+async-trait = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
 subtle = { workspace = true }

@@ -8,7 +8,7 @@ use vend_core::error::VendError;
 use vend_core::payout::{PayoutExecution, PayoutRepo};
 use vend_core::transport::{HoldRequest, HoldStatus, HoldView, MintTransport, ReleaseRequest};
 use vend_mint_client::{MintClient, MintClientConfig};
-use vend_settlement::{classify_hold, execute_payout, ReapAction};
+use vend_settlement::{execute_payout, plan_attached_reap, AttachedReap};
 use vend_store::{AuditActorKind, AuditOutcome, NewAuditEvent, SecurityOpsRepo, VendStore};
 
 #[tokio::main]
@@ -143,7 +143,11 @@ async fn main() -> anyhow::Result<()> {
     // hold id, re-reads Mint's authoritative status, and releases only a hold
     // Mint still reports `Open`. `classify_hold` centralizes the "never release
     // a captured hold" rule shared with `vend_settlement::reap`.
-    let attached_phase = if reap_holds { "reaped" } else { "attached_hold" };
+    let attached_phase = if reap_holds {
+        "reaped"
+    } else {
+        "attached_hold"
+    };
     let attached = store
         .lease_attached_holds(older_than, limit, lease_seconds, &worker_token)
         .await
@@ -154,13 +158,11 @@ async fn main() -> anyhow::Result<()> {
             if hold.id != candidate.hold_id {
                 return Err(VendError::Storage("Mint returned the wrong hold id".into()));
             }
-            match classify_hold(hold.status) {
-                ReapAction::Release => {
-                    if candidate.payout_started {
-                        return Err(VendError::Storage(
-                            "open hold has observed payout transfers; refusing release".into(),
-                        ));
-                    }
+            // One audited, unit-tested decision (`plan_attached_reap`) maps
+            // Mint's authoritative status + the fail-closed payout signal to the
+            // single convergence step; this binary is a thin executor over it.
+            match plan_attached_reap(hold.status, candidate.payout_started, reap_holds)? {
+                AttachedReap::Release => {
                     mint.release_hold(
                         &candidate.hold_id,
                         ReleaseRequest {
@@ -173,25 +175,17 @@ async fn main() -> anyhow::Result<()> {
                         .await?;
                     Ok("released")
                 }
-                ReapAction::ConvergeReleased => {
-                    if candidate.payout_started {
-                        return Err(VendError::Storage(
-                            "released hold has observed payout transfers; manual audit required"
-                                .into(),
-                        ));
-                    }
+                AttachedReap::ConvergeReleased => {
                     store
                         .finish_attached_release(&candidate.charge_id, &worker_token)
                         .await?;
                     Ok("released")
                 }
-                ReapAction::SettleCapture => {
-                    // The reaper never restores captures or moves money. Leave a
-                    // captured hold for the next full reconcile pass; its lease
-                    // is crash-expiring, so skipping simply defers, never loses.
-                    if reap_holds {
-                        return Ok("skipped_capture");
-                    }
+                // The reaper never restores captures or moves money. Leave a
+                // captured hold for the next full reconcile pass; its lease is
+                // crash-expiring, so deferring never loses the row.
+                AttachedReap::DeferCapture => Ok("skipped_capture"),
+                AttachedReap::RestoreCapture => {
                     let plan = store
                         .load_payout(&candidate.charge_id)
                         .await?
@@ -256,7 +250,38 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await;
             }
-            Ok(_) => unreachable!(),
+            Ok(other) => {
+                // Defensive: the async block above only ever yields the three
+                // strings handled above. Treat any unexpected outcome as a
+                // skipped candidate + audit failure rather than panicking the
+                // whole reconcile worker on one row (which would strand every
+                // remaining candidate in this and later passes).
+                failed += 1;
+                let _ = store
+                    .fail_attached_reconciliation(
+                        &candidate.charge_id,
+                        &worker_token,
+                        &format!("unexpected reconcile outcome: {other:?}"),
+                    )
+                    .await;
+                audit_reconciliation(
+                    &store,
+                    &worker_token,
+                    &candidate.charge_id,
+                    "reconciliation.failed",
+                    AuditOutcome::Failed,
+                    attached_phase,
+                    Some("unexpected_outcome"),
+                )
+                .await;
+                tracing::error!(
+                    charge_id = candidate.charge_id.as_str(),
+                    hold_id = candidate.hold_id,
+                    phase = attached_phase,
+                    outcome = other,
+                    "reconciliation candidate returned an unexpected outcome; skipping"
+                );
+            }
             Err(error) => {
                 failed += 1;
                 let _ = store

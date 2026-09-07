@@ -1,7 +1,7 @@
 //! Pack-opening determinism (d) + FakeMint contract-fidelity tests.
 
-use game_economy_core::{Catalog, GameError, GameStore, MintTransport};
 use game_economy_core::transport::{Capture, Hold, Release};
+use game_economy_core::{Catalog, GameError, GameStore, MintTransport};
 use game_economy_testkit::FakeMint;
 
 const PLAYER: &str = "acct_player";
@@ -14,7 +14,10 @@ async fn pack_opening_is_deterministic_per_receipt_and_seed() {
     let mint = FakeMint::new().with_balance(PLAYER, 10_000_000);
     let store = GameStore::new(mint, Catalog::demo(), REVENUE);
 
-    let out = store.purchase(PLAYER, "pack.standard", "buy-1").await.unwrap();
+    let out = store
+        .purchase(PLAYER, "pack.standard", "buy-1")
+        .await
+        .unwrap();
     let opened = store.open_pack(PLAYER, &out.entitlement_id, 7).unwrap();
     assert_eq!(opened.len(), 5);
 
@@ -46,11 +49,17 @@ async fn pack_opening_is_deterministic_per_receipt_and_seed() {
 async fn pack_opens_exactly_once() {
     let mint = FakeMint::new().with_balance(PLAYER, 10_000_000);
     let store = GameStore::new(mint, Catalog::demo(), REVENUE);
-    let out = store.purchase(PLAYER, "pack.standard", "buy-1").await.unwrap();
+    let out = store
+        .purchase(PLAYER, "pack.standard", "buy-1")
+        .await
+        .unwrap();
 
     let first = store.open_pack(PLAYER, &out.entitlement_id, 1).unwrap();
     let err = store.open_pack(PLAYER, &out.entitlement_id, 1).unwrap_err();
-    assert_eq!(err, GameError::PackAlreadyOpened(out.entitlement_id.clone()));
+    assert_eq!(
+        err,
+        GameError::PackAlreadyOpened(out.entitlement_id.clone())
+    );
     assert_eq!(first.len(), 5);
 }
 
@@ -96,7 +105,12 @@ async fn releasing_a_captured_hold_errors() {
     .unwrap();
 
     let err = mint
-        .release_hold(&hold.hold_id, Release { idem_key: "k:release".into() })
+        .release_hold(
+            &hold.hold_id,
+            Release {
+                idem_key: "k:release".into(),
+            },
+        )
         .await
         .unwrap_err();
     assert_eq!(err, GameError::HoldNotFound);
@@ -118,14 +132,22 @@ async fn capture_replay_is_a_noop() {
     let first = mint
         .capture_hold(
             &hold.hold_id,
-            Capture { amount_micros: 2_000_000, to: REVENUE.into(), idem_key: "k:capture".into() },
+            Capture {
+                amount_micros: 2_000_000,
+                to: REVENUE.into(),
+                idem_key: "k:capture".into(),
+            },
         )
         .await
         .unwrap();
     let replay = mint
         .capture_hold(
             &hold.hold_id,
-            Capture { amount_micros: 2_000_000, to: REVENUE.into(), idem_key: "k:capture".into() },
+            Capture {
+                amount_micros: 2_000_000,
+                to: REVENUE.into(),
+                idem_key: "k:capture".into(),
+            },
         )
         .await
         .unwrap();

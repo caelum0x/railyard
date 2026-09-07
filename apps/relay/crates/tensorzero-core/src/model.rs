@@ -5,14 +5,14 @@ use indexmap::IndexMap;
 use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use strum::VariantNames;
 use tensorzero_derive::TensorZeroDeserialize;
 use tensorzero_stored_config::{
-    StoredContentBlockType, StoredHostedProviderKind, StoredModelConfig, StoredModelProvider,
-    StoredOpenAIAPIType, StoredProviderConfig,
+    StoredContentBlockType, StoredHedgeConfig, StoredHostedProviderKind, StoredModelConfig,
+    StoredModelProvider, StoredOpenAIAPIType, StoredProviderConfig,
 };
 use tensorzero_stored_config::{StoredCostConfig, StoredTimeoutsConfig, StoredUnifiedCostConfig};
 use tokio::time::error::Elapsed;
@@ -89,7 +89,12 @@ use crate::{
         types::{ModelInferenceRequest, ModelInferenceResponse, ProviderInferenceResponse},
     },
 };
-use metrics::counter;
+use metrics::{counter, histogram};
+use relay_hedge::{
+    Attempt as HedgeAttempt, HedgeConfig, HedgeError, InMemoryProviderHealth,
+    Outcome as ProviderOutcome, ProviderHealth, ProviderHealthSnapshot, ResultClass,
+    race as race_providers,
+};
 use serde::{Deserialize, Serialize};
 use tensorzero_stored_config::{StoredExtraBodyConfig, StoredExtraHeadersConfig};
 
@@ -123,6 +128,23 @@ pub struct ModelConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub namespace: Option<Namespace>,
+    pub hedge: HedgeConfig,
+}
+
+static PROVIDER_HEALTH: LazyLock<InMemoryProviderHealth> =
+    LazyLock::new(InMemoryProviderHealth::with_defaults);
+
+/// Export a consistent copy of the adaptive provider-routing state for a
+/// durable checkpoint. This is routing optimization state, never billing or
+/// request authority, so callers may persist it best-effort.
+pub fn provider_health_snapshot() -> Vec<ProviderHealthSnapshot> {
+    PROVIDER_HEALTH.snapshot()
+}
+
+/// Restore validated adaptive provider-routing state before serving traffic.
+/// Returns the number of accepted `(model, provider)` records.
+pub fn restore_provider_health(snapshots: Vec<ProviderHealthSnapshot>) -> usize {
+    PROVIDER_HEALTH.restore(snapshots)
 }
 
 #[derive(ts_rs::TS, Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -137,6 +159,8 @@ pub struct UninitializedModelConfig {
     pub skip_relay: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<Namespace>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hedge: Option<HedgeConfig>,
 }
 
 impl UninitializedModelConfig {
@@ -217,7 +241,395 @@ impl UninitializedModelConfig {
             timeouts: self.timeouts,
             skip_relay,
             namespace: self.namespace,
+            hedge: self.hedge.unwrap_or_default(),
         })
+    }
+}
+
+impl ModelConfig {
+    fn ranked_routing(&self, model_name: &str) -> Vec<Arc<str>> {
+        if self.hedge.enabled {
+            PROVIDER_HEALTH.rank(model_name, &self.routing)
+        } else {
+            self.routing.clone()
+        }
+    }
+
+    fn record_provider_result(
+        &self,
+        model_name: &str,
+        provider_name: &str,
+        started_at: tokio::time::Instant,
+        error: Option<&Error>,
+        ttft: bool,
+    ) {
+        if !self.hedge.enabled {
+            return;
+        }
+        let latency = started_at.elapsed();
+        let result = match error {
+            None => ResultClass::Ok,
+            Some(error) if error.is_retryable() => ResultClass::Transient,
+            Some(_) => ResultClass::Fatal,
+        };
+        let result_label = match result {
+            ResultClass::Ok => "ok",
+            ResultClass::Transient => "transient_error",
+            ResultClass::Fatal => "fatal_error",
+        };
+        counter!(
+            "relay_provider_attempts_total",
+            "model_name" => model_name.to_string(),
+            "provider_name" => provider_name.to_string(),
+            "result" => result_label,
+        )
+        .increment(1);
+        histogram!(
+            "relay_provider_attempt_latency_seconds",
+            "model_name" => model_name.to_string(),
+            "provider_name" => provider_name.to_string(),
+        )
+        .record(latency.as_secs_f64());
+        if ttft {
+            histogram!(
+                "relay_provider_attempt_ttft_seconds",
+                "model_name" => model_name.to_string(),
+                "provider_name" => provider_name.to_string(),
+            )
+            .record(latency.as_secs_f64());
+        }
+        PROVIDER_HEALTH.record(
+            model_name,
+            provider_name,
+            ProviderOutcome {
+                latency: Some(latency),
+                ttft: ttft.then_some(latency),
+                result,
+            },
+        );
+    }
+
+    fn record_hedge_result(
+        model_name: &str,
+        winner: Option<&str>,
+        launched: usize,
+        streaming: bool,
+    ) {
+        let mode = if streaming { "streaming" } else { "buffered" };
+        let result = if winner.is_some() {
+            "success"
+        } else {
+            "all_failed"
+        };
+        counter!(
+            "relay_hedge_requests_total",
+            "model_name" => model_name.to_string(),
+            "mode" => mode,
+            "result" => result,
+        )
+        .increment(1);
+        histogram!(
+            "relay_hedge_attempts_launched",
+            "model_name" => model_name.to_string(),
+            "mode" => mode,
+        )
+        .record(launched as f64);
+        if let Some(winner) = winner {
+            counter!(
+                "relay_hedge_wins_total",
+                "model_name" => model_name.to_string(),
+                "provider_name" => winner.to_string(),
+                "mode" => mode,
+            )
+            .increment(1);
+        }
+    }
+
+    async fn infer_hedged<'request>(
+        &'request self,
+        request: &'request ModelInferenceRequest<'request>,
+        clients: &'request InferenceClients,
+        model_name: &'request str,
+        function_name: Option<&'request str>,
+    ) -> Result<ModelInferenceResponse, Error> {
+        let routing = self.ranked_routing(model_name);
+        let mut attempts = Vec::with_capacity(routing.len());
+
+        for provider_name in routing {
+            let provider = self.providers.get(&provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+            let endpoint = provider_name.clone();
+            let attempt_cost = self.hedge.attempt_cost_micros(&provider_name);
+            attempts.push(HedgeAttempt::new(
+                endpoint,
+                attempt_cost,
+                move || async move {
+                    let request = Self::filter_content_blocks(request, model_name, provider);
+                    let model_provider_request = ModelProviderRequest {
+                        request: &request,
+                        model_name,
+                        provider_name: &provider_name,
+                        otlp_config: &clients.otlp_config,
+                        model_inference_id: Uuid::now_v7(),
+                        function_name,
+                    };
+                    let cache_key = model_provider_request.get_cache_key()?;
+                    let started_at = tokio::time::Instant::now();
+                    let response_fut = self.non_streaming_provider_request(
+                        model_provider_request,
+                        provider,
+                        clients,
+                    );
+                    let response = if let Some(timeout) = provider.non_streaming_total_timeout() {
+                        tokio::time::timeout(timeout, response_fut)
+                            .await
+                            .unwrap_or_else(|_: Elapsed| {
+                                Err(Error::new(ErrorDetails::ModelProviderTimeout {
+                                    provider_name: provider_name.to_string(),
+                                    timeout,
+                                    kind: TimeoutKind::NonStreamingTotal,
+                                }))
+                            })
+                    } else {
+                        response_fut.await
+                    };
+
+                    let mut response = match response {
+                        Ok(response) => {
+                            if !response.cached {
+                                self.record_provider_result(
+                                    model_name,
+                                    &provider_name,
+                                    started_at,
+                                    None,
+                                    false,
+                                );
+                            }
+                            response
+                        }
+                        Err(error) => {
+                            self.record_provider_result(
+                                model_name,
+                                &provider_name,
+                                started_at,
+                                Some(&error),
+                                false,
+                            );
+                            return Err(error);
+                        }
+                    };
+
+                    if !response.cached
+                        && let Some(cost_config) = &provider.cost
+                    {
+                        response.usage.cost = compute_cost(
+                            &response.raw_response,
+                            cost_config,
+                            ResponseMode::NonStreaming,
+                        )
+                        .ok();
+                    }
+                    if !response.cached && clients.cache_options.enabled.write() {
+                        let _ = start_cache_write(
+                            &clients.cache_manager,
+                            cache_key,
+                            CacheData {
+                                output: NonStreamingCacheData {
+                                    blocks: response.output.clone(),
+                                },
+                                raw_request: response.raw_request.clone(),
+                                raw_response: response.raw_response.clone(),
+                                input_tokens: response.usage.input_tokens,
+                                output_tokens: response.usage.output_tokens,
+                                finish_reason: response.finish_reason,
+                            },
+                            CacheValidationInfo {
+                                tool_config: request
+                                    .tool_config
+                                    .clone()
+                                    .map(std::borrow::Cow::into_owned),
+                            },
+                        );
+                    }
+                    Ok(response)
+                },
+            ));
+        }
+
+        match race_providers(attempts, &self.hedge).await {
+            Ok(mut outcome) => {
+                Self::record_hedge_result(
+                    model_name,
+                    Some(&outcome.winner),
+                    outcome.launched,
+                    false,
+                );
+                if clients.include_raw_response {
+                    for (_, error) in outcome.errors {
+                        if let Some(entries) = error.extract_raw_response() {
+                            outcome.value.failed_raw_response.extend(entries);
+                        }
+                    }
+                }
+                Ok(outcome.value)
+            }
+            Err(HedgeError::AllFailed { errors }) => {
+                Self::record_hedge_result(model_name, None, errors.len(), false);
+                Err(Error::new(ErrorDetails::AllModelProvidersFailed {
+                    provider_errors: errors
+                        .into_iter()
+                        .map(|(provider, error)| (provider.to_string(), error))
+                        .collect(),
+                }))
+            }
+            Err(HedgeError::NoAttempts) => Err(Error::new(ErrorDetails::Config {
+                message: format!("model `{model_name}` has no hedge attempts"),
+            })),
+        }
+    }
+
+    async fn infer_stream_hedged<'request>(
+        &'request self,
+        request: &'request ModelInferenceRequest<'request>,
+        clients: &'request InferenceClients,
+        model_name: &'request str,
+        function_name: Option<&'request str>,
+    ) -> Result<StreamResponseAndMessages, Error> {
+        let routing = self.ranked_routing(model_name);
+        let mut attempts = Vec::with_capacity(routing.len());
+
+        for provider_name in routing {
+            let provider = self.providers.get(&provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+            let endpoint = provider_name.clone();
+            let attempt_cost = self.hedge.attempt_cost_micros(&provider_name);
+            attempts.push(HedgeAttempt::new(
+                endpoint,
+                attempt_cost,
+                move || async move {
+                    let request = Self::filter_content_blocks(request, model_name, provider);
+                    let model_provider_request = ModelProviderRequest {
+                        request: &request,
+                        model_name,
+                        provider_name: &provider_name,
+                        otlp_config: &clients.otlp_config,
+                        model_inference_id: Uuid::now_v7(),
+                        function_name,
+                    };
+                    let started_at = tokio::time::Instant::now();
+                    let response_fut =
+                        self.streaming_provider_request(model_provider_request, provider, clients);
+                    let total_timeout = provider.streaming_total_timeout();
+                    let ttft_timeout = provider.streaming_ttft_timeout();
+                    let pre_ttft_timeout = match (ttft_timeout, total_timeout) {
+                        (Some(ttft), Some(total)) if ttft <= total => {
+                            Some((started_at + ttft, ttft, TimeoutKind::StreamingTtft))
+                        }
+                        (Some(_), Some(total)) => {
+                            Some((started_at + total, total, TimeoutKind::StreamingTotal))
+                        }
+                        (Some(ttft), None) => {
+                            Some((started_at + ttft, ttft, TimeoutKind::StreamingTtft))
+                        }
+                        (None, Some(total)) => {
+                            Some((started_at + total, total, TimeoutKind::StreamingTotal))
+                        }
+                        (None, None) => None,
+                    };
+                    let response = if let Some((deadline, timeout, kind)) = pre_ttft_timeout {
+                        tokio::time::timeout_at(deadline, response_fut)
+                            .await
+                            .unwrap_or_else(|_: Elapsed| {
+                                Err(Error::new(ErrorDetails::ModelProviderTimeout {
+                                    provider_name: provider_name.to_string(),
+                                    timeout,
+                                    kind,
+                                }))
+                            })
+                    } else {
+                        response_fut.await
+                    };
+
+                    let mut response = match response {
+                        Ok(response) => {
+                            if !response.response.cached {
+                                self.record_provider_result(
+                                    model_name,
+                                    &provider_name,
+                                    started_at,
+                                    None,
+                                    true,
+                                );
+                            }
+                            response
+                        }
+                        Err(error) => {
+                            self.record_provider_result(
+                                model_name,
+                                &provider_name,
+                                started_at,
+                                Some(&error),
+                                true,
+                            );
+                            return Err(error);
+                        }
+                    };
+
+                    if let Some(total_timeout) = total_timeout {
+                        let deadline = started_at + total_timeout;
+                        let span = response.response.stream.span().clone();
+                        let inner = response.response.stream.into_inner();
+                        let timeout_provider_name = provider_name.to_string();
+                        let wrapped = stream_with_deadline(inner, deadline, move || {
+                            Error::new(ErrorDetails::ModelProviderTimeout {
+                                provider_name: timeout_provider_name,
+                                timeout: total_timeout,
+                                kind: TimeoutKind::StreamingTotal,
+                            })
+                        });
+                        response.response.stream = wrapped.peekable().instrument(span);
+                    }
+                    Ok(response)
+                },
+            ));
+        }
+
+        match race_providers(attempts, &self.hedge).await {
+            Ok(mut outcome) => {
+                Self::record_hedge_result(
+                    model_name,
+                    Some(&outcome.winner),
+                    outcome.launched,
+                    true,
+                );
+                if clients.include_raw_response {
+                    for (_, error) in outcome.errors {
+                        if let Some(entries) = error.extract_raw_response() {
+                            outcome.value.response.failed_raw_response.extend(entries);
+                        }
+                    }
+                }
+                Ok(outcome.value)
+            }
+            Err(HedgeError::AllFailed { errors }) => {
+                Self::record_hedge_result(model_name, None, errors.len(), true);
+                Err(Error::new(ErrorDetails::AllModelProvidersFailed {
+                    provider_errors: errors
+                        .into_iter()
+                        .map(|(provider, error)| (provider.to_string(), error))
+                        .collect(),
+                }))
+            }
+            Err(HedgeError::NoAttempts) => Err(Error::new(ErrorDetails::Config {
+                message: format!("model `{model_name}` has no streaming hedge attempts"),
+            })),
+        }
     }
 }
 
@@ -242,6 +654,7 @@ impl TryFrom<StoredModelConfig> for UninitializedModelConfig {
                 .unwrap_or_default(),
             skip_relay: stored.skip_relay,
             namespace: stored.namespace.map(Namespace::new).transpose()?,
+            hedge: stored.hedge.map(hedge_config_from_stored),
         })
     }
 }
@@ -289,7 +702,30 @@ impl TryFrom<&UninitializedModelConfig> for StoredModelConfig {
             timeouts: Some(StoredTimeoutsConfig::from(&config.timeouts)),
             skip_relay: config.skip_relay,
             namespace: config.namespace.as_ref().map(ToString::to_string),
+            hedge: config.hedge.as_ref().map(stored_hedge_config),
         })
+    }
+}
+
+fn hedge_config_from_stored(stored: StoredHedgeConfig) -> HedgeConfig {
+    let defaults = HedgeConfig::default();
+    HedgeConfig {
+        enabled: stored.enabled.unwrap_or(defaults.enabled),
+        max_concurrency: stored.max_concurrency.unwrap_or(defaults.max_concurrency),
+        stagger_ms: stored.stagger_ms,
+        max_cost_micros: stored.max_cost_micros,
+        provider_cost_micros: stored.provider_cost_micros.unwrap_or_default(),
+    }
+}
+
+fn stored_hedge_config(config: &HedgeConfig) -> StoredHedgeConfig {
+    StoredHedgeConfig {
+        enabled: Some(config.enabled),
+        max_concurrency: Some(config.max_concurrency),
+        stagger_ms: config.stagger_ms,
+        max_cost_micros: config.max_cost_micros,
+        provider_cost_micros: (!config.provider_cost_micros.is_empty())
+            .then(|| config.provider_cost_micros.clone()),
     }
 }
 
@@ -903,7 +1339,13 @@ impl ModelConfig {
                     false,
                 ));
             }
-            for provider_name in &self.routing {
+            if self.hedge.is_hedging() {
+                return self
+                    .infer_hedged(request, clients, model_name, function_name)
+                    .await;
+            }
+            let routing = self.ranked_routing(model_name);
+            for provider_name in &routing {
                 let provider = self.providers.get(provider_name).ok_or_else(|| {
                     Error::new(ErrorDetails::ProviderNotFound {
                         provider_name: provider_name.to_string(),
@@ -920,6 +1362,7 @@ impl ModelConfig {
                 };
                 let cache_key = model_provider_request.get_cache_key()?;
 
+                let started_at = tokio::time::Instant::now();
                 let response_fut =
                     self.non_streaming_provider_request(model_provider_request, provider, clients);
                 let response = if let Some(timeout) = provider.non_streaming_total_timeout() {
@@ -940,6 +1383,15 @@ impl ModelConfig {
 
                 match response {
                     Ok(mut response) => {
+                        if !response.cached {
+                            self.record_provider_result(
+                                model_name,
+                                provider_name,
+                                started_at,
+                                None,
+                                false,
+                            );
+                        }
                         // Compute cost from raw response using provider's cost config
                         if !response.cached
                             && let Some(cost_config) = &provider.cost
@@ -989,6 +1441,13 @@ impl ModelConfig {
                         return Ok(response);
                     }
                     Err(error) => {
+                        self.record_provider_result(
+                            model_name,
+                            provider_name,
+                            started_at,
+                            Some(&error),
+                            false,
+                        );
                         provider_errors.insert(provider_name.to_string(), error);
                     }
                 }
@@ -1058,7 +1517,13 @@ impl ModelConfig {
                     messages: request.messages.clone(),
                 });
             }
-            for provider_name in &self.routing {
+            if self.hedge.is_hedging() {
+                return self
+                    .infer_stream_hedged(request, clients, model_name, function_name)
+                    .await;
+            }
+            let routing = self.ranked_routing(model_name);
+            for provider_name in &routing {
                 let provider = self.providers.get(provider_name).ok_or_else(|| {
                     Error::new(ErrorDetails::ProviderNotFound {
                         provider_name: provider_name.to_string(),
@@ -1116,6 +1581,15 @@ impl ModelConfig {
 
                 match response {
                     Ok(mut response) => {
+                        if !response.response.cached {
+                            self.record_provider_result(
+                                model_name,
+                                provider_name,
+                                start,
+                                None,
+                                true,
+                            );
+                        }
                         // Collect raw response entries from failed providers for fallback reporting
                         if clients.include_raw_response {
                             for error in provider_errors.values() {
@@ -1142,6 +1616,13 @@ impl ModelConfig {
                         return Ok(response);
                     }
                     Err(error) => {
+                        self.record_provider_result(
+                            model_name,
+                            provider_name,
+                            start,
+                            Some(&error),
+                            true,
+                        );
                         provider_errors.insert(provider_name.to_string(), error);
                     }
                 }
@@ -3659,6 +4140,7 @@ impl ShorthandModelConfig for ModelConfig {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::default(),
         })
     }
 
@@ -3776,6 +4258,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::default(),
         };
         let tool_config = ProviderToolCallConfig::default();
         let api_keys = InferenceCredentials::default();
@@ -3868,6 +4351,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::default(),
         };
         let response = model_config
             .infer(&request, &clients, model_name, None)
@@ -4010,7 +4494,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_model_config_infer_routing_fallback() {
+    async fn test_model_config_infer_hedged_routing_fallback() {
         let logs_contain = crate::utils::testing::capture_logs();
         // Test that fallback works with bad --> good model provider
 
@@ -4104,6 +4588,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::hedged(2),
         };
 
         let model_name = "test model";
@@ -4185,6 +4670,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::default(),
         };
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
         let clients = InferenceClients {
@@ -4278,6 +4764,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::default(),
         };
         let response = model_config
             .infer_stream(&request, &clients, "my_model", None)
@@ -4309,7 +4796,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_model_config_infer_stream_routing_fallback() {
+    async fn test_model_config_infer_stream_hedged_routing_fallback() {
         let logs_contain = crate::utils::testing::capture_logs();
         // Test that fallback works with bad --> good model provider (streaming)
 
@@ -4375,6 +4862,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::hedged(2),
         };
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
         let clients = InferenceClients {
@@ -4414,7 +4902,7 @@ mod tests {
                 },
             messages: _,
         } = model_config
-            .infer_stream(&request, &clients, "my_model", None)
+            .infer_stream(&request, &clients, "my_streaming_hedge_model", None)
             .await
             .unwrap();
         let initial_chunk = stream.next().await.unwrap().unwrap();
@@ -4476,6 +4964,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::default(),
         };
         let tool_config = ProviderToolCallConfig::default();
         let api_keys = InferenceCredentials::default();
@@ -4615,6 +5104,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::default(),
         };
         let tool_config = ProviderToolCallConfig::default();
         let api_keys = InferenceCredentials::default();
@@ -4775,6 +5265,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::default(),
         };
         let provider_types = ProviderTypesConfig::default();
         let model_table: ModelTable = ModelTable::new(
@@ -5205,10 +5696,11 @@ mod tests {
     // ─── Round-trip tests: Uninitialized → Stored → Uninitialized ───────────
 
     mod stored_round_trip {
-        use std::collections::HashMap;
+        use std::collections::{BTreeMap, HashMap};
         use std::sync::Arc;
 
         use googletest::prelude::*;
+        use relay_hedge::HedgeConfig;
         use rust_decimal::Decimal;
         use tensorzero_stored_config::{
             StoredCostConfig, StoredModelConfig, StoredModelProvider, StoredProviderConfig,
@@ -5377,6 +5869,12 @@ mod tests {
                 namespace: Some(
                     Namespace::new("my_namespace".to_string()).expect("valid namespace"),
                 ),
+                hedge: Some(HedgeConfig {
+                    stagger_ms: Some(75),
+                    max_cost_micros: Some(120_000),
+                    provider_cost_micros: BTreeMap::from([("provider_a".to_string(), 60_000)]),
+                    ..HedgeConfig::hedged(2)
+                }),
             };
             let stored = StoredModelConfig::try_from(&original).expect("should serialize");
             let restored: UninitializedModelConfig =

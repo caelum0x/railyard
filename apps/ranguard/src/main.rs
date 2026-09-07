@@ -5,9 +5,19 @@
 //! read other processes' memory, and does NOT do anti-debugging. See README.
 //!
 //! Usage:
-//!   ranguard                 Run the full end-to-end demo.
-//!   ranguard demo            Same as above.
-//!   ranguard game-loop [ms]  Internal: the tool's own "game" child process.
+//!   ranguard                          Run the full end-to-end demo.
+//!   ranguard demo                     Same as above.
+//!   ranguard snapshot <dir> [out]     Build a signed integrity manifest over a
+//!                                      real directory you own and write it to
+//!                                      `out` (default: `<dir>.ranguard.manifest`).
+//!   ranguard verify <dir> <manifest>  Verify the manifest signature and re-scan
+//!                                      `dir` for tampering against it.
+//!   ranguard game-loop [ms]           Internal: the tool's own "game" child.
+//!
+//! `snapshot` and `verify` are the real, drivable tool: they expose the library's
+//! integrity-monitoring primitives on a directory the operator explicitly hands
+//! to the tool. The signing key is read from the `RANGUARD_KEY` environment
+//! variable (never hardcoded) — the same key must be used to snapshot and verify.
 
 use std::fs;
 use std::io::Write;
@@ -18,10 +28,23 @@ use ranguard::heartbeat::{Client, Outcome, Server};
 use ranguard::manifest::Manifest;
 use ranguard::process::{AttestOutcome, GameProcess};
 
-// Clearly-labeled DEMO key. In a real tool this would come from a secret
-// manager / provisioning step, never be hardcoded (see README SAFETY section).
+// Clearly-labeled DEMO keys, used ONLY by the scripted `demo`. The real
+// `snapshot`/`verify` commands never use these — they read a secret from the
+// environment (see `load_signing_key`). A real tool would provision the key via
+// a secret manager, never hardcode it (see README SAFETY section).
 const DEMO_SIGNING_KEY: &[u8] = b"ranguard-demo-signing-key-not-a-real-secret";
 const DEMO_HEARTBEAT_KEY: &[u8] = b"ranguard-demo-heartbeat-key-not-a-real-secret";
+
+/// Environment variable holding the operator's manifest-signing secret.
+const KEY_ENV: &str = "RANGUARD_KEY";
+
+/// Process exit codes, kept explicit so `verify` is scriptable in CI.
+const EXIT_OK: i32 = 0;
+/// An integrity violation was detected (bad signature or tampered files), or a
+/// runtime error occurred while processing a well-formed request.
+const EXIT_VIOLATION: i32 = 1;
+/// The invocation itself was invalid (bad args, missing key, missing path).
+const EXIT_USAGE: i32 = 2;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -32,14 +55,188 @@ fn main() {
         "demo" => {
             if let Err(e) = run_demo() {
                 eprintln!("demo failed: {e}");
-                std::process::exit(1);
+                std::process::exit(EXIT_VIOLATION);
             }
         }
+        "snapshot" => std::process::exit(run_snapshot(&args)),
+        "verify" => std::process::exit(run_verify(&args)),
+        "help" | "-h" | "--help" => print_usage(&mut std::io::stdout()),
         other => {
             eprintln!("unknown command: {other}");
-            eprintln!("usage: ranguard [demo | game-loop <ms>]");
-            std::process::exit(2);
+            print_usage(&mut std::io::stderr());
+            std::process::exit(EXIT_USAGE);
         }
+    }
+}
+
+fn print_usage(out: &mut impl Write) {
+    let _ = writeln!(
+        out,
+        "ranguard — defensive, userspace integrity monitor\n\
+         \n\
+         usage:\n\
+         \x20 ranguard [demo]                     run the scripted end-to-end demo\n\
+         \x20 ranguard snapshot <dir> [out]       build & sign an integrity manifest over <dir>\n\
+         \x20 ranguard verify   <dir> <manifest>  verify signature + re-scan <dir> for tampering\n\
+         \n\
+         `snapshot` and `verify` read the signing key from the {KEY_ENV} environment variable.\n\
+         Example:\n\
+         \x20 RANGUARD_KEY=$(head -c32 /dev/urandom | base64) ranguard snapshot ./game_assets\n\
+         \x20 RANGUARD_KEY=... ranguard verify ./game_assets ./game_assets.ranguard.manifest"
+    );
+}
+
+/// Read the operator's signing key from the environment. Fails fast with a clear
+/// message if it is missing or empty — we never fall back to a hardcoded secret.
+fn load_signing_key() -> Result<Vec<u8>, String> {
+    match std::env::var(KEY_ENV) {
+        Ok(k) if !k.is_empty() => Ok(k.into_bytes()),
+        Ok(_) => Err(format!(
+            "{KEY_ENV} is set but empty; provide a non-empty signing key"
+        )),
+        Err(_) => Err(format!(
+            "{KEY_ENV} must be set to the manifest signing key (it protects the \
+             manifest's HMAC signature; use the same value to snapshot and verify)"
+        )),
+    }
+}
+
+/// Default manifest path for a snapshotted directory: a sibling file named
+/// `<dirname>.ranguard.manifest`, so the manifest lives next to what it protects.
+fn default_manifest_path(dir: &Path) -> PathBuf {
+    match (dir.parent(), dir.file_name()) {
+        (Some(parent), Some(name)) => {
+            let mut file = name.to_os_string();
+            file.push(".ranguard.manifest");
+            parent.join(file)
+        }
+        _ => dir.join("ranguard.manifest"),
+    }
+}
+
+/// `ranguard snapshot <dir> [out]` — fingerprint a real directory the operator
+/// owns and write a signed manifest. Returns a process exit code.
+fn run_snapshot(args: &[String]) -> i32 {
+    let dir = match args.get(2) {
+        Some(d) => PathBuf::from(d),
+        None => {
+            eprintln!("usage: ranguard snapshot <dir> [manifest-out]");
+            return EXIT_USAGE;
+        }
+    };
+    if !dir.is_dir() {
+        eprintln!("error: {} is not a directory", dir.display());
+        return EXIT_USAGE;
+    }
+    let key = match load_signing_key() {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return EXIT_USAGE;
+        }
+    };
+
+    let manifest = match Manifest::build(&dir, &key) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error: failed to build manifest for {}: {e}", dir.display());
+            return EXIT_VIOLATION;
+        }
+    };
+    let out = args
+        .get(3)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_manifest_path(&dir));
+    if let Err(e) = fs::write(&out, manifest.serialize()) {
+        eprintln!("error: failed to write manifest to {}: {e}", out.display());
+        return EXIT_VIOLATION;
+    }
+
+    println!("Signed integrity manifest written to {}", out.display());
+    println!("Root: {}", dir.display());
+    println!("Hashed {} file(s) with SHA-256:", manifest.entries.len());
+    for e in &manifest.entries {
+        println!(
+            "  {:<40} {:>10} bytes  {}…",
+            e.rel_path,
+            e.size,
+            &e.sha256_hex[..16.min(e.sha256_hex.len())]
+        );
+    }
+    println!("HMAC-SHA256 signature: {}", manifest.mac_hex);
+    EXIT_OK
+}
+
+/// `ranguard verify <dir> <manifest>` — verify the manifest's own signature, then
+/// re-scan `dir` and report tampering. Exit code: 0 = clean & signed, 1 = any
+/// violation (bad signature or file changes), 2 = usage/setup error.
+fn run_verify(args: &[String]) -> i32 {
+    let (dir, manifest_path) = match (args.get(2), args.get(3)) {
+        (Some(d), Some(m)) => (PathBuf::from(d), PathBuf::from(m)),
+        _ => {
+            eprintln!("usage: ranguard verify <dir> <manifest>");
+            return EXIT_USAGE;
+        }
+    };
+    if !dir.is_dir() {
+        eprintln!("error: {} is not a directory", dir.display());
+        return EXIT_USAGE;
+    }
+    let key = match load_signing_key() {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return EXIT_USAGE;
+        }
+    };
+
+    let text = match fs::read_to_string(&manifest_path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!(
+                "error: cannot read manifest {}: {e}",
+                manifest_path.display()
+            );
+            return EXIT_USAGE;
+        }
+    };
+    let manifest = match Manifest::deserialize(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error: malformed manifest {}: {e}", manifest_path.display());
+            return EXIT_VIOLATION;
+        }
+    };
+
+    // 1. Does the manifest itself still carry a valid signature under our key?
+    let sig_ok = manifest.verify_signature(&key);
+    println!("Manifest: {}", manifest_path.display());
+    println!("Root scanned: {}", dir.display());
+    println!(
+        "Signature (HMAC-SHA256): {}",
+        if sig_ok {
+            "VALID"
+        } else {
+            "INVALID — manifest was edited or the wrong key was used"
+        }
+    );
+
+    // 2. Re-scan the live directory against the trusted entries.
+    let report = match manifest.scan(&dir) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: failed to scan {}: {e}", dir.display());
+            return EXIT_VIOLATION;
+        }
+    };
+    print!("{}", report.render());
+
+    if sig_ok && report.is_clean() {
+        println!("RESULT: OK — signature valid and all files match the manifest.");
+        EXIT_OK
+    } else {
+        println!("RESULT: FAIL — integrity violation detected.");
+        EXIT_VIOLATION
     }
 }
 
@@ -82,11 +279,22 @@ fn run_demo() -> std::io::Result<()> {
         .unwrap_or(&sandbox)
         .join("ranguard.manifest");
     fs::write(&manifest_path, manifest.serialize())?;
-    println!("Hashed {} asset file(s) with SHA-256:", manifest.entries.len());
+    println!(
+        "Hashed {} asset file(s) with SHA-256:",
+        manifest.entries.len()
+    );
     for e in &manifest.entries {
-        println!("  {:<20} {} bytes  {}…", e.rel_path, e.size, &e.sha256_hex[..16]);
+        println!(
+            "  {:<20} {} bytes  {}…",
+            e.rel_path,
+            e.size,
+            &e.sha256_hex[..16]
+        );
     }
-    println!("Manifest signed (HMAC-SHA256): {}…", &manifest.mac_hex[..16]);
+    println!(
+        "Manifest signed (HMAC-SHA256): {}…",
+        &manifest.mac_hex[..16]
+    );
     println!("Manifest written to: {}", manifest_path.display());
 
     // ------------------------------------------------------------------
@@ -170,7 +378,8 @@ fn run_demo() -> std::io::Result<()> {
     let mut server = Server::new(DEMO_HEARTBEAT_KEY, seed);
     let mut client = Client::new(DEMO_HEARTBEAT_KEY);
 
-    // Three honest rounds.
+    // Three honest rounds. The client advances its rolling chain only after the
+    // server confirms acceptance (commit), keeping both chains in lockstep.
     let mut captured = None;
     for round in 1..=3 {
         let challenge = server.issue_challenge();
@@ -178,11 +387,11 @@ fn run_demo() -> std::io::Result<()> {
         if round == 1 {
             captured = Some(hb.clone()); // stash a valid heartbeat to replay later
         }
-        println!(
-            "  round {round}: counter={} -> {:?}",
-            hb.counter,
-            server.verify(&hb)
-        );
+        let outcome = server.verify(&hb);
+        if outcome == Outcome::Accepted {
+            client.commit(&hb);
+        }
+        println!("  round {round}: counter={} -> {outcome:?}", hb.counter);
     }
 
     // Replay attack: re-send round 1's already-accepted heartbeat.
@@ -194,7 +403,7 @@ fn run_demo() -> std::io::Result<()> {
 
     // Forgery attack: attacker without the shared key answers a fresh challenge.
     let challenge = server.issue_challenge();
-    let mut attacker = Client::new(b"attacker-does-not-know-the-key");
+    let attacker = Client::new(b"attacker-does-not-know-the-key");
     let forged_hb = attacker.respond(&challenge);
     let outcome = server.verify(&forged_hb);
     println!("  forged heartbeat (wrong key) -> {outcome:?}  <- rejected");
@@ -233,7 +442,10 @@ fn make_sandbox(seed_dir: &Path) -> std::io::Result<PathBuf> {
         // Fallback seed so the demo still runs if assets/ is missing.
         write_file(&assets.join("config.cfg"), b"fov=90\nsensitivity=2.5\n")?;
         write_file(&assets.join("textures.pak"), &vec![0xABu8; 4096])?;
-        write_file(&assets.join("scripts/init.lua"), b"-- game init\nprint('ok')\n")?;
+        write_file(
+            &assets.join("scripts/init.lua"),
+            b"-- game init\nprint('ok')\n",
+        )?;
     }
     Ok(assets)
 }
@@ -264,11 +476,48 @@ fn write_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
 
 /// Apply a deterministic tamper: modify + add + remove one file each.
 fn tamper(sandbox: &Path) -> std::io::Result<()> {
-    write_file(&sandbox.join("config.cfg"), b"fov=90\nsensitivity=2.5\nwallhack=true\n")?;
-    write_file(&sandbox.join("cheat.dll"), b"\x00\x01injected-payload\x02\x03")?;
+    write_file(
+        &sandbox.join("config.cfg"),
+        b"fov=90\nsensitivity=2.5\nwallhack=true\n",
+    )?;
+    write_file(
+        &sandbox.join("cheat.dll"),
+        b"\x00\x01injected-payload\x02\x03",
+    )?;
     let textures = sandbox.join("textures.pak");
     if textures.exists() {
         fs::remove_file(textures)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_manifest_path_is_sibling_of_dir() {
+        let got = default_manifest_path(Path::new("/tmp/game_assets"));
+        assert_eq!(got, PathBuf::from("/tmp/game_assets.ranguard.manifest"));
+    }
+
+    #[test]
+    fn default_manifest_path_relative_dir() {
+        let got = default_manifest_path(Path::new("assets"));
+        assert_eq!(got, PathBuf::from("assets.ranguard.manifest"));
+    }
+
+    #[test]
+    fn default_manifest_path_root_fallback() {
+        // A path with no file name falls back to a manifest inside the dir.
+        let got = default_manifest_path(Path::new("/"));
+        assert_eq!(got, PathBuf::from("/ranguard.manifest"));
+    }
+
+    #[test]
+    fn exit_codes_are_distinct() {
+        assert_ne!(EXIT_OK, EXIT_VIOLATION);
+        assert_ne!(EXIT_OK, EXIT_USAGE);
+        assert_ne!(EXIT_VIOLATION, EXIT_USAGE);
+    }
 }

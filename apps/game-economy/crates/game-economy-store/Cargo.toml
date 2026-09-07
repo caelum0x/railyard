@@ -1,0 +1,15 @@
+[package]
+name = "game-economy-store"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "Atomic local JSON persistence for game purchase recovery and entitlements."
+
+[dependencies]
+game-economy-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+game-economy-testkit = { workspace = true }

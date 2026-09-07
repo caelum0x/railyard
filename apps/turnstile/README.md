@@ -20,6 +20,7 @@ MINT_SERVER_URL=http://127.0.0.1:8080 \
 TURNSTILE_API_KEY=mint-secret \
 TURNSTILE_PAYEE=ait1qprovider \
 TURNSTILE_PRICE_MICROS=4200 \
+TURNSTILE_DATABASE_URL=postgres://localhost/turnstile \
 BIND_ADDR=0.0.0.0:8101 \
 cargo run -p turnstile-demo
 ```
@@ -60,9 +61,36 @@ See the vision doc:
   (success-only billing); Neon/Postgres + Cloudflare for the thin metadata
   control-plane only.
 
+## Durable challenge and settlement ownership
+
+When `TURNSTILE_DATABASE_URL` is set, the reference server migrates and uses a
+shared Postgres challenge store. Every nonce retains the exact issued
+resource/payee/amount/scheme/expiry, so another replica can verify and consume
+it exactly once. Altered authorizations do not burn the legitimate challenge.
+The same database stores the exact verification command, Mint hold identity,
+terminal direction, actual charge, signed receipt, owner token, and recovery
+lease. The request renews its lease while the handler runs. If it disappears,
+another replica atomically claims the command and:
+
+- releases an abandoned verified hold;
+- replays a pending capture with its original amount and idempotency identity;
+- replays a pending release;
+- re-verifies an ambiguous verification without running the handler again.
+
+Capture and release are monotonic alternatives: after capture intent is durable,
+no error path can switch that hold to release. A successful handler whose
+capture is not confirmed returns `503`, `AITP-Settlement: capture_pending`, and
+`AITP-Request-Id`; recovery continues the capture. A failed handler whose release
+is pending keeps its original status and carries
+`AITP-Settlement: release_pending`.
+
+Without `TURNSTILE_DATABASE_URL`, the demo identifies itself as single-replica
+and uses in-memory challenge and settlement stores with the same state machine.
+
 ## Current limits
 
-The framework-agnostic engine and Axum adapter exist. Other framework adapters,
-the MCP helper, registry/discovery, and published SDK packages do not. The demo's
-nonce store is in memory, so horizontally scaled deployments need a shared nonce
-store before they can safely accept a challenge on a different replica.
+The framework-agnostic engine, Axum adapter, shared Postgres challenge and
+settlement stores, lease recovery worker, settlement-status API
+(`GET /v1/settlements/:request_id`), and reference server exist. Other
+framework adapters, the MCP helper, provider registry/discovery, and published
+SDK packages do not.

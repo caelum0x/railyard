@@ -10,6 +10,8 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
+use aitp_client::codec::encode_receipt;
+use aitp_client::{AmountMicros, Receipt};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
@@ -23,6 +25,7 @@ pub struct FakeMint {
     insufficient: bool,
     /// The `available_micros` reported by `GET /v1/accounts/:id/balance`.
     balance_micros: i64,
+    address_account: String,
 }
 
 impl FakeMint {
@@ -33,6 +36,7 @@ impl FakeMint {
             hold_id: "hold_01FAKE".to_string(),
             insufficient: false,
             balance_micros,
+            address_account: "acct_treasury".to_string(),
         }
     }
 
@@ -43,6 +47,7 @@ impl FakeMint {
             hold_id: "hold_01FAKE".to_string(),
             insufficient: true,
             balance_micros: 0,
+            address_account: "acct_treasury".to_string(),
         }
     }
 
@@ -50,6 +55,12 @@ impl FakeMint {
     #[must_use]
     pub fn with_hold_id(mut self, hold_id: impl Into<String>) -> Self {
         self.hold_id = hold_id.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_address_account(mut self, account: impl Into<String>) -> Self {
+        self.address_account = account.into();
         self
     }
 
@@ -97,6 +108,17 @@ impl FakeMint {
     fn respond(&self, req: &HttpRequest) -> HttpResponse {
         let path = req.path.as_str();
         match (req.method, path) {
+            ("POST", "/v1/aitp/verify") => ok_response(
+                200,
+                json!({
+                    "scheme": "hold",
+                    "hold_id": self.hold_id,
+                    "receipt": {
+                        "status": "open",
+                        "captured_micros": 0,
+                    },
+                }),
+            ),
             ("POST", "/v1/holds") if self.insufficient => error_response(
                 402,
                 "insufficient_funds",
@@ -112,25 +134,49 @@ impl FakeMint {
                     "idempotent_replay": false,
                 }),
             ),
-            ("POST", p) if p.starts_with("/v1/holds/") && p.ends_with("/capture") => ok_response(
-                200,
-                json!({
+            ("POST", p) if p.starts_with("/v1/holds/") && p.ends_with("/capture") => {
+                let captured = captured_from_body(&req.body);
+                let receipt = Receipt {
+                    seq: 2,
+                    op: "hold.capture".to_string(),
+                    op_hash: "11".repeat(32),
+                    amount_micros: AmountMicros(captured),
+                    balance_after_micros: AmountMicros(self.balance_micros),
+                    prev_hash: "22".repeat(32),
+                    hash: "33".repeat(32),
+                    sig: "44".repeat(64),
+                };
+                ok_response(200, json!({
                     "id": self.hold_id,
                     "first_seq": 2,
                     "status": "captured",
-                    "captured_micros": captured_from_body(&req.body),
+                    "captured_micros": captured,
                     "holder_balance": { "available_micros": self.balance_micros, "held_micros": 0 },
-                }),
-            ),
-            ("POST", p) if p.starts_with("/v1/holds/") && p.ends_with("/release") => ok_response(
-                200,
-                json!({
-                    "id": self.hold_id,
-                    "first_seq": 2,
-                    "status": "released",
-                    "captured_micros": 0,
-                }),
-            ),
+                }))
+                .with_header("aitp-receipt", encode_receipt(&receipt).unwrap_or_default())
+            }
+            ("POST", p) if p.starts_with("/v1/holds/") && p.ends_with("/release") => {
+                let receipt = Receipt {
+                    seq: 2,
+                    op: "hold.release".to_string(),
+                    op_hash: "55".repeat(32),
+                    amount_micros: AmountMicros(self.balance_micros.max(1)),
+                    balance_after_micros: AmountMicros(self.balance_micros),
+                    prev_hash: "22".repeat(32),
+                    hash: "66".repeat(32),
+                    sig: "77".repeat(64),
+                };
+                ok_response(
+                    200,
+                    json!({
+                        "id": self.hold_id,
+                        "first_seq": 2,
+                        "status": "released",
+                        "captured_micros": 0,
+                    }),
+                )
+                .with_header("aitp-receipt", encode_receipt(&receipt).unwrap_or_default())
+            }
             ("GET", p) if p.starts_with("/v1/accounts/") && p.ends_with("/balance") => ok_response(
                 200,
                 json!({
@@ -140,6 +186,9 @@ impl FakeMint {
                     "updated_seq": 0,
                 }),
             ),
+            ("GET", p) if p.starts_with("/v1/addresses/") => {
+                ok_response(200, json!({ "account_id": self.address_account }))
+            }
             _ => error_response(404, "not_found", "no fake route"),
         }
     }

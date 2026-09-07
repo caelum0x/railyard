@@ -37,10 +37,17 @@ use tensorzero_core::observability;
 use tensorzero_core::utils::gateway;
 
 mod aitp;
+mod aitp_challenge_store;
 mod billing;
+mod catalog;
 mod cli;
+mod cost_feed;
+mod provider_health_persistence;
+mod relay_health;
 mod router;
 mod routes;
+mod settlement_evidence;
+mod settlement_outbox;
 
 use cli::GatewayArgs;
 

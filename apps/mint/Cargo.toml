@@ -72,3 +72,4 @@ mint-stream = { path = "crates/mint-stream" }
 mint-reserve = { path = "crates/mint-reserve" }
 mint-store-postgres = { path = "crates/mint-store-postgres" }
 mint-payments = { path = "crates/mint-payments" }
+mint-sdk = { path = "crates/mint-sdk" }

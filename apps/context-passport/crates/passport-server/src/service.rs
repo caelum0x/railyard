@@ -1,4 +1,4 @@
-//! The Character Lock Passport business logic: create → edit → lock → version →
+//! The Identity Lock business logic: create → edit → lock → version →
 //! resolve → generate-AS-passport → provenance. Handlers stay thin; every
 //! invariant lives here.
 
@@ -7,9 +7,9 @@ use std::sync::Arc;
 use chrono::Utc;
 
 use passport_core::{
-    AssetsPatch, CreateOutcome, CreatePassport, MintMeter, MintMeterRequest, Passport,
-    PassportAssets, PassportError, PassportFilter, PassportStore, PassportVersion, PassportView,
-    RelayConditioningSink, RelayGenerationRequest, VersionStatus,
+    AssetsPatch, CreateOutcome, CreatePassport, Passport, PassportAssets, PassportError,
+    PassportFilter, PassportStore, PassportVersion, PassportView, RelayConditioningSink,
+    RelayGenerationRequest, VersionStatus,
 };
 use passport_provenance::{GenerationRecord, ProvenanceLog};
 use passport_resolve::{ConditioningPayload, Modality, ProviderRegistry};
@@ -26,7 +26,6 @@ pub struct PassportService {
     store: Arc<dyn PassportStore>,
     provenance: Arc<dyn ProvenanceLog>,
     relay: Arc<dyn RelayConditioningSink>,
-    mint: Arc<dyn MintMeter>,
     registry: Arc<ProviderRegistry>,
 }
 
@@ -35,13 +34,11 @@ impl PassportService {
         store: Arc<dyn PassportStore>,
         provenance: Arc<dyn ProvenanceLog>,
         relay: Arc<dyn RelayConditioningSink>,
-        mint: Arc<dyn MintMeter>,
     ) -> Self {
         Self {
             store,
             provenance,
             relay,
-            mint,
             registry: Arc::new(ProviderRegistry::default()),
         }
     }
@@ -221,7 +218,8 @@ impl PassportService {
     }
 
     /// Generate AS this passport: resolve conditioning → Relay generation →
-    /// record provenance (with a frozen rights snapshot) → best-effort Mint meter.
+    /// require Relay's correlated signed settlement → record provenance with a
+    /// frozen rights snapshot and the exact payment evidence.
     pub async fn generate(
         &self,
         id: &str,
@@ -230,9 +228,11 @@ impl PassportService {
         version: Option<i64>,
     ) -> Result<GenerationRecord, PassportError> {
         let target = self.locked_target(id, version).await?;
+        let principal = self.require_passport(id).await?.owner;
         let payload = self.registry.resolve(&target, provider, modality)?;
 
         let request = RelayGenerationRequest {
+            principal: principal.clone(),
             passport_id: target.passport_id.clone(),
             version: target.version,
             provider: provider.to_string(),
@@ -241,8 +241,25 @@ impl PassportService {
                 .map_err(|e| PassportError::Relay(format!("encoding conditioning: {e}")))?,
         };
         let generated = self.relay.generate(&request).await?;
+        let evidence = generated.payment_evidence.clone().ok_or_else(|| {
+            PassportError::Relay("conditioned generation missing signed payment evidence".into())
+        })?;
+        // Apply the same terminal-settlement invariants the attest path enforces,
+        // so the service layer stays fail-closed regardless of which
+        // `RelayConditioningSink` implementation is injected.
+        check_settlement_evidence(&principal, &evidence).map_err(PassportError::Relay)?;
 
-        let base = GenerationRecord::new(
+        // Derive the provenance id from Relay's correlated request id (the natural
+        // idempotency key). A retried settled generation therefore reuses the
+        // already-recorded provenance instead of double-writing a second row with
+        // a fresh random id + timestamp.
+        let record_id = format!("gen_{}", evidence.request_id.trim());
+        if let Some(existing) = self.provenance.get(&record_id).await? {
+            return Ok(existing);
+        }
+
+        let base = GenerationRecord::new_with_id(
+            record_id,
             &target,
             provider,
             modality.as_str(),
@@ -251,22 +268,48 @@ impl PassportService {
             Utc::now(),
         );
 
-        // Metering is best-effort: a Mint hiccup must not lose provenance of a
-        // successful generation (ADR-0002, success-only, keyed by generation id).
-        let receipt = self
-            .mint
-            .meter(&MintMeterRequest {
-                reference: base.id.clone(),
-                passport_id: base.passport_id.clone(),
-                version: base.version,
-                provider: provider.to_string(),
-                modality: modality.as_str().to_string(),
-            })
-            .await
-            .ok()
-            .and_then(|r| r.receipt_ref);
+        let record = base.with_payment_evidence(evidence);
+        self.provenance.record(&record).await?;
+        Ok(record)
+    }
 
-        let record = base.with_receipt(receipt);
+    /// Attest a generation executed outside Identity Lock itself.
+    ///
+    /// This is intentionally not a blind metadata append: the server resolves
+    /// the immutable locked version again, requires owner/request-correlated
+    /// signed settlement evidence, and derives the record id + timestamp from
+    /// durable Relay facts so retries are byte-identical.
+    pub async fn attest(
+        &self,
+        id: &str,
+        provider: &str,
+        modality: Modality,
+        version: Option<i64>,
+        output_ref: String,
+        asset_hash: Option<String>,
+        evidence: passport_core::PaymentEvidence,
+        settled_at_ms: i64,
+    ) -> Result<GenerationRecord, PassportError> {
+        let target = self.locked_target(id, version).await?;
+        // Prove this exact locked version has a real conditioning path for the
+        // selected provider/modality. An unsupported combination cannot be
+        // stamped as identity-conditioned after the fact.
+        self.registry.resolve(&target, provider, modality)?;
+        let owner = self.require_passport(id).await?.owner;
+        validate_external_attestation(&owner, &output_ref, &evidence)?;
+        let created_at = chrono::DateTime::from_timestamp_millis(settled_at_ms)
+            .ok_or_else(|| PassportError::Invalid("settled_at_ms is invalid".into()))?;
+        let record_id = format!("gen_ext_{}", evidence.request_id);
+        let record = GenerationRecord::new_with_id(
+            record_id,
+            &target,
+            provider,
+            modality.as_str(),
+            output_ref,
+            asset_hash,
+            created_at,
+        )
+        .with_payment_evidence(evidence);
         self.provenance.record(&record).await?;
         Ok(record)
     }
@@ -316,4 +359,50 @@ impl PassportService {
                 .ok_or(PassportError::VersionNotLocked),
         }
     }
+}
+
+/// The terminal-settlement invariants shared by both the in-service `generate`
+/// path (evidence from Relay) and the `attest` path (evidence from a caller):
+/// the request id is a bounded id-safe token, the payer owns the passport, and
+/// the receipt is a signed, non-negative, terminal settlement. Returns the
+/// violation message so each caller can wrap it in its own error variant.
+fn check_settlement_evidence(
+    owner: &str,
+    evidence: &passport_core::PaymentEvidence,
+) -> Result<(), String> {
+    let request_id = evidence.request_id.trim();
+    if request_id.is_empty()
+        || request_id.len() > 128
+        || !request_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err("payment evidence request_id is invalid".into());
+    }
+    if evidence.payer_account != owner {
+        return Err("payment evidence payer does not own this passport".into());
+    }
+    let receipt = &evidence.receipt;
+    if !matches!(receipt.operation.as_str(), "hold.capture" | "transfer")
+        || receipt.operation_hash.is_empty()
+        || receipt.receipt_hash.is_empty()
+        || receipt.signature.is_empty()
+        || receipt.amount_micros < 0
+    {
+        return Err("payment evidence is not a signed terminal settlement".into());
+    }
+    Ok(())
+}
+
+fn validate_external_attestation(
+    owner: &str,
+    output_ref: &str,
+    evidence: &passport_core::PaymentEvidence,
+) -> Result<(), PassportError> {
+    if output_ref.trim().is_empty() || output_ref.len() > 4_096 {
+        return Err(PassportError::Invalid(
+            "external generation requires a bounded output_ref".into(),
+        ));
+    }
+    check_settlement_evidence(owner, evidence).map_err(PassportError::Invalid)
 }

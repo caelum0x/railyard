@@ -6,12 +6,13 @@
 
 use std::sync::Arc;
 
-use mint_core::{AccountId, AccountKind, Micros, MintError};
+use mint_core::{op_hash, AccountId, AccountKind, Micros, MintError, TransferAmount};
 use mint_reserve::{
     Asset, FakeKycGate, FakeRamp, KycTier, MintRequest, PayoutDest, PayoutStatus, RedeemRequest,
     ReserveLedger,
 };
-use mint_store::{FixedClock, InMemoryStore, LedgerStore};
+use mint_store::{FixedClock, InMemoryStore, LedgerStore, TransferCommit};
+use serde_json::json;
 
 type RL = ReserveLedger<InMemoryStore, FakeRamp, FakeKycGate>;
 
@@ -411,4 +412,84 @@ async fn solvency_proof_holds_then_catches_a_tamper() {
         .unwrap();
     let bad = rl.solvency().await.unwrap();
     assert!(!bad.ok, "auditor must catch the reserve shortfall");
+}
+
+/// Drive a store-level double-entry transfer (the same op the `Ledger` facade
+/// emits) directly on the reserve ledger's store, so an in-ledger transfer can
+/// be exercised in a solvency scenario without a second store.
+async fn transfer(rl: &RL, from: &AccountId, to: &AccountId, amount: i64, idem: &str) {
+    let hash = op_hash(&json!({
+        "op": "transfer",
+        "from": from.as_str(),
+        "to": to.as_str(),
+        "amount": amount,
+    }));
+    rl.store()
+        .commit_transfer(TransferCommit {
+            from: from.clone(),
+            to: to.clone(),
+            amount: TransferAmount::new(Micros::new(amount)).unwrap(),
+            idem_key: idem.into(),
+            op_hash: hash,
+            ref_: None,
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn solvency_holds_across_mint_transfer_redeem() {
+    // The §6 invariant Σ(available + held) == reserve must survive a full
+    // in-ledger lifecycle at the facade boundary: a mint bumps the reserve, an
+    // internal transfer moves value between accounts (reserve unchanged, backing
+    // unchanged), and a redeem burns supply + reserve in lockstep. `ok` stays
+    // true throughout, then flips false only under a forced off-book tamper.
+    let ramp = FakeRamp::new().with_confirmed_deposit("d1", 1_000, Asset::Usd);
+    let kyc = FakeKycGate::new(KycTier::Verified, i64::MAX);
+    let rl = reserve_ledger(ramp, kyc);
+    let a = account(&rl, AccountKind::User).await;
+    let b = account(&rl, AccountKind::User).await;
+
+    // 1. Mint 1_000 to `a`: reserve and backing both == 1_000.
+    rl.mint(mint_req(&a, 1_000, "d1")).await.unwrap();
+    let after_mint = rl.solvency().await.unwrap();
+    assert!(after_mint.ok);
+    assert_eq!(after_mint.supply_micros, Micros::new(1_000));
+    assert_eq!(after_mint.backed_micros, after_mint.supply_micros);
+
+    // 2. Transfer 400 a -> b: conserves supply (reserve and backing unchanged).
+    transfer(&rl, &a, &b, 400, "t1").await;
+    assert_eq!(
+        rl.store().get_balance(&a).await.unwrap().available_micros,
+        Micros::new(600)
+    );
+    assert_eq!(
+        rl.store().get_balance(&b).await.unwrap().available_micros,
+        Micros::new(400)
+    );
+    let after_xfer = rl.solvency().await.unwrap();
+    assert!(after_xfer.ok, "a transfer conserves supply — still solvent");
+    assert_eq!(after_xfer.supply_micros, Micros::new(1_000));
+    assert_eq!(after_xfer.backed_micros, after_xfer.supply_micros);
+
+    // 3. Redeem 250 from b: burn drops available AND reserve in lockstep.
+    rl.redeem(redeem_req(&b, 250, "p1", KycTier::Verified))
+        .await
+        .unwrap();
+    let after_redeem = rl.solvency().await.unwrap();
+    assert!(
+        after_redeem.ok,
+        "burn keeps reserve == backing — still solvent"
+    );
+    assert_eq!(after_redeem.supply_micros, Micros::new(750));
+    assert_eq!(after_redeem.backed_micros, after_redeem.supply_micros);
+    assert_eq!(
+        after_redeem.supply_micros,
+        rl.store().reserve_micros_snapshot()
+    );
+
+    // 4. Off-book tamper (available up, reserve untouched) => insolvent.
+    rl.store().seed_account(&a, Micros::new(500)).await.unwrap();
+    let bad = rl.solvency().await.unwrap();
+    assert!(!bad.ok, "auditor must catch value credited off the reserve");
 }

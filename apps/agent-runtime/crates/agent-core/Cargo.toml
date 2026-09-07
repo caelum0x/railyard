@@ -8,22 +8,34 @@ description = "Base agent runtime for the agent-economy apps (Turnstile/Abacus):
 
 [dependencies]
 rig-core.workspace = true
-rig-agent.workspace = true
 relay-provider.workspace = true
 aitp-client.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
 hex.workspace = true
+async-stream.workspace = true
+futures-util.workspace = true
+# `time` is required by the capture reconciler's bounded-backoff retry loop.
+tokio = { workspace = true, features = ["time"] }
+async-trait = { workspace = true, optional = true }
+
+[features]
+# Enables the runnable `agent-runtime-demo` binary, which drives the direct-Mint
+# paid path (and the capture reconciler) against the in-process fake Mint using
+# rig's mock completion model. Off by default so normal builds stay lean.
+demo = ["rig-core/test-utils", "dep:async-trait"]
+
+[[bin]]
+name = "agent-runtime-demo"
+required-features = ["demo"]
 
 [dev-dependencies]
-rig-core = { path = "../../../../external/rig/crates/rig-core", default-features = false, features = [
+async-trait.workspace = true
+rig-core = { version = "=0.39.0", default-features = false, features = [
     "reqwest",
     "rustls",
-    "test-utils",
-] }
-rig-agent = { path = "../../../../external/rig/crates/rig-agent", default-features = false, features = [
     "derive",
     "test-utils",
 ] }
-tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }

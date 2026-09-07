@@ -28,8 +28,7 @@
 //! though Mint already captured the money — pushing the caller toward a fresh key
 //! and a genuine double charge.
 
-use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
@@ -37,7 +36,8 @@ use crate::catalog::{Catalog, Product};
 use crate::entitlement::{EntitlementId, Inventory, OwnedPack};
 use crate::error::GameError;
 use crate::pack::{content_item_id, derive_pack_contents, GrantedItem};
-use crate::transport::{Capture, Hold, MintTransport, Release};
+use crate::state::{CompletedPurchase, GameStateRepository, MemoryGameState, PurchaseRecord};
+use crate::transport::{Capture, Hold, MintTransport, Release, SettlementProof};
 
 /// The post-authorization delivery seam. After the hold opens, the store asks the
 /// fulfiller whether the good can actually be delivered (stock, region-lock, a
@@ -61,7 +61,7 @@ impl Fulfiller for AlwaysFulfill {
 }
 
 /// The outcome of a completed purchase.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PurchaseOutcome {
     /// The granted entitlement id.
     pub entitlement_id: EntitlementId,
@@ -73,20 +73,11 @@ pub struct PurchaseOutcome {
     pub receipt_id: String,
     /// The Mint settlement sequence.
     pub settlement_seq: u64,
+    /// Full signed Mint evidence; this is the provenance root for the grant.
+    pub settlement_proof: SettlementProof,
     /// `true` when this purchase was an idempotent replay (no new charge, no new
     /// entitlement — the same result as the original call).
     pub idempotent_replay: bool,
-}
-
-/// A completed purchase, memoized under its `idem_key` so an idempotent retry
-/// replays the ORIGINAL result without re-charging or re-granting — even for
-/// single-owner goods whose ownership guard would otherwise reject the retry.
-#[derive(Clone)]
-struct CompletedPurchase {
-    /// The player the purchase settled for (guards against key reuse across players).
-    player: String,
-    /// The outcome to replay verbatim (with `idempotent_replay` flipped on).
-    outcome: PurchaseOutcome,
 }
 
 /// A storefront bound to one Mint account rail. Generic over the transport `M`
@@ -97,10 +88,10 @@ pub struct GameStore<M: MintTransport, F: Fulfiller = AlwaysFulfill> {
     catalog: Catalog,
     /// The revenue account captures settle to.
     revenue_account: String,
-    /// player -> inventory.
-    inventories: Mutex<HashMap<String, Inventory>>,
-    /// idem_key -> completed purchase, so a retry replays the original outcome.
-    purchases: Mutex<HashMap<String, CompletedPurchase>>,
+    /// Durable purchase + entitlement projection. A pending intent is written
+    /// before Mint is touched so the exact idempotent flow can recover after a
+    /// crash between capture and local grant.
+    state: Arc<dyn GameStateRepository>,
 }
 
 impl<M: MintTransport> GameStore<M, AlwaysFulfill> {
@@ -123,8 +114,25 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             fulfiller,
             catalog,
             revenue_account: revenue_account.into(),
-            inventories: Mutex::new(HashMap::new()),
-            purchases: Mutex::new(HashMap::new()),
+            state: Arc::new(MemoryGameState::default()),
+        }
+    }
+
+    /// Use an explicit durable state adapter (for example the JSON file adapter
+    /// in `game-economy-store`).
+    pub fn with_state(
+        mint: M,
+        fulfiller: F,
+        catalog: Catalog,
+        revenue_account: impl Into<String>,
+        state: Arc<dyn GameStateRepository>,
+    ) -> Self {
+        Self {
+            mint,
+            fulfiller,
+            catalog,
+            revenue_account: revenue_account.into(),
+            state,
         }
     }
 
@@ -140,12 +148,13 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
 
     /// A snapshot copy of a player's inventory (empty if the player is unknown).
     pub fn inventory(&self, player: &str) -> Inventory {
-        self.inventories
-            .lock()
-            .unwrap()
-            .get(player)
-            .cloned()
-            .unwrap_or_default()
+        self.try_inventory(player).unwrap_or_default()
+    }
+
+    /// Fallible inventory read for production callers that must surface storage
+    /// failures rather than treating them as an empty account.
+    pub fn try_inventory(&self, player: &str) -> Result<Inventory, GameError> {
+        self.state.inventory(player)
     }
 
     /// Buy `product_sku` for `player`, reserving and (on success) capturing the
@@ -170,41 +179,94 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         //    BEFORE the ownership guard so a genuine retry of a single-owner good
         //    replays instead of being rejected as `AlreadyOwned`. Reusing the same
         //    key for a different player or SKU is an idempotency conflict.
-        if let Some(done) = self.purchases.lock().unwrap().get(idem_key) {
-            if done.player != player || done.outcome.product_sku != product_sku {
-                return Err(GameError::IdempotencyConflict);
+        if let Some(record) = self.state.purchase(idem_key)? {
+            match record {
+                PurchaseRecord::Completed(done) => {
+                    if done.player != player || done.outcome.product_sku != product_sku {
+                        return Err(GameError::IdempotencyConflict);
+                    }
+                    let mut out = done.outcome;
+                    out.idempotent_replay = true;
+                    return Ok(out);
+                }
+                PurchaseRecord::Pending {
+                    player: p,
+                    product_sku: s,
+                } if p != player || s != product_sku => {
+                    return Err(GameError::IdempotencyConflict);
+                }
+                PurchaseRecord::Pending { .. } => {
+                    // A previous process may have stopped at any network
+                    // boundary. Replaying the deterministic Mint keys below is
+                    // the recovery protocol.
+                }
             }
-            let mut out = done.outcome.clone();
-            out.idempotent_replay = true;
-            return Ok(out);
         }
+
+        // Persist intent before reserving money. The state adapter enforces
+        // same-key/same-principal/same-SKU reuse.
+        self.state.begin_purchase(idem_key, player, product_sku)?;
 
         // Pre-hold ownership guard for single-owner goods: never open a hold (let
         // alone charge) for a cosmetic/pass the player already owns. Packs are
         // consumable, so buying another is always allowed. Idempotent retries are
-        // handled above, so this only fires for a genuinely NEW purchase.
+        // handled above, so this only fires for a genuinely NEW purchase. This
+        // read of the PERSISTED inventory catches the already-granted (incl.
+        // cross-restart) case; the atomic reservation below closes the
+        // concurrent-in-flight race the read-then-act guard alone cannot.
         self.reject_if_already_owned(player, &product)?;
 
+        // Atomically reserve single-owner goods BEFORE any money moves. Two
+        // concurrent purchases (distinct idem keys) of the same cosmetic/pass now
+        // serialize on the state lock: exactly one claims the reservation, the
+        // other is rejected `AlreadyOwned` before a hold is ever opened. A genuine
+        // same-key retry re-takes its own reservation (idempotent). Packs are
+        // consumable, so they never reserve.
+        let reservation = single_owner_key(&product);
+        if let Some((ref ownership_key, ref sku)) = reservation {
+            self.state
+                .reserve_single_owner(player, ownership_key, sku, idem_key)?;
+        }
+
         // 1. Reserve the price. Insufficient funds fails here — no hold, no grant.
-        let hold = self
+        //    If the hold fails we must free the single-owner reservation so a
+        //    fresh, funded attempt (a NEW key) can still buy the good.
+        let hold = match self
             .mint
             .create_hold(Hold {
                 account_id: player.to_string(),
                 amount_micros: price,
                 idem_key: format!("{idem_key}:hold"),
             })
-            .await?;
+            .await
+        {
+            Ok(hold) => hold,
+            Err(err) => {
+                if let Some((ref ownership_key, _)) = reservation {
+                    self.state
+                        .release_single_owner(player, ownership_key, idem_key);
+                }
+                return Err(err);
+            }
+        };
 
-        // 2. Attempt delivery. Failure releases the hold and grants nothing.
+        // 2. Attempt delivery. Failure releases the hold AND the single-owner
+        //    reservation (nothing was granted) and grants nothing.
         if let Err(fulfill_err) = self.fulfiller.fulfill(player, &product).await {
-            self.mint
+            let released = self
+                .mint
                 .release_hold(
                     &hold.hold_id,
                     Release {
                         idem_key: format!("{idem_key}:release"),
                     },
                 )
-                .await?;
+                .await;
+            if let Some((ref ownership_key, _)) = reservation {
+                self.state
+                    .release_single_owner(player, ownership_key, idem_key);
+            }
+            released?;
             return Err(fulfill_err);
         }
 
@@ -223,8 +285,8 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             .await?;
 
         // 4. Grant the entitlement (idempotent by deterministic id).
-        self.grant(
-            player,
+        let inventory = self.grant(
+            self.state.inventory(player)?,
             &product,
             &entitlement_id,
             &capture.receipt_id,
@@ -237,19 +299,21 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             charged_micros: capture.captured_micros,
             receipt_id: capture.receipt_id,
             settlement_seq: capture.settlement_seq,
+            settlement_proof: capture.proof,
             idempotent_replay: capture.idempotent_replay,
         };
 
         // 5. Memoize the completed purchase so a later retry under the same key
         //    replays this exact outcome (see step 0) instead of re-charging or
         //    tripping the ownership guard.
-        self.purchases.lock().unwrap().insert(
-            idem_key.to_string(),
-            CompletedPurchase {
+        self.state.commit_purchase(
+            idem_key,
+            &CompletedPurchase {
                 player: player.to_string(),
                 outcome: outcome.clone(),
             },
-        );
+            &inventory,
+        )?;
 
         Ok(outcome)
     }
@@ -263,10 +327,7 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         entitlement_id: &str,
         seed: u64,
     ) -> Result<Vec<GrantedItem>, GameError> {
-        let mut invs = self.inventories.lock().unwrap();
-        let inv = invs
-            .get_mut(player)
-            .ok_or_else(|| GameError::PackNotOwned(entitlement_id.to_string()))?;
+        let mut inv = self.state.inventory(player)?;
         let pack = inv
             .packs
             .get(entitlement_id)
@@ -290,21 +351,52 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         for item in &contents {
             inv.grant_cosmetic(&item.item_id, &item.name);
         }
+        self.state.save_inventory(player, &inv)?;
         Ok(contents)
+    }
+
+    /// Advance a player's owned battle-pass to `target` tier.
+    ///
+    /// This is the post-purchase progression path: the game backend reports the
+    /// tier a player has earned (through play), and the store clamps it to
+    /// `[current, season_tier_count]` and persists it. It moves NO money — a pass
+    /// is bought once on the Mint rail (see [`Self::purchase`]); tiers unlock for
+    /// free as the season is played. Monotonic + saturating, so a replayed or
+    /// stale report is a harmless no-op. Errors if the player does not own the
+    /// pass or the SKU is not a battle-pass in the catalog.
+    pub fn advance_battle_pass(
+        &self,
+        player: &str,
+        pass_sku: &str,
+        target: u32,
+    ) -> Result<u32, GameError> {
+        let max_tiers = match self.catalog.get(pass_sku) {
+            Some(Product::BattlePass(b)) => b.tiers,
+            Some(_) => return Err(GameError::UnknownProduct(pass_sku.to_string())),
+            None => return Err(GameError::UnknownProduct(pass_sku.to_string())),
+        };
+
+        let mut inv = self.state.inventory(player)?;
+        let pass = inv
+            .battle_pass
+            .as_mut()
+            .filter(|bp| bp.pass_sku == pass_sku)
+            .ok_or_else(|| GameError::BattlePassNotOwned(pass_sku.to_string()))?;
+        let tier = pass.advance_to(target, max_tiers);
+        self.state.save_inventory(player, &inv)?;
+        Ok(tier)
     }
 
     /// Grant the entitlement for a captured purchase. Idempotent — a replayed
     /// purchase re-derives the same entitlement id and no-ops.
     fn grant(
         &self,
-        player: &str,
+        mut inv: Inventory,
         product: &Product,
         entitlement_id: &str,
         receipt_id: &str,
         settlement_seq: u64,
-    ) {
-        let mut invs = self.inventories.lock().unwrap();
-        let inv = invs.entry(player.to_string()).or_default();
+    ) -> Inventory {
         match product {
             Product::CardPack(t) => inv.grant_pack(OwnedPack {
                 entitlement_id: entitlement_id.to_string(),
@@ -319,15 +411,13 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             }
             Product::BattlePass(b) => inv.grant_battle_pass(&b.sku),
         }
+        inv
     }
 
     /// Reject a purchase of a single-owner good the player already holds, BEFORE
     /// any hold is opened (so a duplicate is never charged).
     fn reject_if_already_owned(&self, player: &str, product: &Product) -> Result<(), GameError> {
-        let invs = self.inventories.lock().unwrap();
-        let Some(inv) = invs.get(player) else {
-            return Ok(());
-        };
+        let inv = self.state.inventory(player)?;
         match product {
             Product::Cosmetic(c) => {
                 let item_id = content_item_id(c.rarity, &c.name);
@@ -344,6 +434,22 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             Product::CardPack(_) => {}
         }
         Ok(())
+    }
+}
+
+/// The `(ownership_key, sku)` a single-owner good is reserved under, or `None`
+/// for consumable packs (which never reserve). The `ownership_key` is namespaced
+/// per shape and matches exactly what [`GameStore::reject_if_already_owned`]
+/// checks against the persisted inventory, so the concurrency reservation and the
+/// persisted-ownership guard agree on identity.
+fn single_owner_key(product: &Product) -> Option<(String, String)> {
+    match product {
+        Product::Cosmetic(c) => {
+            let item_id = content_item_id(c.rarity, &c.name);
+            Some((format!("cosmetic:{item_id}"), c.sku.clone()))
+        }
+        Product::BattlePass(b) => Some((format!("pass:{}", b.sku), b.sku.clone())),
+        Product::CardPack(_) => None,
     }
 }
 

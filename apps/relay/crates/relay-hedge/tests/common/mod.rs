@@ -71,7 +71,7 @@ pub fn fake_attempt(
     worst_case_cost_micros: u64,
     latency: Duration,
     script: Script,
-) -> (Attempt<String, String>, Handle) {
+) -> (Attempt<'static, String, String>, Handle) {
     let handle = Handle {
         started: Arc::new(AtomicUsize::new(0)),
         completed: Arc::new(AtomicUsize::new(0)),

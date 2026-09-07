@@ -1,7 +1,10 @@
 //! Hedging configuration. Defaults preserve the existing sequential behavior so
 //! that adding this layer is a no-op until an operator opts in.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use ts_rs::TS;
 
 /// Per-model hedging policy.
 ///
@@ -9,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// behavior: attempts run one at a time, in order, first `Ok` wins. Every field
 /// is `#[serde(default)]` so an omitted `[models.*.hedge]` section deserializes
 /// to exactly this default.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
 #[serde(default, deny_unknown_fields)]
 pub struct HedgeConfig {
     /// Master switch. When `false`, hedging is off regardless of the other
@@ -18,12 +21,17 @@ pub struct HedgeConfig {
     /// Maximum number of provider attempts to race concurrently. `1` (or `0`,
     /// clamped to `1`) means sequential — the untouched fallback path.
     pub max_concurrency: usize,
-    /// Optional delay before launching each attempt after the first, so a fast
-    /// primary usually wins alone before any hedge is even sent upstream.
+    /// Optional interval between provider launches. Secondary attempt `N`
+    /// starts at `N * stagger_ms` from the beginning of the race, so backups
+    /// are introduced progressively instead of bursting together.
     pub stagger_ms: Option<u64>,
     /// Hard per-request cap on the summed worst-case upstream cost (micros) of
     /// concurrently-launched attempts. Never a ledger charge — see crate docs.
     pub max_cost_micros: Option<u64>,
+    /// Worst-case upstream cost for each provider attempt. When a cost cap is
+    /// configured, an unpriced secondary is conservatively treated as over the
+    /// cap and is not launched concurrently.
+    pub provider_cost_micros: BTreeMap<String, u64>,
 }
 
 impl Default for HedgeConfig {
@@ -33,6 +41,7 @@ impl Default for HedgeConfig {
             max_concurrency: 1,
             stagger_ms: None,
             max_cost_micros: None,
+            provider_cost_micros: BTreeMap::new(),
         }
     }
 }
@@ -60,6 +69,21 @@ impl HedgeConfig {
     /// Whether the concurrent (raced) path should be taken at all.
     pub fn is_hedging(&self) -> bool {
         self.effective_concurrency() > 1
+    }
+
+    /// Resolve the cost committed by one attempt. Without a request cap, cost
+    /// metadata is observational and missing entries safely remain zero. With
+    /// a cap, a missing price is returned as `cap + 1`, so `race` admits the
+    /// primary but blocks that attempt from the concurrent hedge window.
+    pub fn attempt_cost_micros(&self, provider: &str) -> u64 {
+        self.provider_cost_micros
+            .get(provider)
+            .copied()
+            .unwrap_or_else(|| {
+                self.max_cost_micros
+                    .map(|cap| cap.saturating_add(1))
+                    .unwrap_or(0)
+            })
     }
 }
 
@@ -100,5 +124,14 @@ mod tests {
         // An empty table must round-trip to the sequential default.
         let c: HedgeConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(c, HedgeConfig::default());
+    }
+
+    #[test]
+    fn capped_unpriced_secondary_is_conservatively_over_cap() {
+        let c = HedgeConfig {
+            max_cost_micros: Some(100),
+            ..HedgeConfig::hedged(2)
+        };
+        assert_eq!(c.attempt_cost_micros("unknown"), 101);
     }
 }

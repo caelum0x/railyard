@@ -7,10 +7,14 @@
 //! auth, and error mapping are real now and faked in tests via `FakeRelay`.
 
 use async_trait::async_trait;
+use mint_protocol::{decode_receipt, HEADER_RECEIPT};
 
 use passport_core::{
-    PassportError, RelayConditioningSink, RelayGenerationRequest, RelayGenerationResult,
+    PassportError, PaymentEvidence, RelayConditioningSink, RelayGenerationRequest,
+    RelayGenerationResult, SettlementReceiptProof,
 };
+
+const HEADER_REQUEST_ID: &str = "AITP-Request-ID";
 
 #[derive(Clone)]
 pub struct RelayClient {
@@ -61,9 +65,78 @@ impl RelayConditioningSink for RelayClient {
             )));
         }
 
-        response
+        let payment_evidence = payment_evidence(response.headers(), &request.principal)?;
+        let mut result = response
             .json::<RelayGenerationResult>()
             .await
-            .map_err(|e| PassportError::Relay(format!("decoding relay response: {e}")))
+            .map_err(|e| PassportError::Relay(format!("decoding relay response: {e}")))?;
+        result.payment_evidence = Some(payment_evidence);
+        Ok(result)
+    }
+}
+
+fn payment_evidence(
+    headers: &reqwest::header::HeaderMap,
+    principal: &str,
+) -> Result<PaymentEvidence, PassportError> {
+    let encoded_receipt = headers
+        .get(HEADER_RECEIPT)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+        .ok_or_else(|| PassportError::Relay("Relay response missing AITP-Receipt".into()))?;
+    let request_id = headers
+        .get(HEADER_REQUEST_ID)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| PassportError::Relay("Relay response missing AITP-Request-ID".into()))?;
+    let receipt = decode_receipt(&encoded_receipt)
+        .map_err(|e| PassportError::Relay(format!("decoding Relay receipt: {e}")))?;
+    if !matches!(receipt.op.as_str(), "hold.capture" | "transfer") {
+        return Err(PassportError::Relay(format!(
+            "Relay generation returned non-settling {} receipt",
+            receipt.op
+        )));
+    }
+    Ok(PaymentEvidence {
+        request_id,
+        payer_account: principal.to_string(),
+        receipt: SettlementReceiptProof {
+            sequence: receipt.seq,
+            operation: receipt.op,
+            operation_hash: receipt.op_hash,
+            amount_micros: receipt.amount_micros,
+            receipt_hash: receipt.hash,
+            signature: receipt.sig,
+        },
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::header::{HeaderMap, HeaderValue};
+
+    const RECEIPT: &str = "eyJzZXEiOjQyLCJvcCI6ImhvbGQuY2FwdHVyZSIsIm9wX2hhc2giOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiYW1vdW50X21pY3JvcyI6OTkwMDAwLCJiYWxhbmNlX2FmdGVyX21pY3JvcyI6NzAxMDAwMCwicHJldl9oYXNoIjoiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYiIsImhhc2giOiJjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjIiwic2lnIjoiZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUifQ";
+
+    #[test]
+    fn decodes_principal_and_request_correlated_signed_evidence() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HEADER_RECEIPT, HeaderValue::from_static(RECEIPT));
+        headers.insert(HEADER_REQUEST_ID, HeaderValue::from_static("req_1"));
+        let evidence = payment_evidence(&headers, "acct_owner").unwrap();
+        assert_eq!(evidence.request_id, "req_1");
+        assert_eq!(evidence.payer_account, "acct_owner");
+        assert_eq!(evidence.receipt.operation, "hold.capture");
+        assert_eq!(evidence.receipt.sequence, 42);
+        assert!(!evidence.receipt.signature.is_empty());
+    }
+
+    #[test]
+    fn missing_receipt_fails_closed() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HEADER_REQUEST_ID, HeaderValue::from_static("req_1"));
+        let error = payment_evidence(&headers, "acct_owner").unwrap_err();
+        assert!(matches!(error, PassportError::Relay(message) if message.contains("AITP-Receipt")));
     }
 }

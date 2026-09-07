@@ -1,0 +1,37 @@
+[package]
+name = "game-economy-server"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "HTTP storefront server that drives the game-economy purchase/pack/inventory flow over a live Mint rail."
+
+[lib]
+name = "game_economy_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "game-economy-server"
+path = "src/main.rs"
+
+[dependencies]
+game-economy-core = { workspace = true }
+game-economy-mint-client = { workspace = true }
+game-economy-store = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+# BLAKE3 keyed-hash backs the per-player bearer-token auth (real MAC, constant-time
+# tag compare) — reused rather than adding `subtle`/`hmac`.
+blake3 = { workspace = true }
+
+[dev-dependencies]
+# Route tests drive the router with the contract-faithful in-memory Mint.
+game-economy-testkit = { workspace = true }
+# `ServiceExt::oneshot` exercises the axum router without binding a socket.
+tower = { version = "0.5", features = ["util"] }
+tokio = { workspace = true, features = ["full"] }

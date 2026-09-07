@@ -1,13 +1,10 @@
 //! The `Aitp402` challenge / verify / settle state machine (SPEC §5.3).
 //!
 //! Ties together the wire types, the two encodings, the payer-key seam, and the
-//! nonce store into a deterministic, injectable (clock + signer + keys + nonces)
+//! durable ledger idempotency into a deterministic, injectable (clock + keys)
 //! settlement engine over an AP0-AP2 [`Ledger`]. Every settled authorization
 //! flows through the existing ledger apply path, so AP2 receipts and value
 //! conservation continue to hold.
-
-use std::collections::HashMap;
-use std::sync::Mutex;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
@@ -22,7 +19,6 @@ use mint_store::{Clock, LedgerStore};
 use ulid::Ulid;
 
 use crate::intent::compute_op_hash;
-use crate::nonce::NonceStore;
 use crate::types::{Authorization, Challenge, Scheme};
 use crate::verifier::PayerKeys;
 
@@ -50,34 +46,25 @@ pub enum Settlement {
 }
 
 /// The AITP-402 server state machine, generic over the store, clock, payer-key
-/// registry, and nonce store (all injectable for deterministic tests).
-pub struct Aitp402<S: LedgerStore, C: Clock, K: PayerKeys, N: NonceStore> {
+/// registry (all injectable for deterministic tests).
+pub struct Aitp402<S: LedgerStore, C: Clock, K: PayerKeys> {
     ledger: Ledger<S>,
     clock: C,
     keys: K,
-    nonces: N,
-    /// Challenges issued by this server, keyed by nonce. `verify_and_settle`
-    /// looks up the challenge to recover its `scheme` and to reject an
-    /// authorization that does not match the price/payee/resource it issued (so
-    /// a payer can neither underpay nor redirect a signed intent).
-    issued: Mutex<HashMap<String, Challenge>>,
 }
 
-impl<S, C, K, N> Aitp402<S, C, K, N>
+impl<S, C, K> Aitp402<S, C, K>
 where
     S: LedgerStore,
     C: Clock,
     K: PayerKeys,
-    N: NonceStore,
 {
     /// Assemble a state machine over an existing ledger.
-    pub fn new(ledger: Ledger<S>, clock: C, keys: K, nonces: N) -> Self {
+    pub fn new(ledger: Ledger<S>, clock: C, keys: K) -> Self {
         Aitp402 {
             ledger,
             clock,
             keys,
-            nonces,
-            issued: Mutex::new(HashMap::new()),
         }
     }
 
@@ -87,8 +74,8 @@ where
     }
 
     /// Issue a `402` [`Challenge`] with a fresh random nonce, expiring
-    /// `ttl_ms` from now. Registers the challenge so a later authorization for
-    /// this nonce can be settled.
+    /// `ttl_ms` from now. Challenge ownership stays at the protected edge;
+    /// Mint settles the resulting payer-signed instruction.
     pub fn issue_challenge(
         &self,
         payee: &Address,
@@ -127,10 +114,6 @@ where
             expiry: self.clock.now() + ttl_ms,
             scheme,
         };
-        self.issued
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(nonce.to_string(), challenge.clone());
         challenge
     }
 
@@ -142,12 +125,10 @@ where
     /// 2. recompute `op_hash`, compare to the claimed one — else
     ///    [`MintError::SignatureInvalid`] (catches post-sign field tampering);
     /// 3. Ed25519-verify `sig` vs the payer key — else `SignatureInvalid`;
-    /// 4. parse payer account + payee address, and match the auth against the
-    ///    issued challenge (no underpay/redirect) — else `bad_account_id` /
-    ///    `bad_address` / `signature_invalid`;
-    /// 5. claim the nonce (LAST, so a bad auth never burns it) — else
-    ///    [`MintError::NonceReplayed`];
-    /// 6. settle by the challenge scheme, threading a nonce-bound
+    /// 4. parse payer account + payee address. The protected service is
+    ///    responsible for matching the authorization to the challenge it issued;
+    ///    Mint verifies the payer-signed money instruction itself;
+    /// 5. settle by the signed scheme, threading a nonce-bound
     ///    `idempotency_key` (`nonce:idempotency_key`, so distinct challenges can
     ///    never share a ledger op) and `resource`.
     pub async fn verify_and_settle(&self, auth: &Authorization) -> Result<Settlement, MintError> {
@@ -174,33 +155,25 @@ where
         vk.verify(recomputed.as_bytes(), &sig)
             .map_err(|_| MintError::SignatureInvalid)?;
 
-        // (4) Parse identities and match the auth against the issued challenge.
+        // (4) Parse identities. Challenge/price matching belongs to the edge
+        // that issued the 402; Mint only moves funds authorized by the payer.
         let payer = AccountId::parse(&auth.payer)?;
         let payee_addr = Address::parse(&auth.payee)?;
-        let scheme = {
-            let issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
-            let challenge = issued.get(&auth.nonce).ok_or(MintError::SignatureInvalid)?;
-            if challenge.payee != auth.payee
-                || challenge.amount_micros != auth.amount_micros
-                || challenge.resource != auth.resource
-                || challenge.expiry != auth.expiry
-            {
-                return Err(MintError::SignatureInvalid);
-            }
-            challenge.scheme
-        };
+        let scheme = auth.scheme;
 
-        // (5) Claim the nonce — only now that the auth is proven valid.
-        self.nonces.claim(&auth.nonce, auth.expiry)?;
-
-        // (6) Settle by scheme through the existing ledger apply path.
+        // (5) Settle by scheme through the existing ledger apply path.
         //
         // Bind the ledger idempotency key to the SINGLE-USE nonce (which is not
         // in the ledger's money-moving op_hash) so two DISTINCT challenges can
         // never collapse to one ledger op. Without this, a payer could reuse one
         // `idempotency_key` across fresh nonces with an identical
         // payer/payee/amount/resource body and be charged once while every
-        // request is served (pay-once-use-many).
+        // request is served (pay-once-use-many). The ledger's durable
+        // idempotency index is the authoritative replay store. An exact replay
+        // returns the original settlement (marked `idempotent_replay`) so a
+        // caller that lost the HTTP response can recover the durable hold id or
+        // receipt after restart. It never moves money twice. Serving a request
+        // twice is prevented at the edge by the request execution lease.
         let amount = auth.amount_micros.get();
         let idem_key = format!("{}:{}", auth.nonce, auth.idempotency_key);
         match scheme {
@@ -216,7 +189,9 @@ where
                         ref_: Some(auth.resource.clone()),
                     })
                     .await?;
-                let aitp_receipt = self.last_receipt().await;
+                let aitp_receipt = self
+                    .receipt_for(receipt.first_seq, &receipt.from_balance.account_id)
+                    .await;
                 Ok(Settlement::Transfer {
                     receipt,
                     aitp_receipt,
@@ -233,7 +208,12 @@ where
                     })
                     .await?;
                 let hold_id = receipt.hold_id.clone();
-                let aitp_receipt = self.last_receipt().await;
+                let aitp_receipt = self
+                    .receipt_for(
+                        receipt.holder_balance.updated_seq,
+                        &receipt.holder_balance.account_id,
+                    )
+                    .await;
                 Ok(Settlement::Hold {
                     hold_id,
                     receipt,
@@ -280,15 +260,17 @@ where
             .await
     }
 
-    /// The §6 receipt a just-committed settlement appended (its last row). A
-    /// settlement always runs on a freshly-claimed nonce, so it is never an
-    /// idempotent no-op here and always appends at least one receipt.
-    async fn last_receipt(&self) -> Receipt {
+    /// Resolve the exact §6 receipt emitted by an operation. Looking up the
+    /// operation's journal sequence and principal is safe under concurrent
+    /// settlements; reading the global "last receipt" is not.
+    async fn receipt_for(&self, journal_seq: u64, account_id: &AccountId) -> Receipt {
         self.ledger
             .receipts()
             .await
-            .last()
-            .cloned()
-            .expect("a settlement always appends a receipt")
+            .into_iter()
+            .find(|receipt| {
+                receipt.body.journal_seq == journal_seq && &receipt.body.account_id == account_id
+            })
+            .expect("a committed settlement always appends its principal receipt")
     }
 }

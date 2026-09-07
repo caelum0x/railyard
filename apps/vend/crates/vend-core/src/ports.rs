@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::VendError;
 use crate::ids::{AppId, ChargeId, EndUserId, SubKeyId, TenantId};
 use crate::money::Charge;
+use crate::transport::SettlementProof;
 
 /// Terminal state of a metered-usage row. Starts `Pending` at hold time and is
 /// driven to `Captured` (2xx-with-usage) or `Released` (any other terminal).
@@ -52,6 +53,9 @@ pub struct MeteredUsage {
     pub tenant_net_micros: i64,
     /// Settlement outcome.
     pub outcome: UsageOutcome,
+    /// Signed Mint evidence once capture/release reaches a terminal state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settlement_proof: Option<SettlementProof>,
     /// UTC day bucket (`YYYY-MM-DD`) for spend-cap aggregation.
     pub utc_day: String,
 }
@@ -86,6 +90,13 @@ pub trait UsageRepo: Send + Sync {
     async fn mark_captured(&self, charge_id: &ChargeId, actual: &Charge) -> Result<(), VendError>;
     /// Mark a row `Released` (no charge).
     async fn mark_released(&self, charge_id: &ChargeId) -> Result<(), VendError>;
+    /// Persist Mint's signed terminal evidence. Idempotent for the same proof;
+    /// rejects a different proof for an already-receipted charge.
+    async fn record_settlement_proof(
+        &self,
+        charge_id: &ChargeId,
+        proof: &SettlementProof,
+    ) -> Result<(), VendError>;
     /// `SUM(charge_micros)` for a key on a UTC day (spend-cap numerator).
     async fn sum_charge_for_key_day(
         &self,

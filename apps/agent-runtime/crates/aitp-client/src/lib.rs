@@ -2,16 +2,18 @@
 //!
 //! This crate models ONLY the caller side of the AITP-402 handshake
 //! (`docs/mint/AITP-402-SPEC.md` §5) as a Rust trait, [`PaymentGateway`], plus
-//! the wire types and a header codec. It has **no dependency on rig or Mint** —
-//! that decoupling is the whole point. A [`StubPaymentGateway`] is the default
-//! (and only) implementor today; a Mint-backed one drops in later behind the
-//! same trait.
+//! the wire types and a header codec. It has **no dependency on rig or
+//! mint-server** — that decoupling is the whole point. It includes an offline
+//! [`StubPaymentGateway`], a direct-Mint compatibility gateway, and the
+//! policy-bound HTTP 402 transport used by Relay-backed agents.
 
 pub mod amount;
 pub mod codec;
 pub mod error;
 pub mod gateway;
+pub mod hold_attestation;
 pub mod mint;
+pub mod paid_http;
 pub mod signer;
 pub mod stub;
 pub mod transport;
@@ -20,10 +22,23 @@ pub mod types;
 pub use amount::{AmountMicros, MICROS_PER_AIT};
 pub use error::PayError;
 pub use gateway::{Authorized, PaymentGateway};
+pub use hold_attestation::{
+    hold_commitment, hold_operation_hash, hold_party_commitment, hold_reference_hash,
+    no_payee_commitment, HoldAttestationVerifyError, HoldSettlementAttestation,
+    HoldSettlementAttestationClaims, HoldSettlementCommand, HoldSettlementExpectation,
+    HoldSettlementOperation, HOLD_SETTLEMENT_ATTESTATION_FORMAT,
+};
 pub use mint::MintPaymentGateway;
+pub use paid_http::{
+    AuthorizationBuilder, AuthorizationPolicy, PaidHttpClient, PaidHttpResponse, PaymentEvidence,
+    SettlementEvidenceVerifier,
+};
 pub use signer::{op_hash, op_hash_hex, AuthSigner, AuthorizationIntent, Ed25519Signer};
 pub use stub::{StubCalls, StubPaymentGateway};
-pub use transport::{HttpRequest, HttpResponse, HttpTransport, ReqwestTransport};
+pub use transport::{
+    HttpByteStream, HttpRequest, HttpResponse, HttpTransport, ReqwestTransport,
+    StreamingHttpResponse, TransportTimeouts,
+};
 pub use types::{HoldRef, PaymentAuthorization, PaymentChallenge, Receipt, Scheme};
 
 #[cfg(test)]

@@ -90,7 +90,7 @@ impl LedgerEntry {
         job_id: Option<JobId>,
     ) -> Self {
         LedgerEntry {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             account_id,
             kind,
             delta_micros,
@@ -117,7 +117,7 @@ impl UsageRecord {
     /// Construct a usage row with a fresh id and timestamp.
     pub fn new(job_id: JobId, account_id: AccountId, model: ModelId, usage: Usage) -> Self {
         UsageRecord {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             job_id,
             account_id,
             model,

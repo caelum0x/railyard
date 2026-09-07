@@ -146,6 +146,7 @@ dashmap = "6.2.1"
 redis = { workspace = true }
 rustls = { workspace = true }
 serde_with = { workspace = true }
+relay-hedge = { path = "../relay-hedge" }
 
 [dev-dependencies]
 googletest = { workspace = true }

@@ -50,6 +50,8 @@ pub struct PaymentAuthorization {
     pub nonce: String,
     pub resource: String,
     pub expiry: i64,
+    /// Echoes the challenged settlement scheme and is covered by `op_hash`.
+    pub scheme: Scheme,
     pub idempotency_key: String,
     pub pubkey_id: String,
     /// blake3 of the canonical intent (hex/base64url). Fake in the stub.
@@ -61,13 +63,20 @@ pub struct PaymentAuthorization {
 /// Parsed `AITP-Receipt` header (server → caller on settle, SPEC §6).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Receipt {
+    #[serde(alias = "sequence")]
     pub seq: u64,
+    #[serde(alias = "operation")]
     pub op: String,
+    #[serde(alias = "operation_hash")]
     pub op_hash: String,
     pub amount_micros: AmountMicros,
+    #[serde(default)]
     pub balance_after_micros: AmountMicros,
+    #[serde(default)]
     pub prev_hash: String,
+    #[serde(alias = "receipt_hash")]
     pub hash: String,
+    #[serde(alias = "signature")]
     pub sig: String,
 }
 

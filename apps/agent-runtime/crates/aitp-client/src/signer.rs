@@ -39,6 +39,7 @@ pub struct AuthorizationIntent<'a> {
     pub nonce: &'a str,
     pub resource: &'a str,
     pub expiry: i64,
+    pub scheme: crate::types::Scheme,
     pub idempotency_key: &'a str,
 }
 
@@ -54,6 +55,13 @@ fn canonical_intent_bytes(intent: &AuthorizationIntent<'_>) -> Vec<u8> {
     map.insert("nonce", Value::from(intent.nonce));
     map.insert("resource", Value::from(intent.resource));
     map.insert("expiry", Value::from(intent.expiry));
+    map.insert(
+        "scheme",
+        Value::from(match intent.scheme {
+            crate::types::Scheme::Hold => "aitp-hold",
+            crate::types::Scheme::Transfer => "aitp-transfer",
+        }),
+    );
     map.insert("idempotency_key", Value::from(intent.idempotency_key));
     serde_json::to_vec(&map).expect("BTreeMap<&str, Value> always serializes")
 }
@@ -140,6 +148,7 @@ mod tests {
             nonce: "9f2c",
             resource: "POST /v1/chat#llama",
             expiry: 1_723_958_400_000,
+            scheme: crate::types::Scheme::Hold,
             idempotency_key: "idem_1",
         };
         let h = op_hash(&a);
@@ -158,6 +167,7 @@ mod tests {
             nonce: "9f2c",
             resource: "r",
             expiry: 10,
+            scheme: crate::types::Scheme::Hold,
             idempotency_key: "idem_1",
         };
         let h = op_hash(&intent);

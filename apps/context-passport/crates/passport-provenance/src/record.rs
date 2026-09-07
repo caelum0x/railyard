@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use passport_core::{new_generation_id, DisclosureLevel, PassportVersion};
+use passport_core::{new_generation_id, DisclosureLevel, PassportVersion, PaymentEvidence};
 
 /// One record per generated asset. `passport_content_digest` binds the asset to
 /// the exact immutable identity snapshot that conditioned it.
@@ -29,6 +29,10 @@ pub struct GenerationRecord {
     /// Optional Mint receipt reference proving the generation settled on the rail.
     #[serde(default)]
     pub mint_receipt_ref: Option<String>,
+    /// Full request/principal-correlated signed evidence. Older stored records
+    /// deserialize with `None`; new generation writes require `Some`.
+    #[serde(default)]
+    pub payment_evidence: Option<PaymentEvidence>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -43,8 +47,30 @@ impl GenerationRecord {
         asset_hash: Option<String>,
         created_at: DateTime<Utc>,
     ) -> Self {
+        Self::new_with_id(
+            new_generation_id(),
+            version,
+            provider,
+            modality,
+            output_ref,
+            asset_hash,
+            created_at,
+        )
+    }
+
+    /// Build a record with a caller-derived stable id. Used for external
+    /// generation attestation where Relay's request id is the idempotency key.
+    pub fn new_with_id(
+        id: impl Into<String>,
+        version: &PassportVersion,
+        provider: impl Into<String>,
+        modality: impl Into<String>,
+        output_ref: impl Into<String>,
+        asset_hash: Option<String>,
+        created_at: DateTime<Utc>,
+    ) -> Self {
         Self {
-            id: new_generation_id(),
+            id: id.into(),
             passport_id: version.passport_id.clone(),
             version: version.version,
             passport_content_digest: version
@@ -58,14 +84,16 @@ impl GenerationRecord {
             iptc_digital_source_type: version.rights.iptc_digital_source_type.clone(),
             disclosure_required: matches!(version.rights.disclosure, DisclosureLevel::Required),
             mint_receipt_ref: None,
+            payment_evidence: None,
             created_at,
         }
     }
 
     /// Attach a Mint receipt reference (returns a new record; no mutation).
-    pub fn with_receipt(&self, receipt_ref: Option<String>) -> Self {
+    pub fn with_payment_evidence(&self, evidence: PaymentEvidence) -> Self {
         let mut next = self.clone();
-        next.mint_receipt_ref = receipt_ref;
+        next.mint_receipt_ref = Some(evidence.receipt.receipt_hash.clone());
+        next.payment_evidence = Some(evidence);
         next
     }
 }

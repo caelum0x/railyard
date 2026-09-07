@@ -45,11 +45,13 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use mint_protocol::{decode_receipt, HEADER_RECEIPT};
 use serde::Deserialize;
 
 use game_economy_core::error::GameError;
 use game_economy_core::transport::{
     Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Release, ReleaseReceipt,
+    SettlementProof,
 };
 
 /// The HTTP header carrying the shared Mint API key (matches mint-server's
@@ -139,16 +141,48 @@ impl HttpMintTransport {
             .map_err(|e| GameError::Mint(format!("mint request to {path} failed: {e}")))?;
         decode(resp).await
     }
-}
 
-/// Content-address a capture receipt id the SAME way `FakeMint` (and mint-core)
-/// do — `rcpt_<blake3("receipt:v1:<hold_id>:<seq>")[..24]>` — so the HTTP and fake
-/// transports mint identical, comparable receipt anchors. mint-server's shared
-/// `hold_receipt` view does not surface the id, so it is derived here from the
-/// hold id + settlement sequence (both of which the response DOES carry).
-fn derive_receipt_id(hold_id: &str, settlement_seq: u64) -> String {
-    let preimage = format!("receipt:v1:{hold_id}:{settlement_seq}");
-    format!("rcpt_{}", &blake3::hash(preimage.as_bytes()).to_hex()[..24])
+    /// A terminal Mint operation is successful only when its signed receipt is
+    /// present and decodable. Returning body data without evidence would create
+    /// an entitlement the caller cannot independently audit.
+    async fn post_json_receipted<B, T>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<(T, SettlementProof), GameError>
+    where
+        B: serde::Serialize,
+        T: for<'de> Deserialize<'de>,
+    {
+        let resp = self
+            .http
+            .post(self.url(path))
+            .header(API_KEY_HEADER, &self.api_key)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| GameError::Mint(format!("mint request to {path} failed: {e}")))?;
+        let encoded = resp
+            .headers()
+            .get(HEADER_RECEIPT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let data = decode(resp).await?;
+        let encoded = encoded
+            .ok_or_else(|| GameError::Mint("Mint terminal response missing AITP-Receipt".into()))?;
+        let receipt = decode_receipt(&encoded)
+            .map_err(|error| GameError::Mint(format!("decode Mint receipt: {error}")))?;
+        Ok((
+            data,
+            SettlementProof {
+                sequence: receipt.seq,
+                operation: receipt.op,
+                operation_hash: receipt.op_hash,
+                receipt_hash: receipt.hash,
+                signature: receipt.sig,
+            },
+        ))
+    }
 }
 
 /// Decode a mint-server response: on 2xx unwrap `{success,data}` (falling back to
@@ -264,8 +298,6 @@ struct CaptureData {
     #[serde(default)]
     captured_micros: i64,
     #[serde(default)]
-    first_seq: u64,
-    #[serde(default)]
     holder_balance: BalanceView,
     #[serde(default)]
     idempotent_replay: bool,
@@ -359,13 +391,9 @@ impl MintTransport for HttpMintTransport {
         })
     }
 
-    async fn capture_hold(
-        &self,
-        hold_id: &str,
-        req: Capture,
-    ) -> Result<CaptureReceipt, GameError> {
-        let data: CaptureData = self
-            .post_json(
+    async fn capture_hold(&self, hold_id: &str, req: Capture) -> Result<CaptureReceipt, GameError> {
+        let (data, proof): (CaptureData, SettlementProof) = self
+            .post_json_receipted(
                 &format!("/v1/holds/{hold_id}/capture"),
                 &HoldCaptureReq {
                     amount_micros: req.amount_micros,
@@ -374,31 +402,41 @@ impl MintTransport for HttpMintTransport {
                 },
             )
             .await?;
+        if proof.operation != "hold.capture" {
+            return Err(GameError::Mint(format!(
+                "Mint capture returned {} receipt",
+                proof.operation
+            )));
+        }
         Ok(CaptureReceipt {
             captured_micros: data.captured_micros,
             balance_after_micros: data.holder_balance.available_micros,
-            settlement_seq: data.first_seq,
-            receipt_id: derive_receipt_id(hold_id, data.first_seq),
+            settlement_seq: proof.sequence,
+            receipt_id: proof.receipt_hash.clone(),
+            proof,
             idempotent_replay: data.idempotent_replay,
         })
     }
 
-    async fn release_hold(
-        &self,
-        hold_id: &str,
-        req: Release,
-    ) -> Result<ReleaseReceipt, GameError> {
-        let data: ReleaseData = self
-            .post_json(
+    async fn release_hold(&self, hold_id: &str, req: Release) -> Result<ReleaseReceipt, GameError> {
+        let (data, proof): (ReleaseData, SettlementProof) = self
+            .post_json_receipted(
                 &format!("/v1/holds/{hold_id}/release"),
                 &HoldReleaseReq {
                     idem_key: &req.idem_key,
                 },
             )
             .await?;
+        if proof.operation != "hold.release" {
+            return Err(GameError::Mint(format!(
+                "Mint release returned {} receipt",
+                proof.operation
+            )));
+        }
         Ok(ReleaseReceipt {
             released_micros: data.released_micros,
             idempotent_replay: data.idempotent_replay,
+            proof,
         })
     }
 }
@@ -429,10 +467,19 @@ mod tests {
 
     #[test]
     fn maps_bare_status_when_code_missing() {
-        assert_eq!(map_error(402, "", String::new()), GameError::InsufficientFunds);
+        assert_eq!(
+            map_error(402, "", String::new()),
+            GameError::InsufficientFunds
+        );
         assert_eq!(map_error(404, "", String::new()), GameError::HoldNotFound);
-        assert_eq!(map_error(409, "", String::new()), GameError::IdempotencyConflict);
-        assert_eq!(map_error(422, "", String::new()), GameError::CaptureExceedsHold);
+        assert_eq!(
+            map_error(409, "", String::new()),
+            GameError::IdempotencyConflict
+        );
+        assert_eq!(
+            map_error(422, "", String::new()),
+            GameError::CaptureExceedsHold
+        );
     }
 
     #[test]
@@ -457,17 +504,5 @@ mod tests {
             }
             other => panic!("expected Mint(..), got {other:?}"),
         }
-    }
-
-    #[test]
-    fn receipt_id_matches_fakemint_derivation() {
-        // Must equal FakeMint's `rcpt_{blake3("receipt:v1:{hold_id}:{seq}")[..24]}`.
-        let hold_id = "hold_00000000000000000000000007";
-        let seq = 42u64;
-        let expected = format!(
-            "rcpt_{}",
-            &blake3::hash(format!("receipt:v1:{hold_id}:{seq}").as_bytes()).to_hex()[..24]
-        );
-        assert_eq!(derive_receipt_id(hold_id, seq), expected);
     }
 }

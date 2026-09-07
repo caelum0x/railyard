@@ -8,7 +8,7 @@ use passport_provenance::GenerationRecord;
 use passport_resolve::ConditioningPayload;
 
 use crate::auth::authorize;
-use crate::dto::{GenerateRequest, ResolveRequest};
+use crate::dto::{AttestRequest, GenerateRequest, ResolveRequest};
 use crate::error::ApiError;
 use crate::state::{AppState, Data};
 
@@ -38,6 +38,31 @@ pub async fn generate(
     let record = state
         .service
         .generate(&id, &request.provider, request.modality, request.version)
+        .await?;
+    Ok((StatusCode::CREATED, Json(Data { data: record })))
+}
+
+/// Append provenance for a first-party generation performed outside this
+/// service, after re-validating both the lock and signed settlement evidence.
+pub async fn attest(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<AttestRequest>,
+) -> Result<(StatusCode, Json<Data<GenerationRecord>>), ApiError> {
+    authorize(&state.api_key, &headers)?;
+    let record = state
+        .service
+        .attest(
+            &id,
+            &request.provider,
+            request.modality,
+            request.version,
+            request.output_ref,
+            request.asset_hash,
+            request.payment_evidence,
+            request.settled_at_ms,
+        )
         .await?;
     Ok((StatusCode::CREATED, Json(Data { data: record })))
 }

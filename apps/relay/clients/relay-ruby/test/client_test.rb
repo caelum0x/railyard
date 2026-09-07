@@ -16,8 +16,8 @@ class RelayClientTest < Minitest::Test
   # ---- construction ---------------------------------------------------------
 
   def test_requires_base_url
-    assert_raises(ArgumentError) { Relay::Client.new(base_url: nil, api_key: "k") }
-    assert_raises(ArgumentError) { Relay::Client.new(base_url: "", api_key: "k") }
+    assert_raises(Relay::ConfigurationError) { Relay::Client.new(base_url: nil, api_key: "k") }
+    assert_raises(Relay::ConfigurationError) { Relay::Client.new(base_url: "", api_key: "k") }
   end
 
   def test_strips_trailing_slash_from_base_url
@@ -120,7 +120,7 @@ class RelayClientTest < Minitest::Test
     assert_equal true, sent["stream_options"]["include_usage"]
   end
 
-  def test_streaming_respects_caller_include_usage_false
+  def test_streaming_forces_terminal_usage_for_settlement
     @transport.script_stream(["data: [DONE]\n\n"])
     @client.chat_completions_stream(
       model: "m",
@@ -128,7 +128,7 @@ class RelayClientTest < Minitest::Test
       stream_options: { include_usage: false }
     ) { |_| }
     sent = JSON.parse(@transport.last_request[:body])
-    assert_equal false, sent["stream_options"]["include_usage"]
+    assert_equal true, sent["stream_options"]["include_usage"]
   end
 
   def test_streaming_handles_frames_split_across_chunks
@@ -153,25 +153,25 @@ class RelayClientTest < Minitest::Test
   end
 
   def test_streaming_maps_error_status
-    @transport.script_stream([], status: 402,
-      error_body: JSON.generate("error" => { "type" => "insufficient_credits", "message" => "insufficient credits" }))
-    assert_raises(Relay::InsufficientCreditsError) do
+    @transport.script_stream([], status: 402, headers: payment_headers,
+      error_body: JSON.generate("error" => { "type" => "payment_required", "message" => "payment required" }))
+    assert_raises(Relay::PaymentRequiredError) do
       @client.chat_completions_stream(model: "m", messages: [{ role: "user", content: "hi" }]) { |_| }
     end
   end
 
   # ---- error mapping --------------------------------------------------------
 
-  def test_maps_402_to_insufficient_credits
+  def test_maps_402_to_typed_payment_required
     @transport.enqueue(status: 402,
-      body: JSON.generate("error" => { "message" => "insufficient credits",
-                                       "type" => "insufficient_credits", "code" => "insufficient_credits" }))
-    err = assert_raises(Relay::InsufficientCreditsError) do
+      headers: payment_headers,
+      body: JSON.generate("error" => { "message" => "payment required" }))
+    err = assert_raises(Relay::PaymentRequiredError) do
       @client.chat_completions(model: "m", messages: [{ role: "user", content: "x" }])
     end
     assert_equal 402, err.status
-    assert_equal "insufficient_credits", err.type
-    assert_equal "insufficient credits", err.message
+    assert_equal REQUEST_ID, err.payment.request_id
+    assert_equal 7_500, err.payment.challenge.amount_micros
   end
 
   def test_maps_401_to_authentication_error
@@ -226,24 +226,40 @@ class RelayClientTest < Minitest::Test
     @transport.enqueue(status: 200, body: JSON.generate("choices" => []))
     result = @client.credits
     assert_equal true, result[:sufficient]
-    assert_equal "inference_probe", result[:checked_via]
+    assert_equal "dry_run_inference_probe", result[:checked_via]
 
     # It probes via a minimal chat completion.
     sent = JSON.parse(@transport.last_request[:body])
     assert_equal "gpt-4o-mini", sent["model"]
     assert_equal 1, sent["max_tokens"]
+    assert_equal true, sent["tensorzero::dryrun"]
   end
 
   def test_credits_reports_insufficient_on_402
-    @transport.enqueue(status: 402,
-      body: JSON.generate("error" => { "message" => "insufficient credits", "type" => "insufficient_credits" }))
+    @transport.enqueue(status: 402, headers: payment_headers,
+      body: JSON.generate("error" => { "message" => "payment required" }))
     result = @client.balance
     assert_equal false, result[:sufficient]
-    assert_equal "insufficient_credits", result[:type]
+    assert_equal "payment_required", result[:type]
   end
 
   def test_credits_requires_a_probe_model
     c = Relay::Client.new(base_url: "http://localhost:3000", transport: @transport)
     assert_raises(ArgumentError) { c.credits }
+  end
+
+  REQUEST_ID = "018f7e23-7b55-7d9a-8000-000000000002"
+
+  def payment_headers
+    challenge = {
+      payee: "ait1qrelay", amount_micros: 7_500, currency: "AIT",
+      resource: "POST /openai/v1/chat/completions#m@#{REQUEST_ID}",
+      nonce: "nonce", expiry: 1_800_000_000_000, scheme: "aitp-hold"
+    }
+    {
+      "aitp-challenge" => Base64.urlsafe_encode64(JSON.generate(challenge), padding: false),
+      "aitp-request-id" => REQUEST_ID,
+      "aitp-version" => "1"
+    }
   end
 end

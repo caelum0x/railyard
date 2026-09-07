@@ -19,6 +19,8 @@ vend.login(
     os.environ["VEND_PASSWORD"],
 )
 app = vend.list_apps()[0]
+checkout = vend.create_funding_checkout(app["id"], "creem", 20_000_000)
+print("Fund this app:", checkout["checkout_url"])
 issued = vend.issue_key(app["id"], daily_cap_micros=5_000_000, environment="test")
 vend.provisioning_key = issued["secret"]
 

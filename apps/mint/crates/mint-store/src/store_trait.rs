@@ -660,6 +660,11 @@ pub trait LedgerStore: Send + Sync {
     /// export / audit).
     async fn snapshot_receipts(&self) -> Vec<Receipt>;
 
+    /// Resolve one exact signed receipt by its account-chain owner and journal
+    /// sequence. Settlement response paths use this instead of scanning the
+    /// global receipt history or racing a "latest receipt" lookup.
+    async fn get_receipt(&self, account_id: &AccountId, journal_seq: u64) -> Option<Receipt>;
+
     /// The Merkle audit root over the whole live receipt log (§6 audit).
     async fn receipt_merkle_root(&self) -> ReceiptHash;
 }

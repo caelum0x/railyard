@@ -12,8 +12,10 @@ use crate::pack::PackStore;
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The object database rooted at a `.git/objects` directory.
@@ -62,6 +64,9 @@ impl Odb {
         let (oid, full) = object::hash_content(obj_type, payload);
         let final_path = self.loose_path(&oid);
         if final_path.exists() {
+            // Content addressing is only safe if an existing path really holds
+            // the expected bytes. Never bless a corrupt or symlinked object.
+            self.read_raw(&oid)?;
             return Ok(oid);
         }
 
@@ -69,20 +74,32 @@ impl Odb {
             .parent()
             .expect("loose path always has a parent directory");
         std::fs::create_dir_all(dir)?;
+        reject_symlink(dir)?;
 
         let compressed = zlib_compress(&full)?;
 
         // Atomic publish: write to a unique temp file, flush + fsync, rename.
-        let tmp_path = self.temp_path(dir);
+        let (tmp_path, mut file) = self.create_temp(dir)?;
         {
-            let mut file = std::fs::File::create(&tmp_path)?;
             file.write_all(&compressed)?;
             file.sync_all()?;
         }
-        // rename is atomic within a filesystem; if it fails, clean up the temp.
-        if let Err(e) = std::fs::rename(&tmp_path, &final_path) {
-            let _ = std::fs::remove_file(&tmp_path);
-            return Err(e.into());
+        // `hard_link` is an atomic no-clobber publish on the same filesystem.
+        // Concurrent identical writers converge; neither can replace an
+        // existing (possibly corrupt) object behind the other's back.
+        match std::fs::hard_link(&tmp_path, &final_path) {
+            Ok(()) => {
+                let _ = std::fs::remove_file(&tmp_path);
+                sync_dir(dir)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let _ = std::fs::remove_file(&tmp_path);
+                self.read_raw(&oid)?;
+            }
+            Err(error) => {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(error.into());
+            }
         }
         Ok(oid)
     }
@@ -94,15 +111,21 @@ impl Odb {
     /// back to `oid` before returning them.
     pub fn read_raw(&self, oid: &ObjectId) -> Result<(ObjectType, Vec<u8>)> {
         let path = self.loose_path(oid);
+        if let Ok(metadata) = std::fs::symlink_metadata(&path) {
+            if metadata.file_type().is_symlink() {
+                return Err(ForgeError::UnsafePath(path.display().to_string()));
+            }
+        }
         let compressed = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             // Not loose — try the packed path (gitoxide) if we have one.
-            Err(_) => {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return match &self.pack {
                     Some(pack) => pack.read_raw(oid),
                     None => Err(ForgeError::ObjectNotFound(oid.to_hex())),
                 };
             }
+            Err(error) => return Err(error.into()),
         };
         let full = zlib_decompress(&compressed)?;
 
@@ -140,7 +163,10 @@ impl Odb {
 
     /// Resolve an abbreviated hex prefix (>= 4 chars) to a unique full oid.
     pub fn resolve_prefix(&self, prefix: &str) -> Result<ObjectId> {
-        if prefix.len() < 4 || prefix.len() > 40 {
+        if prefix.len() < 4
+            || prefix.len() > 40
+            || !prefix.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
             return Err(ForgeError::InvalidOid(format!(
                 "prefix must be 4-40 hex chars: {prefix:?}"
             )));
@@ -188,14 +214,39 @@ impl Odb {
     }
 
     /// Build a unique temporary file path inside `dir` (no extra deps).
-    fn temp_path(&self, dir: &Path) -> PathBuf {
+    fn create_temp(&self, dir: &Path) -> Result<(PathBuf, std::fs::File)> {
+        static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let pid = std::process::id();
-        dir.join(format!(".rgf-tmp-{pid}-{nanos}"))
+        for _ in 0..128 {
+            let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+            let path = dir.join(format!(".rit-tmp-{pid}-{nanos}-{sequence}"));
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(file) => return Ok((path, file)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(ForgeError::Io(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "could not allocate a unique loose-object temporary file",
+        )))
     }
+}
+
+fn reject_symlink(path: &Path) -> Result<()> {
+    if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
+        return Err(ForgeError::UnsafePath(path.display().to_string()));
+    }
+    Ok(())
+}
+
+fn sync_dir(path: &Path) -> Result<()> {
+    std::fs::File::open(path)?.sync_all()?;
+    Ok(())
 }
 
 /// Compress bytes with zlib (the format Git uses for loose objects).
@@ -273,5 +324,67 @@ mod tests {
         let oid = odb.write(ObjectType::Blob, b"prefix me\n").unwrap();
         let short = &oid.to_hex()[..8];
         assert_eq!(odb.resolve_prefix(short).unwrap(), oid);
+    }
+
+    #[test]
+    fn prefix_cannot_escape_objects_directory() {
+        let dir = temp_git_dir();
+        let odb = Odb::new(dir.path());
+        assert!(matches!(
+            odb.resolve_prefix("../../etc"),
+            Err(ForgeError::InvalidOid(_))
+        ));
+    }
+
+    #[test]
+    fn write_does_not_bless_an_existing_corrupt_object() {
+        let dir = temp_git_dir();
+        let odb = Odb::new(dir.path());
+        let oid = odb.write(ObjectType::Blob, b"important").unwrap();
+        std::fs::write(odb.loose_path(&oid), b"corrupt").unwrap();
+        assert!(odb.write(ObjectType::Blob, b"important").is_err());
+    }
+
+    #[test]
+    fn concurrent_writers_publish_one_verified_object() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let dir = temp_git_dir();
+        let root = Arc::new(dir.path().to_path_buf());
+        let barrier = Arc::new(Barrier::new(5));
+        let mut workers = Vec::new();
+        for _ in 0..4 {
+            let root = root.clone();
+            let barrier = barrier.clone();
+            workers.push(thread::spawn(move || {
+                let odb = Odb::new(&root);
+                barrier.wait();
+                odb.write(ObjectType::Blob, b"same concurrent object")
+            }));
+        }
+        barrier.wait();
+        let ids: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap().unwrap())
+            .collect();
+        assert!(ids.windows(2).all(|pair| pair[0] == pair[1]));
+        assert_eq!(
+            Odb::new(&root).read_raw(&ids[0]).unwrap().1,
+            b"same concurrent object"
+        );
+    }
+
+    #[test]
+    fn orphaned_crash_temp_does_not_block_next_publish() {
+        let dir = temp_git_dir();
+        let odb = Odb::new(dir.path());
+        let (oid, _) = object::hash_content(ObjectType::Blob, b"after crash");
+        let shard = odb.loose_path(&oid).parent().unwrap().to_path_buf();
+        std::fs::create_dir_all(&shard).unwrap();
+        std::fs::write(shard.join(".rit-tmp-dead-writer"), b"partial zlib").unwrap();
+
+        assert_eq!(odb.write(ObjectType::Blob, b"after crash").unwrap(), oid);
+        assert_eq!(odb.read_raw(&oid).unwrap().1, b"after crash");
     }
 }

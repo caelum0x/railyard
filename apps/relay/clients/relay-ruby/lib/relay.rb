@@ -2,7 +2,9 @@
 
 require_relative "relay/version"
 require_relative "relay/errors"
+require_relative "relay/aitp"
 require_relative "relay/transport"
+require_relative "relay/multipart"
 require_relative "relay/client"
 
 # Relay — native Ruby client for the Relay gateway (a TensorZero fork).

@@ -72,12 +72,21 @@ async fn main() -> anyhow::Result<()> {
     match database_url {
         Some(url) => {
             tracing::info!("starting with Postgres store");
-            let store = PgStore::connect(&url, signer)
+            let store = PgStore::connect(&url, signer.clone())
                 .await
                 .context("connecting to Postgres")?;
             store.run_migrations().await.context("running migrations")?;
-            let state = AppState::new(store, clock, ramp, kyc, payer_keys, api_key, stripe_secret)
-                .with_payments(payments);
+            let state = AppState::new(
+                store,
+                clock,
+                ramp,
+                kyc,
+                payer_keys,
+                signer,
+                api_key,
+                stripe_secret,
+            )
+            .with_payments(payments);
             serve(state, bind).await
         }
         _ => {
@@ -88,9 +97,19 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
             tracing::warn!("DATABASE_URL unset — using EPHEMERAL in-memory store (dev only)");
-            let store = mint_store::InMemoryStore::with_clock_and_signer(clock.clone(), signer);
-            let state = AppState::new(store, clock, ramp, kyc, payer_keys, api_key, stripe_secret)
-                .with_payments(payments);
+            let store =
+                mint_store::InMemoryStore::with_clock_and_signer(clock.clone(), signer.clone());
+            let state = AppState::new(
+                store,
+                clock,
+                ramp,
+                kyc,
+                payer_keys,
+                signer,
+                api_key,
+                stripe_secret,
+            )
+            .with_payments(payments);
             serve(state, bind).await
         }
     }

@@ -10,6 +10,7 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
+use aitp_client::codec::encode_receipt;
 use aitp_client::{
     AmountMicros, AuthSigner, Ed25519Signer, HttpRequest, HttpResponse, HttpTransport,
     MintPaymentGateway, PayError, PaymentChallenge, PaymentGateway, Scheme,
@@ -85,10 +86,21 @@ fn address_ok() -> HttpResponse {
 }
 
 fn capture_ok() -> HttpResponse {
+    let receipt = aitp_client::Receipt {
+        seq: 42,
+        op: "hold.capture".to_string(),
+        op_hash: "11".repeat(32),
+        amount_micros: AmountMicros(3900),
+        balance_after_micros: AmountMicros(1300),
+        prev_hash: "22".repeat(32),
+        hash: "33".repeat(32),
+        sig: "44".repeat(64),
+    };
     HttpResponse::new(
         200,
         br#"{"success":true,"data":{"hold_id":"hold_01H","first_seq":42,"holder_balance":{"account_id":"acct_payer_01","available_micros":1300,"held_micros":0,"updated_seq":42},"payee_balance":null,"status":"captured","captured_micros":3900,"idempotent_replay":false}}"#.to_vec(),
     )
+    .with_header("aitp-receipt", encode_receipt(&receipt).unwrap())
 }
 
 fn release_ok() -> HttpResponse {
@@ -156,11 +168,15 @@ async fn success_path_captures_actual_to_the_resolved_payee() {
 
     let receipt = gw.capture(&hold, AmountMicros(3900)).await.unwrap();
 
-    // Receipt is built from the hold_receipt view (lossy: no chain hash/sig).
+    // Receipt is the signed evidence returned by Mint, not reconstructed from
+    // the mutable balance view.
     assert_eq!(receipt.seq, 42);
     assert_eq!(receipt.op, "hold.capture");
     assert_eq!(receipt.amount_micros, AmountMicros(3900));
     assert_eq!(receipt.balance_after_micros, AmountMicros(1300));
+    assert_eq!(receipt.op_hash, "11".repeat(32));
+    assert_eq!(receipt.hash, "33".repeat(32));
+    assert_eq!(receipt.sig, "44".repeat(64));
 
     let reqs = transport.requests();
     assert_eq!(reqs.len(), 3);

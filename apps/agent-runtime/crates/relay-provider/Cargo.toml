@@ -4,17 +4,31 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "A rig CompletionModel backed by Relay's OpenAI-compatible gateway (TensorZero). Genuinely reuses the vendored external/rig openai Chat Completions client."
+description = "A Rig CompletionModel backed by Relay's OpenAI-compatible TensorZero gateway, with policy-gated AITP 402 retry."
 
 [dependencies]
 rig-core.workspace = true
 thiserror.workspace = true
+aitp-client.workspace = true
+bytes = "1"
+async-stream = "0.3"
+futures-util = "0.3"
+serde_json.workspace = true
+tracing.workspace = true
+url = "2"
+tokio = { version = "1", features = ["rt", "time"] }
 
 [dev-dependencies]
 # MockCompletionModel for no-network tests lives behind rig-core's test-utils.
-rig-core = { path = "../../../../external/rig/crates/rig-core", default-features = false, features = [
+rig-core = { version = "=0.39.0", default-features = false, features = [
     "reqwest",
     "rustls",
+    "derive",
     "test-utils",
 ] }
-tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }
+async-trait.workspace = true
+base64.workspace = true
+ed25519-dalek = "2"
+sha2 = "0.10"
+hex.workspace = true

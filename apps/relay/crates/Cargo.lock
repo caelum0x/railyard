@@ -2155,6 +2155,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "curve25519-dalek"
+version = "4.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "curve25519-dalek-derive",
+ "digest 0.10.7",
+ "fiat-crypto",
+ "rustc_version",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "curve25519-dalek-derive"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "darling"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2407,6 +2434,16 @@ name = "der"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1a467a65c5e759bce6e65eaf91cc29f466cdc57cb65777bd646872a8a1fd4de"
+dependencies = [
+ "const-oid 0.9.6",
+ "zeroize",
+]
+
+[[package]]
+name = "der"
+version = "0.7.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
  "const-oid 0.9.6",
  "zeroize",
@@ -2696,10 +2733,35 @@ version = "0.14.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413301934810f597c1d19ca71c8710e99a3f1ba28a0d2ebc01551a2daeea3c5c"
 dependencies = [
- "der",
+ "der 0.6.1",
  "elliptic-curve",
  "rfc6979",
  "signature 1.6.4",
+]
+
+[[package]]
+name = "ed25519"
+version = "2.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
+dependencies = [
+ "pkcs8 0.10.2",
+ "signature 2.2.0",
+]
+
+[[package]]
+name = "ed25519-dalek"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
+dependencies = [
+ "curve25519-dalek",
+ "ed25519",
+ "rand_core 0.6.4",
+ "serde",
+ "sha2 0.10.9",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -2719,12 +2781,12 @@ checksum = "e7bb888ab5300a19b8e5bceef25ac745ad065f3c9f7efc6de1b91958110891d3"
 dependencies = [
  "base16ct",
  "crypto-bigint 0.4.9",
- "der",
+ "der 0.6.1",
  "digest 0.10.7",
  "ff",
  "generic-array",
  "group",
- "pkcs8",
+ "pkcs8 0.9.0",
  "rand_core 0.6.4",
  "sec1",
  "subtle",
@@ -2985,6 +3047,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fiat-crypto"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
+
+[[package]]
 name = "filedescriptor"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3231,6 +3299,7 @@ name = "gateway"
 version = "2026.6.0"
 dependencies = [
  "async-stream",
+ "async-trait",
  "autopilot-client",
  "autopilot-tools",
  "autopilot-worker",
@@ -3244,11 +3313,20 @@ dependencies = [
  "flate2",
  "futures",
  "googletest",
+ "hex",
  "http 1.4.0",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "metrics-exporter-prometheus",
  "mimalloc",
+ "relay-aitp",
  "relay-billing",
+ "relay-catalog",
+ "relay-contract",
+ "relay-cost-feed",
+ "relay-hedge",
+ "relay-storage-postgres",
  "reqwest 0.13.3",
  "reqwest-sse-stream",
  "rmcp",
@@ -5481,8 +5559,18 @@ version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9eca2c590a5f85da82668fa685c09ce2888b9430e83299debf1f34b65fd4a4ba"
 dependencies = [
- "der",
- "spki",
+ "der 0.6.1",
+ "spki 0.6.0",
+]
+
+[[package]]
+name = "pkcs8"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f950b2377845cebe5cf8b5165cb3cc1a5e0fa5cfa3e1f7f55707d8fd82e0a7b7"
+dependencies = [
+ "der 0.7.10",
+ "spki 0.7.3",
 ]
 
 [[package]]
@@ -6391,15 +6479,93 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
+name = "relay-aitp"
+version = "2026.6.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "hex",
+ "relay-aitp-wire",
+ "relay-contract",
+ "relay-sdk",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "relay-aitp-wire"
+version = "2026.6.0"
+dependencies = [
+ "base64 0.22.1",
+ "blake3",
+ "ed25519-dalek",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "relay-billing"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "ed25519-dalek",
+ "hex",
+ "relay-aitp-wire",
  "reqwest 0.13.3",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "relay-catalog"
+version = "2026.6.0"
+dependencies = [
+ "async-trait",
+ "relay-billing",
+ "relay-contract",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "ts-rs",
+]
+
+[[package]]
+name = "relay-contract"
+version = "2026.6.0"
+dependencies = [
+ "base64 0.22.1",
+ "googletest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "ts-rs",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "relay-cost-feed"
+version = "2026.6.0"
+dependencies = [
+ "async-trait",
+ "relay-contract",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "ts-rs",
  "uuid",
 ]
 
@@ -6410,10 +6576,52 @@ dependencies = [
  "futures",
  "googletest",
  "relay-billing",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "ts-rs",
+]
+
+[[package]]
+name = "relay-sdk"
+version = "2026.6.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "futures",
+ "http 1.4.0",
+ "relay-catalog",
+ "relay-contract",
+ "relay-cost-feed",
+ "reqwest 0.13.3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "relay-storage-postgres"
+version = "2026.6.0"
+dependencies = [
+ "async-trait",
+ "googletest",
+ "relay-aitp",
+ "relay-billing",
+ "relay-contract",
+ "relay-cost-feed",
+ "relay-hedge",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -6917,9 +7125,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3be24c1842290c45df0a7bf069e0c268a747ad05a192f2fd7dcfdbc1cba40928"
 dependencies = [
  "base16ct",
- "der",
+ "der 0.6.1",
  "generic-array",
- "pkcs8",
+ "pkcs8 0.9.0",
  "subtle",
  "zeroize",
 ]
@@ -7369,7 +7577,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67cf02bbac7a337dc36e4f5a693db6c21e7863f45070f7064577eb4367a3212b"
 dependencies = [
  "base64ct",
- "der",
+ "der 0.6.1",
+]
+
+[[package]]
+name = "spki"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
+dependencies = [
+ "base64ct",
+ "der 0.7.10",
 ]
 
 [[package]]
@@ -7995,6 +8213,7 @@ dependencies = [
  "redis",
  "redis-test",
  "regex",
+ "relay-hedge",
  "reqwest 0.13.3",
  "reqwest-sse-stream",
  "rmcp",

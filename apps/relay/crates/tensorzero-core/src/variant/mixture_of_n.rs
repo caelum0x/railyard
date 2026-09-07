@@ -1568,6 +1568,7 @@ mod tests {
                     timeouts: Default::default(),
                     skip_relay: false,
                     namespace: None,
+                    hedge: relay_hedge::HedgeConfig::default(),
                 },
             )]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
@@ -1701,6 +1702,7 @@ mod tests {
                     timeouts: Default::default(),
                     skip_relay: false,
                     namespace: None,
+                    hedge: relay_hedge::HedgeConfig::default(),
                 },
             );
             let provider_types = ProviderTypesConfig::default();
@@ -1787,6 +1789,7 @@ mod tests {
                     timeouts: Default::default(),
                     skip_relay: false,
                     namespace: None,
+                    hedge: relay_hedge::HedgeConfig::default(),
                 },
             );
             let provider_types = ProviderTypesConfig::default();

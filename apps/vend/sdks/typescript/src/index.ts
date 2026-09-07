@@ -45,6 +45,15 @@ export interface VendApp {
   mint_account_id: string;
 }
 
+export interface FundingCheckout {
+  provider: string;
+  checkout_id: string;
+  checkout_url: string;
+  deposit_ref: string;
+  account_id: string;
+  amount_micros: number;
+}
+
 export interface CreateApp {
   name: string;
   mint_account_id: string;
@@ -237,6 +246,18 @@ export class VendClient {
 
   getApp(appId: string): Promise<VendApp> {
     return this.control<VendApp>(`/v1/customer/apps/${segment(appId)}`, "GET");
+  }
+
+  createFundingCheckout(
+    appId: string,
+    provider: string,
+    amountMicros: number,
+  ): Promise<FundingCheckout> {
+    return this.control<FundingCheckout>(
+      `/v1/customer/apps/${segment(appId)}/funding-checkout`,
+      "POST",
+      { provider, amount_micros: amountMicros },
+    );
   }
 
   createApp(input: CreateApp): Promise<VendApp> {

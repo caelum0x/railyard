@@ -48,9 +48,7 @@ impl ChallengeIssuer {
         let now = now_ms();
         let expiry = now + self.config.challenge_ttl_ms;
         let nonce = generate_nonce();
-        self.nonces.register(&nonce, expiry).await?;
-
-        Ok(PaymentChallenge {
+        let challenge = PaymentChallenge {
             payee: self.config.payee.clone(),
             amount_micros: self.config.price_micros,
             currency: self.config.currency.clone(),
@@ -58,7 +56,9 @@ impl ChallengeIssuer {
             nonce,
             expiry,
             scheme: Scheme::Hold,
-        })
+        };
+        self.nonces.register(&challenge).await?;
+        Ok(challenge)
     }
 }
 

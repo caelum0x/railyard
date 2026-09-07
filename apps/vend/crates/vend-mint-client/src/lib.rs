@@ -11,10 +11,12 @@ use serde::Deserialize;
 use std::fmt;
 use std::time::Duration;
 
+use mint_protocol::{decode_receipt, HEADER_RECEIPT};
 use vend_core::error::VendError;
 use vend_core::transport::{
-    CaptureRequest, CaptureResponse, HoldRequest, HoldResponse, HoldView, MintTransport,
-    ReleaseRequest, ReleaseResponse, TransferRequest, TransferResponse,
+    CaptureRequest, CaptureResponse, CheckoutRequest, CheckoutResponse, HoldRequest, HoldResponse,
+    HoldView, MintTransport, ReleaseRequest, ReleaseResponse, SettlementProof, TransferRequest,
+    TransferResponse,
 };
 
 /// A configured client for one mint-server deployment.
@@ -127,6 +129,42 @@ impl MintClient {
         Self::decode(resp).await
     }
 
+    async fn post_json_receipted<B: serde::Serialize, T: for<'de> Deserialize<'de>>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<(T, SettlementProof), VendError> {
+        let resp = self
+            .http
+            .post(self.url(path))
+            .header("X-API-Key", &self.api_key)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| VendError::Transport(e.to_string()))?;
+        let encoded = resp
+            .headers()
+            .get(HEADER_RECEIPT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let data = Self::decode(resp).await?;
+        let encoded = encoded.ok_or_else(|| {
+            VendError::Transport("Mint terminal response missing AITP-Receipt".to_string())
+        })?;
+        let receipt = decode_receipt(&encoded)
+            .map_err(|error| VendError::Transport(format!("decode Mint receipt: {error}")))?;
+        Ok((
+            data,
+            SettlementProof {
+                sequence: receipt.seq,
+                operation: receipt.op,
+                operation_hash: receipt.op_hash,
+                receipt_hash: receipt.hash,
+                signature: receipt.sig,
+            },
+        ))
+    }
+
     async fn get_json<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, VendError> {
         let resp = self
             .http
@@ -217,6 +255,10 @@ fn map_error(status: u16, code: &str, message: String) -> VendError {
 
 #[async_trait]
 impl MintTransport for MintClient {
+    async fn create_checkout(&self, req: CheckoutRequest) -> Result<CheckoutResponse, VendError> {
+        self.post_json("/v1/checkouts", &req).await
+    }
+
     async fn create_hold(&self, req: HoldRequest) -> Result<HoldResponse, VendError> {
         self.post_json("/v1/holds", &req).await
     }
@@ -230,8 +272,16 @@ impl MintTransport for MintClient {
         hold_id: &str,
         req: CaptureRequest,
     ) -> Result<CaptureResponse, VendError> {
-        self.post_json(&format!("/v1/holds/{hold_id}/capture"), &req)
-            .await
+        let (mut response, proof): (CaptureResponse, SettlementProof) = self
+            .post_json_receipted(&format!("/v1/holds/{hold_id}/capture"), &req)
+            .await?;
+        if proof.operation != "hold.capture" || proof.sequence == 0 {
+            return Err(VendError::Transport(
+                "Mint capture receipt does not match capture response".to_string(),
+            ));
+        }
+        response.proof = proof;
+        Ok(response)
     }
 
     async fn release_hold(
@@ -239,8 +289,15 @@ impl MintTransport for MintClient {
         hold_id: &str,
         req: ReleaseRequest,
     ) -> Result<ReleaseResponse, VendError> {
-        self.post_json(&format!("/v1/holds/{hold_id}/release"), &req)
-            .await
+        let (_response, proof): (serde_json::Value, SettlementProof) = self
+            .post_json_receipted(&format!("/v1/holds/{hold_id}/release"), &req)
+            .await?;
+        if proof.operation != "hold.release" || proof.sequence == 0 {
+            return Err(VendError::Transport(
+                "Mint release receipt does not match release response".to_string(),
+            ));
+        }
+        Ok(ReleaseResponse { proof })
     }
 
     async fn transfer(&self, req: TransferRequest) -> Result<TransferResponse, VendError> {
@@ -385,6 +442,7 @@ mod tests {
 
         use mint_core::{AccountKind, Micros};
         use mint_protocol::InMemoryPayerKeys;
+        use mint_receipts::FixedSigner;
         use mint_reserve::{FakeKycGate, FakeRamp, KycTier};
         use mint_server::{build_router, AppState};
         use mint_store::{Clock, FixedClock, InMemoryStore, LedgerStore};
@@ -407,6 +465,7 @@ mod tests {
             Arc::new(FakeRamp::new()),
             Arc::new(FakeKycGate::new(KycTier::Basic, i64::MAX)),
             Arc::new(InMemoryPayerKeys::new()),
+            Arc::new(FixedSigner::new()),
             API_KEY,
             "whsec_test",
         );

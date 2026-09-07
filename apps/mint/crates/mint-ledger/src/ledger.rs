@@ -65,6 +65,13 @@ impl<S: LedgerStore> Ledger<S> {
         self.store.snapshot_receipts().await
     }
 
+    /// Resolve the signed receipt emitted for one account at an exact journal
+    /// sequence. This is the response-safe lookup for a just-committed or
+    /// idempotently replayed operation.
+    pub async fn receipt(&self, account_id: &AccountId, journal_seq: u64) -> Option<Receipt> {
+        self.store.get_receipt(account_id, journal_seq).await
+    }
+
     /// The Merkle audit root over the whole receipt log (§6 audit).
     pub async fn merkle_root(&self) -> ReceiptHash {
         self.store.receipt_merkle_root().await

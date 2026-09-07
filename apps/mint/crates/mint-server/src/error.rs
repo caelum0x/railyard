@@ -59,8 +59,8 @@ pub fn status_for(err: &MintError) -> StatusCode {
         MintError::BadAddress | MintError::BadAccountId | MintError::InvalidAmount => {
             StatusCode::BAD_REQUEST
         }
-        // 500 Internal — arithmetic overflow / rebuild mismatch / infra fault.
-        MintError::Overflow | MintError::ReceiptRebuildMismatch => {
+        // 500 Internal — arithmetic overflow / rebuild mismatch / storage fault.
+        MintError::Overflow | MintError::ReceiptRebuildMismatch | MintError::Storage => {
             StatusCode::INTERNAL_SERVER_ERROR
         }
     }

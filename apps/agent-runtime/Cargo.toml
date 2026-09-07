@@ -15,15 +15,14 @@ license = "MIT"
 rust-version = "1.94"
 
 [workspace.dependencies]
-# --- Vendored rig (MIT, 0.42.0) via PATH deps on the real crate dirs ---------
-# Paths are resolved relative to THIS manifest (apps/agent-runtime/Cargo.toml).
-# In 0.42 the Agent/Tool/Prompt layer was split OUT of rig-core into rig-agent;
-# rig-core now holds only the model/provider/completion layer. We use both.
-rig-core = { path = "../../external/rig/crates/rig-core", default-features = false, features = [
+# --- Rig runtime -------------------------------------------------------------
+# The previously-declared 0.42 path dependency pointed at an absent
+# `external/rig` checkout, making even unrelated workspace crates impossible to
+# resolve. Use the published, unified 0.39 crate until the 0.42 split crates are
+# deliberately vendored.
+rig-core = { version = "=0.39.0", default-features = false, features = [
     "reqwest",
     "rustls",
-] }
-rig-agent = { path = "../../external/rig/crates/rig-agent", default-features = false, features = [
     "derive",
 ] }
 
@@ -42,3 +41,5 @@ tracing = "0.1"
 tokio = { version = "1", features = ["rt", "macros"] }
 anyhow = "1"
 hex = "0.4"
+async-stream = "0.3"
+futures-util = "0.3"

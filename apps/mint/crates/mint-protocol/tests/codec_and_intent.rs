@@ -30,6 +30,7 @@ fn sample_authorization() -> Authorization {
         nonce: "9f2c".to_string(),
         resource: "POST /v1/chat/completions#llama-3.1-70b".to_string(),
         expiry: 1_723_958_400_000,
+        scheme: Scheme::Hold,
         idempotency_key: "req_1".to_string(),
         pubkey_id: "payer-key-1".to_string(),
         op_hash: "deadbeef".to_string(),
@@ -61,7 +62,7 @@ fn codec_roundtrip_matches_client_bytes() {
     let ajson = String::from_utf8(URL_SAFE_NO_PAD.decode(&ah).unwrap()).unwrap();
     assert_eq!(
         ajson,
-        r#"{"payer":"acct_201J0000000000000000000000","payee":"ait1qprovider","amount_micros":4200,"nonce":"9f2c","resource":"POST /v1/chat/completions#llama-3.1-70b","expiry":1723958400000,"idempotency_key":"req_1","pubkey_id":"payer-key-1","op_hash":"deadbeef","sig":"c2ln"}"#
+        r#"{"payer":"acct_201J0000000000000000000000","payee":"ait1qprovider","amount_micros":4200,"nonce":"9f2c","resource":"POST /v1/chat/completions#llama-3.1-70b","expiry":1723958400000,"scheme":"aitp-hold","idempotency_key":"req_1","pubkey_id":"payer-key-1","op_hash":"deadbeef","sig":"c2ln"}"#
     );
 }
 
@@ -99,6 +100,7 @@ fn op_hash_uses_sorted_canonical_not_transport() {
         "nonce": auth.nonce,
         "resource": auth.resource,
         "expiry": auth.expiry,
+        "scheme": auth.scheme,
         "idempotency_key": auth.idempotency_key,
     }));
     assert_eq!(compute_op_hash(&auth), expected);

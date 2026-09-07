@@ -17,41 +17,48 @@
 //!
 //! ## Design notes (documented, not hidden)
 //!
-//! * **hold_id retention.** `POST /v1/holds` returns a `hold_id` that capture and
-//!   release require, but relay's [`Reservation`] carries no id. So the ledger
-//!   keeps a `Mutex<HashMap<JobId, HoldId>>` populated at `reserve` and consumed
-//!   at the terminal op. This map is process-local and lost on restart — which is
-//!   fine because a hold lives entirely within one request (reserve -> capture or
-//!   release happen in a single middleware pass, including the panic/stream Drop
-//!   paths). The entry is removed only after a CONFIRMED terminal success, so a
-//!   transient capture error still leaves the hold available for the middleware's
-//!   fallback release (no dangling Mint hold).
-//! * **idempotency.** Idem keys are anchored on the relay [`JobId`]:
-//!   `relay:{job}` (create), `relay:{job}:capture`, `relay:{job}:release`. Mint
-//!   treats identical idem keys as no-ops, so middleware retries never double-charge.
+//! * **durable hold identity.** `POST /v1/holds` returns a `hold_id` carried on
+//!   [`Reservation`]. The gateway commits that reservation to its Postgres outbox
+//!   before provider I/O. `MintLedger` holds no process-local money state, so a
+//!   restarted worker can replay the exact terminal command from the durable row.
+//! * **idempotency.** Idem keys are anchored on both the payer principal and
+//!   relay [`JobId`]: `relay:{account}:{job}` plus a terminal suffix. Mint
+//!   treats identical idem keys as no-ops, middleware retries never
+//!   double-charge, and equal request ids from different principals cannot
+//!   collide.
 //! * **payer account.** relay's `AccountId` is the API-key public id, while mint's
 //!   `from` is an opaque `acct_…`. If a single `payer` account is configured every
 //!   flow bills from it; otherwise the relay account id is used verbatim as the
 //!   mint `from` (deployments that mint one wallet per relay account carry the
 //!   `acct_…` id as the public id).
-//! * **payee account.** relay's settle has no payee, but mint's capture needs a
-//!   `to`; the configured `payee` (treasury/provider `acct_…`) receives the debit.
+//! * **payee account.** The configured `payee` (treasury/provider `acct_…`) is
+//!   copied into the reservation and outbox before inference, so restart recovery
+//!   cannot silently redirect a capture after configuration changes.
+//! * **proof.** Production pins Mint Ed25519 verification keys and accepts a
+//!   terminal result only when its signed hold attestation binds the exact local
+//!   hold, payer, payee, amount, reference, idempotency key and receipt hash.
 
 pub mod fake;
 pub mod transport;
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::backend::BillingLedger;
+use crate::backend::{BillingLedger, TerminalSettlement};
 use crate::domain::{AccountId, JobId, ModelId};
 use crate::error::BillingError;
 use crate::ledger::Reservation;
 use crate::money::Micros;
 use crate::usage::Usage;
+use aitp_client::codec::{decode_receipt, HEADER_RECEIPT};
+use aitp_client::{
+    HoldSettlementAttestation, HoldSettlementCommand, HoldSettlementExpectation,
+    HoldSettlementOperation, PaymentAuthorization, Receipt,
+};
+use ed25519_dalek::VerifyingKey;
 
 use transport::{HttpRequest, HttpResponse, HttpTransport, ReqwestTransport, TransportError};
 
@@ -68,8 +75,10 @@ pub struct MintLedger {
     /// Optional single mint payer (`acct_…`). When `None`, the relay account id is
     /// used verbatim as the mint `from` account.
     payer: Option<String>,
-    /// job -> hold_id, populated at reserve and consumed at the terminal op.
-    holds: Mutex<HashMap<JobId, String>>,
+    /// Operator-pinned Mint receipt keys. Production requires at least one;
+    /// tests may use the legacy constructor with an unsigned fake.
+    verification_keys: HashMap<String, VerifyingKey>,
+    require_attestation: bool,
 }
 
 impl MintLedger {
@@ -90,7 +99,8 @@ impl MintLedger {
             api_key: api_key.into(),
             payee: payee.into(),
             payer,
-            holds: Mutex::new(HashMap::new()),
+            verification_keys: HashMap::new(),
+            require_attestation: false,
         }
     }
 
@@ -105,34 +115,36 @@ impl MintLedger {
         Ok(Self::new(transport, api_key, payee, payer))
     }
 
+    /// Production constructor with operator-pinned Mint verification keys.
+    pub fn with_reqwest_verified(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        payee: impl Into<String>,
+        payer: Option<String>,
+        keys: impl IntoIterator<Item = (String, [u8; 32])>,
+    ) -> Result<Self, TransportError> {
+        let mut ledger = Self::with_reqwest(base_url, api_key, payee, payer)?;
+        for (key_id, bytes) in keys {
+            let key = VerifyingKey::from_bytes(&bytes).map_err(|error| {
+                TransportError(format!("invalid Mint verification key: {error}"))
+            })?;
+            ledger.verification_keys.insert(key_id, key);
+        }
+        if ledger.verification_keys.is_empty() {
+            return Err(TransportError(
+                "at least one pinned Mint verification key is required".into(),
+            ));
+        }
+        ledger.require_attestation = true;
+        Ok(ledger)
+    }
+
     /// The mint `from` account for a relay account: the configured single payer,
     /// or the relay account id used verbatim.
-    fn from_account(&self, account: &AccountId) -> String {
+    fn payer_account(&self, account: &AccountId) -> String {
         self.payer
             .clone()
             .unwrap_or_else(|| account.as_str().to_string())
-    }
-
-    fn hold_id(&self, job: &JobId) -> Option<String> {
-        self.holds
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(job)
-            .cloned()
-    }
-
-    fn remember(&self, job: JobId, hold_id: String) {
-        self.holds
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(job, hold_id);
-    }
-
-    fn forget(&self, job: &JobId) {
-        self.holds
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(job);
     }
 
     /// Send a request with the API key attached, classifying a non-2xx response
@@ -165,6 +177,39 @@ impl MintLedger {
 
 #[async_trait]
 impl BillingLedger for MintLedger {
+    async fn health(&self) -> Result<(), BillingError> {
+        // Exercise both Mint's durable store and the configured API key. The
+        // public `/readyz` probe cannot detect a rotated/revoked credential.
+        self.send(HttpRequest::get(format!(
+            "/v1/accounts/{}/balance",
+            self.payee
+        )))
+        .await?;
+        Ok(())
+    }
+
+    fn resolve_payer(&self, principal: &AccountId) -> AccountId {
+        AccountId::new(self.payer_account(principal))
+    }
+
+    fn settlement_payee(&self) -> Option<AccountId> {
+        Some(AccountId::new(self.payee.clone()))
+    }
+
+    async fn validate_payee_address(&self, address: &str) -> Result<(), BillingError> {
+        let response = self
+            .send(HttpRequest::get(format!("/v1/addresses/{address}")))
+            .await?;
+        let envelope: Envelope<AddressLookup> = decode(&response.body)?;
+        if envelope.data.account_id != self.payee {
+            return Err(BillingError::Store(format!(
+                "AITP payee address resolves to '{}', but captures target '{}'",
+                envelope.data.account_id, self.payee
+            )));
+        }
+        Ok(())
+    }
+
     async fn reserve(
         &self,
         account_id: &AccountId,
@@ -176,12 +221,30 @@ impl BillingLedger for MintLedger {
                 "negative reserve estimate {estimate:?}"
             )));
         }
-        let from = self.from_account(account_id);
-        let idem = format!("relay:{job}");
+        let payer = self.resolve_payer(account_id);
+        let idem = format!("relay:{payer}:{job}");
+        self.reserve_resolved(account_id, &payer, estimate, job, &idem)
+            .await
+    }
+
+    async fn reserve_resolved(
+        &self,
+        owner_principal: &AccountId,
+        payer: &AccountId,
+        estimate: Micros,
+        job: JobId,
+        idem: &str,
+    ) -> Result<Reservation, BillingError> {
+        if estimate.is_negative() {
+            return Err(BillingError::InvalidAmount(format!(
+                "negative reserve estimate {estimate:?}"
+            )));
+        }
+        let from = payer.as_str().to_string();
         let body = to_body(&HoldCreateReq {
             from: &from,
             amount_micros: estimate.get(),
-            idem_key: &idem,
+            idem_key: idem,
         })?;
 
         let resp = match self.send(HttpRequest::post_json("/v1/holds", body)).await {
@@ -199,11 +262,53 @@ impl BillingLedger for MintLedger {
         };
 
         let env: Envelope<HoldCreated> = decode(&resp.body)?;
-        self.remember(job, env.data.hold_id);
         Ok(Reservation {
             job_id: job,
-            account_id: account_id.clone(),
+            owner_principal: owner_principal.clone(),
+            account_id: payer.clone(),
             estimate_micros: estimate,
+            held_amount_micros: estimate,
+            backend_reference: Some(env.data.hold_id),
+            settlement_payee: Some(AccountId::new(self.payee.clone())),
+            execution_lease: None,
+        })
+    }
+
+    async fn reserve_authorized(
+        &self,
+        owner_principal: &AccountId,
+        authorization: &PaymentAuthorization,
+        estimate: Micros,
+        job: JobId,
+    ) -> Result<Reservation, BillingError> {
+        let body = to_body(authorization)?;
+        let resp = match self
+            .send(HttpRequest::post_json("/v1/aitp/verify", body))
+            .await
+        {
+            Ok(resp) => resp,
+            Err(MintFault::Insufficient) => {
+                return Err(BillingError::InsufficientCredits {
+                    available: Micros::ZERO,
+                    requested: estimate,
+                });
+            }
+            Err(other) => return Err(other.into()),
+        };
+        let env: Envelope<AitpVerified> = decode(&resp.body)?;
+        let hold_id = env.data.hold_id.ok_or_else(|| {
+            BillingError::Store("Mint AITP verify returned no hold_id".to_string())
+        })?;
+        let payer = AccountId::new(authorization.payer.clone());
+        Ok(Reservation {
+            job_id: job,
+            owner_principal: owner_principal.clone(),
+            account_id: payer,
+            estimate_micros: estimate,
+            held_amount_micros: Micros::new(authorization.amount_micros.get()),
+            backend_reference: Some(hold_id),
+            settlement_payee: Some(AccountId::new(self.payee.clone())),
+            execution_lease: None,
         })
     }
 
@@ -213,15 +318,37 @@ impl BillingLedger for MintLedger {
         usage: Usage,
         model: ModelId,
     ) -> Result<(), BillingError> {
+        self.settle_with_receipt(reservation, usage, model)
+            .await
+            .map(|_| ())
+    }
+
+    async fn settle_with_receipt(
+        &self,
+        reservation: &Reservation,
+        usage: Usage,
+        model: ModelId,
+    ) -> Result<Option<Receipt>, BillingError> {
+        Ok(self
+            .settle_with_evidence(reservation, usage, model)
+            .await?
+            .receipt)
+    }
+
+    async fn settle_with_evidence(
+        &self,
+        reservation: &Reservation,
+        usage: Usage,
+        model: ModelId,
+    ) -> Result<TerminalSettlement, BillingError> {
         // The model only labels the debit on the in-memory ledger; mint captures
         // by hold id + amount, so it is not carried on the wire here.
         let _ = model;
         let job = reservation.job_id;
-        let Some(hold_id) = self.hold_id(&job) else {
-            // No live hold: already captured/released (first-terminal-wins) or the
-            // hold predates this process. Idempotent no-op — never a second debit.
-            return Ok(());
-        };
+        let hold_id = reservation
+            .backend_reference
+            .as_deref()
+            .ok_or(BillingError::UnknownReservation(reservation.job_id))?;
 
         let actual = usage.cost_micros;
         if actual.is_negative() {
@@ -230,50 +357,175 @@ impl BillingLedger for MintLedger {
             )));
         }
 
-        let idem = format!("relay:{job}:capture");
+        let idem = format!("relay:{}:{job}:capture", reservation.account_id);
+        let reference = settlement_reference(reservation);
+        let payee = reservation
+            .settlement_payee
+            .as_ref()
+            .ok_or_else(|| BillingError::Store("Mint reservation has no immutable payee".into()))?;
         let body = to_body(&CaptureReq {
             amount_micros: actual.get(),
-            to: &self.payee,
+            to: payee.as_str(),
             idem_key: &idem,
+            reference: &reference,
         })?;
 
         // Capture the EXACT actual; mint auto-releases the remainder of the hold,
         // so the net debit is the actual and never the reserved estimate. The hold
         // is only forgotten AFTER a confirmed capture, so a transient failure keeps
         // it available for the middleware's fallback release.
-        self.send(HttpRequest::post_json(
-            format!("/v1/holds/{hold_id}/capture"),
-            body,
-        ))
-        .await?;
-        self.forget(&job);
-        Ok(())
+        let response = self
+            .send(HttpRequest::post_json(
+                format!("/v1/holds/{hold_id}/capture"),
+                body,
+            ))
+            .await?;
+        self.decode_and_verify_terminal(
+            &response,
+            reservation,
+            &idem,
+            &reference,
+            HoldSettlementOperation::Capture {
+                payee_account: payee.as_str(),
+                amount_micros: actual.get(),
+            },
+        )
     }
 
     async fn release(&self, reservation: &Reservation) -> Result<(), BillingError> {
+        self.release_with_evidence(reservation).await.map(|_| ())
+    }
+
+    async fn release_with_evidence(
+        &self,
+        reservation: &Reservation,
+    ) -> Result<TerminalSettlement, BillingError> {
         let job = reservation.job_id;
-        let Some(hold_id) = self.hold_id(&job) else {
-            return Ok(()); // already terminal — idempotent no-op.
-        };
-        let idem = format!("relay:{job}:release");
-        let body = to_body(&ReleaseReq { idem_key: &idem })?;
-        self.send(HttpRequest::post_json(
-            format!("/v1/holds/{hold_id}/release"),
-            body,
-        ))
-        .await?;
-        self.forget(&job);
-        Ok(())
+        let hold_id = reservation
+            .backend_reference
+            .as_deref()
+            .ok_or(BillingError::UnknownReservation(reservation.job_id))?;
+        let idem = format!("relay:{}:{job}:release", reservation.account_id);
+        let reference = settlement_reference(reservation);
+        let body = to_body(&ReleaseReq {
+            idem_key: &idem,
+            reference: &reference,
+        })?;
+        let response = self
+            .send(HttpRequest::post_json(
+                format!("/v1/holds/{hold_id}/release"),
+                body,
+            ))
+            .await?;
+        self.decode_and_verify_terminal(
+            &response,
+            reservation,
+            &idem,
+            &reference,
+            HoldSettlementOperation::Release {
+                released_micros: reservation.held_amount_micros.get(),
+            },
+        )
     }
 
     async fn available_micros(&self, account_id: &AccountId) -> Result<Micros, BillingError> {
-        let from = self.from_account(account_id);
+        let from = self.payer_account(account_id);
         let resp = self
             .send(HttpRequest::get(format!("/v1/accounts/{from}/balance")))
             .await?;
         let env: Envelope<BalanceData> = decode(&resp.body)?;
         Ok(Micros::new(env.data.available_micros))
     }
+}
+
+impl MintLedger {
+    fn decode_terminal(&self, response: &HttpResponse) -> Result<TerminalSettlement, BillingError> {
+        let encoded = response.header(HEADER_RECEIPT).ok_or_else(|| {
+            BillingError::Store("Mint terminal response missing AITP-Receipt header".to_string())
+        })?;
+        let receipt = decode_receipt(encoded)
+            .map_err(|error| BillingError::Store(format!("decode Mint receipt: {error}")))?;
+        let envelope: Envelope<HoldTerminalData> = decode(&response.body)?;
+        Ok(TerminalSettlement {
+            receipt: Some(receipt),
+            attestation: envelope.data.attestation,
+        })
+    }
+
+    fn decode_and_verify_terminal(
+        &self,
+        response: &HttpResponse,
+        reservation: &Reservation,
+        idem: &str,
+        reference: &str,
+        operation: HoldSettlementOperation<'_>,
+    ) -> Result<TerminalSettlement, BillingError> {
+        let decoded = self.decode_terminal(response)?;
+        self.verify_terminal(reservation, idem, reference, operation, decoded)
+    }
+
+    fn verify_terminal(
+        &self,
+        reservation: &Reservation,
+        idem: &str,
+        reference: &str,
+        operation: HoldSettlementOperation<'_>,
+        decoded: TerminalSettlement,
+    ) -> Result<TerminalSettlement, BillingError> {
+        if !self.require_attestation {
+            return Ok(decoded);
+        }
+        let receipt = decoded
+            .receipt
+            .as_ref()
+            .ok_or_else(|| BillingError::Store("Mint terminal response missing receipt".into()))?;
+        let attestation = decoded.attestation.as_ref().ok_or_else(|| {
+            BillingError::Store("Mint terminal response missing signed attestation".into())
+        })?;
+        let key = self
+            .verification_keys
+            .get(&attestation.signer_key_id)
+            .ok_or_else(|| BillingError::Store("Mint attestation signer is not pinned".into()))?;
+        let hold_id = reservation
+            .backend_reference
+            .as_deref()
+            .ok_or(BillingError::UnknownReservation(reservation.job_id))?;
+        let expectation = HoldSettlementExpectation {
+            command: HoldSettlementCommand {
+                hold_id,
+                payer_account: reservation.account_id.as_str(),
+                operation,
+                idempotency_key: idem,
+                reference: Some(reference),
+            },
+            receipt_hash: &receipt.hash,
+        };
+        let claims = attestation
+            .verify_expected(&attestation.signer_key_id, key, &expectation)
+            .map_err(|error| {
+                BillingError::Store(format!(
+                    "Mint terminal attestation verification failed: {error}"
+                ))
+            })?;
+        if receipt.seq != claims.sequence
+            || receipt.op != claims.operation
+            || receipt.op_hash != claims.operation_hash
+            || receipt.amount_micros.get() != claims.amount_micros
+            || receipt.hash != claims.receipt_hash
+        {
+            return Err(BillingError::Store(
+                "Mint receipt header conflicts with its verified terminal attestation".into(),
+            ));
+        }
+        Ok(decoded)
+    }
+}
+
+fn settlement_reference(reservation: &Reservation) -> String {
+    format!(
+        "relay:{}:{}",
+        reservation.owner_principal, reservation.job_id
+    )
 }
 
 // ---- typed transport faults ------------------------------------------------
@@ -336,16 +588,25 @@ struct HoldCreateReq<'a> {
     idem_key: &'a str,
 }
 
+#[derive(Debug, Deserialize)]
+struct AddressLookup {
+    account_id: String,
+}
+
 #[derive(Debug, Serialize)]
 struct CaptureReq<'a> {
     amount_micros: i64,
     to: &'a str,
     idem_key: &'a str,
+    #[serde(rename = "ref")]
+    reference: &'a str,
 }
 
 #[derive(Debug, Serialize)]
 struct ReleaseReq<'a> {
     idem_key: &'a str,
+    #[serde(rename = "ref")]
+    reference: &'a str,
 }
 
 /// The mint success envelope `{ success:true, data }` — `success` is ignored.
@@ -360,11 +621,23 @@ struct HoldCreated {
     hold_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct AitpVerified {
+    #[serde(default)]
+    hold_id: Option<String>,
+}
+
 /// `GET /v1/accounts/:id/balance` -> `data`.
 #[derive(Debug, Deserialize)]
 struct BalanceData {
     #[serde(default)]
     available_micros: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct HoldTerminalData {
+    #[serde(default)]
+    attestation: Option<HoldSettlementAttestation>,
 }
 
 fn to_body<T: Serialize>(value: &T) -> Result<Vec<u8>, BillingError> {
@@ -373,7 +646,8 @@ fn to_body<T: Serialize>(value: &T) -> Result<Vec<u8>, BillingError> {
 }
 
 fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, BillingError> {
-    serde_json::from_slice(bytes).map_err(|e| BillingError::Store(format!("decode mint response: {e}")))
+    serde_json::from_slice(bytes)
+        .map_err(|e| BillingError::Store(format!("decode mint response: {e}")))
 }
 
 fn parse_error(body: &[u8]) -> Option<(String, String)> {
@@ -440,15 +714,15 @@ mod tests {
         let body = body_json(&holds[0]);
         assert_eq!(body["from"], "acct_payer");
         assert_eq!(body["amount_micros"], 3_000_000);
-        assert_eq!(body["idem_key"], format!("relay:{job}"));
+        assert_eq!(body["idem_key"], format!("relay:{}:{job}", acct()));
         // API key is attached.
         assert!(holds[0]
             .headers
             .iter()
             .any(|(k, v)| k == "x-api-key" && v == API_KEY));
 
-        // hold_id retained for the terminal op.
-        assert_eq!(l.hold_id(&job).as_deref(), Some("hold_ABC"));
+        // hold_id travels with the durable reservation instead of process memory.
+        assert_eq!(res.backend_reference.as_deref(), Some("hold_ABC"));
     }
 
     #[tokio::test]
@@ -471,14 +745,19 @@ mod tests {
         // The EXACT actual is captured, not the 3_000_000 estimate.
         assert_eq!(body["amount_micros"], 1_234_567);
         assert_eq!(body["to"], PAYEE);
-        assert_eq!(body["idem_key"], format!("relay:{job}:capture"));
+        assert_eq!(body["idem_key"], format!("relay:{}:{job}:capture", acct()));
 
-        // Hold consumed; a second settle is an idempotent no-op (no 2nd capture).
-        assert_eq!(l.hold_id(&job), None);
+        // A retry sends the exact same idempotency key. Mint returns its original
+        // terminal result, so at-least-once HTTP remains one effective capture.
         l.settle(&res, usage(1_234_567), model())
             .await
             .expect("idempotent settle");
-        assert_eq!(fake.matching("POST", "/v1/holds/hold_XYZ/capture").len(), 1);
+        let retries = fake.matching("POST", "/v1/holds/hold_XYZ/capture");
+        assert_eq!(retries.len(), 2);
+        assert_eq!(
+            body_json(&retries[0])["idem_key"],
+            body_json(&retries[1])["idem_key"]
+        );
     }
 
     #[tokio::test]
@@ -495,13 +774,24 @@ mod tests {
 
         let rels = fake.matching("POST", "/v1/holds/hold_REL/release");
         assert_eq!(rels.len(), 1);
-        assert_eq!(body_json(&rels[0])["idem_key"], format!("relay:{job}:release"));
+        assert_eq!(
+            body_json(&rels[0])["idem_key"],
+            format!("relay:{}:{job}:release", acct())
+        );
         // No capture ever happened -> costs zero.
-        assert!(fake.matching("POST", "/v1/holds/hold_REL/capture").is_empty());
+        assert!(fake
+            .matching("POST", "/v1/holds/hold_REL/capture")
+            .is_empty());
 
-        // Idempotent: a second release is a no-op.
+        // Idempotent: a second release repeats the exact command; Mint is the
+        // durable first-terminal-wins authority.
         l.release(&res).await.expect("idempotent release");
-        assert_eq!(fake.matching("POST", "/v1/holds/hold_REL/release").len(), 1);
+        let retries = fake.matching("POST", "/v1/holds/hold_REL/release");
+        assert_eq!(retries.len(), 2);
+        assert_eq!(
+            body_json(&retries[0])["idem_key"],
+            body_json(&retries[1])["idem_key"]
+        );
     }
 
     #[tokio::test]
@@ -531,22 +821,177 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn production_mode_rejects_terminal_response_without_attestation() {
+        let fake = Arc::new(FakeMint::funded(10_000_000));
+        let mut l = ledger(fake);
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[7_u8; 32]);
+        l.verification_keys
+            .insert("pinned-key".into(), signing.verifying_key());
+        l.require_attestation = true;
+        let reservation = l
+            .reserve(&acct(), Micros::new(3_000_000), JobId::new())
+            .await
+            .expect("reserve");
+        let error = l
+            .settle_with_evidence(&reservation, usage(1_000), model())
+            .await
+            .expect_err("unsigned Mint result must fail closed");
+        assert!(error.to_string().contains("signed attestation"));
+    }
+
+    #[tokio::test]
     async fn available_micros_reads_the_balance_route() {
         let fake = Arc::new(FakeMint::funded(7_654_321));
         let l = ledger(fake.clone());
         let avail = l.available_micros(&acct()).await.expect("balance");
         assert_eq!(avail, Micros::new(7_654_321));
-        assert_eq!(fake.matching("GET", "/v1/accounts/acct_payer/balance").len(), 1);
+        assert_eq!(
+            fake.matching("GET", "/v1/accounts/acct_payer/balance")
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn health_exercises_mint_readiness_without_mutating_money() {
+        let fake = Arc::new(FakeMint::funded(7_654_321));
+        let l = ledger(fake.clone());
+        l.health().await.expect("Mint readiness");
+        assert_eq!(
+            fake.matching("GET", "/v1/accounts/acct_treasury/balance")
+                .len(),
+            1
+        );
+        assert_eq!(fake.seen().len(), 1);
     }
 
     #[tokio::test]
     async fn configured_payer_overrides_the_relay_account() {
         let fake = Arc::new(FakeMint::funded(10_000_000));
-        let l = MintLedger::new(fake.clone(), API_KEY, PAYEE, Some("acct_single".to_string()));
+        let l = MintLedger::new(
+            fake.clone(),
+            API_KEY,
+            PAYEE,
+            Some("acct_single".to_string()),
+        );
         l.reserve(&acct(), Micros::new(1_000), JobId::new())
             .await
             .expect("reserve");
         let holds = fake.matching("POST", "/v1/holds");
         assert_eq!(body_json(&holds[0])["from"], "acct_single");
+    }
+
+    #[tokio::test]
+    async fn resolved_reserve_replay_ignores_later_payer_configuration() {
+        let fake = Arc::new(FakeMint::funded(10_000_000));
+        let l = MintLedger::new(
+            fake.clone(),
+            API_KEY,
+            PAYEE,
+            Some("acct_new_config".to_string()),
+        );
+        let persisted = AccountId::new("acct_persisted");
+        let job = JobId::new();
+        l.reserve_resolved(
+            &AccountId::new("relay_owner"),
+            &persisted,
+            Micros::new(1_000),
+            job,
+            "persisted-reserve-idem",
+        )
+        .await
+        .expect("replay exact reserve");
+        let hold = &fake.matching("POST", "/v1/holds")[0];
+        assert_eq!(body_json(hold)["from"], "acct_persisted");
+        assert_eq!(body_json(hold)["idem_key"], "persisted-reserve-idem");
+    }
+
+    #[tokio::test]
+    async fn advertised_payee_must_resolve_to_capture_account() {
+        let good = Arc::new(FakeMint::funded(1));
+        ledger(good)
+            .validate_payee_address("ait1qprovider")
+            .await
+            .expect("matching address mapping");
+
+        let bad = Arc::new(FakeMint::funded(1).with_address_account("acct_other"));
+        assert!(ledger(bad)
+            .validate_payee_address("ait1qprovider")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn authorized_reservation_persists_the_full_signed_hold_amount() {
+        use aitp_client::{AmountMicros, Scheme};
+
+        let fake = Arc::new(FakeMint::funded(10_000_000));
+        let l = ledger(fake);
+        let authorization = PaymentAuthorization {
+            payer: "acct_sponsor".into(),
+            payee: "ait1qprovider".into(),
+            amount_micros: AmountMicros(75_000),
+            nonce: "nonce".into(),
+            resource: "POST /v1/chat/completions".into(),
+            expiry: i64::MAX,
+            scheme: Scheme::Hold,
+            idempotency_key: "authorized-hold".into(),
+            pubkey_id: "payer-key".into(),
+            op_hash: "op-hash".into(),
+            sig: "signature".into(),
+        };
+        let reservation = l
+            .reserve_authorized(
+                &AccountId::new("relay_owner"),
+                &authorization,
+                Micros::new(50_000),
+                JobId::new(),
+            )
+            .await
+            .expect("authorized reserve");
+        assert_eq!(reservation.estimate_micros, Micros::new(50_000));
+        assert_eq!(reservation.held_amount_micros, Micros::new(75_000));
+    }
+
+    #[tokio::test]
+    async fn equal_job_ids_are_isolated_by_principal() {
+        let fake = Arc::new(FakeMint::funded(10_000_000));
+        let l = ledger(fake.clone());
+        let job = JobId::new();
+        let alice = AccountId::new("acct_alice");
+        let bob = AccountId::new("acct_bob");
+
+        let alice_reservation = l
+            .reserve(&alice, Micros::new(2_000), job)
+            .await
+            .expect("alice reserve");
+        let bob_reservation = l
+            .reserve(&bob, Micros::new(2_000), job)
+            .await
+            .expect("bob reserve");
+
+        assert!(alice_reservation.backend_reference.is_some());
+        assert!(bob_reservation.backend_reference.is_some());
+        let holds = fake.matching("POST", "/v1/holds");
+        assert_eq!(
+            body_json(&holds[0])["idem_key"],
+            format!("relay:{alice}:{job}")
+        );
+        assert_eq!(
+            body_json(&holds[1])["idem_key"],
+            format!("relay:{bob}:{job}")
+        );
+
+        l.settle(&alice_reservation, usage(1_000), model())
+            .await
+            .expect("alice settle");
+
+        l.settle(&bob_reservation, usage(1_000), model())
+            .await
+            .expect("bob settle");
+        assert_eq!(
+            fake.matching("POST", "/v1/holds/hold_01FAKE/capture").len(),
+            2
+        );
     }
 }

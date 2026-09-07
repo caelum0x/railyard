@@ -9,9 +9,12 @@
 
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 
 use crate::slo::{Outcome, ResultClass};
+
+const MAX_RESTORED_COOLDOWN: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Relative weights of the three health signals in the composite score.
 #[derive(Clone, Copy, Debug)]
@@ -84,6 +87,28 @@ pub enum CircuitState {
     HalfOpen { probing: bool },
 }
 
+/// Restart-safe circuit representation. Monotonic [`Instant`] values cannot be
+/// serialized, so open circuits retain only their remaining cooldown.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "state")]
+pub enum CircuitSnapshot {
+    Closed,
+    Open { remaining_cooldown_ms: u64 },
+    HalfOpen,
+}
+
+/// Durable numeric state for one provider scorer.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct EwmaScoreSnapshot {
+    pub ewma_latency_ms: f64,
+    pub ewma_ttft_ms: f64,
+    pub decaying_max_ms: f64,
+    pub error_rate: f64,
+    pub total: u64,
+    pub failures: u64,
+    pub circuit: CircuitSnapshot,
+}
+
 /// Rolling health of one endpoint.
 #[derive(Clone, Debug)]
 pub struct EwmaScore {
@@ -124,6 +149,65 @@ impl Default for EwmaScore {
 }
 
 impl EwmaScore {
+    pub(crate) fn snapshot(&self, now: Instant) -> EwmaScoreSnapshot {
+        let circuit = match self.circuit {
+            CircuitState::Closed => CircuitSnapshot::Closed,
+            CircuitState::Open { until } => CircuitSnapshot::Open {
+                remaining_cooldown_ms: until
+                    .saturating_duration_since(now)
+                    .as_millis()
+                    .min(u64::MAX as u128) as u64,
+            },
+            // An in-flight probe cannot survive a process restart. Restore it
+            // as eligible for exactly one fresh probe.
+            CircuitState::HalfOpen { .. } => CircuitSnapshot::HalfOpen,
+        };
+        EwmaScoreSnapshot {
+            ewma_latency_ms: self.ewma_latency_ms,
+            ewma_ttft_ms: self.ewma_ttft_ms,
+            decaying_max_ms: self.decaying_max_ms,
+            error_rate: self.error_rate,
+            total: self.total,
+            failures: self.failures,
+            circuit,
+        }
+    }
+
+    pub(crate) fn restore(snapshot: EwmaScoreSnapshot, now: Instant) -> Option<Self> {
+        let finite_nonnegative = |value: f64| value.is_finite() && value >= 0.0;
+        if !finite_nonnegative(snapshot.ewma_latency_ms)
+            || !finite_nonnegative(snapshot.ewma_ttft_ms)
+            || !finite_nonnegative(snapshot.decaying_max_ms)
+            || !snapshot.error_rate.is_finite()
+            || !(0.0..=1.0).contains(&snapshot.error_rate)
+            || snapshot.failures > snapshot.total
+        {
+            return None;
+        }
+        let circuit = match snapshot.circuit {
+            CircuitSnapshot::Closed => CircuitState::Closed,
+            CircuitSnapshot::Open {
+                remaining_cooldown_ms,
+            } => CircuitState::Open {
+                // A corrupt or manually edited snapshot must not overflow
+                // `Instant` arithmetic or suppress a provider indefinitely.
+                until: now
+                    + Duration::from_millis(remaining_cooldown_ms).min(MAX_RESTORED_COOLDOWN),
+            },
+            CircuitSnapshot::HalfOpen => CircuitState::HalfOpen { probing: false },
+        };
+        Some(Self {
+            ewma_latency_ms: snapshot.ewma_latency_ms,
+            ewma_ttft_ms: snapshot.ewma_ttft_ms,
+            decaying_max_ms: snapshot.decaying_max_ms,
+            error_rate: snapshot.error_rate,
+            total: snapshot.total,
+            failures: snapshot.failures,
+            circuit,
+            half_open_deadline: None,
+        })
+    }
+
     /// Fold one attempt outcome into the rolling statistics and advance the
     /// circuit breaker.
     pub fn record(&mut self, outcome: Outcome, cfg: &SloConfig, now: Instant) {
@@ -360,5 +444,68 @@ mod tests {
             eq(false),
             "recovered endpoint must get a fresh probe, not be shed forever"
         );
+    }
+
+    #[gtest]
+    #[tokio::test(start_paused = true)]
+    async fn snapshot_round_trip_preserves_open_circuit_and_numeric_state() {
+        let cfg = SloConfig::default();
+        let now = Instant::now();
+        let mut original = EwmaScore::default();
+        for _ in 0..5 {
+            original.record(Outcome::transient_error(), &cfg, now);
+        }
+
+        let snapshot = original.snapshot(now);
+        let mut restored = EwmaScore::restore(snapshot, now).expect("valid snapshot");
+        expect_that!(restored.error_rate(), eq(original.error_rate()));
+        expect_that!(
+            restored.circuit(),
+            matches_pattern!(CircuitState::Open { .. })
+        );
+
+        let after_cooldown = now + cfg.open_cooldown + Duration::from_millis(1);
+        restored.maybe_half_open(after_cooldown);
+        expect_that!(
+            restored.rank_score(&cfg, after_cooldown).shed,
+            eq(false),
+            "restored circuit should admit one probe after its remaining cooldown"
+        );
+    }
+
+    #[gtest]
+    #[tokio::test(start_paused = true)]
+    async fn restore_rejects_invalid_numbers_and_bounds_untrusted_cooldown() {
+        let now = Instant::now();
+        let invalid = EwmaScoreSnapshot {
+            ewma_latency_ms: f64::NAN,
+            ewma_ttft_ms: 0.0,
+            decaying_max_ms: 0.0,
+            error_rate: 0.0,
+            total: 0,
+            failures: 0,
+            circuit: CircuitSnapshot::Closed,
+        };
+        expect_that!(EwmaScore::restore(invalid, now), none());
+
+        let bounded = EwmaScore::restore(
+            EwmaScoreSnapshot {
+                ewma_latency_ms: 1.0,
+                ewma_ttft_ms: 1.0,
+                decaying_max_ms: 1.0,
+                error_rate: 0.0,
+                total: 1,
+                failures: 0,
+                circuit: CircuitSnapshot::Open {
+                    remaining_cooldown_ms: u64::MAX,
+                },
+            },
+            now,
+        )
+        .expect("otherwise valid snapshot");
+        let CircuitState::Open { until } = bounded.circuit() else {
+            panic!("expected restored open circuit")
+        };
+        expect_that!(until.duration_since(now), eq(MAX_RESTORED_COOLDOWN));
     }
 }

@@ -91,6 +91,7 @@ impl PaymentGateway for StubPaymentGateway {
             nonce: challenge.nonce.clone(),
             resource: challenge.resource.clone(),
             expiry: challenge.expiry,
+            scheme: challenge.scheme,
             idempotency_key: idempotency_key.clone(),
             pubkey_id: "key_stub".to_string(),
             op_hash: format!("stub_ophash_{}", challenge.nonce),

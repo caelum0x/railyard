@@ -18,8 +18,7 @@ use mint_ledger::{
     Ed25519Signer, FixedSigner, InMemoryStore, Keyring, Ledger, LedgerStore, Micros,
 };
 use mint_protocol::{
-    build_authorization, Aitp402, InMemoryNonceStore, InMemoryPayerKeys, MintError, Scheme,
-    Settlement,
+    build_authorization, Aitp402, InMemoryPayerKeys, MintError, Scheme, Settlement,
 };
 use mint_store::FixedClock;
 use proptest::prelude::*;
@@ -58,7 +57,7 @@ fn is_expected(err: &MintError) -> bool {
     )
 }
 
-type Proto = Aitp402<InMemoryStore, Arc<FixedClock>, InMemoryPayerKeys, InMemoryNonceStore>;
+type Proto = Aitp402<InMemoryStore, Arc<FixedClock>, InMemoryPayerKeys>;
 
 struct World {
     proto: Proto,
@@ -102,8 +101,7 @@ async fn build_world() -> World {
 
     let signer = Ed25519Signer::from_seed(PAYER_SEED, "payer-key-1");
     let keys = InMemoryPayerKeys::with_payer_signer(payer.as_str(), &signer);
-    let nonces = InMemoryNonceStore::new(clock.clone());
-    let proto = Aitp402::new(ledger, clock, keys, nonces);
+    let proto = Aitp402::new(ledger, clock, keys);
 
     let allowance = proto
         .ledger()

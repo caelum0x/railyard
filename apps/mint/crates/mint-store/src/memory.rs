@@ -2467,6 +2467,12 @@ impl LedgerStore for InMemoryStore {
         self.receipts_snapshot()
     }
 
+    async fn get_receipt(&self, account_id: &AccountId, journal_seq: u64) -> Option<Receipt> {
+        self.receipts_snapshot().into_iter().find(|receipt| {
+            &receipt.body.account_id == account_id && receipt.body.journal_seq == journal_seq
+        })
+    }
+
     async fn receipt_merkle_root(&self) -> ReceiptHash {
         self.merkle_root()
     }

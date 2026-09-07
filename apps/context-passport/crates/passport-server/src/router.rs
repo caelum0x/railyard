@@ -37,6 +37,7 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/passports/:id/generate",
             post(handlers::generate::generate),
         )
+        .route("/v1/passports/:id/attest", post(handlers::generate::attest))
         .route(
             "/v1/passports/:id/generations",
             get(handlers::generate::list_generations),

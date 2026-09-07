@@ -39,6 +39,14 @@ export interface VendApp {
     markup_policy: MarkupPolicy;
     mint_account_id: string;
 }
+export interface FundingCheckout {
+    provider: string;
+    checkout_id: string;
+    checkout_url: string;
+    deposit_ref: string;
+    account_id: string;
+    amount_micros: number;
+}
 export interface CreateApp {
     name: string;
     mint_account_id: string;
@@ -132,6 +140,7 @@ export declare class VendClient {
     tenant(): Promise<Tenant>;
     listApps(): Promise<VendApp[]>;
     getApp(appId: string): Promise<VendApp>;
+    createFundingCheckout(appId: string, provider: string, amountMicros: number): Promise<FundingCheckout>;
     createApp(input: CreateApp): Promise<VendApp>;
     setAppEnabled(appId: string, enabled: boolean): Promise<VendApp>;
     listKeys(appId: string): Promise<ProvisioningKey[]>;

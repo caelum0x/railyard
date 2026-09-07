@@ -1,0 +1,46 @@
+# rithub is its OWN standalone Cargo workspace (like rit, mint, agent-runtime).
+# It layers the forge (domain + Postgres + HTTP + git-hosting) over `rit`, which
+# it consumes as a path dependency. Build/test ONLY from this directory, e.g.:
+#   cd apps/rithub && cargo build -p rithub-server
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+# Internal crates
+rithub-core = { path = "crates/rithub-core" }
+rithub-git = { path = "crates/rithub-git" }
+# The from-scratch Rust git — the only dependency that owns git internals.
+rit = { path = "../rit" }
+
+# Async runtime + HTTP
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace"] }
+
+# Persistence
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "uuid",
+    "time",
+    "macros",
+    "migrate",
+] }
+
+# Serialization + ids + errors + logging
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+time = { version = "0.3", features = ["serde", "formatting"] }
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

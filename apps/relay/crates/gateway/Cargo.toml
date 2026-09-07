@@ -9,7 +9,15 @@ license.workspace = true
 tensorzero-core = { path = "../tensorzero-core" }
 tensorzero-optimizers = { path = "../tensorzero-optimizers" }
 evaluations = { path = "../evaluations" }
+relay-aitp = { path = "../relay-aitp" }
 relay-billing = { path = "../relay-billing" }
+relay-catalog = { path = "../relay-catalog" }
+relay-contract = { path = "../relay-contract" }
+relay-cost-feed = { path = "../relay-cost-feed" }
+relay-hedge = { path = "../relay-hedge" }
+relay-storage-postgres = { path = "../relay-storage-postgres" }
+reqwest.workspace = true
+async-trait = { workspace = true }
 axum = { workspace = true }
 tracing = { version = "0.1.43", features = ["log", "release_max_level_debug"] }
 tokio = { workspace = true }
@@ -36,6 +44,7 @@ ts-rs.workspace = true
 async-stream = { workspace = true }
 http-body-util = { workspace = true }
 base64 = "0.22.1"
+hex = "0.4"
 
 [lints]
 workspace = true
@@ -50,7 +59,6 @@ rmcp = { version = "1.7.0", features = [
     "client",
     "transport-streamable-http-client-reqwest",
 ] }
-reqwest.workspace = true
 tempfile = { workspace = true }
 tensorzero = { path = "../tensorzero-client", features = ["e2e_tests"] }
 serde_json = { workspace = true }
@@ -64,3 +72,5 @@ chrono = { workspace = true }
 flate2 = "1.1.8"
 zstd = "0.13.3"
 brotli = "8.0.2"
+hyper = { version = "1.9.0", features = ["client", "server", "http1"] }
+hyper-util = { version = "0.1.19", features = ["tokio"] }

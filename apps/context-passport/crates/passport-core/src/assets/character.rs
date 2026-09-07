@@ -13,9 +13,13 @@ pub struct CharacterAssets {
     /// Rendered avatar / talking-head reference (HeyGen / Hedra).
     #[serde(default)]
     pub avatar_ref: Option<String>,
-    /// LoRA / embedding reference for consistent generation.
+    /// LoRA / fine-tune reference for consistent generation.
     #[serde(default)]
     pub lora_ref: Option<String>,
+    /// IP-Adapter / textual-inversion embedding reference (portable image/video
+    /// conditioning channel, distinct from a trained LoRA).
+    #[serde(default)]
+    pub embedding_ref: Option<String>,
     /// Visual style descriptor woven into prompts.
     #[serde(default)]
     pub style: Option<String>,
@@ -40,6 +44,8 @@ pub struct CharacterPatch {
     #[serde(default)]
     pub lora_ref: Option<String>,
     #[serde(default)]
+    pub embedding_ref: Option<String>,
+    #[serde(default)]
     pub style: Option<String>,
     #[serde(default)]
     pub personality: Option<String>,
@@ -62,6 +68,9 @@ impl CharacterAssets {
         }
         if let Some(v) = &patch.lora_ref {
             next.lora_ref = Some(v.clone());
+        }
+        if let Some(v) = &patch.embedding_ref {
+            next.embedding_ref = Some(v.clone());
         }
         if let Some(v) = &patch.style {
             next.style = Some(v.clone());

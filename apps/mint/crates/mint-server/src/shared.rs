@@ -2,7 +2,7 @@
 //! shared, by `Arc`, across the four domain facades in [`crate::state`].
 //!
 //! The domain facades (`Ledger<S>`, `StreamLedger<S>`, `ReserveLedger<S,R,K>`,
-//! `Aitp402<S,C,K,N>`) each OWN their generic dependency by value. To share a
+//! `Aitp402<S,C,K>`) each OWN their generic dependency by value. To share a
 //! single backing store/ramp across all of them we wrap an `Arc<dyn _>` in a
 //! LOCAL newtype and implement the (foreign) trait for it — the orphan rule
 //! permits `impl ForeignTrait for LocalType`. Cloning a wrapper clones only the
@@ -153,6 +153,9 @@ impl<S: LedgerStore> LedgerStore for SharedStore<S> {
     }
     async fn snapshot_receipts(&self) -> Vec<Receipt> {
         self.0.snapshot_receipts().await
+    }
+    async fn get_receipt(&self, account_id: &AccountId, journal_seq: u64) -> Option<Receipt> {
+        self.0.get_receipt(account_id, journal_seq).await
     }
     async fn receipt_merkle_root(&self) -> ReceiptHash {
         self.0.receipt_merkle_root().await

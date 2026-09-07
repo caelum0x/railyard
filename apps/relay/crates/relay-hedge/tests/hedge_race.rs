@@ -47,6 +47,42 @@ async fn loser_future_is_canceled_when_winner_returns() {
 
 #[gtest]
 #[tokio::test(start_paused = true)]
+async fn secondary_attempts_launch_at_progressive_stagger_deadlines() {
+    let (a, ha) = fake_attempt("A", 0, Duration::from_secs(10), Script::Ok);
+    let (b, hb) = fake_attempt("B", 0, Duration::from_secs(10), Script::Ok);
+    let (c, hc) = fake_attempt("C", 0, Duration::from_secs(10), Script::Ok);
+    let cfg = HedgeConfig {
+        enabled: true,
+        max_concurrency: 3,
+        stagger_ms: Some(100),
+        max_cost_micros: None,
+        provider_cost_micros: Default::default(),
+    };
+
+    let race_future = race(vec![a, b, c], &cfg);
+    tokio::pin!(race_future);
+    assert!(futures::poll!(&mut race_future).is_pending());
+    expect_that!(ha.started(), eq(1));
+    expect_that!(hb.started(), eq(0));
+    expect_that!(hc.started(), eq(0));
+
+    tokio::time::advance(Duration::from_millis(99)).await;
+    assert!(futures::poll!(&mut race_future).is_pending());
+    expect_that!(hb.started(), eq(0));
+    expect_that!(hc.started(), eq(0));
+
+    tokio::time::advance(Duration::from_millis(1)).await;
+    assert!(futures::poll!(&mut race_future).is_pending());
+    expect_that!(hb.started(), eq(1));
+    expect_that!(hc.started(), eq(0));
+
+    tokio::time::advance(Duration::from_millis(100)).await;
+    assert!(futures::poll!(&mut race_future).is_pending());
+    expect_that!(hc.started(), eq(1));
+}
+
+#[gtest]
+#[tokio::test(start_paused = true)]
 async fn cost_cap_blocks_over_cap_hedges() {
     // Each attempt worst-cases 100 micros; a 150-micro cap fits only one at a
     // time, so B and C are never launched (the first is exempt so we still run).
@@ -59,6 +95,7 @@ async fn cost_cap_blocks_over_cap_hedges() {
         max_concurrency: 3,
         stagger_ms: None,
         max_cost_micros: Some(150),
+        provider_cost_micros: Default::default(),
     };
     let out = race(vec![a, b, c], &cfg).await.expect("a winner");
 
@@ -81,12 +118,38 @@ async fn cost_cap_degrades_to_sequential_tail_on_failure() {
         max_concurrency: 2,
         stagger_ms: None,
         max_cost_micros: Some(150),
+        provider_cost_micros: Default::default(),
     };
     let out = race(vec![a, b], &cfg).await.expect("a winner");
 
     expect_that!(out.winner.as_ref(), eq("B"));
     expect_that!(ha.started(), eq(1));
     expect_that!(hb.started(), eq(1));
+}
+
+#[gtest]
+#[tokio::test(start_paused = true)]
+async fn over_cap_secondary_still_runs_after_primary_failure() {
+    let (primary, primary_handle) =
+        fake_attempt("primary", 100, Duration::from_millis(10), Script::Err);
+    let (secondary, secondary_handle) =
+        fake_attempt("secondary", 500, Duration::from_millis(10), Script::Ok);
+    let cfg = HedgeConfig {
+        enabled: true,
+        max_concurrency: 2,
+        stagger_ms: None,
+        max_cost_micros: Some(150),
+        provider_cost_micros: Default::default(),
+    };
+
+    let outcome = race(vec![primary, secondary], &cfg)
+        .await
+        .expect("sequential fallback must remain available");
+
+    expect_that!(outcome.winner.as_ref(), eq("secondary"));
+    expect_that!(outcome.launched, eq(2));
+    expect_that!(primary_handle.started(), eq(1));
+    expect_that!(secondary_handle.started(), eq(1));
 }
 
 #[gtest]

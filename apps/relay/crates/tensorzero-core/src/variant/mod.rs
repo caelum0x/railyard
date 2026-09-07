@@ -1525,6 +1525,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::default(),
         };
         let retry_config = Box::leak(Box::new(RetryConfig::default()));
 
@@ -1645,6 +1646,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::default(),
         };
 
         // Create the arguments struct
@@ -1718,6 +1720,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::default(),
         };
 
         // Create the arguments struct
@@ -1879,6 +1882,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::default(),
         };
         let retry_config = Box::leak(Box::new(RetryConfig::default()));
 
@@ -2006,6 +2010,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::default(),
         }));
 
         // Prepare the model inference request
@@ -2217,6 +2222,7 @@ mod tests {
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
+            hedge: relay_hedge::HedgeConfig::default(),
         }));
         let retry_config = RetryConfig::default();
 

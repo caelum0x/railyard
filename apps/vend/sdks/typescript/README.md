@@ -18,6 +18,8 @@ const session = await vend.login(
   process.env.VEND_PASSWORD!,
 );
 const apps = await vend.listApps();
+const checkout = await vend.createFundingCheckout(apps[0]!.id, "creem", 20_000_000);
+console.log("Fund this app:", checkout.checkout_url);
 const issued = await vend.issueKey(apps[0]!.id, {
   environment: "test",
   daily_cap_micros: 5_000_000,

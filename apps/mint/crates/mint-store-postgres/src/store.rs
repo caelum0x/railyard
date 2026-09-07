@@ -25,7 +25,7 @@ use mint_store::{
     StreamOpenOutcome, StreamRecord, StreamStatus, StreamTickCommit, StreamTickOutcome,
     SystemClock, TransferCommit,
 };
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgPoolOptions, PgRow};
 use sqlx::{PgConnection, PgPool, Row};
 use ulid::Ulid;
 
@@ -108,6 +108,37 @@ impl PgStore {
         self.signer.as_ref()
     }
 
+    fn receipt_from_row(row: &PgRow) -> Option<Receipt> {
+        let account_id = AccountId::parse(&row.get::<String, _>("account_id")).ok()?;
+        let from = row
+            .get::<Option<String>, _>("from_id")
+            .and_then(|value| AccountId::parse(&value).ok());
+        let to = row
+            .get::<Option<String>, _>("to_id")
+            .and_then(|value| AccountId::parse(&value).ok());
+        Some(Receipt {
+            body: ReceiptBody {
+                account_id,
+                account_seq: row.get::<i64, _>("seq") as u64,
+                journal_seq: row.get::<i64, _>("journal_seq") as u64,
+                op: rows::receipt_op_from_text(&row.get::<String, _>("op")),
+                op_hash: rows::ophash_from_slice(&row.get::<Vec<u8>, _>("op_hash")),
+                amount_micros: Micros::new(row.get::<i64, _>("amount_micros")),
+                from,
+                to,
+                balance_after_available_micros: Micros::new(
+                    row.get::<i64, _>("balance_after_micros"),
+                ),
+                balance_after_held_micros: Micros::new(row.get::<i64, _>("balance_after_held")),
+                ts: row.get::<i64, _>("ts"),
+                prev_hash: rows::hash_from_slice(&row.get::<Vec<u8>, _>("prev_hash")),
+                signer: mint_receipts::SignerKeyId::new(row.get::<String, _>("signer")),
+            },
+            hash: rows::hash_from_slice(&row.get::<Vec<u8>, _>("hash")),
+            sig: rows::sig_from_slice(&row.get::<Vec<u8>, _>("sig")),
+        })
+    }
+
     /// Lock two accounts' balance rows in `AccountId` sort order → deadlock-free.
     async fn lock_pair(
         &self,
@@ -149,7 +180,9 @@ impl PgStore {
         Ok(())
     }
 
-    /// The receipt rows (available/held balance-after) for one op, in chain order.
+    /// The receipt rows (available/held balance-after) for one operation, in
+    /// global journal order. `receipts.seq` is only a per-account chain
+    /// position, so it cannot order the debit and credit legs of a transfer.
     async fn op_receipts(
         &self,
         conn: &mut PgConnection,
@@ -157,7 +190,7 @@ impl PgStore {
     ) -> Result<Vec<(AccountId, i64, i64, i64)>, MintError> {
         let rows = sqlx::query(
             "SELECT account_id, balance_after_micros, balance_after_held, journal_seq \
-             FROM receipts WHERE op_hash = $1 ORDER BY seq ASC",
+             FROM receipts WHERE op_hash = $1 ORDER BY journal_seq ASC",
         )
         .bind(rows::ophash_to_vec(op_hash))
         .fetch_all(&mut *conn)
@@ -566,25 +599,36 @@ impl LedgerStore for PgStore {
 
         match check_idem(&mut tx, &commit.idem_key, &commit.op_hash).await? {
             IdemCheck::Conflict => return Err(MintError::IdempotencyConflict),
-            IdemCheck::Replay { .. } => {
+            IdemCheck::Replay { first_seq, .. } => {
                 let recs = self.op_receipts(&mut tx, &commit.op_hash).await?;
                 if recs.len() < 2 {
                     return Err(MintError::Overflow);
                 }
+                // Resolve legs by their requested roles, not by account-chain
+                // sequence. The sender and recipient can have very different
+                // receipt histories when an idempotent request is replayed.
+                let from = recs
+                    .iter()
+                    .find(|receipt| receipt.0 == commit.from)
+                    .ok_or(MintError::Overflow)?;
+                let to = recs
+                    .iter()
+                    .find(|receipt| receipt.0 == commit.to)
+                    .ok_or(MintError::Overflow)?;
                 let from_balance = Balance {
-                    account_id: recs[0].0.clone(),
-                    available_micros: Micros::new(recs[0].1),
-                    held_micros: Micros::new(recs[0].2),
-                    updated_seq: recs[0].3 as u64,
+                    account_id: from.0.clone(),
+                    available_micros: Micros::new(from.1),
+                    held_micros: Micros::new(from.2),
+                    updated_seq: from.3 as u64,
                 };
                 let to_balance = Balance {
-                    account_id: recs[1].0.clone(),
-                    available_micros: Micros::new(recs[1].1),
-                    held_micros: Micros::new(recs[1].2),
-                    updated_seq: recs[1].3 as u64,
+                    account_id: to.0.clone(),
+                    available_micros: Micros::new(to.1),
+                    held_micros: Micros::new(to.2),
+                    updated_seq: to.3 as u64,
                 };
                 return Ok(CommitOutcome {
-                    first_seq: recs[0].3 as u64,
+                    first_seq: first_seq as u64,
                     from_balance,
                     to_balance,
                     idempotent_replay: true,
@@ -2021,42 +2065,22 @@ impl LedgerStore for PgStore {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            let account_id = match AccountId::parse(&r.get::<String, _>("account_id")) {
-                Ok(a) => a,
-                Err(_) => continue,
-            };
-            let from = r
-                .get::<Option<String>, _>("from_id")
-                .and_then(|s| AccountId::parse(&s).ok());
-            let to = r
-                .get::<Option<String>, _>("to_id")
-                .and_then(|s| AccountId::parse(&s).ok());
-            let body = ReceiptBody {
-                account_id,
-                account_seq: r.get::<i64, _>("seq") as u64,
-                journal_seq: r.get::<i64, _>("journal_seq") as u64,
-                op: rows::receipt_op_from_text(&r.get::<String, _>("op")),
-                op_hash: rows::ophash_from_slice(&r.get::<Vec<u8>, _>("op_hash")),
-                amount_micros: Micros::new(r.get::<i64, _>("amount_micros")),
-                from,
-                to,
-                balance_after_available_micros: Micros::new(
-                    r.get::<i64, _>("balance_after_micros"),
-                ),
-                balance_after_held_micros: Micros::new(r.get::<i64, _>("balance_after_held")),
-                ts: r.get::<i64, _>("ts"),
-                prev_hash: rows::hash_from_slice(&r.get::<Vec<u8>, _>("prev_hash")),
-                signer: mint_receipts::SignerKeyId::new(r.get::<String, _>("signer")),
-            };
-            out.push(Receipt {
-                body,
-                hash: rows::hash_from_slice(&r.get::<Vec<u8>, _>("hash")),
-                sig: rows::sig_from_slice(&r.get::<Vec<u8>, _>("sig")),
-            });
-        }
-        out
+        rows.iter().filter_map(Self::receipt_from_row).collect()
+    }
+
+    async fn get_receipt(&self, account_id: &AccountId, journal_seq: u64) -> Option<Receipt> {
+        let journal_seq = i64::try_from(journal_seq).ok()?;
+        let row = sqlx::query(
+            "SELECT account_id, seq, journal_seq, op, op_hash, amount_micros, from_id, to_id, \
+                    balance_after_micros, balance_after_held, ts, prev_hash, hash, sig, signer \
+             FROM receipts WHERE account_id = $1 AND journal_seq = $2 LIMIT 1",
+        )
+        .bind(account_id.as_str())
+        .bind(journal_seq)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()??;
+        Self::receipt_from_row(&row)
     }
 
     async fn receipt_merkle_root(&self) -> ReceiptHash {

@@ -15,9 +15,9 @@ use async_trait::async_trait;
 
 use vend_core::error::VendError;
 use vend_core::transport::{
-    CaptureRequest, CaptureResponse, HoldRequest, HoldResponse, HoldStatus, HoldView, MintBalance,
-    MintTransport, RelayRequest, RelayResponse, RelayTransport, ReleaseRequest, ReleaseResponse,
-    TransferRequest, TransferResponse, Usage,
+    CaptureRequest, CaptureResponse, CheckoutRequest, CheckoutResponse, HoldRequest, HoldResponse,
+    HoldStatus, HoldView, MintBalance, MintTransport, RelayRequest, RelayResponse, RelayTransport,
+    ReleaseRequest, ReleaseResponse, SettlementProof, TransferRequest, TransferResponse, Usage,
 };
 
 pub use store::InMemoryStore;
@@ -99,6 +99,20 @@ impl FakeMint {
 
 #[async_trait]
 impl MintTransport for FakeMint {
+    async fn create_checkout(&self, req: CheckoutRequest) -> Result<CheckoutResponse, VendError> {
+        if req.amount_micros <= 0 || req.amount_micros % 10_000 != 0 {
+            return Err(VendError::InvalidAmount);
+        }
+        Ok(CheckoutResponse {
+            provider: req.provider.clone(),
+            checkout_id: "checkout_test".into(),
+            checkout_url: "https://pay.test/checkout_test".into(),
+            deposit_ref: format!("{}:checkout_test", req.provider),
+            account_id: req.account_id,
+            amount_micros: req.amount_micros,
+        })
+    }
+
     async fn create_hold(&self, req: HoldRequest) -> Result<HoldResponse, VendError> {
         let mut s = self.inner.lock().unwrap();
         if let Some(existing) = s.by_idem.get(&req.idem_key).cloned() {
@@ -168,8 +182,17 @@ impl MintTransport for FakeMint {
             let payee = *s.balances.get(&req.to).unwrap_or(&0);
             s.balances.insert(req.to.clone(), payee + req.amount_micros);
         }
+        s.seq += 1;
+        let sequence = s.seq;
         Ok(CaptureResponse {
             captured_micros: req.amount_micros,
+            proof: SettlementProof {
+                sequence,
+                operation: "hold.capture".into(),
+                operation_hash: format!("fake-op-{sequence}"),
+                receipt_hash: format!("fake-receipt-{sequence}"),
+                signature: format!("fake-signature-{sequence}"),
+            },
         })
     }
 
@@ -187,7 +210,17 @@ impl MintTransport for FakeMint {
                 h.settled = true;
             }
         }
-        Ok(ReleaseResponse {})
+        s.seq += 1;
+        let sequence = s.seq;
+        Ok(ReleaseResponse {
+            proof: SettlementProof {
+                sequence,
+                operation: "hold.release".into(),
+                operation_hash: format!("fake-op-{sequence}"),
+                receipt_hash: format!("fake-receipt-{sequence}"),
+                signature: format!("fake-signature-{sequence}"),
+            },
+        })
     }
 
     async fn transfer(&self, req: TransferRequest) -> Result<TransferResponse, VendError> {

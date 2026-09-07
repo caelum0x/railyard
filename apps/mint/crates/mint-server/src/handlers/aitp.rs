@@ -11,8 +11,9 @@ use mint_protocol::{encode_challenge, encode_receipt, Authorization, Settlement,
 use mint_store::LedgerStore;
 use serde_json::json;
 
+use crate::attestation::HoldSettlementOperation;
 use crate::dto::{parse_account, AitpCaptureReq, AitpChallengeReq, AitpReleaseReq};
-use crate::error::{ok, ApiError, ApiResult};
+use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 use crate::views;
 
@@ -102,11 +103,25 @@ pub async fn capture<S: LedgerStore + 'static>(
 ) -> ApiResult {
     let hold_id = HoldId::parse(&body.hold_id).map_err(ApiError::from)?;
     let to = parse_account(&body.to).map_err(ApiError::from)?;
+    let amount_micros = body.amount_micros;
+    let idem_key = body.idem_key;
     let receipt = st
         .aitp
-        .capture(hold_id, body.amount_micros, to, body.idem_key)
+        .capture(hold_id.clone(), amount_micros, to.clone(), idem_key.clone())
         .await?;
-    Ok(ok(views::hold_receipt(&receipt)))
+    super::holds::signed_hold_settlement_response(
+        &st,
+        StatusCode::OK,
+        &receipt,
+        &hold_id,
+        HoldSettlementOperation::Capture {
+            payee: &to,
+            amount_micros,
+        },
+        &idem_key,
+        None,
+    )
+    .await
 }
 
 /// `POST /v1/aitp/release` → `Aitp402::release` (failure path, ADR-0002).
@@ -115,8 +130,18 @@ pub async fn release<S: LedgerStore + 'static>(
     Json(body): Json<AitpReleaseReq>,
 ) -> ApiResult {
     let hold_id = HoldId::parse(&body.hold_id).map_err(ApiError::from)?;
-    let receipt = st.aitp.release(hold_id, body.idem_key).await?;
-    Ok(ok(views::hold_receipt(&receipt)))
+    let idem_key = body.idem_key;
+    let receipt = st.aitp.release(hold_id.clone(), idem_key.clone()).await?;
+    super::holds::signed_hold_settlement_response(
+        &st,
+        StatusCode::OK,
+        &receipt,
+        &hold_id,
+        HoldSettlementOperation::Release,
+        &idem_key,
+        None,
+    )
+    .await
 }
 
 fn insert_header(resp: &mut Response, name: HeaderName, value: &str) {

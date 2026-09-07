@@ -24,6 +24,7 @@ serde_json = { workspace = true }
 async-trait = { workspace = true }
 blake3 = { workspace = true }
 reqwest = { workspace = true }
+mint-protocol = { workspace = true }
 
 [dev-dependencies]
 # The mock mint-server used by the tests is a tiny hand-rolled tokio TCP stub

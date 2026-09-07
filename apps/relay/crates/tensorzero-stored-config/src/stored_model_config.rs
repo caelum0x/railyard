@@ -22,6 +22,20 @@ pub struct StoredModelConfig {
     pub timeouts: Option<StoredTimeoutsConfig>,
     pub skip_relay: Option<bool>,
     pub namespace: Option<String>,
+    pub hedge: Option<StoredHedgeConfig>,
+}
+
+/// Stored representation of Relay's opt-in provider hedging and adaptive
+/// routing policy. Kept transport-only here so stored configuration does not
+/// depend on the runtime implementation crate.
+#[serde_with::skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredHedgeConfig {
+    pub enabled: Option<bool>,
+    pub max_concurrency: Option<usize>,
+    pub stagger_ms: Option<u64>,
+    pub max_cost_micros: Option<u64>,
+    pub provider_cost_micros: Option<BTreeMap<String, u64>>,
 }
 
 // --- Model provider ---

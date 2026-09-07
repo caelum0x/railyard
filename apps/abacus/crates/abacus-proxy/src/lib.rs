@@ -11,13 +11,17 @@
 //! `abacus-mint-client` + `abacus-upstream`, while tests wire the `abacus-testkit`
 //! fakes.
 
+pub mod audit;
 pub mod auth;
 pub mod config;
 pub mod enforce;
 pub mod handler;
 pub mod hold_reaper;
+pub mod local_hold_store;
 pub mod local_store;
 pub mod mem_hold_store;
+pub mod postgres_hold_store;
+pub mod postgres_product_store;
 pub mod pricing;
 pub mod settle;
 
@@ -26,6 +30,7 @@ use std::sync::Arc;
 use axum::routing::{get, post};
 use axum::{middleware, Router};
 
+use abacus_core::hold_store::HoldStore;
 use abacus_core::identity::BudgetRepo;
 use abacus_core::receipt::ReceiptStore;
 use abacus_core::transport::{MintTransport, UpstreamTransport};
@@ -46,6 +51,8 @@ pub struct AppState {
     pub budgets: Arc<dyn BudgetRepo>,
     /// Receipt system-of-record.
     pub receipts: Arc<dyn ReceiptStore>,
+    /// Restart-safe table of Mint holds currently between reserve and terminal.
+    pub holds: Arc<dyn HoldStore>,
     /// Ingress `X-API-Key` secret agents must present.
     pub ingress_api_key: String,
     /// Per-provider/model pricing table → `est_max`.
@@ -61,6 +68,9 @@ pub struct AppState {
 pub fn build_router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/v1/proxy", post(handler::proxy))
+        // Read the receipt system-of-record for one enforced request. Behind the
+        // same ingress key — agent spend is not public.
+        .route("/v1/receipts/:request_id", get(audit::get_receipt))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_api_key,

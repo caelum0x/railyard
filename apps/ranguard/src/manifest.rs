@@ -63,9 +63,19 @@ fn collect_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) -> i
         } else if file_type.is_file() {
             let rel = path
                 .strip_prefix(root)
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "path not under root"))?
+                .map_err(|_| io::Error::other("path not under root"))?
                 .to_string_lossy()
                 .replace('\\', "/");
+            // The canonical manifest body is tab/newline delimited. A path
+            // containing either byte would corrupt the round-trip (and thus the
+            // signature), so we refuse it explicitly rather than emit a manifest
+            // that cannot be parsed back or verified.
+            if rel.contains('\t') || rel.contains('\n') {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("path contains an unsupported tab or newline: {rel:?}"),
+                ));
+            }
             out.push((rel, path));
         }
         // Symlinks and special files are intentionally skipped.
@@ -213,8 +223,11 @@ impl Manifest {
             current.insert(rel, path);
         }
 
-        let trusted: BTreeMap<&str, &Entry> =
-            self.entries.iter().map(|e| (e.rel_path.as_str(), e)).collect();
+        let trusted: BTreeMap<&str, &Entry> = self
+            .entries
+            .iter()
+            .map(|e| (e.rel_path.as_str(), e))
+            .collect();
 
         let mut changes = Vec::new();
         let mut checked = 0usize;
@@ -333,6 +346,33 @@ mod tests {
         let parsed = Manifest::deserialize(&text).unwrap();
         assert!(parsed.verify_signature(b"secret"));
         assert!(!parsed.verify_signature(b"wrong-key"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn empty_dir_builds_and_verifies() {
+        let dir = temp_dir("empty");
+        let m = Manifest::build(&dir, b"key").unwrap();
+        assert!(m.entries.is_empty());
+        assert!(m.verify_signature(b"key"));
+        let report = m.scan(&dir).unwrap();
+        assert!(report.is_clean());
+        assert_eq!(report.files_checked, 0);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_path_with_tab_or_newline() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = temp_dir("weirdname");
+        // A filename containing a newline would corrupt the tab/newline-delimited
+        // canonical body; the builder must refuse it rather than emit a manifest
+        // that cannot round-trip.
+        let weird = dir.join(std::ffi::OsStr::from_bytes(b"bad\nname.txt"));
+        fs::write(&weird, b"x").unwrap();
+        let err = Manifest::build(&dir, b"key").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         fs::remove_dir_all(&dir).ok();
     }
 

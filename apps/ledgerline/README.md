@@ -44,6 +44,16 @@ movements, preserving ADR-0002. Replaying an identical `idempotency_key` returns
 the original record with `idempotent_replay: true`; changing the event behind a
 key returns `409`.
 
+Settlement (money) and the request-level margin projection are two writes. A
+crash after a request settles on Mint but before its margin row lands would leave
+the money correct yet the request's gross margin invisible. The recovery worker
+(`src/recovery.rs`) closes that window: alongside driving stuck sagas, it runs a
+projection reconciliation sweep that finds any `Settled` saga whose `margin_events`
+row is missing (a Postgres anti-join in production) and rebuilds it from the
+saga's authorized event binding. The backfill touches only the read model — never
+Mint — and `save` is idempotent by `idempotency_key`, so a racing client retry can
+never double-project or double-charge.
+
 ## Run locally
 
 Ledgerline is a standalone Cargo workspace, deliberately outside the root
@@ -110,6 +120,16 @@ cargo test
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
+The saga's money invariants and the projection backfill are proven end to end
+against a real database by the integration suite in `tests/pg_settlement.rs`. It
+is gated on `DATABASE_URL`, so plain `cargo test` stays green with no database;
+point it at Postgres to exercise the real outbox and store:
+
+```bash
+DATABASE_URL='postgres://user@localhost:5432/ledgerline' \
+  cargo test --test pg_settlement
+```
+
 ## Current Sx0 boundary
 
 This slice deliberately stops before Sx1 rating catalogs and Relay cost-feed
@@ -117,12 +137,10 @@ subscription. Clients currently provide the already-rated revenue and exact or
 estimated COGS amounts. Postgres stores operational metadata and projections;
 Mint remains the authoritative ledger.
 
-The settlement outbox mechanism (atomic-or-compensated saga) is complete and
-proven by unit tests, but the shipped `OutboxStore` is the in-process
-`MemoryOutbox`, wired in `main.rs`. It gives crash-visible progress and
-compensation *within a single running process*; it does not survive a process
-restart. The remaining production step is a transactional `PostgresOutbox`
-implementation of the `OutboxStore` port (co-committed with the `margin_events`
-write) plus a background sweeper that resumes `pending`/`compensating` sagas
-after a restart. Completing the Sx0 scale gate also still requires load-testing
-one million events.
+The settlement outbox mechanism (atomic-or-compensated saga) is backed by the
+`settlement_outbox` Postgres table in production. Every Mint step transition is
+persisted, so retrying the same request after a restart resumes or compensates
+from its durable state; `MemoryOutbox` remains only for focused tests. Automatic
+replay without an inbound retry is covered by the recovery worker, which both
+finishes stuck sagas and backfills settled-but-unprojected margin rows on a fixed
+cadence. The one-million-event scale test remains an Sx0 operational follow-up.

@@ -25,6 +25,19 @@ pub enum EventOutcome {
     Failed,
 }
 
+/// Signed settlement evidence emitted by Relay/Mint for the source request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceSettlementReceipt {
+    pub request_id: String,
+    pub payer_account: String,
+    pub sequence: u64,
+    pub operation: String,
+    pub amount_micros: i64,
+    pub operation_hash: String,
+    pub receipt_hash: String,
+    pub signature: String,
+}
+
 /// One request-level usage event. Money is always integer microdollars.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MeterEvent {
@@ -49,6 +62,9 @@ pub struct MeterEvent {
     pub cogs_account: String,
     /// Mint account receiving provider COGS.
     pub provider_account: String,
+    /// Relay/Mint proof correlating this margin event to the settled request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_settlement_receipt: Option<SourceSettlementReceipt>,
 }
 
 impl MeterEvent {
@@ -88,6 +104,41 @@ impl MeterEvent {
                     ));
                 }
             }
+        }
+
+        if let Some(receipt) = &self.source_settlement_receipt {
+            if receipt.request_id != self.request_id
+                || receipt.payer_account != self.customer_account
+                || receipt.sequence == 0
+                || receipt.operation_hash.is_empty()
+                || receipt.receipt_hash.is_empty()
+                || receipt.signature.is_empty()
+            {
+                return Err(LedgerlineError::Invalid(
+                    "source settlement receipt does not match request principal/correlation"
+                        .to_string(),
+                ));
+            }
+            match self.outcome {
+                EventOutcome::Succeeded
+                    if receipt.operation != "hold.capture"
+                        || receipt.amount_micros != self.cogs_micros =>
+                {
+                    return Err(LedgerlineError::Invalid(
+                        "successful source receipt must capture the exact COGS amount".to_string(),
+                    ));
+                }
+                EventOutcome::Failed if receipt.operation != "hold.release" => {
+                    return Err(LedgerlineError::Invalid(
+                        "failed source receipt must prove hold release".to_string(),
+                    ));
+                }
+                _ => {}
+            }
+        } else if self.source == EventSource::RelayGateway {
+            return Err(LedgerlineError::Invalid(
+                "Relay events require signed source settlement evidence".to_string(),
+            ));
         }
         Ok(())
     }
@@ -183,6 +234,16 @@ mod tests {
             revenue_account: "acct_revenue".into(),
             cogs_account: "acct_cogs".into(),
             provider_account: "acct_provider".into(),
+            source_settlement_receipt: Some(SourceSettlementReceipt {
+                request_id: "req-1".into(),
+                payer_account: "acct_customer".into(),
+                sequence: 42,
+                operation: "hold.capture".into(),
+                amount_micros: 1_250_000,
+                operation_hash: "op_hash".into(),
+                receipt_hash: "receipt_hash".into(),
+                signature: "signature".into(),
+            }),
         }
     }
 
@@ -195,12 +256,42 @@ mod tests {
     }
 
     #[test]
+    fn consumes_the_shared_settlement_receipt_vocabulary() {
+        let receipt: SourceSettlementReceipt = serde_json::from_value(serde_json::json!({
+            "request_id": "gateway_job_1",
+            "payer_account": "acct_owner",
+            "sequence": 7,
+            "operation": "hold.capture",
+            "amount_micros": 42,
+            "operation_hash": "op_hash",
+            "receipt_hash": "receipt_hash",
+            "signature": "signature"
+        }))
+        .unwrap();
+        assert_eq!(receipt.request_id, "gateway_job_1");
+        assert_eq!(receipt.amount_micros, 42);
+    }
+
+    #[test]
     fn failed_requests_must_be_free() {
         let mut input = event();
         input.outcome = EventOutcome::Failed;
         assert!(input.validate().is_err());
         input.revenue_micros = 0;
         input.cogs_micros = 0;
+        let receipt = input.source_settlement_receipt.as_mut().unwrap();
+        receipt.operation = "hold.release".into();
         input.validate().expect("zero-cost failure is valid");
+    }
+
+    #[test]
+    fn relay_receipt_is_principal_and_request_correlated() {
+        let mut input = event();
+        input.source_settlement_receipt.as_mut().unwrap().request_id = "another-request".into();
+        assert!(input.validate().is_err());
+
+        let mut missing = event();
+        missing.source_settlement_receipt = None;
+        assert!(missing.validate().is_err());
     }
 }

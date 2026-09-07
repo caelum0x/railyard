@@ -25,7 +25,9 @@ function jsonResponse(status: number, payload: unknown): FetchLikeResponse {
   return {
     ok: status >= 200 && status < 300,
     status,
-    headers: { get: () => "application/json" },
+    headers: {
+      get: (name) => name.toLowerCase() === "content-type" ? "application/json" : null,
+    },
     json: async () => payload,
     text: async () => JSON.stringify(payload),
     body: null,
@@ -48,7 +50,9 @@ function sseResponse(frames: string[]): FetchLikeResponse {
   return {
     ok: true,
     status: 200,
-    headers: { get: () => "text/event-stream" },
+    headers: {
+      get: (name) => name.toLowerCase() === "content-type" ? "text/event-stream" : null,
+    },
     json: async () => {
       throw new Error("not json");
     },

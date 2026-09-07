@@ -143,6 +143,13 @@ pub struct AitpReleaseReq {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct CheckoutReq {
+    pub provider: String,
+    pub account_id: String,
+    pub amount_micros: i64,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct MintReq {
     pub to: String,
     pub amount_micros: i64,

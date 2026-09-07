@@ -177,15 +177,38 @@ trust surface is the code in this repo.
 
 **Requirements:** Rust + Cargo (developed and tested with Cargo 1.94). No network access required.
 
-The binary exposes two commands via positional args (there is intentionally no arg-parsing crate):
+The binary exposes its commands via positional args (there is intentionally no arg-parsing crate):
 
 | Command | Purpose |
 | --- | --- |
-| `vanguard` / `vanguard demo` | Run the full end-to-end demo (default when no argument is given) |
-| `vanguard game-loop <ms>` | **Internal** — the tool's own idle "game" child, launched by the attestation step; you normally won't call it directly. `<ms>` defaults to `1500` |
+| `ranguard` / `ranguard demo` | Run the full end-to-end demo (default when no argument is given) |
+| `ranguard snapshot <dir> [out]` | **Real tool** — build & sign an integrity manifest over a directory you own; writes `out` (default `<dir>.ranguard.manifest`) |
+| `ranguard verify <dir> <manifest>` | **Real tool** — verify the manifest's signature and re-scan `<dir>` for tampering against it |
+| `ranguard help` / `--help` / `-h` | Print usage |
+| `ranguard game-loop <ms>` | **Internal** — the tool's own idle "game" child, launched by the attestation step; you normally won't call it directly. `<ms>` defaults to `1500` |
 
-> Note: there is no `--help` flag. Any unrecognized argument prints a short usage line and exits with
-> code `2` (see the captured output below).
+> `snapshot` and `verify` are the drivable tool over your own files (the `demo` is a scripted,
+> self-contained teaching run). They read the signing key from the **`RANGUARD_KEY`** environment
+> variable — the same value must be used to snapshot and to verify. The key is never hardcoded.
+>
+> Any unrecognized argument prints the usage line and exits with code `2`.
+
+### Use it on your own directory
+
+```bash
+# 1. Pick a secret signing key (keep it out of source control).
+export RANGUARD_KEY="$(head -c 32 /dev/urandom | base64)"
+
+# 2. Snapshot a directory you own at a trusted moment.
+ranguard snapshot ./game_assets            # writes ./game_assets.ranguard.manifest
+
+# 3. Later, verify it hasn't been tampered with.
+ranguard verify ./game_assets ./game_assets.ranguard.manifest
+```
+
+`verify` exits `0` when the signature is valid and every file matches the manifest, and `1` when it
+detects any integrity violation (bad/edited signature, or a modified / added / removed file) — so it
+drops straight into a CI gate or a pre-launch check. A wrong or missing `RANGUARD_KEY` exits `2`.
 
 ### Build
 

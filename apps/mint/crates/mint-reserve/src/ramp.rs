@@ -362,7 +362,7 @@ mod tests {
 
     #[tokio::test]
     async fn strict_gate_denies_regardless_of_amount() {
-        let gate = StrictKycGate::default();
+        let gate = StrictKycGate;
         for amount in [0, 1, 1_000, i64::MAX] {
             assert_eq!(
                 gate.authorize(&acct(), KycTier::Verified, Micros::new(amount))

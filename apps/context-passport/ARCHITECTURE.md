@@ -1,4 +1,4 @@
-# Passport — Enterprise Architecture
+# Identity Lock — Enterprise Architecture
 
 > **Universal AI identity & consistency platform.**
 > Lock an identity once — a character, a brand, a persona, a voice, a media style
@@ -6,7 +6,16 @@
 > on **any** provider, for **any** agent, **forever**.
 >
 > This document is the authoritative enterprise architecture. It supersedes the
-> planning notes in `PLAN.md` (the old OAuth-context concept) and expands the
+> shipped Sx0 build described in the prior 222-line architecture into the full
+> ~22-crate enterprise target. It is deliberately grounded in **what already
+> exists** (a real, tested 9-crate Rust workspace) before it projects the target,
+> so the reader can always separate *is* from *will be*.
+> Identity Lock architecture. `PLAN.md` belongs to the distinct Context Passport
+> OAuth-context concept and is not superseded by this system. This document
+> expands the shipped Sx0 build into the full ~22-crate Identity Lock target. It
+> is deliberately grounded in **what already exists** (a real, tested 9-crate
+> Rust workspace) before it projects the target, so the reader can always
+> separate *is* from *will be*.
 > shipped Sx0 build described in the prior 222-line architecture into the full
 > ~22-crate enterprise target. It is deliberately grounded in **what already
 > exists** (a real, tested 9-crate Rust workspace) before it projects the target,
@@ -167,10 +176,10 @@ Two facts from the provider research already shape the code:
 ### 2.4 What is explicitly deferred (Sx1+)
 
 The resolver contract, capability routing, versioning/lock integrity,
-provenance, and the Relay/Mint seams are real and tested with fakes. Deferred and
+provenance, and Relay's correlated signed-settlement seam are real and tested with fakes. Deferred and
 tracked as explicit extension points:
 
-- the **live** Relay conditioning-endpoint contract and the Mint metering endpoint;
+- provider-specific live Relay conditioning contracts and terminal evidence for streaming responses;
 - the per-provider `provider_artifacts` minting/registry subsystem (training);
 - **consistency scoring / drift detection / eval harness** (the moat — none of it
   exists yet);
@@ -639,7 +648,7 @@ across providers while keeping the verifier honest.
                                                    ▼
                                  (5) PROVENANCE + WATERMARK + SETTLE
                                  sign C2PA manifest, embed watermark,
-                                 meter Mint (success-only), trigger royalty,
+                                 persist Relay/Mint signed evidence, trigger royalty,
                                  emit Ledgerline margin, append audit
                                                    │
                                                    ▼
@@ -821,8 +830,8 @@ calling any thin slice "done":
 
 | rung | scope | crates real | ~LOC | "done" means |
 |---|---|---:|---:|---|
-| **Sx0** ✅ | core loop: create→lock→version→resolve→generate(fake Relay/Mint)→provenance shape; in-mem + PG; auth | **9 (thin)** | ~3.7K | the **spine** compiles and is tested — *not* the platform |
-| **Sx1** | live Relay + Mint wiring; `provider_artifacts` map; AITP-402 royalty transfer; Ledgerline emit | 12 | ~9K | real cross-service money + fan-out |
+| **Sx0** ✅ | core loop: create→lock→version→resolve→generate(receipted Relay)→signed-evidence provenance; in-mem + PG; auth | **9 (thin)** | ~3.7K | the **spine** compiles and is tested — *not* the platform |
+| **Sx1** | provider-specific Relay wiring; `provider_artifacts` map; AITP-402 royalty transfer; Ledgerline emit | 12 | ~9K | real cross-service money + fan-out |
 | **Sx2** | `passport-providers` (5 families); `passport-assets` split; grants + access control; **TS SDK** | 16 | ~18K | Menivor can generate-AS in production |
 | **Sx3** | **`passport-consistency` (the moat)**: face/voice/style scoring, drift, seed bank, eval harness, regenerate policy | 18 | ~27K | consistency is *measured and enforced*, not hoped |
 | **Sx4** | `passport-artifacts` training/broker; `passport-provenance` Ed25519 + Merkle + real C2PA JUMBF; `passport-watermark` | 20 | ~35K | Family-B gaps get *filled*; outputs are *credentialed + traceable* |

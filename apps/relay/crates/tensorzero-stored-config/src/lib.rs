@@ -74,8 +74,9 @@ pub use stored_metric_config::{
     StoredMetricOptimize, StoredMetricType,
 };
 pub use stored_model_config::{
-    STORED_MODEL_CONFIG_SCHEMA_REVISION, StoredContentBlockType, StoredHostedProviderKind,
-    StoredModelConfig, StoredModelProvider, StoredOpenAIAPIType, StoredProviderConfig,
+    STORED_MODEL_CONFIG_SCHEMA_REVISION, StoredContentBlockType, StoredHedgeConfig,
+    StoredHostedProviderKind, StoredModelConfig, StoredModelProvider, StoredOpenAIAPIType,
+    StoredProviderConfig,
 };
 pub use stored_optimizer_info::{
     STORED_OPTIMIZER_CONFIG_SCHEMA_REVISION, StoredDiclOptimizationConfig,

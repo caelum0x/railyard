@@ -23,9 +23,13 @@ pub mod clock;
 pub mod config;
 pub mod error;
 pub mod guard;
+pub mod journal;
 pub mod nonce;
 #[cfg(feature = "postgres")]
 pub mod pg;
+#[cfg(feature = "postgres")]
+pub mod pg_settlement;
+pub mod recovery;
 pub mod settle;
 pub mod verifier;
 
@@ -41,8 +45,14 @@ pub use challenge::ChallengeIssuer;
 pub use config::TurnstileConfig;
 pub use error::TurnstileError;
 pub use guard::{Admit, Turnstile};
+pub use journal::{
+    InMemorySettlementJournal, SettlementJournal, SettlementPhase, SettlementRecord,
+};
 pub use nonce::{InMemoryNonceStore, NonceStore};
 #[cfg(feature = "postgres")]
 pub use pg::{spawn_reaper, PostgresNonceStore};
+#[cfg(feature = "postgres")]
+pub use pg_settlement::PostgresSettlementJournal;
+pub use recovery::{reconcile_once, spawn_settlement_reaper, RecoveryReport};
 pub use settle::Settled;
 pub use verifier::{FakeVerifier, MintVerifier, PaymentVerifier, VerifiedHold};

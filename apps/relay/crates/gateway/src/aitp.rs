@@ -11,27 +11,28 @@
 //! `amount_micros`, capture the actual usage after. That maps 1:1 onto the
 //! existing `relay-billing` reserve -> settle/release success-only lifecycle.
 
+#[cfg(test)]
 use base64::Engine as _;
+#[cfg(test)]
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+#[cfg(test)]
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use uuid::Uuid;
 
+#[cfg(test)]
 use relay_billing::now_ms;
-
-/// AITP protocol version advertised on the challenge.
-pub const AITP_VERSION: &str = "0.1";
-
-/// Response header carrying the protocol version. Lowercase because HTTP header
-/// names are case-insensitive and `HeaderName::from_static` requires lowercase.
-pub const AITP_VERSION_HEADER: &str = "aitp-version";
-
-/// Response header carrying the base64url-encoded challenge.
-pub const AITP_CHALLENGE_HEADER: &str = "aitp-challenge";
+pub use relay_contract::headers::{
+    AITP_AUTHORIZATION_HEADER, AITP_CHALLENGE_HEADER, AITP_RECEIPT_HEADER, AITP_REQUEST_ID_HEADER,
+    AITP_VERSION, AITP_VERSION_HEADER,
+};
 
 /// Currency of the AITP ledger.
+#[cfg(test)]
 pub const AITP_CURRENCY: &str = "AIT";
 
 /// The metered-inference scheme: hold up to `amount_micros`, capture after.
+#[cfg(test)]
 pub const AITP_SCHEME_HOLD: &str = "aitp-hold";
 
 /// How long a minted challenge stays valid (5 minutes), in milliseconds.
@@ -40,6 +41,7 @@ pub const AITP_CHALLENGE_TTL_MS: u64 = 5 * 60 * 1_000;
 /// The AITP-402 challenge body (§5.1). Serializes to the deterministic JSON that
 /// is base64url-encoded into the `AITP-Challenge` header.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(test)]
 pub struct Challenge {
     /// The provider's receive address (`ait1q…`).
     pub payee: String,
@@ -57,6 +59,7 @@ pub struct Challenge {
     pub scheme: String,
 }
 
+#[cfg(test)]
 impl Challenge {
     /// Build an `aitp-hold` challenge for a metered-inference request with an
     /// explicitly-supplied `nonce` and `expiry` (deterministic; used by tests).
@@ -91,7 +94,7 @@ impl Challenge {
             payee,
             amount_micros,
             resource,
-            Uuid::new_v4().to_string(),
+            Uuid::now_v7().to_string(),
             expiry_ms,
         )
     }

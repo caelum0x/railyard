@@ -32,4 +32,9 @@ pub enum PayError {
     /// Any other gateway-side failure (network, unexpected status, etc.).
     #[error("gateway error: {0}")]
     Gateway(String),
+
+    /// The protected endpoint asked the signer to authorize money outside the
+    /// caller's explicit payee/resource/amount policy.
+    #[error("authorization policy rejected challenge: {0}")]
+    Policy(String),
 }

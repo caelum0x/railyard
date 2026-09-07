@@ -10,10 +10,7 @@ class FakeTransport
   def initialize
     @requests = []
     @responses = []
-    @stream_chunks = []
-    @stream_status = 200
-    @stream_headers = {}
-    @stream_error_body = nil
+    @streams = []
   end
 
   # Queue a canned response for the next #request call (FIFO).
@@ -24,10 +21,9 @@ class FakeTransport
 
   # Script the raw SSE chunks the next #stream call will emit.
   def script_stream(chunks, status: 200, headers: {}, error_body: nil)
-    @stream_chunks = chunks
-    @stream_status = status
-    @stream_headers = headers
-    @stream_error_body = error_body
+    @streams << {
+      chunks: chunks, status: status, headers: headers, error_body: error_body
+    }
     self
   end
 
@@ -40,18 +36,22 @@ class FakeTransport
     @responses.shift || Relay::Response.new(status: 200, headers: {}, body: "{}")
   end
 
-  def stream(method:, url:, headers:, body:)
+  def stream(method:, url:, headers:, body:, on_response: nil)
     @requests << { method: method, url: url, headers: headers, body: body }
+    stream = @streams.shift || { chunks: [], status: 200, headers: {}, error_body: nil }
+    on_response.call(
+      Relay::Response.new(status: stream[:status], headers: stream[:headers], body: nil)
+    ) if on_response
 
-    if @stream_status >= 400
+    if stream[:status] >= 400
       return Relay::Response.new(
-        status: @stream_status,
-        headers: @stream_headers,
-        body: @stream_error_body
+        status: stream[:status],
+        headers: stream[:headers],
+        body: stream[:error_body]
       )
     end
 
-    @stream_chunks.each { |chunk| yield chunk }
-    Relay::Response.new(status: @stream_status, headers: @stream_headers, body: nil)
+    stream[:chunks].each { |chunk| yield chunk }
+    Relay::Response.new(status: stream[:status], headers: stream[:headers], body: nil)
   end
 end

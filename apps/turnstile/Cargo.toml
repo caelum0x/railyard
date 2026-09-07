@@ -33,7 +33,7 @@ turnstile-core = { path = "crates/turnstile-core" }
 turnstile-axum = { path = "crates/turnstile-axum" }
 
 # --- Async runtime + HTTP server stack ---------------------------------------
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
 axum = "0.7"
 tower = "0.5"
 http = "1"

@@ -1,161 +1,187 @@
-//! Success-only hold settlement with RAII release-on-drop (SPEC ADR-0002).
+//! Success-only hold settlement backed by a replayable command journal.
 //!
-//! [`Settled`] is the handle Turnstile hands to the edge after a successful
-//! verify. Exactly one terminal action runs:
-//! - [`capture`](Settled::capture) settles the ACTUAL amount to the payee (the
-//!   handler succeeded), or
-//! - [`release`](Settled::release) frees the reservation (the handler failed,
-//!   agent pays nothing).
-//!
-//! If the handle is dropped without either being called — a panic, an early
-//! return, a bug — [`Drop`] fires a best-effort release so a reserved hold never
-//! silently bills the agent. `aitp-transfer` verifies carry no hold, so their
-//! [`Settled`] is inert (capture/release/drop are all no-ops).
+//! `Settled` never owns the only copy of a Mint hold. The journal receives the
+//! terminal direction before Mint I/O, so capture ambiguity can only replay
+//! capture and handler failure can only replay release. Dropping the handle
+//! stops its lease heartbeat; the recovery worker claims and releases the
+//! expired held command instead of relying on asynchronous destructor I/O.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use aitp_client::{AmountMicros, HoldRef, Receipt, Scheme};
+use aitp_client::{AmountMicros, Receipt, Scheme};
+use tokio::sync::oneshot;
 
+use crate::clock::now_ms;
 use crate::error::TurnstileError;
+use crate::journal::{SettlementJournal, SettlementPhase, SettlementRecord};
 use crate::verifier::PaymentVerifier;
 
-/// A settled-but-not-yet-captured hold. Holds the verifier so it can capture or
-/// release, and takes the [`HoldRef`] on the first terminal action so it fires
-/// once.
+/// A verified authorization whose handler lease owns the next state change.
 pub struct Settled {
     verifier: Arc<dyn PaymentVerifier>,
-    hold: Option<HoldRef>,
+    journal: Arc<dyn SettlementJournal>,
+    nonce: String,
+    owner_token: String,
+    hold: Option<aitp_client::HoldRef>,
     scheme: Scheme,
+    quoted: AmountMicros,
+    lease: Duration,
+    stop_heartbeat: Option<oneshot::Sender<()>>,
 }
 
 impl Settled {
     #[must_use]
-    pub fn new(verifier: Arc<dyn PaymentVerifier>, hold: Option<HoldRef>, scheme: Scheme) -> Self {
+    pub fn new(
+        verifier: Arc<dyn PaymentVerifier>,
+        journal: Arc<dyn SettlementJournal>,
+        record: SettlementRecord,
+        owner_token: String,
+        lease: Duration,
+    ) -> Self {
+        let scheme = record
+            .scheme
+            .expect("verified settlement record must declare its scheme");
+        let stop_heartbeat = if record.phase == SettlementPhase::Held {
+            Some(spawn_heartbeat(
+                journal.clone(),
+                record.nonce().to_string(),
+                owner_token.clone(),
+                lease,
+            ))
+        } else {
+            None
+        };
         Self {
             verifier,
-            hold,
+            journal,
+            nonce: record.nonce().to_string(),
+            owner_token,
+            hold: record.hold,
             scheme,
+            quoted: record.authorization.amount_micros,
+            lease,
+            stop_heartbeat,
         }
     }
 
-    /// The scheme this settlement came from.
     #[must_use]
     pub fn scheme(&self) -> Scheme {
         self.scheme
     }
 
-    /// Whether a capturable hold is still outstanding.
     #[must_use]
     pub fn has_hold(&self) -> bool {
         self.hold.is_some()
     }
 
-    /// Capture `actual` usage to the payee — the SUCCESS path. Consumes the
-    /// handle so no drop-release follows. Returns the (lossy) [`Receipt`], or
-    /// `None` for an `aitp-transfer` that had no hold to capture.
+    #[must_use]
+    pub fn nonce(&self) -> &str {
+        &self.nonce
+    }
+
+    fn lease_until(&self) -> i64 {
+        now_ms().saturating_add(self.lease.as_millis() as i64)
+    }
+
+    fn stop_heartbeat(&mut self) {
+        if let Some(stop) = self.stop_heartbeat.take() {
+            let _ = stop.send(());
+        }
+    }
+
+    /// Persist capture intent, then replay the same Mint capture until its
+    /// receipt is durable. A capture error never triggers release.
     pub async fn capture(
         mut self,
         actual: AmountMicros,
     ) -> Result<Option<Receipt>, TurnstileError> {
-        match self.hold.take() {
-            Some(hold) => Ok(Some(self.verifier.capture(&hold, actual).await?)),
-            None => Ok(None),
+        self.stop_heartbeat();
+        if actual > self.quoted {
+            return Err(TurnstileError::Settlement(format!(
+                "actual charge {} exceeds quoted maximum {}",
+                actual.get(),
+                self.quoted.get()
+            )));
         }
+        if actual == AmountMicros::ZERO {
+            self.release().await?;
+            return Ok(None);
+        }
+        let Some(hold) = self.hold.take() else {
+            return Ok(None);
+        };
+        self.journal
+            .prepare_capture(&self.nonce, &self.owner_token, actual, self.lease_until())
+            .await?;
+        let receipt = match self.verifier.capture(&hold, actual).await {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                let _ = self
+                    .journal
+                    .record_error(&self.nonce, &self.owner_token, &error.to_string())
+                    .await;
+                return Err(error);
+            }
+        };
+        self.journal
+            .complete_capture(&self.nonce, &self.owner_token, &receipt)
+            .await?;
+        Ok(Some(receipt))
     }
 
-    /// Release the hold without settling — the FAILURE path. Consumes the handle.
+    /// Persist release intent before Mint I/O. A release error remains
+    /// recoverable and can never be changed into capture.
     pub async fn release(mut self) -> Result<(), TurnstileError> {
-        if let Some(hold) = self.hold.take() {
-            self.verifier.release(&hold).await?;
+        self.stop_heartbeat();
+        let Some(hold) = self.hold.take() else {
+            return Ok(());
+        };
+        self.journal
+            .prepare_release(&self.nonce, &self.owner_token, self.lease_until())
+            .await?;
+        if let Err(error) = self.verifier.release(&hold).await {
+            let _ = self
+                .journal
+                .record_error(&self.nonce, &self.owner_token, &error.to_string())
+                .await;
+            return Err(error);
         }
-        Ok(())
+        self.journal
+            .complete_release(&self.nonce, &self.owner_token)
+            .await
     }
 }
 
 impl Drop for Settled {
     fn drop(&mut self) {
-        // If neither capture nor release ran, free the hold so a dropped handle
-        // never bills the agent. Best-effort: only when a Tokio runtime is live
-        // (it always is inside an axum handler); errors are swallowed.
-        if let Some(hold) = self.hold.take() {
-            let verifier = self.verifier.clone();
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                handle.spawn(async move {
-                    let _ = verifier.release(&hold).await;
-                });
-            }
-        }
+        self.stop_heartbeat();
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::verifier::FakeVerifier;
-
-    #[tokio::test]
-    async fn capture_settles_actual_and_skips_drop_release() {
-        let verifier = Arc::new(FakeVerifier::with_hold("h1"));
-        let settled = Settled::new(verifier.clone(), Some(HoldRef("h1".into())), Scheme::Hold);
-
-        let receipt = settled.capture(AmountMicros(900)).await.unwrap().unwrap();
-        assert_eq!(receipt.amount_micros, AmountMicros(900));
-
-        let calls = verifier.snapshot();
-        assert_eq!(calls.captured, vec![("h1".to_string(), 900)]);
-        assert!(
-            calls.released.is_empty(),
-            "captured hold must never release"
-        );
-    }
-
-    #[tokio::test]
-    async fn explicit_release_frees_hold_and_skips_capture() {
-        let verifier = Arc::new(FakeVerifier::with_hold("h1"));
-        let settled = Settled::new(verifier.clone(), Some(HoldRef("h1".into())), Scheme::Hold);
-
-        settled.release().await.unwrap();
-
-        let calls = verifier.snapshot();
-        assert_eq!(calls.released, vec!["h1".to_string()]);
-        assert!(calls.captured.is_empty());
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn dropped_uncaptured_hold_releases_via_raii() {
-        let verifier = Arc::new(FakeVerifier::with_hold("h1"));
-        {
-            let settled = Settled::new(verifier.clone(), Some(HoldRef("h1".into())), Scheme::Hold);
-            // Simulate a handler that neither captured nor released (panic/bug):
-            // dropping the handle must free the reservation exactly once.
-            drop(settled);
-        }
-        // Let the spawned best-effort release run to completion.
-        for _ in 0..10 {
-            if !verifier.snapshot().released.is_empty() {
-                break;
+fn spawn_heartbeat(
+    journal: Arc<dyn SettlementJournal>,
+    nonce: String,
+    owner_token: String,
+    lease: Duration,
+) -> oneshot::Sender<()> {
+    let (stop_tx, mut stop_rx) = oneshot::channel();
+    let interval_ms = (lease.as_millis() / 3).max(1) as u64;
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_millis(interval_ms));
+        ticker.tick().await;
+        loop {
+            tokio::select! {
+                _ = &mut stop_rx => break,
+                _ = ticker.tick() => {
+                    let lease_until = now_ms().saturating_add(lease.as_millis() as i64);
+                    if let Err(error) = journal.renew(&nonce, &owner_token, lease_until).await {
+                        eprintln!("turnstile settlement heartbeat stopped: {error}");
+                        break;
+                    }
+                }
             }
-            tokio::task::yield_now().await;
-            std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert_eq!(
-            verifier.snapshot().released,
-            vec!["h1".to_string()],
-            "RAII drop releases the uncaptured hold exactly once"
-        );
-    }
-
-    #[tokio::test]
-    async fn transfer_settlement_is_inert() {
-        // aitp-transfer verifies carry no hold: capture/release/drop are no-ops.
-        let verifier = Arc::new(FakeVerifier::transfer());
-        let settled = Settled::new(verifier.clone(), None, Scheme::Transfer);
-        assert!(!settled.has_hold());
-
-        let receipt = settled.capture(AmountMicros(100)).await.unwrap();
-        assert!(receipt.is_none(), "no hold means no capture receipt");
-        let calls = verifier.snapshot();
-        assert!(calls.captured.is_empty());
-        assert!(calls.released.is_empty());
-    }
+    });
+    stop_tx
 }

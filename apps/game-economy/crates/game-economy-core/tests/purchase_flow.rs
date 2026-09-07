@@ -6,9 +6,12 @@
 //! grants the right entitlement.
 
 use async_trait::async_trait;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use game_economy_core::{
-    content_item_id, entitlement_id, Catalog, Fulfiller, GameError, GameStore, Product, Rarity,
+    content_item_id, entitlement_id, Catalog, CompletedPurchase, Fulfiller, GameError,
+    GameStateRepository, GameStore, Inventory, MemoryGameState, Product, PurchaseRecord, Rarity,
 };
 use game_economy_testkit::{Call, FakeMint};
 
@@ -107,6 +110,97 @@ async fn idempotent_retry_does_not_double_charge() {
     assert_eq!(store.mint_balance(REVENUE), 9_990_000);
     // Exactly one pack granted.
     assert_eq!(store.inventory(PLAYER).packs.len(), 1);
+}
+
+/// Simulates a process/storage crash in the only dangerous window: Mint has
+/// captured successfully, but the local entitlement transaction has not yet
+/// committed. The persisted pending intent lets a retry replay Mint and recover
+/// ownership without charging twice.
+struct FailFirstCommit {
+    inner: MemoryGameState,
+    fail: AtomicBool,
+}
+
+impl FailFirstCommit {
+    fn new() -> Self {
+        Self {
+            inner: MemoryGameState::default(),
+            fail: AtomicBool::new(true),
+        }
+    }
+}
+
+impl GameStateRepository for FailFirstCommit {
+    fn inventory(&self, player: &str) -> Result<Inventory, GameError> {
+        self.inner.inventory(player)
+    }
+    fn purchase(&self, key: &str) -> Result<Option<PurchaseRecord>, GameError> {
+        self.inner.purchase(key)
+    }
+    fn begin_purchase(&self, key: &str, player: &str, sku: &str) -> Result<(), GameError> {
+        self.inner.begin_purchase(key, player, sku)
+    }
+    fn commit_purchase(
+        &self,
+        key: &str,
+        completed: &CompletedPurchase,
+        inventory: &Inventory,
+    ) -> Result<(), GameError> {
+        if self.fail.swap(false, Ordering::SeqCst) {
+            return Err(GameError::Storage("simulated crash after capture".into()));
+        }
+        self.inner.commit_purchase(key, completed, inventory)
+    }
+    fn save_inventory(&self, player: &str, inventory: &Inventory) -> Result<(), GameError> {
+        self.inner.save_inventory(player, inventory)
+    }
+    fn reserve_single_owner(
+        &self,
+        player: &str,
+        ownership_key: &str,
+        sku: &str,
+        idem_key: &str,
+    ) -> Result<(), GameError> {
+        self.inner
+            .reserve_single_owner(player, ownership_key, sku, idem_key)
+    }
+    fn release_single_owner(&self, player: &str, ownership_key: &str, idem_key: &str) {
+        self.inner
+            .release_single_owner(player, ownership_key, idem_key)
+    }
+}
+
+#[tokio::test]
+async fn retry_recovers_entitlement_after_capture_commit_crash() {
+    let mint = FakeMint::new().with_balance(PLAYER, 10_000_000);
+    let state = Arc::new(FailFirstCommit::new());
+    let store = GameStore::with_state(
+        mint,
+        game_economy_core::AlwaysFulfill,
+        Catalog::demo(),
+        REVENUE,
+        state,
+    );
+
+    let first = store.purchase(PLAYER, "pack.standard", "recover-1").await;
+    assert_eq!(
+        first.unwrap_err(),
+        GameError::Storage("simulated crash after capture".into())
+    );
+    assert!(store.inventory(PLAYER).packs.is_empty());
+    assert_eq!(store.mint_balance(REVENUE), 990_000);
+
+    let recovered = store
+        .purchase(PLAYER, "pack.standard", "recover-1")
+        .await
+        .expect("retry should recover the captured entitlement");
+    assert!(recovered.idempotent_replay);
+    assert_eq!(store.mint_balance(REVENUE), 990_000);
+    assert_eq!(store.inventory(PLAYER).packs.len(), 1);
+    assert_eq!(
+        recovered.receipt_id,
+        recovered.settlement_proof.receipt_hash
+    );
 }
 
 /// Insufficient funds fails at the hold — no capture, no grant.
@@ -247,6 +341,77 @@ async fn battle_pass_purchase_grants_pass() {
     let bp = inv.battle_pass.expect("pass granted");
     assert_eq!(bp.pass_sku, "pass.season1");
     assert_eq!(bp.tier, 1);
+}
+
+/// A purchased battle-pass advances tiers (monotonic, clamped) and moves NO money.
+#[tokio::test]
+async fn battle_pass_tiers_advance_after_purchase_without_charging() {
+    let mint = FakeMint::new().with_balance(PLAYER, 10_000_000);
+    let store = GameStore::new(mint, Catalog::demo(), REVENUE);
+
+    store
+        .purchase(PLAYER, "pass.season1", "buy-pass")
+        .await
+        .unwrap();
+    let revenue_after_buy = store.mint_balance(REVENUE);
+
+    // Advance to tier 40, then a stale lower report is a no-op, then saturate.
+    assert_eq!(
+        store
+            .advance_battle_pass(PLAYER, "pass.season1", 40)
+            .unwrap(),
+        40
+    );
+    assert_eq!(
+        store
+            .advance_battle_pass(PLAYER, "pass.season1", 5)
+            .unwrap(),
+        40,
+        "a lower report must never regress the pass"
+    );
+    assert_eq!(
+        store
+            .advance_battle_pass(PLAYER, "pass.season1", 9_999)
+            .unwrap(),
+        100,
+        "advance saturates at the season's tier count"
+    );
+
+    // Progression is persisted on the inventory.
+    assert_eq!(store.inventory(PLAYER).battle_pass.unwrap().tier, 100);
+    // No money moved during progression — the pass was paid for exactly once.
+    assert_eq!(store.mint_balance(REVENUE), revenue_after_buy);
+}
+
+/// Advancing a pass the player does not own is rejected (no silent create).
+#[tokio::test]
+async fn advancing_an_unowned_pass_errors() {
+    let mint = FakeMint::new().with_balance(PLAYER, 10_000_000);
+    let store = GameStore::new(mint, Catalog::demo(), REVENUE);
+    let err = store
+        .advance_battle_pass(PLAYER, "pass.season1", 5)
+        .unwrap_err();
+    assert_eq!(err, GameError::BattlePassNotOwned("pass.season1".into()));
+    assert!(store.inventory(PLAYER).battle_pass.is_none());
+}
+
+/// Advancing a non-pass SKU (or unknown SKU) is an unknown-product error.
+#[tokio::test]
+async fn advancing_a_non_pass_sku_errors() {
+    let mint = FakeMint::new().with_balance(PLAYER, 10_000_000);
+    let store = GameStore::new(mint, Catalog::demo(), REVENUE);
+    assert_eq!(
+        store
+            .advance_battle_pass(PLAYER, "pack.standard", 5)
+            .unwrap_err(),
+        GameError::UnknownProduct("pack.standard".into())
+    );
+    assert_eq!(
+        store
+            .advance_battle_pass(PLAYER, "no.such.sku", 5)
+            .unwrap_err(),
+        GameError::UnknownProduct("no.such.sku".into())
+    );
 }
 
 /// An unknown SKU fails before any Mint call.

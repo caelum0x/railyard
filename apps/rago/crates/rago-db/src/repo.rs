@@ -293,6 +293,58 @@ impl Db {
         charges_from: NaiveDateTime,
         charges_to: NaiveDateTime,
     ) -> Result<BilledInvoice> {
+        self.insert_subscription_invoice_guarded_inner(
+            invoice,
+            fees,
+            &PrepaidSettlement::NONE,
+            subscription_id,
+            charges_from,
+            charges_to,
+        )
+        .await
+    }
+
+    /// Guarded subscription-invoice insert that *also* settles prepaid wallet
+    /// credit atomically.
+    ///
+    /// The wallet draw-down (`wallet_transactions` inserts + wallet balance
+    /// decrements) and the invoice/fees write share the **same** transaction and
+    /// are gated behind the same period reservation. So:
+    /// * on the winning `Created` path the invoice's reduced total, the
+    ///   outbound wallet transactions, and the decreased balances all commit
+    ///   together (conservation: `Σ wallet draw-down == invoice.prepaid_credit`);
+    /// * on a lost race / re-run the guard fires *before* any wallet mutation,
+    ///   so the wallet is **never** double-charged — exactly-once settlement,
+    ///   mirroring the re-bill invoice guarantee.
+    pub async fn insert_subscription_invoice_with_prepaid_guarded(
+        &self,
+        invoice: &Invoice,
+        fees: &[Fee],
+        settlement: &PrepaidSettlement<'_>,
+        subscription_id: Uuid,
+        charges_from: NaiveDateTime,
+        charges_to: NaiveDateTime,
+    ) -> Result<BilledInvoice> {
+        self.insert_subscription_invoice_guarded_inner(
+            invoice,
+            fees,
+            settlement,
+            subscription_id,
+            charges_from,
+            charges_to,
+        )
+        .await
+    }
+
+    async fn insert_subscription_invoice_guarded_inner(
+        &self,
+        invoice: &Invoice,
+        fees: &[Fee],
+        settlement: &PrepaidSettlement<'_>,
+        subscription_id: Uuid,
+        charges_from: NaiveDateTime,
+        charges_to: NaiveDateTime,
+    ) -> Result<BilledInvoice> {
         let mut tx = self.pool.begin().await?;
 
         // Reserve the (subscription, period). `ON CONFLICT DO NOTHING` against the
@@ -318,6 +370,8 @@ impl Db {
 
         if reserved.rows_affected() == 0 {
             // Period already billed — discard this attempt and return the winner.
+            // Crucially, we return *before* touching any wallet, so a re-run or a
+            // lost race never re-draws prepaid credit.
             tx.rollback().await?;
             let existing = self
                 .existing_period_invoice(subscription_id, charges_from, charges_to)
@@ -333,6 +387,14 @@ impl Db {
         insert_invoice_exec(&mut *tx, invoice).await?;
         for fee in fees {
             insert_fee_exec(&mut *tx, fee).await?;
+        }
+        // Prepaid settlement — same transaction, so it is all-or-nothing with the
+        // invoice write and only happens on the winning reservation.
+        for wtx in settlement.transactions {
+            insert_wallet_transaction_exec(&mut *tx, wtx).await?;
+        }
+        for wallet in settlement.updated_wallets {
+            update_wallet_balance_exec(&mut *tx, wallet).await?;
         }
         tx.commit().await?;
         Ok(BilledInvoice::Created)
@@ -2618,6 +2680,28 @@ impl Db {
     }
 }
 
+/// Prepaid wallet draw-down to persist atomically with a subscription invoice
+/// ([`Db::insert_subscription_invoice_with_prepaid_guarded`]).
+///
+/// Borrows the artifacts produced by
+/// `rago_billing::prepaid::apply_prepaid_credit`: the outbound
+/// `transactions` (one per drawn-down wallet) and the `updated_wallets` with
+/// their decreased balances. The two slices are parallel to a single
+/// allocation, so persisting both — and nothing on a lost guard race —
+/// preserves conservation.
+pub struct PrepaidSettlement<'a> {
+    pub transactions: &'a [WalletTransaction],
+    pub updated_wallets: &'a [Wallet],
+}
+
+impl PrepaidSettlement<'_> {
+    /// No prepaid credit applied (the plain guarded-insert path).
+    pub const NONE: PrepaidSettlement<'static> = PrepaidSettlement {
+        transactions: &[],
+        updated_wallets: &[],
+    };
+}
+
 /// Outcome of a guarded subscription-invoice insert
 /// ([`Db::insert_subscription_invoice_guarded`]).
 #[derive(Debug, Clone)]
@@ -2721,6 +2805,55 @@ where
     .bind(&fee.grouped_by)
     .bind(fee.created_at.naive_utc())
     .bind(fee.updated_at.naive_utc())
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// Insert a wallet transaction against any executor (pool or transaction) —
+/// shared by [`Db::insert_wallet_transaction`] and the guarded prepaid path so
+/// the outbound draw-down is written in the same transaction as the invoice.
+async fn insert_wallet_transaction_exec<'e, E>(exec: E, t: &WalletTransaction) -> Result<()>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    sqlx::query(
+        "INSERT INTO wallet_transactions (id, organization_id, wallet_id, transaction_type, status, \
+         amount, credit_amount, invoice_id, settled_at, created_at, updated_at) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+    )
+    .bind(t.id)
+    .bind(t.organization_id)
+    .bind(t.wallet_id)
+    .bind(t.transaction_type.as_i32())
+    .bind(t.status.as_i32())
+    .bind(t.amount)
+    .bind(t.credit_amount)
+    .bind(t.invoice_id)
+    .bind(t.settled_at.map(|x| x.naive_utc()))
+    .bind(t.created_at.naive_utc())
+    .bind(t.updated_at.naive_utc())
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// Update a wallet's balance columns against any executor (pool or transaction)
+/// — shared by [`Db::update_wallet_balance`] and the guarded prepaid path.
+async fn update_wallet_balance_exec<'e, E>(exec: E, w: &Wallet) -> Result<()>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    sqlx::query(
+        "UPDATE wallets SET balance_cents = $2, credits_balance = $3, consumed_credits = $4, \
+         consumed_amount_cents = $5, updated_at = $6 WHERE id = $1",
+    )
+    .bind(w.id)
+    .bind(w.balance_cents)
+    .bind(w.credits_balance)
+    .bind(w.consumed_credits)
+    .bind(w.consumed_amount_cents)
+    .bind(w.updated_at.naive_utc())
     .execute(exec)
     .await?;
     Ok(())

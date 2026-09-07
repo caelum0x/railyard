@@ -224,6 +224,7 @@ mod tests {
                 timeouts: Default::default(),
                 skip_relay: false,
                 namespace: None,
+                hedge: relay_hedge::HedgeConfig::default(),
             },
         )]);
 

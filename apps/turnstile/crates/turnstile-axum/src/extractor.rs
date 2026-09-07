@@ -45,12 +45,19 @@ impl PaidRequest {
         self.ctx.price
     }
 
-    /// Report the ACTUAL amount to bill (success-only capture). Must be `<=` the
-    /// quoted price to stay within the reserved hold. If never called, the
-    /// middleware captures the full quoted price on success.
+    /// Report the ACTUAL amount to bill (success-only capture). The reserved hold
+    /// caps the charge at the quoted price, so a report above the quote is clamped
+    /// down to the quote rather than allowed to overrun the hold (a capture above
+    /// the quote would otherwise fail and strand the hold for recovery). If never
+    /// called, the middleware captures the full quoted price on success.
     pub fn report_actual(&self, actual: AmountMicros) {
+        let clamped = if actual > self.ctx.price {
+            self.ctx.price
+        } else {
+            actual
+        };
         if let Ok(mut guard) = self.ctx.reported.lock() {
-            *guard = Some(actual);
+            *guard = Some(clamped);
         }
     }
 }

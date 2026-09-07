@@ -19,6 +19,12 @@ pub enum MintError {
     /// Checked integer arithmetic would overflow `i64`.
     #[error("overflow")]
     Overflow,
+    /// An infrastructure fault in the storage layer (DB connection lost, query
+    /// failure, (de)serialization error). Kept distinct from
+    /// [`MintError::Overflow`] so an infra outage is never mislabelled as an
+    /// arithmetic overflow; like `Overflow` it maps to HTTP `500`.
+    #[error("storage")]
+    Storage,
     /// A bech32 address failed to decode or its checksum was invalid.
     #[error("bad_address")]
     BadAddress,
@@ -106,6 +112,7 @@ impl MintError {
             MintError::InsufficientFunds => "insufficient_funds",
             MintError::IdempotencyConflict => "idempotency_conflict",
             MintError::Overflow => "overflow",
+            MintError::Storage => "storage",
             MintError::BadAddress => "bad_address",
             MintError::AccountNotFound => "account_not_found",
             MintError::InvalidAmount => "invalid_amount",
@@ -141,6 +148,7 @@ impl MintError {
             "insufficient_funds" => MintError::InsufficientFunds,
             "idempotency_conflict" => MintError::IdempotencyConflict,
             "overflow" => MintError::Overflow,
+            "storage" => MintError::Storage,
             "bad_address" => MintError::BadAddress,
             "account_not_found" => MintError::AccountNotFound,
             "invalid_amount" => MintError::InvalidAmount,
@@ -179,6 +187,7 @@ mod tests {
             (MintError::InsufficientFunds, "insufficient_funds"),
             (MintError::IdempotencyConflict, "idempotency_conflict"),
             (MintError::Overflow, "overflow"),
+            (MintError::Storage, "storage"),
             (MintError::BadAddress, "bad_address"),
             (MintError::AccountNotFound, "account_not_found"),
             (MintError::InvalidAmount, "invalid_amount"),
@@ -220,6 +229,7 @@ mod tests {
             MintError::InsufficientFunds,
             MintError::IdempotencyConflict,
             MintError::Overflow,
+            MintError::Storage,
             MintError::BadAddress,
             MintError::AccountNotFound,
             MintError::InvalidAmount,

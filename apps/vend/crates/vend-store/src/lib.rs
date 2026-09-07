@@ -2253,6 +2253,39 @@ impl UsageRepo for VendStore {
         }
     }
 
+    async fn record_settlement_proof(
+        &self,
+        charge_id: &ChargeId,
+        proof: &vend_core::transport::SettlementProof,
+    ) -> Result<(), VendError> {
+        let sequence = i64::try_from(proof.sequence)
+            .map_err(|_| VendError::Storage("Mint receipt sequence overflow".to_string()))?;
+        let changed = sqlx::query(
+            "UPDATE metered_usage SET settlement_seq = $2, settlement_operation = $3, \
+             settlement_op_hash = $4, settlement_receipt_hash = $5, settlement_signature = $6 \
+             WHERE charge_id = $1 AND outcome IN ('captured','released') AND \
+               (settlement_seq IS NULL OR (settlement_seq = $2 AND settlement_operation = $3 AND \
+                settlement_op_hash = $4 AND settlement_receipt_hash = $5 AND settlement_signature = $6))",
+        )
+        .bind(charge_id.as_str())
+        .bind(sequence)
+        .bind(&proof.operation)
+        .bind(&proof.operation_hash)
+        .bind(&proof.receipt_hash)
+        .bind(&proof.signature)
+        .execute(&self.pool)
+        .await
+        .map_err(store_err)?;
+        if changed.rows_affected() == 1 {
+            Ok(())
+        } else {
+            Err(VendError::Storage(
+                "settlement proof rejected: missing/nonterminal charge or conflicting proof"
+                    .to_string(),
+            ))
+        }
+    }
+
     async fn sum_charge_for_key_day(
         &self,
         sub_key_id: &SubKeyId,
@@ -2321,37 +2354,54 @@ impl ReadinessRepo for VendStore {
 #[async_trait]
 impl IdempotencyRepo for VendStore {
     async fn claim(&self, key: &str, request_hash: &str) -> Result<IdempotencyClaim, VendError> {
-        let inserted = sqlx::query(
-            "INSERT INTO idempotency_keys (key, request_hash, state, response_body) \
-             VALUES ($1, $2, 'pending', NULL) ON CONFLICT (key) DO NOTHING",
-        )
-        .bind(key)
-        .bind(request_hash)
-        .execute(&self.pool)
-        .await
-        .map_err(store_err)?;
-        if inserted.rows_affected() == 1 {
-            return Ok(IdempotencyClaim::Acquired);
-        }
+        // The claim is two statements (insert-or-nothing, then read the existing
+        // row) rather than one transaction. A concurrent `abort` may DELETE the
+        // pending row between them; the follow-up read must therefore tolerate a
+        // vanished row and re-attempt the claim instead of surfacing a spurious
+        // non-retriable `RowNotFound`. The loop is bounded because each empty
+        // read corresponds to a concrete concurrent delete; under any finite
+        // churn a fresh INSERT eventually wins.
+        for _ in 0..16 {
+            let inserted = sqlx::query(
+                "INSERT INTO idempotency_keys (key, request_hash, state, response_body) \
+                 VALUES ($1, $2, 'pending', NULL) ON CONFLICT (key) DO NOTHING",
+            )
+            .bind(key)
+            .bind(request_hash)
+            .execute(&self.pool)
+            .await
+            .map_err(store_err)?;
+            if inserted.rows_affected() == 1 {
+                return Ok(IdempotencyClaim::Acquired);
+            }
 
-        let row = sqlx::query(
-            "SELECT request_hash, state, response_body FROM idempotency_keys WHERE key = $1",
-        )
-        .bind(key)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(store_err)?;
-        let stored_hash: String = row.try_get("request_hash").map_err(store_err)?;
-        if stored_hash != request_hash {
-            return Ok(IdempotencyClaim::Conflict);
+            let row = sqlx::query(
+                "SELECT request_hash, state, response_body FROM idempotency_keys WHERE key = $1",
+            )
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(store_err)?;
+            let Some(row) = row else {
+                // The key was concurrently aborted between our INSERT and this
+                // read; retry from the top so we can freshly acquire it.
+                continue;
+            };
+            let stored_hash: String = row.try_get("request_hash").map_err(store_err)?;
+            if stored_hash != request_hash {
+                return Ok(IdempotencyClaim::Conflict);
+            }
+            let state: String = row.try_get("state").map_err(store_err)?;
+            let response: Option<String> = row.try_get("response_body").map_err(store_err)?;
+            return match (state.as_str(), response) {
+                ("complete", Some(response)) => Ok(IdempotencyClaim::Replay(response)),
+                ("pending", _) => Ok(IdempotencyClaim::InProgress),
+                _ => Err(VendError::Storage("invalid idempotency state".to_string())),
+            };
         }
-        let state: String = row.try_get("state").map_err(store_err)?;
-        let response: Option<String> = row.try_get("response_body").map_err(store_err)?;
-        match (state.as_str(), response) {
-            ("complete", Some(response)) => Ok(IdempotencyClaim::Replay(response)),
-            ("pending", _) => Ok(IdempotencyClaim::InProgress),
-            _ => Err(VendError::Storage("invalid idempotency state".to_string())),
-        }
+        // Pathological churn (16 consecutive concurrent aborts): report the key
+        // as in-progress, which callers treat as a safe, retriable outcome.
+        Ok(IdempotencyClaim::InProgress)
     }
 
     async fn complete(

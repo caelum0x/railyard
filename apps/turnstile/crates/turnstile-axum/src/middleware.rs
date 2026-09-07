@@ -30,6 +30,10 @@ pub async fn admit(State(gate): State<Arc<Turnstile>>, mut req: Request, next: N
         .get(HEADER_AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_owned());
+    let request_id = authorization
+        .as_deref()
+        .and_then(|encoded| aitp_client::codec::decode_authorization(encoded).ok())
+        .map(|authorization| authorization.nonce);
 
     match gate.admit(authorization.as_deref(), &resource).await {
         Admit::Challenge(challenge) => response::challenge(&challenge),
@@ -56,11 +60,19 @@ pub async fn admit(State(gate): State<Arc<Turnstile>>, mut req: Request, next: N
                 .unwrap_or_else(|| gate.price());
 
             if succeeded {
-                let receipt = settled.capture(actual).await.ok().flatten();
-                response::attach_receipt(response, receipt)
+                match settled.capture(actual).await {
+                    Ok(receipt) => response::attach_request_id(
+                        response::attach_receipt(response, receipt),
+                        request_id.as_deref(),
+                    ),
+                    Err(error) => response::settlement_unavailable(&error, request_id.as_deref()),
+                }
             } else {
-                let _ = settled.release().await;
-                response
+                let response = match settled.release().await {
+                    Ok(()) => response,
+                    Err(error) => response::mark_release_pending(response, &error),
+                };
+                response::attach_request_id(response, request_id.as_deref())
             }
         }
     }

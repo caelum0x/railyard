@@ -41,6 +41,7 @@ pub fn to_c2pa_manifest(record: &GenerationRecord) -> Value {
             "modality": record.modality,
             "disclosure_required": record.disclosure_required,
             "mint_receipt_ref": record.mint_receipt_ref,
+            "payment_evidence": record.payment_evidence,
             "created_at": record.created_at
         }
     })
@@ -66,6 +67,7 @@ mod tests {
                 "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia".into(),
             disclosure_required: true,
             mint_receipt_ref: Some("rcpt_9".into()),
+            payment_evidence: None,
             created_at: Utc::now(),
         };
         let m = to_c2pa_manifest(&record);

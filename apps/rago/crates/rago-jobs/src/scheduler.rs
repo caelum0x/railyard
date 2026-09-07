@@ -274,11 +274,24 @@ async fn bill_one(
         &[],
     )?;
 
+    // Apply prepaid wallet credit (after tax) before persisting, so the invoice
+    // total reflects the customer's prepaid balance. Only committed on the
+    // winning re-bill reservation, so the wallet is drawn down exactly once.
+    let settlement =
+        crate::prepaid_settle::settle_prepaid(db, subscription.customer_id, &mut invoice, &fees)
+            .await?;
+    let prepaid = rago_db::PrepaidSettlement {
+        transactions: &settlement.transactions,
+        updated_wallets: &settlement.updated_wallets,
+    };
+
     // Re-bill guard: at most one recurring invoice per (subscription, period).
     // A re-run for the same subscription+period returns the existing invoice
     // instead of creating a duplicate (which the payment path would double-charge).
     match db
-        .insert_subscription_invoice_guarded(&invoice, &fees, subscription.id, from, to)
+        .insert_subscription_invoice_with_prepaid_guarded(
+            &invoice, &fees, &prepaid, subscription.id, from, to,
+        )
         .await?
     {
         rago_db::BilledInvoice::Created => Ok((invoice, fees)),

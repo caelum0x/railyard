@@ -1,0 +1,27 @@
+[package]
+name = "relay-storage-postgres"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Postgres persistence adapters for Relay's durable payment lifecycle"
+
+[dependencies]
+async-trait.workspace = true
+relay-aitp = { path = "../relay-aitp" }
+relay-billing = { path = "../relay-billing" }
+relay-cost-feed = { path = "../relay-cost-feed" }
+relay-hedge = { path = "../relay-hedge" }
+relay-contract = { path = "../relay-contract" }
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+googletest.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

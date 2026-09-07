@@ -121,7 +121,7 @@ impl PackStore {
 }
 
 /// Map a gitoxide object kind onto `rit`'s [`ObjectType`].
-fn map_kind(kind: gix_object::Kind) -> ObjectType {
+pub(crate) fn map_kind(kind: gix_object::Kind) -> ObjectType {
     match kind {
         gix_object::Kind::Blob => ObjectType::Blob,
         gix_object::Kind::Tree => ObjectType::Tree,

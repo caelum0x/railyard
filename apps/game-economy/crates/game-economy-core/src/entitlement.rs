@@ -45,6 +45,23 @@ pub struct BattlePassState {
     pub tier: u32,
 }
 
+impl BattlePassState {
+    /// Advance the pass to `target` tier, clamped to `[current_tier, max_tiers]`.
+    ///
+    /// Progression is **monotonic** (a pass never regresses) and **saturating**
+    /// (it never exceeds the season's tier count), so this is idempotent: calling
+    /// it with the current tier, a lower tier, or the same target twice is a no-op.
+    /// Returns the tier after the advance.
+    pub fn advance_to(&mut self, target: u32, max_tiers: u32) -> u32 {
+        let ceiling = max_tiers.max(1);
+        let capped = target.min(ceiling);
+        if capped > self.tier {
+            self.tier = capped;
+        }
+        self.tier
+    }
+}
+
 /// Everything a single player owns on the game rail.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Inventory {
@@ -65,7 +82,9 @@ impl Inventory {
     /// Grant a pack. Idempotent: if the entitlement id is already present the
     /// existing pack (opened state and all) is left untouched.
     pub fn grant_pack(&mut self, pack: OwnedPack) {
-        self.packs.entry(pack.entitlement_id.clone()).or_insert(pack);
+        self.packs
+            .entry(pack.entitlement_id.clone())
+            .or_insert(pack);
     }
 
     /// Unlock a cosmetic by its content-addressed id. Idempotent.
@@ -100,5 +119,57 @@ impl Inventory {
             .as_ref()
             .map(|bp| bp.pass_sku == pass_sku)
             .unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pass() -> BattlePassState {
+        BattlePassState {
+            pass_sku: "pass.season1".into(),
+            tier: 1,
+        }
+    }
+
+    #[test]
+    fn advance_moves_forward_and_returns_new_tier() {
+        let mut bp = pass();
+        assert_eq!(bp.advance_to(10, 100), 10);
+        assert_eq!(bp.tier, 10);
+    }
+
+    #[test]
+    fn advance_is_monotonic_never_regresses() {
+        let mut bp = pass();
+        bp.advance_to(20, 100);
+        // A stale/lower report must not roll the pass back.
+        assert_eq!(bp.advance_to(5, 100), 20);
+        assert_eq!(bp.tier, 20);
+    }
+
+    #[test]
+    fn advance_saturates_at_max_tiers() {
+        let mut bp = pass();
+        assert_eq!(bp.advance_to(999, 100), 100);
+        assert_eq!(bp.tier, 100);
+    }
+
+    #[test]
+    fn advance_to_same_tier_is_noop() {
+        let mut bp = pass();
+        bp.advance_to(30, 100);
+        assert_eq!(bp.advance_to(30, 100), 30);
+    }
+
+    #[test]
+    fn grant_battle_pass_is_idempotent_and_keeps_tier() {
+        let mut inv = Inventory::new();
+        inv.grant_battle_pass("pass.season1");
+        inv.battle_pass.as_mut().unwrap().advance_to(15, 100);
+        // Re-granting the same pass must not reset progression to tier 1.
+        inv.grant_battle_pass("pass.season1");
+        assert_eq!(inv.battle_pass.unwrap().tier, 15);
     }
 }

@@ -11,6 +11,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
+mint-protocol = { path = "../../../mint/crates/mint-protocol" }
 
 [dev-dependencies]
 tokio = { workspace = true }
@@ -18,6 +19,7 @@ axum = { workspace = true }
 tower = { workspace = true }
 mint-core = { path = "../../../mint/crates/mint-core" }
 mint-protocol = { path = "../../../mint/crates/mint-protocol" }
+mint-receipts = { path = "../../../mint/crates/mint-receipts" }
 mint-reserve = { path = "../../../mint/crates/mint-reserve" }
 mint-server = { path = "../../../mint/crates/mint-server" }
 mint-store = { path = "../../../mint/crates/mint-store" }

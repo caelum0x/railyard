@@ -22,6 +22,7 @@ use async_trait::async_trait;
 use game_economy_core::error::GameError;
 use game_economy_core::transport::{
     Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Release, ReleaseReceipt,
+    SettlementProof,
 };
 
 /// A mutating transport call, recorded in order for test assertions.
@@ -121,7 +122,68 @@ impl FakeMint {
 
     /// Current available balance for an account.
     pub fn balance(&self, account: &str) -> i64 {
-        *self.inner.lock().unwrap().balances.get(account).unwrap_or(&0)
+        *self
+            .inner
+            .lock()
+            .unwrap()
+            .balances
+            .get(account)
+            .unwrap_or(&0)
+    }
+
+    /// Sum of every account's available (unheld) balance, in µ$. Read-only test
+    /// introspection: the money-conservation invariant is
+    /// `total_available() + held_total()` and must equal the seeded supply.
+    pub fn total_available(&self) -> i64 {
+        self.inner.lock().unwrap().balances.values().sum()
+    }
+
+    /// Sum of the amounts still reserved in **open** (non-terminal) holds, in µ$.
+    /// A captured/released hold contributes nothing (its funds have settled or
+    /// returned to available), so this counts only funds currently in-flight.
+    pub fn held_total(&self) -> i64 {
+        self.inner
+            .lock()
+            .unwrap()
+            .holds
+            .values()
+            .filter(|h| h.status == HoldStatus::Open)
+            .map(|h| h.amount)
+            .sum()
+    }
+
+    /// Total conserved supply = available across all accounts + funds held open.
+    /// Every hold/capture/release only *moves* money between these two buckets (or
+    /// between accounts), so this value is invariant for the ledger's lifetime.
+    pub fn conserved_total(&self) -> i64 {
+        self.total_available() + self.held_total()
+    }
+
+    /// A snapshot of every account and its available balance, ordered by account
+    /// id for deterministic assertions.
+    pub fn accounts(&self) -> Vec<(String, i64)> {
+        let mut out: Vec<(String, i64)> = self
+            .inner
+            .lock()
+            .unwrap()
+            .balances
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    /// The amounts of every currently-open hold, in µ$ (terminal holds excluded).
+    pub fn open_holds(&self) -> Vec<i64> {
+        self.inner
+            .lock()
+            .unwrap()
+            .holds
+            .values()
+            .filter(|h| h.status == HoldStatus::Open)
+            .map(|h| h.amount)
+            .collect()
     }
 
     /// A snapshot of every recorded mutating call, in order.
@@ -131,7 +193,13 @@ impl FakeMint {
 
     /// Count of recorded calls matching a predicate — handy for "captured once".
     pub fn count_calls(&self, pred: impl Fn(&Call) -> bool) -> usize {
-        self.inner.lock().unwrap().calls.iter().filter(|c| pred(c)).count()
+        self.inner
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .filter(|c| pred(c))
+            .count()
     }
 
     fn next_hold_id(l: &mut Ledger) -> String {
@@ -201,11 +269,7 @@ impl MintTransport for FakeMint {
         Ok(receipt)
     }
 
-    async fn capture_hold(
-        &self,
-        hold_id: &str,
-        req: Capture,
-    ) -> Result<CaptureReceipt, GameError> {
+    async fn capture_hold(&self, hold_id: &str, req: Capture) -> Result<CaptureReceipt, GameError> {
         let mut l = self.inner.lock().unwrap();
         l.calls.push(Call::Capture {
             hold_id: hold_id.to_string(),
@@ -227,7 +291,11 @@ impl MintTransport for FakeMint {
         }
 
         // Resolve the hold; a distinct close of a terminal hold is not-found.
-        let hold = l.holds.get(hold_id).cloned().ok_or(GameError::HoldNotFound)?;
+        let hold = l
+            .holds
+            .get(hold_id)
+            .cloned()
+            .ok_or(GameError::HoldNotFound)?;
         if hold.status != HoldStatus::Open {
             return Err(GameError::HoldNotFound);
         }
@@ -241,7 +309,8 @@ impl MintTransport for FakeMint {
         let holder_bal = *l.balances.get(&hold.account).unwrap_or(&0);
         l.balances.insert(hold.account.clone(), holder_bal + refund);
         let payee_bal = *l.balances.get(&req.to).unwrap_or(&0);
-        l.balances.insert(req.to.clone(), payee_bal + req.amount_micros);
+        l.balances
+            .insert(req.to.clone(), payee_bal + req.amount_micros);
         if let Some(h) = l.holds.get_mut(hold_id) {
             h.status = HoldStatus::Captured;
         }
@@ -257,7 +326,14 @@ impl MintTransport for FakeMint {
             captured_micros: req.amount_micros,
             balance_after_micros: balance_after,
             settlement_seq: seq,
-            receipt_id,
+            receipt_id: receipt_id.clone(),
+            proof: SettlementProof {
+                sequence: seq,
+                operation: "hold.capture".into(),
+                operation_hash: oh.clone(),
+                receipt_hash: receipt_id.clone(),
+                signature: format!("sig_fake_{seq}"),
+            },
             idempotent_replay: false,
         };
         l.idem.insert(
@@ -270,11 +346,7 @@ impl MintTransport for FakeMint {
         Ok(receipt)
     }
 
-    async fn release_hold(
-        &self,
-        hold_id: &str,
-        req: Release,
-    ) -> Result<ReleaseReceipt, GameError> {
+    async fn release_hold(&self, hold_id: &str, req: Release) -> Result<ReleaseReceipt, GameError> {
         let mut l = self.inner.lock().unwrap();
         l.calls.push(Call::Release {
             hold_id: hold_id.to_string(),
@@ -294,20 +366,34 @@ impl MintTransport for FakeMint {
         }
 
         // Distinct close of a terminal (or missing) hold is not-found.
-        let hold = l.holds.get(hold_id).cloned().ok_or(GameError::HoldNotFound)?;
+        let hold = l
+            .holds
+            .get(hold_id)
+            .cloned()
+            .ok_or(GameError::HoldNotFound)?;
         if hold.status != HoldStatus::Open {
             return Err(GameError::HoldNotFound);
         }
 
         // Free the whole reservation: held -> available, no payee.
         let holder_bal = *l.balances.get(&hold.account).unwrap_or(&0);
-        l.balances.insert(hold.account.clone(), holder_bal + hold.amount);
+        l.balances
+            .insert(hold.account.clone(), holder_bal + hold.amount);
         if let Some(h) = l.holds.get_mut(hold_id) {
             h.status = HoldStatus::Released;
         }
+        l.seq += 1;
+        let seq = l.seq;
         let receipt = ReleaseReceipt {
             released_micros: hold.amount,
             idempotent_replay: false,
+            proof: SettlementProof {
+                sequence: seq,
+                operation: "hold.release".into(),
+                operation_hash: oh.clone(),
+                receipt_hash: format!("release_{}", &oh[..12]),
+                signature: format!("sig_release_{}", &oh[..12]),
+            },
         };
         l.idem.insert(
             req.idem_key.clone(),

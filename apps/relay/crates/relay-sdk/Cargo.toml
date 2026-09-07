@@ -1,0 +1,27 @@
+[package]
+name = "relay-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Hardened async Rust SDK for the Railyard Relay"
+
+[dependencies]
+async-trait.workspace = true
+bytes = "1.11.1"
+futures.workspace = true
+http.workspace = true
+relay-contract = { path = "../relay-contract" }
+relay-catalog = { path = "../relay-catalog" }
+relay-cost-feed = { path = "../relay-cost-feed" }
+reqwest = { workspace = true, features = ["stream"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+tokio-util.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

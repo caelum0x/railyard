@@ -35,6 +35,10 @@ pub enum TurnstileError {
     #[error("nonce store error: {0}")]
     Storage(String),
 
+    /// The durable settlement journal rejected a state transition or lease.
+    #[error("settlement journal error: {0}")]
+    Settlement(String),
+
     /// A required configuration value was missing or malformed at startup.
     #[error("configuration error: {0}")]
     Config(String),

@@ -19,6 +19,7 @@ use std::sync::Arc;
 use turnstile_core::error::TurnstileError;
 use turnstile_core::nonce::NonceStore;
 use turnstile_core::pg::PostgresNonceStore;
+use turnstile_core::{AmountMicros, PaymentChallenge, Scheme};
 
 /// Connect + migrate against `TURNSTILE_DATABASE_URL`, or `None` to SKIP.
 async fn store() -> Option<PostgresNonceStore> {
@@ -35,6 +36,18 @@ fn unique_nonce(tag: &str) -> String {
     format!("test_{tag}_{:032x}", rand::random::<u128>())
 }
 
+fn challenge(nonce: String, expiry: i64) -> PaymentChallenge {
+    PaymentChallenge {
+        payee: "ait1qpayee".into(),
+        amount_micros: AmountMicros(1_000),
+        currency: "AIT".into(),
+        resource: "POST /v1/echo".into(),
+        nonce,
+        expiry,
+        scheme: Scheme::Hold,
+    }
+}
+
 #[tokio::test]
 async fn register_consume_then_replay_is_rejected() {
     let Some(store) = store().await else {
@@ -43,7 +56,9 @@ async fn register_consume_then_replay_is_rejected() {
     };
     let nonce = unique_nonce("live");
 
-    store.register(&nonce, 10_000).await.unwrap();
+    let issued = challenge(nonce.clone(), 10_000);
+    store.register(&issued).await.unwrap();
+    assert_eq!(store.get(&nonce).await.unwrap(), Some(issued));
     // First consume within its validity window succeeds.
     assert!(store.consume(&nonce, 500).await.is_ok());
     // The row is gone: a second consume is a replay, not merely a flag flip.
@@ -61,7 +76,10 @@ async fn expired_nonce_is_rejected_on_consume() {
     };
     let nonce = unique_nonce("expiry");
 
-    store.register(&nonce, 100).await.unwrap();
+    store
+        .register(&challenge(nonce.clone(), 100))
+        .await
+        .unwrap();
     assert!(matches!(
         store.consume(&nonce, 200).await, // now (200) > expiry (100)
         Err(TurnstileError::NonceExpired)
@@ -77,8 +95,14 @@ async fn sweep_reaps_only_expired_rows() {
     let expired = unique_nonce("sweep_old");
     let live = unique_nonce("sweep_new");
 
-    store.register(&expired, 100).await.unwrap();
-    store.register(&live, 10_000).await.unwrap();
+    store
+        .register(&challenge(expired.clone(), 100))
+        .await
+        .unwrap();
+    store
+        .register(&challenge(live.clone(), 10_000))
+        .await
+        .unwrap();
 
     // Sweeping at t=200 drops the expired row (and reports at least it).
     let removed = store.sweep(200).await.unwrap();
@@ -100,7 +124,10 @@ async fn concurrent_consume_admits_exactly_one() {
     };
     let store = Arc::new(store);
     let nonce = unique_nonce("race");
-    store.register(&nonce, 10_000).await.unwrap();
+    store
+        .register(&challenge(nonce.clone(), 10_000))
+        .await
+        .unwrap();
 
     // Fan out many racing consumers against the same shared row. The atomic
     // DELETE ... RETURNING must hand the row to exactly one of them.

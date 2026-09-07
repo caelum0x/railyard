@@ -1,0 +1,17 @@
+[package]
+name = "rithub-git"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The rit bridge: hosts bare git repositories on disk and serves them over the dumb HTTP protocol. The only rithub crate that touches rit."
+
+[dependencies]
+rit.workspace = true
+thiserror.workspace = true
+similar = "2"
+tar = "0.4"
+flate2 = "1"
+
+[dev-dependencies]
+tempfile = "3"

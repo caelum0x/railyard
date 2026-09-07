@@ -24,13 +24,10 @@
 //!    therefore remembers the challenge payee across the authorize→capture gap
 //!    (keyed by `hold_id`) and resolves it to an `AccountId` via
 //!    `GET /v1/addresses/:address` immediately before capturing.
-//! 2. **`capture`/`release` return no `AITP-Receipt` header.** Only
-//!    `/v1/aitp/verify` emits one; the hold capture/release routes return the
-//!    `hold_receipt` VIEW envelope. A faithful flat [`Receipt`] cannot be
-//!    reconstructed, so [`capture`](MintPaymentGateway::capture) synthesizes a
-//!    LOSSY receipt from the view (`seq`, `amount_micros`, `balance_after_micros`
-//!    are real; `op_hash`/`prev_hash`/`hash`/`sig` are empty). Documented on the
-//!    method.
+//! 2. **`capture` needs durable settlement evidence.** Mint returns the exact
+//!    signed, hash-linked receipt in `AITP-Receipt`; the gateway requires and
+//!    decodes that header instead of attempting to reconstruct evidence from a
+//!    balance view.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -39,6 +36,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::amount::AmountMicros;
+use crate::codec::{decode_receipt, HEADER_RECEIPT};
 use crate::error::PayError;
 use crate::gateway::{Authorized, PaymentGateway};
 use crate::signer::{op_hash, op_hash_hex, AuthSigner, AuthorizationIntent};
@@ -127,6 +125,7 @@ impl MintPaymentGateway {
             nonce: &challenge.nonce,
             resource: &challenge.resource,
             expiry: challenge.expiry,
+            scheme: challenge.scheme,
             idempotency_key: &idempotency_key,
         };
         let hash = op_hash(&intent);
@@ -137,6 +136,7 @@ impl MintPaymentGateway {
             nonce: challenge.nonce.clone(),
             resource: challenge.resource.clone(),
             expiry: challenge.expiry,
+            scheme: challenge.scheme,
             idempotency_key,
             pubkey_id: self.signer.pubkey_id(),
             op_hash: op_hash_hex(&hash),
@@ -201,12 +201,8 @@ impl PaymentGateway for MintPaymentGateway {
         })
     }
 
-    /// Settle the hold for `actual` to the payee — the SUCCESS path.
-    ///
-    /// Note (gap #2): the mint's capture route returns the `hold_receipt` VIEW
-    /// with NO `AITP-Receipt` header, so the returned [`Receipt`] is LOSSY —
-    /// `seq`/`amount_micros`/`balance_after_micros` are authoritative, while
-    /// `op_hash`/`prev_hash`/`hash`/`sig` are empty (the mint never sent them).
+    /// Settle the hold for `actual` to the payee — the SUCCESS path. The result
+    /// is Mint's exact signed, hash-linked settlement receipt.
     async fn capture(&self, hold: &HoldRef, actual: AmountMicros) -> Result<Receipt, PayError> {
         let ctx = self.context_for(&hold.0).ok_or_else(|| {
             PayError::Gateway(format!(
@@ -232,7 +228,10 @@ impl PaymentGateway for MintPaymentGateway {
                 body,
             ))
             .await?;
-        let env: Envelope<HoldReceiptData> = parse_json(&resp.body)?;
+        let encoded_receipt = resp.header(HEADER_RECEIPT).ok_or_else(|| {
+            PayError::Codec("capture response missing AITP-Receipt header".to_string())
+        })?;
+        let receipt = decode_receipt(encoded_receipt)?;
 
         // Capture succeeded; drop the remembered context.
         self.holds
@@ -240,17 +239,7 @@ impl PaymentGateway for MintPaymentGateway {
             .unwrap_or_else(|e| e.into_inner())
             .remove(&hold.0);
 
-        Ok(Receipt {
-            seq: env.data.first_seq,
-            op: "hold.capture".to_string(),
-            // The capture route sends no AITP-Receipt: these fields are unknown.
-            op_hash: String::new(),
-            amount_micros: AmountMicros(env.data.captured_micros),
-            balance_after_micros: AmountMicros(env.data.holder_balance.available_micros),
-            prev_hash: String::new(),
-            hash: String::new(),
-            sig: String::new(),
-        })
+        Ok(receipt)
     }
 
     /// Release the hold without settling — the FAILURE path (agent pays nothing).
@@ -303,24 +292,6 @@ struct VerifyData {
 #[derive(Debug, Deserialize)]
 struct AddressData {
     account_id: String,
-}
-
-/// `POST /v1/holds/:id/capture|release` → `data` (the `hold_receipt` view).
-#[derive(Debug, Default, Deserialize)]
-struct HoldReceiptData {
-    #[serde(default)]
-    first_seq: u64,
-    #[serde(default)]
-    captured_micros: i64,
-    #[serde(default)]
-    holder_balance: BalanceView,
-}
-
-/// The subset of the mint `Balance` projection the receipt needs.
-#[derive(Debug, Default, Deserialize)]
-struct BalanceView {
-    #[serde(default)]
-    available_micros: i64,
 }
 
 /// `POST /v1/holds/:id/capture` request body (`dto::HoldCaptureReq`).

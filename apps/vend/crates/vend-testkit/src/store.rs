@@ -298,6 +298,33 @@ impl UsageRepo for InMemoryStore {
         Ok(())
     }
 
+    async fn record_settlement_proof(
+        &self,
+        charge_id: &ChargeId,
+        proof: &vend_core::transport::SettlementProof,
+    ) -> Result<(), VendError> {
+        let mut state = self.inner.lock().unwrap();
+        let usage = state
+            .usage
+            .get_mut(charge_id.as_str())
+            .ok_or_else(|| VendError::Storage("missing usage for settlement proof".to_string()))?;
+        if usage.outcome == UsageOutcome::Pending {
+            return Err(VendError::Storage(
+                "cannot receipt a pending usage row".to_string(),
+            ));
+        }
+        match &usage.settlement_proof {
+            Some(existing) if existing != proof => Err(VendError::Storage(
+                "conflicting settlement proof".to_string(),
+            )),
+            Some(_) => Ok(()),
+            None => {
+                usage.settlement_proof = Some(proof.clone());
+                Ok(())
+            }
+        }
+    }
+
     async fn sum_charge_for_key_day(
         &self,
         sub_key_id: &SubKeyId,

@@ -1,0 +1,15 @@
+[package]
+name = "rithub-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "rithub forge domain: users, organizations, repositories, permissions, and the Postgres-backed store."
+
+[dependencies]
+serde.workspace = true
+sqlx.workspace = true
+uuid.workspace = true
+time.workspace = true
+thiserror.workspace = true
+sha2 = "0.10"

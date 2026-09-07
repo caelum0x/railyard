@@ -27,6 +27,15 @@ pub struct Config {
     pub agent_config_path: String,
     /// Append-only settled receipt log (`ABACUS_RECEIPT_LOG`).
     pub receipt_log_path: String,
+    /// Atomic JSON snapshot of open Mint holds (`ABACUS_HOLD_STORE`).
+    pub hold_store_path: String,
+    /// Shared Postgres recovery state (`ABACUS_DATABASE_URL`). When absent,
+    /// Abacus is explicitly limited to a single replica and uses the JSON file.
+    pub database_url: Option<String>,
+    /// Age after which a still-open hold is considered orphaned.
+    pub hold_ttl_ms: i64,
+    /// Interval between orphan sweeps.
+    pub hold_reaper_interval_ms: u64,
 }
 
 /// Read a required, non-empty env var or fail fast with a config error.
@@ -45,6 +54,20 @@ fn optional(key: &str, default: &str) -> String {
     }
 }
 
+fn optional_value(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn positive_i64(key: &str, default: i64) -> Result<i64, AbacusError> {
+    let raw = optional(key, &default.to_string());
+    raw.parse::<i64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| AbacusError::Config(format!("{key} must be a positive integer")))
+}
+
 impl Config {
     /// Load + validate the configuration from the process environment.
     pub fn from_env() -> Result<Self, AbacusError> {
@@ -58,6 +81,10 @@ impl Config {
             upstream_path: optional("UPSTREAM_PATH", "/v1/chat/completions"),
             agent_config_path: require("ABACUS_AGENT_CONFIG")?,
             receipt_log_path: optional("ABACUS_RECEIPT_LOG", "./abacus-receipts.jsonl"),
+            hold_store_path: optional("ABACUS_HOLD_STORE", "./abacus-open-holds.json"),
+            database_url: optional_value("ABACUS_DATABASE_URL"),
+            hold_ttl_ms: positive_i64("ABACUS_HOLD_TTL_MS", 15 * 60 * 1_000)?,
+            hold_reaper_interval_ms: positive_i64("ABACUS_HOLD_REAPER_INTERVAL_MS", 30_000)? as u64,
         })
     }
 }

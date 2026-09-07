@@ -12,16 +12,17 @@ use sqlx::{PgConnection, Row};
 
 use crate::rows;
 
-/// Map an infrastructure `sqlx` error onto the frozen [`MintError`] surface.
+/// Map an infrastructure `sqlx` error onto the stable [`MintError`] surface.
 ///
-/// The `LedgerStore` trait is frozen and has no dedicated "internal" variant, so
-/// unexpected DB failures are traced and surfaced as [`MintError::Overflow`] —
-/// which the HTTP layer maps to `500` (an infrastructure fault, distinct from
-/// every 4xx business code). `RowNotFound` is handled at each call site where a
-/// missing row is semantically meaningful (account/hold/stream not found).
+/// Unexpected DB failures are traced and surfaced as [`MintError::Storage`] —
+/// which the HTTP layer maps to `500`, exactly like `Overflow`, but keeps the
+/// wire/log `code` honest: a connection drop or query failure is reported as
+/// `storage`, not mislabelled as an arithmetic `overflow`. `RowNotFound` is
+/// handled at each call site where a missing row is semantically meaningful
+/// (account/hold/stream not found).
 pub fn db_err(e: sqlx::Error) -> MintError {
     tracing::error!(error = %e, "mint-store-postgres: database error");
-    MintError::Overflow
+    MintError::Storage
 }
 
 /// The result of the idempotency guard.
@@ -281,5 +282,20 @@ pub async fn read_balance_row(
             updated_seq: r.get::<i64, _>("updated_seq") as u64,
         }),
         None => Err(MintError::AccountNotFound),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn db_err_maps_infra_faults_to_storage_not_overflow() {
+        // A lost/closed pool is an infrastructure fault: it must surface as a
+        // distinct `Storage` error (HTTP 500) and NOT be mislabelled as an
+        // arithmetic `Overflow`, which would hide a real outage behind a
+        // math-error code.
+        assert_eq!(db_err(sqlx::Error::PoolClosed), MintError::Storage);
+        assert_ne!(db_err(sqlx::Error::PoolClosed), MintError::Overflow);
     }
 }

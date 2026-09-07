@@ -12,19 +12,12 @@
 //! Determinism: time enters ONLY through the injected [`Clock`], so tests advance
 //! a [`abacus_core::hold_store::ManualClock`] instead of sleeping.
 //!
-//! ## Where this plugs into the hot path (future wiring, out of scope here)
-//!
-//! The mechanism is intentionally standalone in this first increment. To wire it
-//! live: register a [`HoldRecord`] right after [`crate::enforce::enforce`] returns
-//! an `Allow` (the `Reservation` carries `hold_id`/`reserved_micros`; the
-//! `idem_key` is already in hand), and `store.remove(hold_id)` inside
-//! [`crate::settle::settle`] once the terminal is recorded. A periodic task then
-//! calls [`reap_expired`] on an interval. Doing that touches the request handler
-//! and its tests, so it is deferred to keep this commit's blast radius to the new
-//! seam.
+//! Production registers each hold before forwarding, removes it after terminal
+//! settlement, and runs this sweep immediately at startup and on an interval.
 
 use abacus_core::error::AbacusError;
 use abacus_core::hold_store::{Clock, HoldStore};
+use abacus_core::receipt::{MintReceipt, ReceiptOutcome, ReceiptStore};
 use abacus_core::transport::{MintTransport, Release};
 
 /// The outcome of one reap sweep — enough to log/meter what the reaper did.
@@ -66,18 +59,49 @@ impl ReapSummary {
 pub async fn reap_expired(
     store: &dyn HoldStore,
     mint: &dyn MintTransport,
+    receipts: &dyn ReceiptStore,
     clock: &dyn Clock,
     ttl_ms: i64,
 ) -> Result<ReapSummary, AbacusError> {
     let now_ms = clock.now_ms();
+    reap_expired_claimed(
+        store,
+        mint,
+        receipts,
+        clock,
+        ttl_ms,
+        "single-replica",
+        now_ms.saturating_add(ttl_ms.max(1)),
+        usize::MAX,
+    )
+    .await
+}
+
+/// Replica-safe sweep using an explicit worker lease. The worker owns each
+/// returned row until `lease_until_ms`; a crash leaves it reclaimable later.
+pub async fn reap_expired_claimed(
+    store: &dyn HoldStore,
+    mint: &dyn MintTransport,
+    receipts: &dyn ReceiptStore,
+    clock: &dyn Clock,
+    ttl_ms: i64,
+    worker_id: &str,
+    lease_until_ms: i64,
+    limit: usize,
+) -> Result<ReapSummary, AbacusError> {
+    let now_ms = clock.now_ms();
     let mut summary = ReapSummary::default();
+    summary.survived = store
+        .list()
+        .await?
+        .into_iter()
+        .filter(|record| !record.is_expired(now_ms, ttl_ms))
+        .count();
 
-    for record in store.list().await? {
-        if !record.is_expired(now_ms, ttl_ms) {
-            summary.survived += 1;
-            continue;
-        }
-
+    for record in store
+        .claim_expired(worker_id, now_ms, ttl_ms, lease_until_ms, limit)
+        .await?
+    {
         match mint
             .release_hold(
                 &record.hold_id,
@@ -87,10 +111,30 @@ pub async fn reap_expired(
             )
             .await
         {
-            Ok(_) => {
+            Ok(release) => {
                 // Release succeeded (or was an idempotent no-op on Mint). Drop the
                 // tracking row so the next sweep does not revisit it.
-                store.remove(&record.hold_id).await?;
+                if let Some(context) = &record.receipt_context {
+                    let receipt = MintReceipt {
+                        agent_id: context.agent_id.clone(),
+                        run_id: context.run_id.clone(),
+                        budget_id: context.budget_id.clone(),
+                        payer_account: context.payer_account.clone(),
+                        request_id: context.request_id.clone(),
+                        hold_id: record.hold_id.clone(),
+                        reserved_micros: record.reserved_micros,
+                        captured_micros: 0,
+                        balance_after_micros: 0,
+                        settlement_seq: release.proof.sequence,
+                        outcome: ReceiptOutcome::Released,
+                        settlement_proof: release.proof,
+                    };
+                    store
+                        .complete_claim_with_receipt(&record.hold_id, worker_id, &receipt, receipts)
+                        .await?;
+                } else {
+                    store.complete_claim(&record.hold_id, worker_id).await?;
+                }
                 summary.released_micros = summary
                     .released_micros
                     .saturating_add(record.reserved_micros);
@@ -100,7 +144,7 @@ pub async fn reap_expired(
                 // The hold was already captured/released (e.g. the handler settled
                 // it after we snapshotted the list). Nothing to return; just clear
                 // the stale tracking row.
-                store.remove(&record.hold_id).await?;
+                store.complete_claim(&record.hold_id, worker_id).await?;
                 summary.already_terminal += 1;
             }
             Err(other) => return Err(other),
@@ -114,9 +158,12 @@ pub async fn reap_expired(
 mod tests {
     use super::*;
 
-    use abacus_core::hold_store::{HoldRecord, ManualClock};
+    use abacus_core::hold_store::{HoldReceiptContext, HoldRecord, ManualClock};
+    use abacus_core::ids::{AgentId, BudgetId, RunId};
+    use abacus_core::receipt::{ReceiptOutcome, ReceiptStore};
     use abacus_core::transport::Hold;
     use abacus_testkit::fake_mint::LedgerFakeMint;
+    use abacus_testkit::FakeReceiptStore;
 
     use crate::mem_hold_store::InMemoryHoldStore;
 
@@ -147,6 +194,13 @@ mod tests {
             reserved_micros: amount,
             created_at_ms,
             deadline_ms,
+            receipt_context: Some(HoldReceiptContext {
+                agent_id: AgentId::generate(),
+                run_id: RunId::generate(),
+                budget_id: BudgetId::generate(),
+                payer_account: TREASURY.to_string(),
+                request_id: idem_key.to_string(),
+            }),
         };
         store.create(record.clone()).await.expect("track hold");
         record
@@ -164,11 +218,20 @@ mod tests {
 
         // Time moves past the TTL: the caller panicked and never settled.
         clock.advance(TTL_MS + 1);
-        let summary = reap_expired(&store, &mint, &clock, TTL_MS).await.unwrap();
+        let receipts = FakeReceiptStore::new();
+        let summary = reap_expired(&store, &mint, &receipts, &clock, TTL_MS)
+            .await
+            .unwrap();
 
         assert_eq!(summary.reaped_hold_ids, vec![orphan.hold_id.clone()]);
         assert_eq!(summary.released_micros, 4_000);
         assert_eq!(summary.already_terminal, 0);
+        let receipt = receipts.get(&orphan.hold_id).await.unwrap().unwrap();
+        assert_eq!(receipt.request_id, "req_orphan");
+        assert_eq!(receipt.outcome, ReceiptOutcome::Released);
+        assert_eq!(receipt.captured_micros, 0);
+        assert_eq!(receipt.settlement_seq, receipt.settlement_proof.sequence);
+        assert!(!receipt.settlement_proof.signature.is_empty());
         // Budget is fully returned to the agent, and the row is gone.
         assert_eq!(mint.balance(TREASURY), 10_000);
         assert!(store.is_empty());
@@ -185,7 +248,9 @@ mod tests {
 
         // Only a little time passes — well within TTL.
         clock.advance(TTL_MS - 1);
-        let summary = reap_expired(&store, &mint, &clock, TTL_MS).await.unwrap();
+        let summary = reap_expired(&store, &mint, &FakeReceiptStore::new(), &clock, TTL_MS)
+            .await
+            .unwrap();
 
         assert!(summary.reaped_hold_ids.is_empty());
         assert_eq!(summary.survived, 1);
@@ -203,13 +268,18 @@ mod tests {
         open_and_track(&mint, &store, "req_orphan", 4_000, 1_000, None).await;
         clock.advance(TTL_MS + 1);
 
-        let first = reap_expired(&store, &mint, &clock, TTL_MS).await.unwrap();
+        let receipts = FakeReceiptStore::new();
+        let first = reap_expired(&store, &mint, &receipts, &clock, TTL_MS)
+            .await
+            .unwrap();
         assert_eq!(first.reaped_count(), 1);
         assert_eq!(first.released_micros, 4_000);
         assert_eq!(mint.balance(TREASURY), 10_000);
 
         // A second sweep must be a total no-op: budget unchanged, nothing reaped.
-        let second = reap_expired(&store, &mint, &clock, TTL_MS).await.unwrap();
+        let second = reap_expired(&store, &mint, &receipts, &clock, TTL_MS)
+            .await
+            .unwrap();
         assert_eq!(second, ReapSummary::default());
         assert_eq!(mint.balance(TREASURY), 10_000);
         assert!(store.is_empty());
@@ -231,7 +301,9 @@ mod tests {
         assert_eq!(mint.balance(TREASURY), 10_000); // 20k - 2k - 3k - 5k
 
         clock.set(50_000);
-        let summary = reap_expired(&store, &mint, &clock, TTL_MS).await.unwrap();
+        let summary = reap_expired(&store, &mint, &FakeReceiptStore::new(), &clock, TTL_MS)
+            .await
+            .unwrap();
 
         let mut reaped = summary.reaped_hold_ids.clone();
         reaped.sort();
@@ -259,12 +331,15 @@ mod tests {
                 reserved_micros: 1_000,
                 created_at_ms: 1_000,
                 deadline_ms: None,
+                receipt_context: None,
             })
             .await
             .unwrap();
 
         clock.advance(TTL_MS + 1);
-        let summary = reap_expired(&store, &mint, &clock, TTL_MS).await.unwrap();
+        let summary = reap_expired(&store, &mint, &FakeReceiptStore::new(), &clock, TTL_MS)
+            .await
+            .unwrap();
 
         assert!(summary.reaped_hold_ids.is_empty());
         assert_eq!(summary.released_micros, 0);
@@ -283,7 +358,9 @@ mod tests {
         let rec = open_and_track(&mint, &store, "req_dl", 4_000, 1_000, Some(1_500)).await;
         clock.set(1_600); // past the deadline, nowhere near the TTL.
 
-        let summary = reap_expired(&store, &mint, &clock, 1_000_000).await.unwrap();
+        let summary = reap_expired(&store, &mint, &FakeReceiptStore::new(), &clock, 1_000_000)
+            .await
+            .unwrap();
         assert_eq!(summary.reaped_hold_ids, vec![rec.hold_id]);
         assert_eq!(mint.balance(TREASURY), 10_000);
     }

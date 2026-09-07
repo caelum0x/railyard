@@ -69,3 +69,80 @@ impl ScanReport {
         out
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn change(kind: ChangeKind, path: &str, detail: &str) -> Change {
+        Change {
+            kind,
+            path: path.to_string(),
+            detail: detail.to_string(),
+        }
+    }
+
+    #[test]
+    fn change_kind_display() {
+        assert_eq!(ChangeKind::Modified.to_string(), "MODIFIED");
+        assert_eq!(ChangeKind::Added.to_string(), "ADDED");
+        assert_eq!(ChangeKind::Removed.to_string(), "REMOVED");
+    }
+
+    #[test]
+    fn change_display_format() {
+        let c = change(ChangeKind::Modified, "config.cfg", "hash aaa… -> bbb…");
+        assert_eq!(c.to_string(), "[MODIFIED] config.cfg — hash aaa… -> bbb…");
+    }
+
+    #[test]
+    fn empty_report_is_clean() {
+        let report = ScanReport::default();
+        assert!(report.is_clean());
+    }
+
+    #[test]
+    fn report_with_changes_is_not_clean() {
+        let report = ScanReport {
+            files_checked: 3,
+            changes: vec![change(ChangeKind::Added, "cheat.dll", "unexpected file")],
+        };
+        assert!(!report.is_clean());
+    }
+
+    #[test]
+    fn render_clean_report_reports_ok() {
+        let report = ScanReport {
+            files_checked: 5,
+            changes: vec![],
+        };
+        let rendered = report.render();
+        assert!(rendered.contains("5 file(s) checked, 0 change(s) detected"));
+        assert!(rendered.contains("OK: all assets match the trusted manifest."));
+    }
+
+    #[test]
+    fn render_dirty_report_lists_changes_in_order() {
+        let report = ScanReport {
+            files_checked: 2,
+            changes: vec![
+                change(ChangeKind::Added, "cheat.dll", "unexpected file"),
+                change(ChangeKind::Modified, "config.cfg", "hash a… -> b…"),
+                change(ChangeKind::Removed, "textures.pak", "missing on disk"),
+            ],
+        };
+        let rendered = report.render();
+        assert!(rendered.contains("2 file(s) checked, 3 change(s) detected"));
+        assert!(!rendered.contains("OK: all assets match"));
+
+        // Every change is rendered, and in the order supplied.
+        let added_at = rendered.find("[ADDED] cheat.dll").expect("added line");
+        let modified_at = rendered
+            .find("[MODIFIED] config.cfg")
+            .expect("modified line");
+        let removed_at = rendered
+            .find("[REMOVED] textures.pak")
+            .expect("removed line");
+        assert!(added_at < modified_at && modified_at < removed_at);
+    }
+}

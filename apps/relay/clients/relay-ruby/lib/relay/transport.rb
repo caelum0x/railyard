@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "net/http"
+require "socket"
+require "timeout"
 require "uri"
 
 module Relay
@@ -27,9 +29,11 @@ module Relay
       uri = URI.parse(url)
       res = build_http(uri).request(build_request(method, uri, headers, body))
       Response.new(status: res.code.to_i, headers: normalize_headers(res), body: res.body)
+    rescue IOError, SystemCallError, Timeout::Error, SocketError => e
+      raise TransportError, "Relay transport failed: #{e.message}"
     end
 
-    def stream(method:, url:, headers:, body:)
+    def stream(method:, url:, headers:, body:, on_response: nil)
       uri = URI.parse(url)
       status = nil
       resp_headers = {}
@@ -38,6 +42,7 @@ module Relay
       build_http(uri).request(build_request(method, uri, headers, body)) do |res|
         status = res.code.to_i
         resp_headers = normalize_headers(res)
+        on_response.call(Response.new(status: status, headers: resp_headers, body: nil)) if on_response
 
         if status >= 400
           # Buffer the whole error payload so Client can map it to a typed error.
@@ -49,6 +54,8 @@ module Relay
       end
 
       Response.new(status: status, headers: resp_headers, body: error_body)
+    rescue IOError, SystemCallError, Timeout::Error, SocketError => e
+      raise TransportError, "Relay transport failed: #{e.message}"
     end
 
     private
@@ -66,6 +73,9 @@ module Relay
         case method.to_s.upcase
         when "GET"  then Net::HTTP::Get
         when "POST" then Net::HTTP::Post
+        when "PUT" then Net::HTTP::Put
+        when "PATCH" then Net::HTTP::Patch
+        when "DELETE" then Net::HTTP::Delete
         else raise ArgumentError, "unsupported HTTP method: #{method}"
         end
 

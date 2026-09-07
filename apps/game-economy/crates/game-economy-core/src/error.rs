@@ -39,6 +39,11 @@ pub enum GameError {
     #[error("already owned: {0}")]
     AlreadyOwned(String),
 
+    /// Tier progression was requested for a battle-pass SKU the player does not
+    /// hold (a pass must be purchased before its tiers can advance).
+    #[error("battle pass not owned: {0}")]
+    BattlePassNotOwned(String),
+
     /// Pack-opening was requested for an entitlement the player does not hold.
     #[error("pack not owned: {0}")]
     PackNotOwned(String),
@@ -50,4 +55,8 @@ pub enum GameError {
     /// A transport/ledger error with no more specific mapping.
     #[error("mint error: {0}")]
     Mint(String),
+
+    /// Durable entitlement/purchase projection failed.
+    #[error("game state storage error: {0}")]
+    Storage(String),
 }

@@ -22,6 +22,7 @@ impl ProviderAdapter for VideoAdapter {
                 p.reference_images = c.face_refs.clone();
                 p.avatar_ref = c.avatar_ref.clone();
                 p.lora_ref = c.lora_ref.clone();
+                p.embedding_ref = c.embedding_ref.clone();
                 p.voice_id = c.voice_id.clone();
                 p.style_prompt = join([c.style.as_deref(), c.wardrobe.as_deref()]);
             }

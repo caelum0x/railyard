@@ -20,7 +20,13 @@ use abacus_core::hold_store::{HoldRecord, HoldStore};
 
 /// An in-memory, mutex-guarded hold table for single-instance deployments.
 pub struct InMemoryHoldStore {
-    inner: Mutex<HashMap<String, HoldRecord>>,
+    inner: Mutex<MemoryState>,
+}
+
+#[derive(Default)]
+struct MemoryState {
+    records: HashMap<String, HoldRecord>,
+    leases: HashMap<String, (String, i64)>,
 }
 
 impl Default for InMemoryHoldStore {
@@ -33,13 +39,16 @@ impl InMemoryHoldStore {
     /// A fresh, empty store.
     pub fn new() -> Self {
         InMemoryHoldStore {
-            inner: Mutex::new(HashMap::new()),
+            inner: Mutex::new(MemoryState::default()),
         }
     }
 
     /// Number of currently-tracked holds (best-effort; a poisoned lock reads 0).
     pub fn len(&self) -> usize {
-        self.inner.lock().map(|map| map.len()).unwrap_or(0)
+        self.inner
+            .lock()
+            .map(|state| state.records.len())
+            .unwrap_or(0)
     }
 
     /// `true` iff no holds are currently tracked.
@@ -55,27 +64,27 @@ fn lock_err(_poisoned: impl std::fmt::Debug) -> AbacusError {
 #[async_trait]
 impl HoldStore for InMemoryHoldStore {
     async fn create(&self, record: HoldRecord) -> Result<(), AbacusError> {
-        let mut map = self.inner.lock().map_err(lock_err)?;
-        match map.get(&record.hold_id) {
+        let mut state = self.inner.lock().map_err(lock_err)?;
+        match state.records.get(&record.hold_id) {
             // Idempotent re-registration of the identical row.
             Some(existing) if *existing == record => Ok(()),
             // A different row for the same hold id is a genuine conflict.
             Some(_) => Err(AbacusError::IdempotencyConflict),
             None => {
-                map.insert(record.hold_id.clone(), record);
+                state.records.insert(record.hold_id.clone(), record);
                 Ok(())
             }
         }
     }
 
     async fn get(&self, hold_id: &str) -> Result<Option<HoldRecord>, AbacusError> {
-        let map = self.inner.lock().map_err(lock_err)?;
-        Ok(map.get(hold_id).cloned())
+        let state = self.inner.lock().map_err(lock_err)?;
+        Ok(state.records.get(hold_id).cloned())
     }
 
     async fn list(&self) -> Result<Vec<HoldRecord>, AbacusError> {
-        let map = self.inner.lock().map_err(lock_err)?;
-        let mut records: Vec<HoldRecord> = map.values().cloned().collect();
+        let state = self.inner.lock().map_err(lock_err)?;
+        let mut records: Vec<HoldRecord> = state.records.values().cloned().collect();
         // Deterministic order (oldest first, then hold_id) so a reap sweep — and
         // the tests that assert on it — are reproducible despite HashMap's random
         // iteration order.
@@ -87,15 +96,69 @@ impl HoldStore for InMemoryHoldStore {
         Ok(records)
     }
 
+    async fn claim_expired(
+        &self,
+        worker_id: &str,
+        now_ms: i64,
+        ttl_ms: i64,
+        lease_until_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<HoldRecord>, AbacusError> {
+        let mut state = self.inner.lock().map_err(lock_err)?;
+        let mut candidates: Vec<HoldRecord> = state
+            .records
+            .values()
+            .filter(|record| record.is_expired(now_ms, ttl_ms))
+            .filter(|record| {
+                state
+                    .leases
+                    .get(&record.hold_id)
+                    .is_none_or(|(_, until)| *until <= now_ms)
+            })
+            .cloned()
+            .collect();
+        candidates.sort_by(|a, b| {
+            a.created_at_ms
+                .cmp(&b.created_at_ms)
+                .then_with(|| a.hold_id.cmp(&b.hold_id))
+        });
+        candidates.truncate(limit);
+        for record in &candidates {
+            state.leases.insert(
+                record.hold_id.clone(),
+                (worker_id.to_string(), lease_until_ms),
+            );
+        }
+        Ok(candidates)
+    }
+
+    async fn complete_claim(
+        &self,
+        hold_id: &str,
+        worker_id: &str,
+    ) -> Result<Option<HoldRecord>, AbacusError> {
+        let mut state = self.inner.lock().map_err(lock_err)?;
+        if !matches!(state.leases.get(hold_id), Some((owner, _)) if owner == worker_id) {
+            return Ok(None);
+        }
+        state.leases.remove(hold_id);
+        Ok(state.records.remove(hold_id))
+    }
+
     async fn remove(&self, hold_id: &str) -> Result<Option<HoldRecord>, AbacusError> {
-        let mut map = self.inner.lock().map_err(lock_err)?;
-        Ok(map.remove(hold_id))
+        let mut state = self.inner.lock().map_err(lock_err)?;
+        state.leases.remove(hold_id);
+        Ok(state.records.remove(hold_id))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use abacus_core::ids::{AgentId, BudgetId, RunId};
+    use abacus_core::receipt::{MintReceipt, ReceiptOutcome};
+    use abacus_core::transport::SettlementProof;
+    use abacus_testkit::FakeReceiptStore;
 
     fn rec(hold_id: &str, created_at_ms: i64) -> HoldRecord {
         HoldRecord {
@@ -104,6 +167,30 @@ mod tests {
             reserved_micros: 2_500,
             created_at_ms,
             deadline_ms: None,
+            receipt_context: None,
+        }
+    }
+
+    fn released_receipt(hold_id: &str) -> MintReceipt {
+        MintReceipt {
+            agent_id: AgentId::generate(),
+            run_id: RunId::generate(),
+            budget_id: BudgetId::generate(),
+            payer_account: "acct_owner".into(),
+            request_id: "request_lease".into(),
+            hold_id: hold_id.into(),
+            reserved_micros: 2_500,
+            captured_micros: 0,
+            balance_after_micros: 0,
+            settlement_seq: 1,
+            outcome: ReceiptOutcome::Released,
+            settlement_proof: SettlementProof {
+                sequence: 1,
+                operation: "hold.release".into(),
+                operation_hash: "op".into(),
+                receipt_hash: "receipt".into(),
+                signature: "signature".into(),
+            },
         }
     }
 
@@ -157,5 +244,46 @@ mod tests {
             .map(|r| r.hold_id)
             .collect();
         assert_eq!(ids, vec!["hold_a", "hold_b", "hold_c"]);
+    }
+
+    #[tokio::test]
+    async fn recovery_claim_is_exclusive_and_reclaimable_after_lease_expiry() {
+        let store = InMemoryHoldStore::new();
+        store.create(rec("hold_a", 10)).await.unwrap();
+        let first = store
+            .claim_expired("replica-a", 100, 50, 150, 10)
+            .await
+            .unwrap();
+        assert_eq!(first.len(), 1);
+        assert!(store
+            .claim_expired("replica-b", 100, 50, 150, 10)
+            .await
+            .unwrap()
+            .is_empty());
+        let receipts = FakeReceiptStore::new();
+        assert!(store
+            .complete_claim_with_receipt(
+                "hold_a",
+                "replica-b",
+                &released_receipt("hold_a"),
+                &receipts,
+            )
+            .await
+            .unwrap()
+            .is_none());
+        assert!(receipts.is_empty());
+        assert_eq!(
+            store
+                .claim_expired("replica-b", 150, 50, 200, 10)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(store
+            .complete_claim("hold_a", "replica-b")
+            .await
+            .unwrap()
+            .is_some());
     }
 }

@@ -15,9 +15,13 @@ base64.workspace = true
 # Real Mint-backed gateway: HTTP transport + canonical op_hash + ed25519 signer.
 # rustls is reqwest 0.13's default TLS provider (already resolved by the vendored
 # rig stack), so no OpenSSL/native-tls is pulled in.
-reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
+bytes = "1"
+futures-util = "0.3"
 blake3 = "1"
 ed25519-dalek = "2"
+hex.workspace = true
+sha2 = "0.10"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt", "macros"] }
+tokio = { version = "1", features = ["rt", "macros", "time", "net", "io-util"] }

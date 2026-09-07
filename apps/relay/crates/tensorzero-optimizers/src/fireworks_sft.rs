@@ -318,6 +318,7 @@ impl JobHandle for FireworksSFTJobHandle {
                     timeouts: TimeoutsConfig::default(),
                     skip_relay: None,
                     namespace: None,
+                    hedge: None,
                 }),
             };
             if !self.deploy_after_training {

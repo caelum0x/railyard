@@ -1269,6 +1269,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mint-sdk"
+version = "0.1.0"
+dependencies = [
+ "mint-protocol",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "mint-server"
 version = "0.1.0"
 dependencies = [

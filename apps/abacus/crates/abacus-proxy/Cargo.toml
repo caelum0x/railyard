@@ -36,6 +36,7 @@ anyhow = { workspace = true }
 subtle = { workspace = true }
 ulid = { workspace = true }
 async-trait = { workspace = true }
+sqlx = { workspace = true }
 
 [dev-dependencies]
 abacus-testkit = { workspace = true }

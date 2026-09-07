@@ -360,6 +360,7 @@ impl JobHandle for TogetherSFTJobHandle {
                         timeouts: TimeoutsConfig::default(),
                         skip_relay: None,
                         namespace: None,
+                        hedge: None,
                     }),
                 })
             }

@@ -3,8 +3,8 @@
 -- store. A nonce issued by any replica is registered here; the first replica to
 -- consume it wins the row (atomic DELETE ... RETURNING) and the rest see a replay.
 --
--- This is NOT a money ledger: it holds only short-lived challenge nonces and
--- their expiry. Rows are consumed on use and swept once expired (the reaper).
+-- This is NOT a money ledger: it holds only short-lived challenge ownership and
+-- expiry. Rows are consumed on use and swept once expired (the reaper).
 CREATE TABLE IF NOT EXISTS turnstile_nonces (
     nonce      TEXT PRIMARY KEY,
     expiry_ms  BIGINT NOT NULL,

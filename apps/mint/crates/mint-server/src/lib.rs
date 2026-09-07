@@ -10,6 +10,7 @@
 //! - [`handlers`]— one thin module per resource group.
 //! - [`shared`]  — `Arc`-sharing newtypes so the facades see one store.
 
+pub mod attestation;
 pub mod auth;
 pub mod dto;
 pub mod error;

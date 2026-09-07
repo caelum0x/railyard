@@ -18,6 +18,7 @@ pub mod entitlement;
 pub mod error;
 pub mod money;
 pub mod pack;
+pub mod state;
 pub mod store;
 pub mod transport;
 
@@ -25,7 +26,9 @@ pub use catalog::{BattlePass, CardPackTier, Catalog, Cosmetic, Product, Rarity};
 pub use entitlement::{BattlePassState, EntitlementId, Inventory, OwnedPack};
 pub use error::GameError;
 pub use pack::{content_item_id, derive_pack_contents, GrantedItem};
+pub use state::{CompletedPurchase, GameStateRepository, MemoryGameState, PurchaseRecord};
 pub use store::{entitlement_id, AlwaysFulfill, Fulfiller, GameStore, PurchaseOutcome};
 pub use transport::{
     Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Release, ReleaseReceipt,
+    SettlementProof,
 };

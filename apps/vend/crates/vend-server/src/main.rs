@@ -116,7 +116,7 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState {
         metrics: metrics.clone(),
-        mint,
+        mint: mint.clone(),
         relay,
         tenants: store.clone(),
         keys: store.clone(),
@@ -142,6 +142,7 @@ async fn main() -> anyhow::Result<()> {
             admin_auth,
             customer_auth,
             security_config,
+            mint,
         )),
         metrics,
         runtime.limits,

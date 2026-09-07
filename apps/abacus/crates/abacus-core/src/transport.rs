@@ -59,6 +59,18 @@ pub struct CaptureReceipt {
     pub balance_after_micros: i64,
     /// Ledger sequence number of the settlement (receipt anchor).
     pub settlement_seq: u64,
+    /// Signed, hash-linked Mint evidence for this exact terminal operation.
+    pub proof: SettlementProof,
+}
+
+/// Normalized subset of Mint's `AITP-Receipt` persisted by spending products.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementProof {
+    pub sequence: u64,
+    pub operation: String,
+    pub operation_hash: String,
+    pub receipt_hash: String,
+    pub signature: String,
 }
 
 /// Release an unused hold (any non-2xx / aborted stream / panic / timeout path).
@@ -73,6 +85,8 @@ pub struct Release {
 pub struct ReleaseReceipt {
     /// Amount released back to available balance, in µ$.
     pub released_micros: i64,
+    /// Signed, hash-linked proof that the hold was released without charging.
+    pub proof: SettlementProof,
 }
 
 /// A read of an agent's delegated budget allowance (the ceiling path).

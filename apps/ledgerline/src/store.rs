@@ -129,17 +129,29 @@ impl PostgresStore {
             .await
             .map_err(|error| LedgerlineError::Storage(error.to_string()))
     }
+
+    /// Cloneable pool handle shared with the durable settlement outbox.
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
 }
 
 #[async_trait]
 impl EventStore for PostgresStore {
     async fn save(&self, record: &MarginRecord) -> Result<(MarginRecord, bool), LedgerlineError> {
+        let source_receipt = record
+            .event
+            .source_settlement_receipt
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| LedgerlineError::Storage(error.to_string()))?;
         let result = sqlx::query(
             "INSERT INTO margin_events (idempotency_key, request_id, customer_id, feature, model, \
              source, outcome, revenue_micros, cogs_micros, margin_micros, margin_bps, \
-             customer_account, revenue_account, cogs_account, provider_account, revenue_hold_id, \
-             revenue_sequence, cogs_sequence, created_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) \
+             customer_account, revenue_account, cogs_account, provider_account, \
+             source_settlement_receipt, revenue_hold_id, revenue_sequence, cogs_sequence, created_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) \
              ON CONFLICT (idempotency_key) DO NOTHING",
         )
         .bind(&record.event.idempotency_key)
@@ -157,6 +169,7 @@ impl EventStore for PostgresStore {
         .bind(&record.event.revenue_account)
         .bind(&record.event.cogs_account)
         .bind(&record.event.provider_account)
+        .bind(source_receipt)
         .bind(&record.settlement.revenue_hold_id)
         .bind(record.settlement.revenue_sequence)
         .bind(record.settlement.cogs_sequence)
@@ -271,6 +284,13 @@ fn parse_outcome(value: &str) -> Result<EventOutcome, LedgerlineError> {
 fn row_to_record(row: &PgRow) -> Result<MarginRecord, LedgerlineError> {
     let source: String = row.try_get("source").map_err(storage_error)?;
     let outcome: String = row.try_get("outcome").map_err(storage_error)?;
+    let source_receipt: Option<String> = row
+        .try_get("source_settlement_receipt")
+        .map_err(storage_error)?;
+    let source_settlement_receipt = source_receipt
+        .map(|value| serde_json::from_str(&value))
+        .transpose()
+        .map_err(|error| LedgerlineError::Storage(error.to_string()))?;
     Ok(MarginRecord {
         event: MeterEvent {
             idempotency_key: row.try_get("idempotency_key").map_err(storage_error)?,
@@ -286,6 +306,7 @@ fn row_to_record(row: &PgRow) -> Result<MarginRecord, LedgerlineError> {
             revenue_account: row.try_get("revenue_account").map_err(storage_error)?,
             cogs_account: row.try_get("cogs_account").map_err(storage_error)?,
             provider_account: row.try_get("provider_account").map_err(storage_error)?,
+            source_settlement_receipt,
         },
         margin_micros: row.try_get("margin_micros").map_err(storage_error)?,
         margin_bps: row.try_get("margin_bps").map_err(storage_error)?,

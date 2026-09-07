@@ -10,3 +10,6 @@ passport-core = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

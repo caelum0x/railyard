@@ -1,6 +1,6 @@
 # Relay product integration
 
-This directory vendors TensorZero as ReelForge's standalone Relay inference
+This directory vendors TensorZero as Railyard's standalone Relay inference
 gateway. Its executable is `gateway` in the `crates` workspace. A no-model
 development instance starts with:
 
@@ -25,16 +25,184 @@ python3 ../../../scripts/cloud-runtime-env.py relay -- \
   cargo run -p gateway -- --config-file ../config/tensorzero.toml
 ```
 
-ReelForge adds opt-in success-only Mint billing. When
+Relay adds opt-in success-only Mint billing. When
 `RELAY_BILLING_ENABLED=1`, startup now fails closed unless `MINT_SERVER_URL`,
-`MINT_API_KEY`, `MINT_PAYEE_ACCOUNT`, and `RELAY_AITP_PAYEE` are configured; it
-no longer silently falls back to an unfunded in-memory ledger.
+`MINT_API_KEY`, `MINT_PAYEE_ACCOUNT`, `RELAY_AITP_PAYEE`, authenticated gateway
+access, Postgres, and `MINT_VERIFICATION_KEYS_JSON` are configured; it no longer
+silently falls back to an unfunded in-memory ledger. Verification keys are a JSON
+array of `{ "key_id": "...", "public_key_hex": "<64 lowercase hex>" }` and are
+operator-pinned rather than dynamically trusted from Mint discovery.
 `MINT_PAYER_ACCOUNT` is an optional single-payer override.
 
-The main integration gap is product configuration: billing prices currently use
-a conservative default table rather than a versioned operator-owned model price
-catalog. This subtree is a maintained vendor fork, so upstream claims and links
-below describe TensorZero itself, not automatically the ReelForge deployment.
+Relay persists the exact reservation and one immutable terminal command in
+Postgres before Mint calls, recovers stale commands without rerunning inference,
+and atomically stores verified capture evidence with command completion.
+Periodic recovery, panic/disconnect refunds, and the final shutdown recovery
+pass run in TensorZero's tracked task set, so graceful shutdown waits for their
+durable commands instead of abandoning unowned background tasks.
+Execution-owner fencing plus a renewable stream lease prevents duplicate callers
+or stale recovery workers from releasing a live hold. The signed authorization's
+full held amount is persisted separately from Relay's estimate, direct recovery
+reuses the already-resolved payer and idempotency key, and startup verifies that
+`RELAY_AITP_PAYEE` resolves in Mint to `MINT_PAYEE_ACCOUNT`. Streaming terminal
+usage/`[DONE]` is withheld until capture intent is durable; incomplete usage
+fails closed and is never converted to a guessed charge. The embedded model
+catalog can be overlaid with the validated legacy `RELAY_PRICE_CATALOG_PATH`,
+or replaced with a full capability-aware snapshot through
+`RELAY_CATALOG_PATH` (the two are mutually exclusive). The exact same catalog
+instance drives billing and the authenticated `GET /v1/relay/catalog` and
+`POST /v1/relay/quotes` endpoints, so apps cannot see a price different from
+the configured money path. Unknown models retain the conservative billing
+default.
+Native `/inference` `model_name` and `function_name` values, OpenAI-compatible
+TensorZero selectors, and response variant selectors all canonicalize to stable
+catalog identities, so a function-specific override does not change when
+TensorZero selects a different variant. Billing covers native inference,
+OpenAI-compatible chat/completions/responses, and embeddings. Native
+`params.chat_completion.max_tokens` participates in the authorization ceiling,
+and embedding responses settle prompt usage with an explicit zero output
+dimension. Request pricing accepts the same 100 MiB ceiling as the gateway, so
+large multimodal JSON is not misclassified as an unknown maximum-cost request.
+Paid batch inference uses one durable hold across its asynchronous lifecycle:
+the accepted batch ID and function billing identity are committed before the
+start response is exposed, pending aggregate polls retain the hold, provider
+failure releases it, and a completed aggregate poll sums every inference's
+normalized usage and captures exactly once. Batch ownership is principal-bound
+and a leased single-poller transition prevents concurrent reconciliation.
+Paid callers must poll the whole batch; the per-inference poll route is rejected
+because a partial response cannot prove the aggregate charge for the one hold.
+Named TensorZero models and functions are operator-controlled retail routes:
+they never use the generic fallback. Paid startup verifies that every configured
+model, embedding model, and non-internal function has an enabled price in the
+effective catalog. `/health` also probes that catalog and, when billing is
+enabled, performs a protected non-mutating Mint ledger read so revoked Mint
+credentials or a failed billing store make Relay unready.
+
+The Relay-owned integration surface is split into small crates under
+`crates/` so other Railyard applications never depend on TensorZero gateway
+internals:
+
+- `relay-contract`: versioned wire types, exact microdollars, model selectors,
+  normalized usage, AITP headers/challenges, errors, and settlement evidence.
+- `relay-sdk`: hardened async Rust client for native and OpenAI-compatible JSON,
+  streaming SSE, embeddings, batches, multipart uploads, typed 402 challenges,
+  paid retries across non-streaming and streaming inference, typed unhealthy
+  dependency snapshots, catalog/quote discovery, and settlement lookup. Dropping a paid
+  stream before `[DONE]` can enqueue its request ID without network I/O; the
+  separately-run recovery worker performs the asynchronous evidence lookup.
+  Settled replays fail closed unless a caller-pinned
+  `MintAttestationValidator` independently verifies the Mint signature,
+  receipt projection, and principal/request binding.
+- `clients/relay-js`: dependency-free JavaScript/TypeScript client for Node,
+  browsers, Expo, and React Native. It mirrors the paid one-retry flow,
+  catalog/quote discovery, typed health, settlement evidence, binary multipart,
+  bounded SSE, and principal-scoped cost-event operations needed by web and
+  mobile apps.
+  Replay evidence requires an injected pinned-key verifier before it becomes a
+  trusted already-settled result; absent or rejected verification has distinct
+  fail-closed errors. Python and Ruby enforce the same boundary.
+- `clients/relay-python`: dependency-free synchronous and asynchronous Python
+  client for backend services. It uses injected transports or a redirect-free
+  standard-library transport and mirrors Relay's paid, streaming, discovery,
+  evidence, binary multipart, and cost-event boundaries for Menivor's FastAPI layer.
+- `clients/relay-ruby`: dependency-free Ruby client with the same typed AITP
+  one-retry boundary, paid streaming, binary multipart, live discovery/quotes,
+  settlement evidence, and principal-scoped cost-event operations.
+- `relay-catalog`: refreshable model discovery, capability metadata, exact
+  quotes, last-good snapshot refresh, and the adapter used by gateway billing.
+- `relay-aitp`: durable challenge ownership and replay state. Challenges are
+  bound to the authenticated Relay principal; another account cannot reuse a
+  payer-signed authorization even if it obtains the request ID and headers.
+  Its Mint validator checks the operator-pinned Ed25519 key, signed payload,
+  receipt projection, and canonical principal/request reference. Bounded
+  retention cleanup removes stale challenges without touching live ones.
+- `relay-cost-feed`: idempotent cost-event contract, durable leasing, retry and
+  dead-letter policy. The gateway inserts each captured cost event in the same
+  Postgres transaction that commits Mint evidence and billing completion.
+  Authenticated owners can list `GET /v1/billing/cost-events` with `state`,
+  `before`, and bounded `limit` filters, inspect a specific event, and requeue
+  only their own dead letters through the matching `/replay` endpoint;
+  published or live events reject replay.
+- `relay-storage-postgres`: independently buildable restart-safe billing
+  coordinator, challenge/evidence/cost-event/provider-health adapters, and the
+  ordered Relay-only migration entry point. Paid gateway startup applies that
+  schema transactionally under a Postgres advisory lock and records each
+  migration once. The crate deliberately avoids the
+  TensorZero gateway/V8 dependency graph. Its credential-free recovery harness
+  injects a Mint capture outage and proves that the hold remains authoritative,
+  only one replacement worker replays it, and actual usage is debited once.
+- `relay-billing` and `relay-hedge`: success-only Mint settlement and adaptive,
+  cost-bounded provider execution.
+
+Cost events are never dropped when a consumer is unavailable. If
+`RELAY_COST_FEED_URL` is set, the gateway delivers them as JSON with the event
+UUID in `Idempotency-Key`; `RELAY_COST_FEED_BEARER` optionally authenticates the
+request. Without a URL, rows remain pending in `relay_cost_events`. Delivery
+uses bounded HTTP timeouts, disables redirects, leases rows with `SKIP LOCKED`,
+backs off failed attempts, and dead-letters after the configured attempt limit.
+
+The current dependency and completion graph is maintained in
+[`docs/RELAY-ENGINEERING-GRAPH.md`](docs/RELAY-ENGINEERING-GRAPH.md).
+The exact code-complete versus live-infrastructure boundary is recorded in
+[`docs/RELAY-RELEASE-BOUNDARY.md`](docs/RELAY-RELEASE-BOUNDARY.md).
+
+The Relay-only Postgres lifecycle can be checked without Docker, provider
+credentials, or Mint credentials:
+
+```bash
+python3 tools/relay_postgres_smoke.py
+```
+
+The runner creates an ephemeral local Postgres cluster, applies the six Relay
+migrations, and verifies principal-bound challenges, atomic
+settlement/evidence/cost-event commits, idempotency, concurrent `SKIP LOCKED`
+leases, batch metadata constraints, and provider-health checkpoints. It needs a
+host that permits Postgres shared memory; restricted sandboxes that reject
+`shmget` cannot start the database process.
+
+Relay also adds opt-in, per-model provider hedging and adaptive SLO routing on
+top of TensorZero's provider dispatch. It is disabled by default. When enabled,
+non-streaming calls race to the first complete success and streaming calls race
+to the first token; losing futures are cancelled and only the winning response
+can reach success-only billing. Real attempt latency, TTFT, retryable failures,
+and fatal failures feed the per-provider EWMA/circuit-breaker ranker.
+Prometheus metrics expose `relay_provider_attempts_total`, provider latency and
+TTFT histograms, hedge request outcomes, launched-attempt width, and per-provider
+wins.
+
+When Postgres is configured, the gateway restores adaptive provider-health
+records before serving, checkpoints them every 30 seconds, and performs a final
+tracked write on graceful shutdown. Snapshots preserve latency/error EWMAs and
+circuit state while subtracting process downtime from an open circuit's
+remaining cooldown. Malformed records are ignored and persistence failure falls
+back to neutral scores because routing health is an optimization, never billing
+or request authority.
+
+```toml
+[models.chat.hedge]
+enabled = true
+max_concurrency = 2
+stagger_ms = 75
+max_cost_micros = 120000
+
+[models.chat.hedge.provider_cost_micros]
+primary = 60000
+fallback = 55000
+```
+
+Secondary launches use progressive absolute deadlines (`1×`, `2×`, … the
+configured `stagger_ms`) rather than bursting together. With
+`max_cost_micros` set, a secondary provider without an explicit
+`provider_cost_micros` entry is conservatively blocked from the concurrent
+window. The primary still runs, so incomplete cost metadata degrades to normal
+fallback instead of making the request unavailable or silently exceeding the
+cap. Hedge configuration survives TensorZero stored-config snapshots.
+
+This subtree is a maintained vendor fork, so upstream claims and links below
+describe TensorZero itself, not automatically the Railyard Relay deployment.
+
+The exact owned/upstream boundary and the rules that keep Relay independently
+operable are documented in [`OWNERSHIP.md`](OWNERSHIP.md).
 
 ---
 

@@ -1,6 +1,6 @@
-# Character Lock Passport (working name)
+# Identity Lock
 
-> Supersedes the original "AI context portability / OAuth identity" concept in PLAN.md.
+> Separate from the original "AI context portability / OAuth identity" product in PLAN.md.
 > This is now a **Railyard infra service** — a provider-agnostic identity & consistency layer
 > consumed by *any* product on the rail (Menivor, and future payers), across *all* AI model providers.
 

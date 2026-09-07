@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use mint_ledger::Ledger;
 use mint_payments::PaymentRegistry;
-use mint_protocol::{Aitp402, InMemoryNonceStore, PayerKeys};
+use mint_protocol::{Aitp402, PayerKeys};
+use mint_receipts::Signer;
 use mint_reserve::{KycGate, Ramp, ReserveLedger};
 use mint_store::{Clock, LedgerStore};
 use mint_stream::StreamLedger;
@@ -16,7 +17,7 @@ use crate::shared::{DynKyc, DynPayerKeys, DynRamp, SharedStore};
 
 /// Concrete AITP-402 state-machine type used by the server (shared store,
 /// dyn clock, shared payer keys, in-memory nonce store).
-pub type ServerAitp<S> = Aitp402<SharedStore<S>, Arc<dyn Clock>, DynPayerKeys, InMemoryNonceStore>;
+pub type ServerAitp<S> = Aitp402<SharedStore<S>, Arc<dyn Clock>, DynPayerKeys>;
 
 /// Concrete reserve-ledger type used by the server.
 pub type ServerReserve<S> = ReserveLedger<SharedStore<S>, DynRamp, DynKyc>;
@@ -39,6 +40,9 @@ pub struct AppState<S: LedgerStore> {
     /// `None` when payments are unconfigured (dev/tests) ⇒ every webhook route
     /// returns `"provider not configured"`.
     pub payments: Option<Arc<PaymentRegistry>>,
+    /// Receipt/attestation signer. Callers pass the same signer to the store,
+    /// so ledger receipts and transfer attestations share one trust root.
+    pub receipt_signer: Arc<dyn Signer>,
 }
 
 impl<S: LedgerStore> Clone for AppState<S> {
@@ -51,6 +55,7 @@ impl<S: LedgerStore> Clone for AppState<S> {
             api_key: self.api_key.clone(),
             stripe_secret: self.stripe_secret.clone(),
             payments: self.payments.clone(),
+            receipt_signer: self.receipt_signer.clone(),
         }
     }
 }
@@ -65,6 +70,7 @@ impl<S: LedgerStore + 'static> AppState<S> {
         ramp: Arc<dyn Ramp>,
         kyc: Arc<dyn KycGate>,
         payer_keys: Arc<dyn PayerKeys>,
+        receipt_signer: Arc<dyn Signer>,
         api_key: impl Into<String>,
         stripe_secret: impl Into<String>,
     ) -> Self {
@@ -77,12 +83,10 @@ impl<S: LedgerStore + 'static> AppState<S> {
             DynRamp(ramp),
             DynKyc(kyc),
         ));
-        let nonces = InMemoryNonceStore::new(clock.clone());
         let aitp = Arc::new(Aitp402::new(
             Ledger::new(shared.clone()),
             clock,
             DynPayerKeys(payer_keys),
-            nonces,
         ));
 
         AppState {
@@ -93,6 +97,7 @@ impl<S: LedgerStore + 'static> AppState<S> {
             api_key: Arc::new(api_key.into()),
             stripe_secret: Arc::new(stripe_secret.into()),
             payments: None,
+            receipt_signer,
         }
     }
 

@@ -20,6 +20,10 @@ pub enum ForgeError {
     #[error("not a git repository (or any parent): {0}")]
     NotARepository(String),
 
+    /// The operation requires a non-bare worktree, but only a Git directory is available.
+    #[error("repository has no supported worktree: {0}")]
+    NoWorktree(String),
+
     /// An object's on-disk bytes could not be parsed (bad header, truncated
     /// payload, declared length mismatch, non-UTF-8 header, etc.).
     #[error("malformed {kind} object: {reason}")]
@@ -52,6 +56,24 @@ pub enum ForgeError {
     #[error("cannot resolve reference: {0}")]
     InvalidRef(String),
 
+    /// A ref compare-and-swap observed a different value than the caller's
+    /// expected old object id.
+    #[error("reference changed concurrently: {name} (expected {expected}, found {actual})")]
+    RefConflict {
+        name: String,
+        expected: String,
+        actual: String,
+    },
+
+    /// Another writer (or a crashed writer awaiting explicit recovery) owns the
+    /// ref lock.
+    #[error("reference is locked: {0}")]
+    RefLocked(String),
+
+    /// Repository-controlled input attempted to escape a repository-owned path.
+    #[error("unsafe repository path: {0}")]
+    UnsafePath(String),
+
     /// An abbreviated object id prefix matched more than one object.
     #[error("ambiguous object id prefix: {0}")]
     AmbiguousPrefix(String),
@@ -70,6 +92,47 @@ pub enum ForgeError {
     /// pack decode errors fail **closed** as a typed error rather than a panic.
     #[error("packfile error: {0}")]
     Pack(String),
+
+    /// The Git index is corrupt, unsupported, or exceeds a defensive bound.
+    #[error("invalid git index: {0}")]
+    InvalidIndex(String),
+
+    /// Another Git-compatible writer owns `.git/index.lock`.
+    #[error("git index is locked: {0}")]
+    IndexLocked(String),
+
+    /// A snapshot/restore would overwrite untracked or locally modified work.
+    #[error("worktree collision: {0}")]
+    WorktreeCollision(String),
+
+    /// An adversarial repository graph exceeded a declared traversal bound.
+    #[error("repository resource limit exceeded: {0}")]
+    ResourceLimit(String),
+
+    /// A received object graph is malformed, disconnected, type-confused, or
+    /// contains repository structures that strict fsck cannot accept.
+    #[error("received object graph rejected: {0}")]
+    Connectivity(String),
+
+    /// A branch update would discard commits without an explicit force policy.
+    #[error("non-fast-forward update rejected for {name}: {old} is not an ancestor of {new}")]
+    NonFastForward {
+        name: String,
+        old: String,
+        new: String,
+    },
+
+    /// A quarantine transaction or receive command violated its bounded input
+    /// contract before repository state was published.
+    #[error("receive transaction rejected: {0}")]
+    ReceiveRejected(String),
+
+    /// A three-way merge encountered a criss-cross history with more than one
+    /// merge base. The single-base strategy fails closed here rather than
+    /// silently choosing an arbitrary base (which risks mis-resolving a hunk);
+    /// a recursive/virtual-base merge is out of scope for this slice.
+    #[error("cannot merge: {0} merge bases (criss-cross history); recursive merge is unsupported")]
+    MergeMultipleBases(usize),
 }
 
 impl ForgeError {

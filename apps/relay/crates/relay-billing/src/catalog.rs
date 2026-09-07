@@ -9,32 +9,11 @@
 //! ## Units (ADR-0001: integer microdollars, no float on the money path)
 //!
 //! Providers publish prices as **USD per 1,000,000 tokens**. The billing engine
-//! ([`ModelPrice`]) charges in **integer micro-USD per token**. The exact
-//! relationship is:
-//!
-//! ```text
-//! micro_usd_per_token = usd_per_1M_tokens        // numerically equal
-//!                     = micro_usd_per_1M / 1e6
-//! ```
-//!
-//! so a model listed at `$3.00 / 1M` costs `3` micro-USD per token, and one at
-//! `$15.00 / 1M` costs `15`. Each [`CATALOG`] entry therefore stores the list
-//! price as **micro-USD per 1M tokens** (an integer = `usd * 1_000_000`), which
-//! [`per_token_micros`] divides down to the engine's per-token unit with
-//! half-up rounding — the same rounding convention as
-//! [`crate::money::usd_to_micros`]. Everything is `i64`; there is no float on
-//! the money path.
-//!
-//! ## Granularity note (documented limitation)
-//!
-//! One micro-USD per token is `$1.00 / 1M` — the finest rate this unit can
-//! express. Frontier models ($3–$75 / 1M) map exactly, but ultra-cheap models
-//! (e.g. `$0.10 / 1M` input) round toward `0` at this granularity. Rounding to
-//! the nearest integer is still far closer to the truth than the flat default,
-//! and undercharging a fraction of a micro on a `$0.10 / 1M` model is
-//! economically negligible. If sub-`$1/1M` fidelity is ever required, that is a
-//! follow-up ADR to move the engine to a per-million-token rate; it is
-//! deliberately out of scope for this additive catalog.
+//! ([`ModelPrice`]) retains those exact integer **micro-USD per million token**
+//! rates. Cost calculation multiplies tokens at full precision and rounds the
+//! final request charge up to one microdollar, so `$0.10 / 1M` is never rounded
+//! down to a free model. Everything is `i64`/`i128`; there is no float on the
+//! money path.
 //!
 //! ## Adding a model
 //!
@@ -49,17 +28,7 @@ use crate::pricing::{ModelPrice, PriceTable};
 /// equivalently the token count a per-1M price is quoted against (both `1e6`).
 /// Multiplying makes the [`CATALOG`] rows read as their dollar prices
 /// (`3 * USD_PER_MILLION` is `$3.00 / 1M`); dividing a micro-USD-per-1M price by
-/// it yields micro-USD per single token.
 const USD_PER_MILLION: i64 = 1_000_000;
-
-/// Convert a list price quoted in **micro-USD per 1,000,000 tokens** into the
-/// engine's **micro-USD per token**, rounding half-up (matching
-/// [`crate::money::usd_to_micros`]). `const` so the whole catalog is built from
-/// compile-time constants with no float anywhere.
-pub(crate) const fn per_token_micros(micro_usd_per_million: i64) -> i64 {
-    // Half-up rounding for a non-negative integer: (x + 0.5*scale) / scale.
-    (micro_usd_per_million + USD_PER_MILLION / 2) / USD_PER_MILLION
-}
 
 /// Build a [`ModelPrice`] from input/output list prices quoted in micro-USD per
 /// 1M tokens.
@@ -68,8 +37,8 @@ const fn price(
     completion_micro_usd_per_million: i64,
 ) -> ModelPrice {
     ModelPrice::new(
-        per_token_micros(prompt_micro_usd_per_million),
-        per_token_micros(completion_micro_usd_per_million),
+        prompt_micro_usd_per_million,
+        completion_micro_usd_per_million,
     )
 }
 
@@ -80,7 +49,7 @@ const fn price(
 /// is exactly the key the billing middleware looks up. Prices are published
 /// provider list prices (USD per 1M tokens, expressed here in micro-USD). Where a
 /// provider tiers by context length, the standard/base tier is used.
-const CATALOG: &[(&str, i64, i64)] = &[
+pub const BUILTIN_PRICES: &[(&str, i64, i64)] = &[
     // ---- Anthropic (claude opus / sonnet / haiku families) --------------
     (
         "anthropic/claude-3-opus",
@@ -172,10 +141,10 @@ const CATALOG: &[(&str, i64, i64)] = &[
 /// `default` as the conservative fallback for any model not in the catalog.
 ///
 /// This is the single entry point the gateway wires into billing: known models
-/// resolve to their accurate per-token rate, unknown models resolve to `default`.
+/// resolve to their accurate per-million rate, unknown models resolve to `default`.
 pub fn price_table(default: ModelPrice) -> PriceTable {
     let mut table = PriceTable::new(default);
-    for (raw_id, prompt_per_million, completion_per_million) in CATALOG {
+    for (raw_id, prompt_per_million, completion_per_million) in BUILTIN_PRICES {
         table.insert(
             ModelId::namespace(raw_id),
             price(*prompt_per_million, *completion_per_million),
@@ -188,24 +157,14 @@ pub fn price_table(default: ModelPrice) -> PriceTable {
 mod tests {
     use super::*;
 
-    /// The conservative default used in tests (mirrors the gateway's
-    /// `default_model_price()` = $10/$30 per 1M).
+    /// A deliberately smaller test fallback. Production's gateway default is
+    /// `$15/$75` per 1M; catalog tests only verify fallback mechanics here.
     fn default_price() -> ModelPrice {
-        ModelPrice::new(10, 30)
+        ModelPrice::new(10_000_000, 30_000_000)
     }
 
     fn model(raw: &str) -> ModelId {
         ModelId::namespace(raw)
-    }
-
-    #[test]
-    fn per_token_micros_rounds_half_up() {
-        assert_eq!(per_token_micros(3 * USD_PER_MILLION), 3); // $3/1M -> 3
-        assert_eq!(per_token_micros(2_500_000), 3); // $2.50/1M -> 2.5 -> 3 (half up)
-        assert_eq!(per_token_micros(600_000), 1); // $0.60/1M -> 0.6 -> 1
-        assert_eq!(per_token_micros(400_000), 0); // $0.40/1M -> 0.4 -> 0
-        assert_eq!(per_token_micros(1_500_000), 2); // $1.50/1M -> 1.5 -> 2
-        assert_eq!(per_token_micros(0), 0);
     }
 
     #[test]
@@ -214,38 +173,38 @@ mod tests {
         // Anthropic
         assert_eq!(
             table.price_for(&model("anthropic/claude-3-opus")),
-            ModelPrice::new(15, 75)
+            ModelPrice::new(15_000_000, 75_000_000)
         );
         assert_eq!(
             table.price_for(&model("anthropic/claude-3.5-sonnet")),
-            ModelPrice::new(3, 15)
+            ModelPrice::new(3_000_000, 15_000_000)
         );
         assert_eq!(
             table.price_for(&model("anthropic/claude-3.5-haiku")),
-            ModelPrice::new(1, 4) // $0.80 -> 1, $4 -> 4
+            ModelPrice::new(800_000, 4_000_000)
         );
         // OpenAI
         assert_eq!(
             table.price_for(&model("openai/gpt-4o")),
-            ModelPrice::new(3, 10) // $2.50 -> 3, $10 -> 10
+            ModelPrice::new(2_500_000, 10_000_000)
         );
         assert_eq!(
             table.price_for(&model("openai/gpt-4-turbo")),
-            ModelPrice::new(10, 30)
+            ModelPrice::new(10_000_000, 30_000_000)
         );
         assert_eq!(
             table.price_for(&model("openai/o1")),
-            ModelPrice::new(15, 60)
+            ModelPrice::new(15_000_000, 60_000_000)
         );
         // Google
         assert_eq!(
             table.price_for(&model("google/gemini-2.5-pro")),
-            ModelPrice::new(1, 10)
+            ModelPrice::new(1_250_000, 10_000_000)
         );
         // Mistral
         assert_eq!(
             table.price_for(&model("mistralai/mistral-large")),
-            ModelPrice::new(2, 6)
+            ModelPrice::new(2_000_000, 6_000_000)
         );
     }
 
@@ -262,7 +221,7 @@ mod tests {
         let unknown = model("some-startup/frontier-42b");
         assert!(!table.is_known(&unknown));
         assert_eq!(table.price_for(&unknown), default_price());
-        // default: 1000*10 + 500*30 = 10_000 + 15_000 = 25_000
+        // default: 1000*$10/1M + 500*$30/1M = 25,000 micro-USD.
         assert_eq!(
             table.cost(&unknown, 1000, 500),
             crate::money::Micros::new(25_000)
@@ -272,17 +231,17 @@ mod tests {
     #[test]
     fn cost_is_model_aware_for_a_known_model() {
         let table = price_table(default_price());
-        // gpt-4o = (3, 10): 1000*3 + 500*10 = 3000 + 5000 = 8000
+        // gpt-4o = ($2.50/$10 per 1M): 1000 + 500 tokens = 7,500 micro-USD.
         assert_eq!(
             table.cost(&model("openai/gpt-4o"), 1000, 500),
-            crate::money::Micros::new(8_000)
+            crate::money::Micros::new(7_500)
         );
     }
 
     #[test]
     fn every_catalog_id_is_namespaced_and_resolvable() {
         let table = price_table(default_price());
-        for (raw_id, _, _) in CATALOG {
+        for (raw_id, _, _) in BUILTIN_PRICES {
             let id = ModelId::namespace(raw_id);
             assert!(
                 id.as_str().starts_with("openrouter/"),
@@ -298,7 +257,7 @@ mod tests {
     #[test]
     fn catalog_has_no_duplicate_ids() {
         let mut seen = std::collections::HashSet::new();
-        for (raw_id, _, _) in CATALOG {
+        for (raw_id, _, _) in BUILTIN_PRICES {
             assert!(seen.insert(*raw_id), "duplicate catalog id: {raw_id}");
         }
     }

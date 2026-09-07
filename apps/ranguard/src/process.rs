@@ -82,6 +82,22 @@ impl GameProcess {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+
+    /// Test-only constructor that decouples the spawned child from the binary
+    /// whose integrity we track. Production code always uses `launch`, which ties
+    /// them together; tests use this to drive the `BinaryTampered` branch without
+    /// executing (and then mutating) a real, freshly-copied executable — which is
+    /// unreliable on platforms that refuse to run unsigned binaries.
+    #[cfg(test)]
+    fn from_parts(child: Child, binary_path: PathBuf, expected_hash_hex: String) -> GameProcess {
+        let pid = child.id();
+        GameProcess {
+            child,
+            pid,
+            binary_path,
+            expected_hash_hex,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -107,5 +123,60 @@ mod tests {
         // Wait for it to finish, then attestation should report Exited.
         std::thread::sleep(std::time::Duration::from_millis(600));
         assert_eq!(proc.attest().unwrap(), AttestOutcome::Exited);
+    }
+
+    // Exercises the BinaryTampered branch. We spawn a real, signed system child
+    // (/bin/sleep) so it runs and reaps cleanly, but we integrity-check a SEPARATE
+    // file we own and can freely rewrite. This avoids executing an unsigned copy
+    // of a binary (which some platforms refuse to run). `attest` checks the binary
+    // hash before liveness, so overwriting that file surfaces as BinaryTampered.
+    #[cfg(unix)]
+    #[test]
+    fn detects_binary_tamper() {
+        use crate::manifest::hash_file;
+        use std::fs;
+        use std::io::Write;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let sleep = Path::new("/bin/sleep");
+        if !sleep.exists() {
+            return; // environment without /bin/sleep; skip gracefully
+        }
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("ranguard_proc_tamper_{nanos}"));
+        fs::create_dir_all(&dir).unwrap();
+
+        // The tracked "binary": an ordinary file we can rewrite at will.
+        let tracked = dir.join("tracked.bin");
+        {
+            let mut f = fs::File::create(&tracked).unwrap();
+            f.write_all(b"original-trusted-contents").unwrap();
+        }
+        let trusted = to_hex(&hash_file(&tracked).unwrap());
+
+        // A real, well-behaved child so terminate() reaps cleanly.
+        let child = Command::new(sleep).arg("2").spawn().unwrap();
+        let mut proc = GameProcess::from_parts(child, tracked.clone(), trusted.clone());
+
+        // Tamper: overwrite the tracked file with different bytes.
+        {
+            let mut f = fs::File::create(&tracked).unwrap();
+            f.write_all(b"tampered-different-contents").unwrap();
+        }
+
+        match proc.attest().unwrap() {
+            AttestOutcome::BinaryTampered { expected, actual } => {
+                assert_eq!(expected, trusted);
+                assert_ne!(expected, actual);
+            }
+            other => panic!("expected BinaryTampered, got {other:?}"),
+        }
+
+        proc.terminate();
+        fs::remove_dir_all(&dir).ok();
     }
 }

@@ -10,7 +10,7 @@ name = "turnstile-demo"
 path = "src/main.rs"
 
 [dependencies]
-turnstile-core.workspace = true
+turnstile-core = { workspace = true, features = ["postgres"] }
 turnstile-axum.workspace = true
 aitp-client.workspace = true
 axum.workspace = true
