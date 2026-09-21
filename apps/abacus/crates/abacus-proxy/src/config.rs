@@ -23,6 +23,11 @@ pub struct Config {
     /// Upstream path requests are forwarded to (`UPSTREAM_PATH`, default
     /// `/v1/chat/completions`).
     pub upstream_path: String,
+    /// Optional multi-provider pricing config file (`ABACUS_PRICING_CONFIG`). When
+    /// set, its entries overlay the built-in table so any provider/model the
+    /// operator prices is honored; when absent, only the built-in OpenAI rates
+    /// apply and other models fail with `model_not_priced`.
+    pub pricing_config_path: Option<String>,
     /// Declarative agent/budget policy file (`ABACUS_AGENT_CONFIG`).
     pub agent_config_path: String,
     /// Append-only settled receipt log (`ABACUS_RECEIPT_LOG`).
@@ -79,6 +84,7 @@ impl Config {
             upstream_base_url: require("UPSTREAM_BASE_URL")?,
             provider: optional("ABACUS_PROVIDER", "openai"),
             upstream_path: optional("UPSTREAM_PATH", "/v1/chat/completions"),
+            pricing_config_path: optional_value("ABACUS_PRICING_CONFIG"),
             agent_config_path: require("ABACUS_AGENT_CONFIG")?,
             receipt_log_path: optional("ABACUS_RECEIPT_LOG", "./abacus-receipts.jsonl"),
             hold_store_path: optional("ABACUS_HOLD_STORE", "./abacus-open-holds.json"),

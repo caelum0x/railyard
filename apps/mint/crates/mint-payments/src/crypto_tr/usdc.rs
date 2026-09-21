@@ -10,7 +10,8 @@
 //! - **Pure chain**: a watcher confirms a deposit tx via JSON-RPC
 //!   (`confirm_deposit` → `eth_getTransactionReceipt`).
 //!
-//! Off-ramp (`initiate_payout`) submits a transfer to the configured RPC.
+//! Off-ramp (`initiate_payout`) submits an ERC-20 `transfer(to,amount)` to the
+//! USDC token contract via the configured RPC (`eth_sendTransaction`).
 
 use std::sync::Arc;
 
@@ -32,6 +33,29 @@ use crate::verify::hmac_sha256_hex_verify;
 const COMMERCE_API_BASE: &str = "https://api.commerce.coinbase.com";
 /// The Coinbase Commerce API version header value.
 const COMMERCE_API_VERSION: &str = "2018-03-22";
+
+/// The canonical ERC-20 `transfer(address,uint256)` function selector —
+/// `keccak256("transfer(address,uint256)")[..4]`, a fixed well-known constant.
+const ERC20_TRANSFER_SELECTOR: &str = "a9059cbb";
+
+/// ABI-encode an ERC-20 `transfer(to, amount)` call into the `data` field of an
+/// `eth_sendTransaction`: the 4-byte selector, then the 32-byte left-padded
+/// recipient address, then the 32-byte big-endian `amount` (in the token's base
+/// units). Returns [`RampError::ProviderUnavailable`] for a malformed address
+/// (the [`RampError`] taxonomy has no dedicated "bad destination" variant; the
+/// redeem burn is already durable, so the payout surfaces as retryable-failed).
+fn encode_erc20_transfer(to: &str, amount_base_units: u128) -> Result<String, RampError> {
+    let hex_addr = to.strip_prefix("0x").unwrap_or(to);
+    if hex_addr.len() != 40 || !hex_addr.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(RampError::ProviderUnavailable);
+    }
+    // 24 leading zero-nibbles pad the 20-byte (40-hex) address to a 32-byte word;
+    // `{:064x}` renders the amount as a 32-byte big-endian word.
+    Ok(format!(
+        "0x{ERC20_TRANSFER_SELECTOR}{:0>64}{amount_base_units:064x}",
+        hex_addr.to_ascii_lowercase()
+    ))
+}
 
 /// A live USDC [`Ramp`] over an injected [`HttpTransport`] (JSON-RPC node).
 pub struct UsdcRamp {
@@ -161,17 +185,37 @@ impl Ramp for UsdcRamp {
         dest: &PayoutDest,
         amount: Micros,
     ) -> Result<Payout, RampError> {
-        // Submit the (deploy-time signed) transfer to the node. The RPC call is
-        // real + fake-injectable; transaction signing lives at deploy.
+        // USDC pays out as an ERC-20 `transfer(to, amount)` to the token
+        // contract — NOT a native-value transfer. Signing is performed by the
+        // configured node / relayer (`eth_sendTransaction`); an optional
+        // `payout_from` selects the operator hot wallet when the node holds many.
         let address = match dest {
-            PayoutDest::Crypto { address, .. } => address.clone(),
+            PayoutDest::Crypto { address, .. } => address.as_str(),
             PayoutDest::Stripe { .. } => return Err(RampError::ProviderUnavailable),
         };
+        // USDC is a 6-decimal ERC-20 and microdollars are also 6-decimal, so the
+        // payout base-unit amount equals the microdollar amount 1:1
+        // (1 µ$ = 1 USDC base unit). A non-positive amount can never reach here
+        // (redeem enforces strictly-positive) but is rejected defensively.
+        let amount_base_units =
+            u128::try_from(amount.get()).map_err(|_| RampError::ProviderUnavailable)?;
+        let token_contract = self
+            .cfg
+            .extra("token_contract")
+            .filter(|c| !c.is_empty())
+            .ok_or(RampError::ProviderUnavailable)?
+            .to_string();
+        let data = encode_erc20_transfer(address, amount_base_units)?;
+        let mut tx = serde_json::json!({
+            "to": token_contract,
+            "value": "0x0",
+            "data": data,
+        });
+        if let Some(from) = self.cfg.extra("payout_from").filter(|f| !f.is_empty()) {
+            tx["from"] = serde_json::json!(from);
+        }
         let _ = self
-            .rpc_call(
-                "eth_sendTransaction",
-                serde_json::json!([{ "to": address, "value": amount.get() }]),
-            )
+            .rpc_call("eth_sendTransaction", serde_json::json!([tx]))
             .await?;
         Ok(Payout {
             payout_ref: payout_ref.to_string(),
@@ -237,9 +281,14 @@ mod tests {
     use crate::crypto_tr::test_support::{headers, hmac_hex, FakeTransport};
     use std::collections::HashMap;
 
+    /// The mainnet USDC token contract — used to assert payouts target the token,
+    /// not the recipient EOA.
+    const USDC_TOKEN: &str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+
     fn cfg(secret: Option<&str>, commerce_key: Option<&str>) -> ProviderConfig {
         let mut extra = HashMap::new();
         extra.insert("rpc_url".to_string(), "https://rpc.local".to_string());
+        extra.insert("token_contract".to_string(), USDC_TOKEN.to_string());
         if let Some(k) = commerce_key {
             extra.insert("commerce_api_key".to_string(), k.to_string());
         }
@@ -385,6 +434,69 @@ mod tests {
         let ramp = UsdcRamp::new(FakeTransport::new().arc(), cfg(Some("s"), None));
         let dest = PayoutDest::Stripe {
             account: "acct".into(),
+        };
+        assert_eq!(
+            ramp.initiate_payout("usdc:p1", &dest, Micros::new(1_000_000))
+                .await,
+            Err(RampError::ProviderUnavailable)
+        );
+    }
+
+    #[tokio::test]
+    async fn payout_encodes_erc20_transfer_to_token_contract() {
+        let transport = FakeTransport::new()
+            .route("rpc.local", 200, serde_json::json!({"result":"0xtxhash"}))
+            .arc();
+        let ramp = UsdcRamp::new(transport.clone(), cfg(Some("s"), None));
+        let dest = PayoutDest::Crypto {
+            chain: "ethereum".into(),
+            address: "0x1111111111111111111111111111111111111111".into(),
+        };
+        let payout = ramp
+            .initiate_payout("usdc:p1", &dest, Micros::new(25_000_000))
+            .await
+            .expect("payout paid");
+        assert_eq!(payout.status, PayoutStatus::Paid);
+        assert_eq!(payout.amount_micros, Micros::new(25_000_000));
+
+        let body = String::from_utf8(transport.last_post_body()).unwrap();
+        // The tx targets the USDC token contract, carries ZERO native value, and
+        // moves funds via `transfer(to,amount)` calldata — NOT a native transfer
+        // of `amount` wei (the prior bug).
+        assert!(body.contains(&format!("\"to\":\"{USDC_TOKEN}\"")), "body: {body}");
+        assert!(body.contains("\"value\":\"0x0\""), "body: {body}");
+        assert!(!body.contains("25000000"), "must not send raw micros as wei: {body}");
+        // selector + 32-byte padded recipient + 32-byte big-endian amount
+        // (25_000_000 µ$ == 25_000_000 USDC base units == 0x17d7840).
+        let expected_data = format!(
+            "0xa9059cbb{:0>64}{:064x}",
+            "1111111111111111111111111111111111111111", 25_000_000u128
+        );
+        assert!(body.contains(&expected_data), "body: {body}");
+    }
+
+    #[tokio::test]
+    async fn payout_without_token_contract_is_unavailable() {
+        let mut cfg = cfg(Some("s"), None);
+        cfg.extra.remove("token_contract");
+        let ramp = UsdcRamp::new(FakeTransport::new().arc(), cfg);
+        let dest = PayoutDest::Crypto {
+            chain: "ethereum".into(),
+            address: "0x1111111111111111111111111111111111111111".into(),
+        };
+        assert_eq!(
+            ramp.initiate_payout("usdc:p1", &dest, Micros::new(1_000_000))
+                .await,
+            Err(RampError::ProviderUnavailable)
+        );
+    }
+
+    #[tokio::test]
+    async fn payout_to_malformed_address_is_rejected() {
+        let ramp = UsdcRamp::new(FakeTransport::new().arc(), cfg(Some("s"), None));
+        let dest = PayoutDest::Crypto {
+            chain: "ethereum".into(),
+            address: "0xnothex".into(),
         };
         assert_eq!(
             ramp.initiate_payout("usdc:p1", &dest, Micros::new(1_000_000))

@@ -74,6 +74,25 @@ async fn main() -> anyhow::Result<()> {
         .bind_addr
         .parse()
         .context("ABACUS_BIND_ADDR must be a valid socket address")?;
+
+    // Config-driven multi-provider pricing: overlay ABACUS_PRICING_CONFIG on the
+    // built-in OpenAI table so any provider/model an operator prices is honored;
+    // fall back to the built-in table when the env var is unset.
+    let pricing = match &config.pricing_config_path {
+        Some(path) => {
+            let table = PricingTable::from_config_file(std::path::Path::new(path))
+                .context("loading ABACUS_PRICING_CONFIG pricing table")?;
+            tracing::info!(%path, "loaded multi-provider pricing config");
+            Arc::new(table)
+        }
+        None => {
+            tracing::info!(
+                "ABACUS_PRICING_CONFIG unset; using built-in OpenAI pricing table only"
+            );
+            Arc::new(PricingTable::builtin())
+        }
+    };
+
     let state = AppState {
         mint,
         upstream,
@@ -81,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
         receipts,
         holds: holds.clone(),
         ingress_api_key: config.abacus_api_key.clone(),
-        pricing: Arc::new(PricingTable::builtin()),
+        pricing,
         provider: config.provider.clone(),
         upstream_path: config.upstream_path.clone(),
     };

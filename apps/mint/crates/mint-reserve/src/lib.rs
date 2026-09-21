@@ -20,8 +20,8 @@ mod ramp;
 mod reserve_ledger;
 
 pub use ramp::{
-    Asset, Deposit, FakeKycGate, FakeRamp, KycGate, KycTier, Payout, PayoutDest, PayoutStatus,
-    Ramp, RampError, StrictKycGate,
+    Asset, Deposit, FakeKycGate, FakeRamp, KycError, KycGate, KycStatus, KycTier, KycVerifier,
+    Payout, PayoutDest, PayoutStatus, Ramp, RampError, StrictKycGate, VerifiedKycGate,
 };
 pub use reserve_ledger::ReserveLedger;
 

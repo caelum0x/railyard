@@ -357,7 +357,7 @@ pub async fn create_event(
     auth: Authed,
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
-    use rago_billing::events::{build_event, validate_creation, EventParams};
+    use rago_billing::events::EventParams;
 
     let p = wrapped(&body, "event");
     let params = EventParams {
@@ -369,50 +369,14 @@ pub async fn create_event(
         precise_total_amount_cents: dec_of(p, "precise_total_amount_cents"),
     };
 
-    // Look up the subscription + metric for validation.
-    let sub = st
-        .db
-        .find_subscription_by_external_id(auth.organization.id, &params.external_subscription_id)
-        .await?;
-    let sub_ext_ids: Vec<String> = sub.as_ref().map(|s| vec![s.external_id.clone()]).unwrap_or_default();
-    let metric = st.db.find_metric_by_code(auth.organization.id, &params.code).await?;
-    let exists = st
-        .db
-        .event_exists(
-            auth.organization.id,
-            &params.external_subscription_id,
-            &params.transaction_id,
-        )
-        .await?;
-
-    validate_creation(&params, &sub_ext_ids, metric.as_ref(), exists).map_err(|e| match e {
-        rago_billing::events::EventValidationError::SubscriptionNotFound => ApiError::NotFound("subscription".into()),
-        rago_billing::events::EventValidationError::BillableMetricNotFound => ApiError::NotFound("billable_metric".into()),
-        rago_billing::events::EventValidationError::TransactionId => {
-            ApiError::validation("transaction_id", "value_is_missing_or_already_exists")
-        }
-        rago_billing::events::EventValidationError::InvalidProperties => {
-            ApiError::validation("properties", "value_is_not_valid_number")
-        }
-        rago_billing::events::EventValidationError::InvalidTimestamp => {
-            ApiError::validation("timestamp", "invalid_format")
-        }
-    })?;
-
-    let mut event = build_event(auth.organization.id, &params, now());
-    event.customer_id = sub.as_ref().map(|s| s.customer_id);
-    event.subscription_id = sub.as_ref().map(|s| s.id);
-    // The DB unique index is the authoritative dedup guard: if a concurrent
-    // request won the race between the check above and this insert, the row is a
-    // no-op and we surface the same "already exists" validation error.
-    if !st.db.insert_event(&event).await? {
-        return Err(ApiError::validation(
+    // Shared validate + dedup + insert path (also used by reel usage ingest).
+    match crate::emit::ingest_event(&st, auth.organization.id, params).await? {
+        crate::emit::Ingest::Created(event) => Ok(Json(json!({ "event": ser::event(&event) }))),
+        crate::emit::Ingest::Duplicate => Err(ApiError::validation(
             "transaction_id",
             "value_is_missing_or_already_exists",
-        ));
+        )),
     }
-
-    Ok(Json(json!({ "event": ser::event(&event) })))
 }
 
 // ---- invoices (billing trigger + fetch) ------------------------------------

@@ -339,6 +339,103 @@ impl KycGate for StrictKycGate {
     }
 }
 
+// ---- Production KYC: provider-verified identity seam ----------------------
+
+/// The verified-identity standing of an account as reported by a KYC provider
+/// (Persona / Stripe Identity). This is the account's *actual* status on file,
+/// distinct from any tier a caller merely *presents* on a redeem request.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KycStatus {
+    /// No verification exists for the account — treat as unverified.
+    Unverified,
+    /// A verification exists but is not yet in a terminal approved state
+    /// (pending / processing / needs-review).
+    Pending,
+    /// Identity verification approved at the given tier.
+    Approved(KycTier),
+    /// Verification was explicitly declined / failed.
+    Declined,
+}
+
+/// Failures a [`KycVerifier`] provider lookup can report. Every variant is
+/// treated as **deny** by [`VerifiedKycGate`] (fail closed): a KYC provider we
+/// cannot reach — or is misconfigured — must never wave a money-moving payout
+/// through.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KycError {
+    /// The provider is transiently unreachable (network / 5xx).
+    ProviderUnavailable,
+    /// The provider is missing required configuration (e.g. an API key).
+    NotConfigured,
+    /// The provider returned a response we could not interpret.
+    MalformedResponse,
+}
+
+/// The injectable KYC-provider lookup seam. Mirrors the [`Ramp`] / `Signer`
+/// determinism seams: the concrete Persona / Stripe Identity impls live in
+/// `mint-payments` behind an `HttpTransport`; deterministic fakes (below) run in
+/// tests with NO network and NO keys.
+///
+/// A verifier resolves an account's *provider-verified* [`KycStatus`] keyed on
+/// its stable `acct_…` id (used as the provider `reference-id` / metadata key).
+#[async_trait]
+pub trait KycVerifier: Send + Sync {
+    /// Resolve the account's current verified status from the provider.
+    async fn verify(&self, account: &AccountId) -> Result<KycStatus, KycError>;
+}
+
+/// The production [`KycGate`]: authorizes a redemption ONLY against the account's
+/// provider-*verified* tier (looked up live via a [`KycVerifier`]) plus a
+/// per-transaction payout limit.
+///
+/// Unlike the dev [`FakeKycGate`], it deliberately IGNORES the caller-presented
+/// tier — identity is established by the provider, never asserted by the caller —
+/// and it fails **closed** on any provider error. This is the gate an operator
+/// wires in production to replace the deny-by-default [`StrictKycGate`].
+pub struct VerifiedKycGate<V: KycVerifier> {
+    verifier: V,
+    min_tier: KycTier,
+    per_tx_limit: Micros,
+}
+
+impl<V: KycVerifier> VerifiedKycGate<V> {
+    /// A gate that approves a redemption only when the provider reports the
+    /// account verified at ≥ `min_tier` AND the amount is within `per_tx_limit`.
+    pub fn new(verifier: V, min_tier: KycTier, per_tx_limit_micros: i64) -> Self {
+        VerifiedKycGate {
+            verifier,
+            min_tier,
+            per_tx_limit: Micros::new(per_tx_limit_micros),
+        }
+    }
+}
+
+#[async_trait]
+impl<V: KycVerifier> KycGate for VerifiedKycGate<V> {
+    async fn authorize(
+        &self,
+        account: &AccountId,
+        _presented_tier: KycTier,
+        amount: Micros,
+    ) -> Result<(), MintError> {
+        // Enforce the payout ceiling before spending a provider round-trip.
+        if amount.get() > self.per_tx_limit.get() {
+            return Err(MintError::PayoutLimitExceeded);
+        }
+        // Establish identity from the provider, NOT from the caller-presented
+        // tier. Any provider failure denies (fail closed).
+        let status = self
+            .verifier
+            .verify(account)
+            .await
+            .map_err(|_| MintError::KycRequired)?;
+        match status {
+            KycStatus::Approved(tier) if tier >= self.min_tier => Ok(()),
+            _ => Err(MintError::KycRequired),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,5 +479,93 @@ mod tests {
             .authorize(&acct(), KycTier::Basic, Micros::new(999_999_999))
             .await
             .is_ok());
+    }
+
+    // ---- VerifiedKycGate: provider-verified identity + payout limit ---------
+
+    /// A deterministic [`KycVerifier`] fake: a fixed status, or a simulated
+    /// provider error. NO network.
+    struct FakeKycVerifier(Result<KycStatus, KycError>);
+
+    #[async_trait]
+    impl KycVerifier for FakeKycVerifier {
+        async fn verify(&self, _account: &AccountId) -> Result<KycStatus, KycError> {
+            self.0.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn verified_gate_admits_provider_approved_identity() {
+        let gate = VerifiedKycGate::new(
+            FakeKycVerifier(Ok(KycStatus::Approved(KycTier::Verified))),
+            KycTier::Verified,
+            1_000_000_000,
+        );
+        assert!(gate
+            .authorize(&acct(), KycTier::None, Micros::new(500_000_000))
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn verified_gate_ignores_a_caller_presented_tier() {
+        // Caller CLAIMS Verified, but the provider says Unverified: denied.
+        let gate = VerifiedKycGate::new(
+            FakeKycVerifier(Ok(KycStatus::Unverified)),
+            KycTier::Verified,
+            1_000_000_000,
+        );
+        assert_eq!(
+            gate.authorize(&acct(), KycTier::Verified, Micros::new(1))
+                .await,
+            Err(MintError::KycRequired)
+        );
+    }
+
+    #[tokio::test]
+    async fn verified_gate_denies_below_required_tier() {
+        let gate = VerifiedKycGate::new(
+            FakeKycVerifier(Ok(KycStatus::Approved(KycTier::Basic))),
+            KycTier::Verified,
+            1_000_000_000,
+        );
+        assert_eq!(
+            gate.authorize(&acct(), KycTier::Verified, Micros::new(1))
+                .await,
+            Err(MintError::KycRequired)
+        );
+    }
+
+    #[tokio::test]
+    async fn verified_gate_enforces_per_tx_limit_before_network() {
+        // Over the ceiling → PayoutLimitExceeded, even though the (unused here)
+        // provider would have approved.
+        let gate = VerifiedKycGate::new(
+            FakeKycVerifier(Ok(KycStatus::Approved(KycTier::Verified))),
+            KycTier::Verified,
+            1_000_000,
+        );
+        assert_eq!(
+            gate.authorize(&acct(), KycTier::Verified, Micros::new(1_000_001))
+                .await,
+            Err(MintError::PayoutLimitExceeded)
+        );
+    }
+
+    #[tokio::test]
+    async fn verified_gate_fails_closed_on_provider_error() {
+        for err in [
+            KycError::ProviderUnavailable,
+            KycError::NotConfigured,
+            KycError::MalformedResponse,
+        ] {
+            let gate = VerifiedKycGate::new(FakeKycVerifier(Err(err)), KycTier::Verified, i64::MAX);
+            assert_eq!(
+                gate.authorize(&acct(), KycTier::Verified, Micros::new(1))
+                    .await,
+                Err(MintError::KycRequired),
+                "provider error {err:?} must deny"
+            );
+        }
     }
 }

@@ -1311,10 +1311,13 @@ fn release_hold_detached(
     });
 }
 
-/// True for the inference-shaped routes we bill: the native `/inference` and the
-/// OpenAI-compatible chat/completions/responses/embeddings endpoints.
+/// True for the inference-shaped routes we bill: the native `/inference`, the
+/// passport-conditioned generation surface (which reuses the native inference
+/// handler), and the OpenAI-compatible chat/completions/responses/embeddings
+/// endpoints.
 fn is_billable_path(path: &str) -> bool {
     path.ends_with("/inference")
+        || path.ends_with("/v1/passport/generate")
         || path.ends_with("/chat/completions")
         || path.ends_with("/completions")
         || path.ends_with("/responses")
@@ -1573,7 +1576,9 @@ fn inference_route(path: &str) -> InferenceRoute {
         InferenceRoute::OpenAiEmbeddings
     } else if path.ends_with("/batch_inference") {
         InferenceRoute::BatchInference
-    } else if path.ends_with("/inference") {
+    } else if path.ends_with("/inference") || path.ends_with("/v1/passport/generate") {
+        // The passport surface delegates to the native inference handler, so its
+        // cost events attribute to the same route class.
         InferenceRoute::NativeInference
     } else {
         InferenceRoute::Unknown

@@ -24,6 +24,19 @@ use tensorzero_core::{endpoints, utils::gateway::SwappableAppStateData};
 pub fn build_otel_enabled_routes() -> (OtelEnabledRoutes, Router<SwappableAppStateData>) {
     let mut routes = vec![
         ("/inference", post(endpoints::inference::inference_handler)),
+        // Passport-conditioned generation surface. The Context Passport submits a
+        // resolved, provider-conditioned generation here; the payload is a native
+        // TensorZero inference request (function `passport_<modality>` + the
+        // assembled conditioning as input) so it reuses the exact inference
+        // pipeline and the success-only billing/AITP settlement middleware that
+        // wraps `/inference` (see `billing::is_billable_path`). The response
+        // carries the standard `usage` object plus the `AITP-Receipt` /
+        // `AITP-Request-ID` headers the passport client turns into signed payment
+        // evidence.
+        (
+            "/v1/passport/generate",
+            post(endpoints::inference::inference_handler),
+        ),
         (
             "/batch_inference",
             post(endpoints::batch_inference::start_batch_inference_handler),

@@ -81,9 +81,14 @@ trust decision.
 ## Product gaps
 
 Payer-key rotation is config-and-restart rather than an authenticated control
-plane. Redemption fails closed until a real KYC provider is configured; no
-allowlist or fake verification is used in production. Cash redemption also
-depends on a payout-capable provider (Creem and mobile IAP are deposit-only).
+plane. Redemption fails closed until a real KYC provider is configured: set
+`MINT_KYC_PROVIDER=persona|stripe_identity` plus the provider key
+(`PERSONA_API_KEY` / `STRIPE_API_KEY`) to install the `VerifiedKycGate`, which
+authorizes each cash-out against the account's provider-verified identity and a
+per-tx payout ceiling; with nothing configured every redeem is denied and no
+fake verification is ever used in production. Cash redemption also depends on a
+payout-capable provider (USDC pays out an ERC-20 `transfer` to the configured
+token contract; Creem and mobile IAP are deposit-only).
 The longer-term custody, anchoring, fee, and multi-currency decisions remain in
 `IMPLEMENTATION.md`.
 

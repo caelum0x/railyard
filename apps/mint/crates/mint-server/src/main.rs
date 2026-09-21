@@ -10,6 +10,15 @@
 //! - `MINT_PAYER_KEYS_JSON` — JSON payer-key registrations for AITP-402.
 //! - `STRIPE_WEBHOOK_SECRET` — HMAC secret for the Stripe on-ramp webhook.
 //! - `MINT_ALLOW_INMEMORY=1` — dev-only escape hatch when `DATABASE_URL` is unset.
+//! - `MINT_KYC_PROVIDER` — `persona` | `stripe_identity`: install a real,
+//!   provider-verified KYC gate (`VerifiedKycGate`) for cash-out. Requires the
+//!   provider key (`PERSONA_API_KEY`, or `STRIPE_API_KEY` for `stripe_identity`);
+//!   if the key is absent the server logs and falls back to the deny-by-default
+//!   `StrictKycGate` (fail closed). Unset ⇒ redemptions stay denied by default.
+//! - `MINT_KYC_PER_TX_LIMIT_MICROS` — per-redemption payout ceiling in
+//!   microdollars for the real gate (default `1_000_000_000` = $1,000).
+//! - `MINT_KYC_MIN_TIER` — `basic` | `verified`: the minimum provider-verified
+//!   tier a redemption requires (default `verified`).
 //! - `MINT_DEV_KYC_ALLOW=1` — dev-only: install the permissive `FakeKycGate`
 //!   instead of the deny-by-default `StrictKycGate`. REFUSED in production
 //!   (`DATABASE_URL` set) so it cannot ship enabled on a money-moving deployment.
@@ -23,10 +32,12 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context};
 use ed25519_dalek::VerifyingKey;
-use mint_payments::{HttpTransport, PaymentRegistry, ReqwestTransport};
+use mint_payments::{
+    HttpTransport, PaymentRegistry, PersonaKycVerifier, ReqwestTransport, StripeIdentityKycVerifier,
+};
 use mint_protocol::InMemoryPayerKeys;
 use mint_receipts::{Ed25519Signer, FixedSigner, Signer};
-use mint_reserve::{FakeKycGate, KycGate, KycTier, Ramp, StrictKycGate};
+use mint_reserve::{FakeKycGate, KycGate, KycTier, Ramp, StrictKycGate, VerifiedKycGate};
 use mint_server::{build_router, AppState};
 use mint_store::{Clock, LedgerStore, SystemClock};
 use mint_store_postgres::PgStore;
@@ -60,13 +71,13 @@ async fn main() -> anyhow::Result<()> {
     // (it routes `confirm_deposit` by the `<provider>:` ref prefix), and the
     // registry itself drives the per-provider on-ramp webhook routes.
     let transport: Arc<dyn HttpTransport> = Arc::new(ReqwestTransport::new());
-    let payments = Arc::new(PaymentRegistry::from_env(transport));
+    let payments = Arc::new(PaymentRegistry::from_env(transport.clone()));
     tracing::info!(
         active_providers = payments.active_count(),
         "payment registry loaded"
     );
     let ramp: Arc<dyn Ramp> = resolve_ramp(&payments, production)?;
-    let kyc: Arc<dyn KycGate> = load_kyc_gate(production)?;
+    let kyc: Arc<dyn KycGate> = load_kyc_gate(production, transport)?;
     let payer_keys = Arc::new(load_payer_keys()?);
 
     match database_url {
@@ -156,32 +167,67 @@ fn load_signer(production: bool) -> anyhow::Result<Arc<dyn Signer>> {
     }
 }
 
+/// A real, provider-verified KYC backend the binary can install.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KycProvider {
+    /// Persona (`withpersona.com`) inquiries.
+    Persona,
+    /// Stripe Identity verification sessions.
+    StripeIdentity,
+}
+
+impl KycProvider {
+    /// Parse the `MINT_KYC_PROVIDER` value (case-insensitive). `None` ⇒ the value
+    /// is not a recognized provider.
+    fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "persona" => Some(KycProvider::Persona),
+            "stripe" | "stripe_identity" | "stripe-identity" => Some(KycProvider::StripeIdentity),
+            _ => None,
+        }
+    }
+}
+
 /// Which KYC gate the binary should install. Decided purely from the deployment
-/// mode + the dev override so the decision is unit-testable without touching the
-/// process environment.
+/// mode, the dev override, and the configured provider so the decision is
+/// unit-testable without touching the process environment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KycChoice {
-    /// Deny-by-default [`StrictKycGate`] — the production default.
+    /// Deny-by-default [`StrictKycGate`] — the fail-closed default.
     Strict,
     /// Permissive [`FakeKycGate`] — dev only, never in production.
     DevFake,
+    /// A real, provider-verified [`VerifiedKycGate`].
+    Provider(KycProvider),
 }
 
-/// Pure KYC selection: production always denies by default; the permissive dev
-/// gate is only permitted when explicitly requested AND not in production.
-fn choose_kyc(production: bool, dev_allow: bool) -> anyhow::Result<KycChoice> {
+/// Pure KYC selection. Precedence: the dev fake (dev only, refused in prod) →
+/// a real provider (only when its key is present) → deny-by-default. A provider
+/// named without its key falls back to Strict (fail closed) rather than crashing
+/// the whole server, since only cash-out — not deposits/transfers — is gated.
+fn choose_kyc(
+    production: bool,
+    dev_allow: bool,
+    provider: Option<KycProvider>,
+    provider_key_present: bool,
+) -> anyhow::Result<KycChoice> {
     if production && dev_allow {
         bail!(
             "MINT_DEV_KYC_ALLOW=1 must not be set in production (DATABASE_URL is configured): the \
              permissive dev KYC gate cannot ship enabled on a money-moving deployment. Wire a real \
-             KycGate provider instead."
+             KycGate provider (MINT_KYC_PROVIDER) instead."
         );
     }
-    Ok(if dev_allow {
-        KycChoice::DevFake
-    } else {
-        KycChoice::Strict
-    })
+    if dev_allow {
+        return Ok(KycChoice::DevFake);
+    }
+    if let Some(p) = provider {
+        if provider_key_present {
+            return Ok(KycChoice::Provider(p));
+        }
+        return Ok(KycChoice::Strict);
+    }
+    Ok(KycChoice::Strict)
 }
 
 /// Which funding ramp the binary should install.
@@ -213,12 +259,95 @@ fn choose_ramp(
     Ok(RampChoice::DevFake)
 }
 
-/// Select the KYC gate from the environment. Production runs the deny-by-default
-/// [`StrictKycGate`]; the permissive [`FakeKycGate`] is a dev-only escape hatch
-/// (`MINT_DEV_KYC_ALLOW=1`) that is refused in production.
-fn load_kyc_gate(production: bool) -> anyhow::Result<Arc<dyn KycGate>> {
+/// The default per-redemption payout ceiling for the real KYC gate: $1,000.
+const DEFAULT_KYC_PER_TX_LIMIT_MICROS: i64 = 1_000_000_000;
+
+/// Read an env var, treating empty/whitespace as unset.
+fn env_nonempty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+/// The per-tx payout ceiling (microdollars) for the real KYC gate.
+fn kyc_per_tx_limit() -> anyhow::Result<i64> {
+    match env_nonempty("MINT_KYC_PER_TX_LIMIT_MICROS") {
+        Some(raw) => {
+            let n: i64 = raw
+                .trim()
+                .parse()
+                .context("MINT_KYC_PER_TX_LIMIT_MICROS must be an integer microdollar amount")?;
+            if n <= 0 {
+                bail!("MINT_KYC_PER_TX_LIMIT_MICROS must be a positive microdollar amount");
+            }
+            Ok(n)
+        }
+        None => Ok(DEFAULT_KYC_PER_TX_LIMIT_MICROS),
+    }
+}
+
+/// The minimum provider-verified tier a redemption requires for the real gate.
+fn kyc_min_tier() -> anyhow::Result<KycTier> {
+    match env_nonempty("MINT_KYC_MIN_TIER") {
+        Some(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "basic" => Ok(KycTier::Basic),
+            "verified" => Ok(KycTier::Verified),
+            other => bail!("MINT_KYC_MIN_TIER must be 'basic' or 'verified' (got '{other}')"),
+        },
+        None => Ok(KycTier::Verified),
+    }
+}
+
+/// Select the KYC gate from the environment. Precedence:
+/// 1. A real provider (`MINT_KYC_PROVIDER` + its key) → [`VerifiedKycGate`],
+///    which authorizes against provider-verified identity + a payout limit.
+/// 2. `MINT_DEV_KYC_ALLOW=1` (dev only, refused in production) → the permissive
+///    [`FakeKycGate`].
+/// 3. Otherwise the deny-by-default [`StrictKycGate`].
+fn load_kyc_gate(
+    production: bool,
+    transport: Arc<dyn HttpTransport>,
+) -> anyhow::Result<Arc<dyn KycGate>> {
     let dev_allow = std::env::var("MINT_DEV_KYC_ALLOW").ok().as_deref() == Some("1");
-    match choose_kyc(production, dev_allow)? {
+    let provider_raw = env_nonempty("MINT_KYC_PROVIDER");
+    let provider = match &provider_raw {
+        Some(raw) => Some(KycProvider::parse(raw).with_context(|| {
+            format!("MINT_KYC_PROVIDER '{raw}' is invalid — must be one of: persona, stripe_identity")
+        })?),
+        None => None,
+    };
+    // Each provider draws its credential from a distinct env var.
+    let provider_key = match provider {
+        Some(KycProvider::Persona) => env_nonempty("PERSONA_API_KEY"),
+        Some(KycProvider::StripeIdentity) => env_nonempty("STRIPE_API_KEY"),
+        None => None,
+    };
+    let min_tier = kyc_min_tier()?;
+    let per_tx_limit = kyc_per_tx_limit()?;
+
+    match choose_kyc(production, dev_allow, provider, provider_key.is_some())? {
+        KycChoice::Provider(p) => {
+            let key = provider_key.expect("provider key presence checked by choose_kyc");
+            let gate: Arc<dyn KycGate> = match p {
+                KycProvider::Persona => Arc::new(VerifiedKycGate::new(
+                    PersonaKycVerifier::new(transport, key),
+                    min_tier,
+                    per_tx_limit,
+                )),
+                KycProvider::StripeIdentity => Arc::new(VerifiedKycGate::new(
+                    StripeIdentityKycVerifier::new(transport, key),
+                    min_tier,
+                    per_tx_limit,
+                )),
+            };
+            tracing::info!(
+                provider = ?p,
+                per_tx_limit_micros = per_tx_limit,
+                min_tier = ?min_tier,
+                "KYC: live provider gate installed (authorizes against provider-verified identity)"
+            );
+            Ok(gate)
+        }
         KycChoice::DevFake => {
             tracing::warn!(
                 "MINT_DEV_KYC_ALLOW=1 — installing permissive FakeKycGate (dev only; approves \
@@ -227,10 +356,17 @@ fn load_kyc_gate(production: bool) -> anyhow::Result<Arc<dyn KycGate>> {
             Ok(Arc::new(FakeKycGate::new(KycTier::Basic, i64::MAX)))
         }
         KycChoice::Strict => {
-            tracing::info!(
-                "KYC: StrictKycGate (deny-by-default) — redemptions are refused until a real \
-                 KycGate provider is wired"
-            );
+            if provider_raw.is_some() {
+                tracing::warn!(
+                    "MINT_KYC_PROVIDER is set but its API key is missing — redemptions are DENIED \
+                     (StrictKycGate) until the provider key is supplied"
+                );
+            } else {
+                tracing::info!(
+                    "KYC: StrictKycGate (deny-by-default) — redemptions are refused until a real \
+                     KycGate provider is wired (MINT_KYC_PROVIDER)"
+                );
+            }
             Ok(Arc::new(StrictKycGate::new()))
         }
     }
@@ -317,26 +453,65 @@ mod tests {
 
     #[test]
     fn kyc_defaults_to_strict_deny_in_production() {
-        // Production, no dev override → the deny-by-default gate.
-        assert_eq!(choose_kyc(true, false).unwrap(), KycChoice::Strict);
+        // Production, no dev override, no provider → the deny-by-default gate.
+        assert_eq!(choose_kyc(true, false, None, false).unwrap(), KycChoice::Strict);
     }
 
     #[test]
     fn kyc_defaults_to_strict_deny_in_dev_too() {
         // Even in dev, absent an explicit opt-in the gate denies (fail closed).
-        assert_eq!(choose_kyc(false, false).unwrap(), KycChoice::Strict);
+        assert_eq!(
+            choose_kyc(false, false, None, false).unwrap(),
+            KycChoice::Strict
+        );
     }
 
     #[test]
     fn kyc_dev_fake_only_when_explicitly_allowed_in_dev() {
-        assert_eq!(choose_kyc(false, true).unwrap(), KycChoice::DevFake);
+        assert_eq!(
+            choose_kyc(false, true, None, false).unwrap(),
+            KycChoice::DevFake
+        );
     }
 
     #[test]
     fn kyc_dev_fake_refused_in_production() {
         // The permissive gate must NOT be installable on a production deployment.
-        let err = choose_kyc(true, true).unwrap_err();
+        let err = choose_kyc(true, true, None, false).unwrap_err();
         assert!(err.to_string().contains("must not be set in production"));
+    }
+
+    #[test]
+    fn kyc_uses_real_provider_when_key_present_even_in_production() {
+        // A configured provider WITH its key is the real gate — in production too.
+        assert_eq!(
+            choose_kyc(true, false, Some(KycProvider::Persona), true).unwrap(),
+            KycChoice::Provider(KycProvider::Persona)
+        );
+        assert_eq!(
+            choose_kyc(false, false, Some(KycProvider::StripeIdentity), true).unwrap(),
+            KycChoice::Provider(KycProvider::StripeIdentity)
+        );
+    }
+
+    #[test]
+    fn kyc_provider_without_key_falls_back_to_strict_deny() {
+        // Named but keyless ⇒ fail closed (deny), not a fake approval.
+        assert_eq!(
+            choose_kyc(true, false, Some(KycProvider::Persona), false).unwrap(),
+            KycChoice::Strict
+        );
+    }
+
+    #[test]
+    fn kyc_provider_string_parsing() {
+        assert_eq!(KycProvider::parse("persona"), Some(KycProvider::Persona));
+        assert_eq!(
+            KycProvider::parse("Stripe_Identity"),
+            Some(KycProvider::StripeIdentity)
+        );
+        assert_eq!(KycProvider::parse("stripe"), Some(KycProvider::StripeIdentity));
+        assert_eq!(KycProvider::parse("nope"), None);
     }
 
     #[test]

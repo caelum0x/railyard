@@ -27,6 +27,7 @@ pub mod error;
 pub mod event;
 pub mod http;
 pub mod iap;
+pub mod kyc;
 mod money;
 pub mod provider;
 pub mod registry;
@@ -37,6 +38,7 @@ pub use config::{Mode, PaymentsConfig, ProviderConfig};
 pub use error::PaymentError;
 pub use event::{DepositEvent, WebhookError};
 pub use http::{Headers, HttpResponse, HttpTransport, ReqwestTransport, TransportError};
+pub use kyc::{PersonaKycVerifier, StripeIdentityKycVerifier};
 pub use provider::ProviderId;
 pub use registry::PaymentRegistry;
 

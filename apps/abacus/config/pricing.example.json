@@ -1,0 +1,29 @@
+{
+  "_comment": "ABACUS_PRICING_CONFIG template. Copy, then set REAL list prices in µ$ per 1000 tokens for every provider/model you route. Entries overlay the built-in OpenAI table (they override same-key built-ins); models with no entry here and none built in fail with model_not_priced. Rates below are placeholders — verify against each provider's current price sheet before sending paid traffic.",
+  "models": [
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "input_micros_per_1k": 2500,
+      "output_micros_per_1k": 10000
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-3-5-sonnet",
+      "input_micros_per_1k": 3000,
+      "output_micros_per_1k": 15000
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-3-5-haiku",
+      "input_micros_per_1k": 800,
+      "output_micros_per_1k": 4000
+    },
+    {
+      "provider": "google",
+      "model": "gemini-1.5-pro",
+      "input_micros_per_1k": 1250,
+      "output_micros_per_1k": 5000
+    }
+  ]
+}

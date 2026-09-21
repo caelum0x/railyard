@@ -14,4 +14,113 @@ bucket_name = "env::R2_BUCKET_NAME"
 region = "auto"
 endpoint = "env::R2_S3_ENDPOINT"
 
-[functions]
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                   MODELS                                    │
+# │                                                                             │
+# │ Operator-owned catalog. Every provider credential is resolved ONLY from the │
+# │ environment via `env::` — the placeholders below name the variables the     │
+# │ owner must export at deploy time; no secret is ever written into config.    │
+# │ Adding a model here also lets `relay-billing` price it (see the             │
+# │ `[functions.*]` prices) so a request cannot select an unpriced model.       │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+[models."gpt-4o-mini"]
+routing = ["openai"]
+
+[models."gpt-4o-mini".providers.openai]
+type = "openai"
+model_name = "gpt-4o-mini"
+api_key_location = "env::OPENAI_API_KEY"
+
+[models."gpt-4o"]
+routing = ["openai"]
+
+[models."gpt-4o".providers.openai]
+type = "openai"
+model_name = "gpt-4o"
+api_key_location = "env::OPENAI_API_KEY"
+
+[models."claude-sonnet"]
+routing = ["anthropic"]
+
+[models."claude-sonnet".providers.anthropic]
+type = "anthropic"
+model_name = "claude-sonnet-4-5"
+api_key_location = "env::ANTHROPIC_API_KEY"
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                              EMBEDDING MODELS                               │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+[embedding_models."text-embedding-3-small"]
+routing = ["openai"]
+
+[embedding_models."text-embedding-3-small".providers.openai]
+type = "openai"
+model_name = "text-embedding-3-small"
+api_key_location = "env::OPENAI_API_KEY"
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                 FUNCTIONS                                   │
+# │                                                                             │
+# │ Named entry points the gateway exposes over `/inference` (and the           │
+# │ passport-conditioned `/v1/passport/generate` surface). A function selects a │
+# │ variant at runtime, so `relay-billing` requires an explicit operator price  │
+# │ per function (fail-closed): publish the retail price in `relay-catalog`     │
+# │ config for each `tensorzero::function_name::<name>` selector before enabling │
+# │ billing, otherwise a metered request is rejected rather than mispriced.      │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+# General-purpose chat entry point.
+[functions.chat]
+type = "chat"
+
+[functions.chat.variants.default]
+type = "chat_completion"
+model = "gpt-4o-mini"
+weight = 1.0
+
+# Passport-conditioned TEXT generation (scripts, captions, hooks, brand-voice
+# copy). This is the modality Relay can serve end-to-end today: the passport
+# client assembles the resolved conditioning into the request input and the
+# gateway runs it through a real provider model. `provider`/`modality` and the
+# owning `passport_id` arrive as `tensorzero::tags::*` for provenance.
+[functions.passport_text]
+type = "chat"
+
+[functions.passport_text.variants.default]
+type = "chat_completion"
+model = "gpt-4o-mini"
+weight = 1.0
+
+# NON-TEXT MODALITIES (image / voice / video).
+#
+# The passport model targets asset providers (Veo, Runway, Kling, HeyGen,
+# ElevenLabs, local LoRA, …). TensorZero-native providers speak the LLM
+# chat/embeddings contract and do NOT drive those asset backends, so these
+# functions are intentionally left UNWIRED rather than aliased to an LLM that
+# would return text where an asset is expected. A request for one of these
+# modalities fails closed (unknown function) until the owner adds a Relay
+# provider adapter. Uncomment and point at a real adapter-backed model once the
+# corresponding integration exists:
+#
+# [functions.passport_image]
+# type = "chat"
+# [functions.passport_image.variants.default]
+# type = "chat_completion"
+# model = "<image-provider-model>"
+# weight = 1.0
+#
+# [functions.passport_voice]
+# type = "chat"
+# [functions.passport_voice.variants.default]
+# type = "chat_completion"
+# model = "<voice-provider-model>"
+# weight = 1.0
+#
+# [functions.passport_video]
+# type = "chat"
+# [functions.passport_video.variants.default]
+# type = "chat_completion"
+# model = "<video-provider-model>"
+# weight = 1.0

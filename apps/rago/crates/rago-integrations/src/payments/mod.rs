@@ -1,13 +1,15 @@
-//! Payment providers — the abstraction plus Stripe (fully implemented).
+//! Payment providers — the abstraction plus Stripe, GoCardless and Adyen (all
+//! fully implemented).
 //!
 //! Faithful port of `PaymentProviders::BaseService` + the provider `payments/
 //! create_service.rb` flow: a payment intent is created at the provider, its
 //! status is mapped to the invoice's `payable_payment_status`, and the invoice
 //! `payment_status` is updated accordingly.
 //!
-//! GoCardless and Adyen implement the same [`PaymentProvider`] trait; only their
-//! constructors exist here and they return [`PaymentError::NotImplemented`] —
-//! they are flagged as follow-ups, never faked.
+//! Stripe, GoCardless and Adyen each implement the same [`PaymentProvider`]
+//! trait against the real provider HTTP API (see [`stripe`], [`gocardless`],
+//! [`adyen`]). [`PaymentError::NotImplemented`] is retained as a variant for any
+//! provider added in the future but is not returned by the providers above.
 
 pub mod adyen;
 pub mod gocardless;

@@ -30,6 +30,18 @@ Clients call `POST /v1/proxy` with `X-API-Key`, `X-Abacus-Agent`, and the
 upstream `Authorization: Bearer ...` header. `ABACUS_BIND_ADDR` defaults to
 `0.0.0.0:8100`; `ABACUS_PROVIDER` defaults to `openai`.
 
+`ABACUS_PRICING_CONFIG` (optional) points at a JSON file of per-provider/model
+rates that overlay the built-in OpenAI table, so Abacus can price ANY provider or
+model instead of killing it with `model_not_priced`. See
+[`config/pricing.example.json`](config/pricing.example.json); each entry is
+`{ provider, model, input_micros_per_1k, output_micros_per_1k }` in µ$ per 1000
+tokens. Config entries override same-key built-ins; a missing/negative rate or an
+empty key fails startup. Unset ⇒ only the built-in OpenAI rates apply. The
+pre-flight estimate reserves the MAX cost conservatively: it sums text across
+plain and structured (vision) message content, reserves a per-part floor for each
+non-text image/audio/file part, and counts tool-call payloads and tool/function
+definitions — so multimodal and tool-calling requests are never under-reserved.
+
 `ABACUS_DATABASE_URL` enables the shared, migrated Postgres product store:
 transactional policy import, signed receipt projection, and every open Mint
 hold. Recovery workers claim expired holds with leases; each persisted hold also

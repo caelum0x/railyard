@@ -16,8 +16,8 @@ use axum::extract::{Path, Query, State};
 use axum::Json;
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Utc};
 use rago_billing::charge_to_fee;
-use rago_core::enums::BillingTime;
-use rago_core::models::{Fee, Subscription};
+use rago_core::enums::{BillingTime, WalletStatus};
+use rago_core::models::{Fee, Subscription, Wallet};
 use rago_billing::dates::MonthlyDates;
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -25,6 +25,7 @@ use serde_json::{json, Value};
 
 use crate::auth::Authed;
 use crate::error::{ApiError, ApiResult};
+use crate::serializers as ser;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -287,4 +288,196 @@ fn first_of_next_month(date: NaiveDate) -> NaiveDate {
     } else {
         NaiveDate::from_ymd_opt(date.year(), date.month() + 1, 1).unwrap()
     }
+}
+
+// ---- reel generation: billing catalog, usage ingest, credit/cap gate --------
+
+/// Request-ready billable-metric + plan definitions an operator provisions rago
+/// with so reel usage (`POST /reels/usage`) prices correctly. The `billable_metrics`
+/// entries are `POST /billable_metrics` bodies and `plan` is a `POST /plans` body
+/// (same root-wrapped shape those endpoints accept, minus the wrapper).
+///
+/// Per-charge `amount` values are placeholders (`"0"`) — an operator sets the
+/// real reel pricing when provisioning; until then reel usage records but bills
+/// nothing.
+pub fn reel_billing_catalog() -> Value {
+    use crate::emit::reel_metric as m;
+    json!({
+        "billable_metrics": [
+            {
+                "name": "Reels generated",
+                "code": m::GENERATED,
+                "aggregation_type": "count_agg",
+                "recurring": false,
+            },
+            {
+                "name": "Reel render seconds",
+                "code": m::RENDER_SECONDS,
+                "aggregation_type": "sum_agg",
+                "field_name": m::RENDER_SECONDS_FIELD,
+                "recurring": false,
+            },
+            {
+                "name": "Reel AI credits",
+                "code": m::AI_CREDITS,
+                "aggregation_type": "sum_agg",
+                "field_name": m::AI_CREDITS_FIELD,
+                "recurring": false,
+            },
+        ],
+        "plan": {
+            "name": "Menivor Reels",
+            "code": crate::emit::REEL_PLAN_CODE,
+            "interval": "monthly",
+            "amount_cents": 0,
+            "amount_currency": "USD",
+            "pay_in_advance": false,
+            "charges": [
+                { "billable_metric_code": m::GENERATED, "charge_model": "standard", "properties": { "amount": "0" } },
+                { "billable_metric_code": m::RENDER_SECONDS, "charge_model": "standard", "properties": { "amount": "0" } },
+                { "billable_metric_code": m::AI_CREDITS, "charge_model": "standard", "properties": { "amount": "0" } },
+            ],
+        },
+        "note": "Charge `amount` values are placeholders — set real reel pricing when provisioning.",
+    })
+}
+
+/// `GET /reels/catalog` — the canonical reel billing catalog (see
+/// [`reel_billing_catalog`]) so an operator can provision rago consistently.
+pub async fn reel_catalog(_auth: Authed) -> Json<Value> {
+    Json(json!({ "reel_billing_catalog": reel_billing_catalog() }))
+}
+
+/// `POST /reels/usage` — Menivor's generation gateway reports one completed reel
+/// render; rago expands it into the billable usage events (see
+/// [`crate::emit::reel_usage_events`]) and ingests each through the shared
+/// event path. Idempotent by `render_id`: re-reporting a render re-emits the
+/// same `transaction_id`s, which are recognised as already billed and skipped.
+pub async fn record_reel_usage(
+    State(st): State<AppState>,
+    auth: Authed,
+    Json(usage): Json<crate::emit::ReelRenderUsage>,
+) -> ApiResult<Json<Value>> {
+    let org = auth.organization.id;
+    if usage.render_id.trim().is_empty() {
+        return Err(ApiError::validation("render_id", "value_is_mandatory"));
+    }
+    if usage.external_subscription_id.trim().is_empty() {
+        return Err(ApiError::validation("external_subscription_id", "value_is_mandatory"));
+    }
+
+    let mut billed_events: Vec<Value> = Vec::new();
+    let mut already_billed_metrics: Vec<String> = Vec::new();
+    for params in crate::emit::reel_usage_events(&usage) {
+        let code = params.code.clone();
+        match crate::emit::ingest_event(&st, org, params).await? {
+            crate::emit::Ingest::Created(event) => billed_events.push(ser::event(&event)),
+            crate::emit::Ingest::Duplicate => already_billed_metrics.push(code),
+        }
+    }
+
+    Ok(Json(json!({
+        "reel_usage": {
+            "render_id": usage.render_id,
+            "external_subscription_id": usage.external_subscription_id,
+            "billed_events": billed_events,
+            "already_billed_metrics": already_billed_metrics,
+        }
+    })))
+}
+
+/// Body of `POST /customers/:external_customer_id/render_allowance`.
+#[derive(Debug, Deserialize)]
+pub struct AllowanceRequest {
+    /// The subscription the render bills against.
+    pub external_subscription_id: String,
+    /// Estimated cost of the render about to start, in the plan currency's minor
+    /// units (Menivor prices the reel's planned duration + AI credits against the
+    /// plan's charges, or supplies a conservative upper bound).
+    pub estimated_cost_cents: i64,
+    /// Optional hard spend cap for the current period. When set, a render whose
+    /// projected total usage would exceed it is denied.
+    #[serde(default)]
+    pub cap_cents: Option<i64>,
+}
+
+/// `POST /customers/:external_customer_id/render_allowance` — the server-side
+/// credit/cap gate the app calls BEFORE starting a render.
+///
+/// Denies when the customer's prepaid credit balance cannot cover the estimated
+/// cost, or when projected period usage would exceed the supplied spend cap. It
+/// never starts (or records) a render — it only answers allow/deny along with
+/// the figures behind the decision so the app can explain it to the user.
+///
+/// A customer with no active prepaid wallet is postpaid: credits never block,
+/// only the spend cap can.
+pub async fn render_allowance(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(external_customer_id): Path<String>,
+    Json(req): Json<AllowanceRequest>,
+) -> ApiResult<Json<Value>> {
+    let org = auth.organization.id;
+    if req.estimated_cost_cents < 0 {
+        return Err(ApiError::validation("estimated_cost_cents", "value_is_invalid"));
+    }
+    if let Some(cap) = req.cap_cents {
+        if cap < 0 {
+            return Err(ApiError::validation("cap_cents", "value_is_invalid"));
+        }
+    }
+
+    let customer = st
+        .db
+        .find_customer_by_external_id(org, &external_customer_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("customer".into()))?;
+    let (sub, currency, dates) =
+        load_scope(&st, org, &external_customer_id, &req.external_subscription_id).await?;
+
+    // Current-period usage priced through the billing engine (same read path as
+    // `current_usage`), summed to a single amount.
+    let b = dates.boundaries();
+    let from = b.from_date.and_hms_opt(0, 0, 0).unwrap();
+    let now = Utc::now().naive_utc();
+    let usages = compute_charges_usage(&st, org, &sub, currency, from, now).await?;
+    let current_usage_cents: i64 = usages.iter().map(|u| u.amount_cents).sum();
+    let projected_usage_cents = current_usage_cents.saturating_add(req.estimated_cost_cents);
+
+    // Prepaid credit balance: sum of ACTIVE wallets' ongoing balance (net of
+    // uninvoiced usage), matching Lago's `ongoing_balance_cents`.
+    let wallets = st.db.wallets_for_customer(customer.id).await?;
+    let active: Vec<&Wallet> = wallets
+        .iter()
+        .filter(|w| matches!(w.status, WalletStatus::Active))
+        .collect();
+    let has_prepaid_wallet = !active.is_empty();
+    let credit_balance_cents: i64 = active.iter().map(|w| w.ongoing_balance_cents).sum();
+
+    let mut reasons: Vec<&str> = Vec::new();
+    if has_prepaid_wallet && req.estimated_cost_cents > credit_balance_cents {
+        reasons.push("insufficient_credits");
+    }
+    if let Some(cap) = req.cap_cents {
+        if projected_usage_cents > cap {
+            reasons.push("usage_cap_exceeded");
+        }
+    }
+    let allowed = reasons.is_empty();
+
+    Ok(Json(json!({
+        "render_allowance": {
+            "allowed": allowed,
+            "reasons": reasons,
+            "external_customer_id": external_customer_id,
+            "external_subscription_id": req.external_subscription_id,
+            "currency": currency.code(),
+            "estimated_cost_cents": req.estimated_cost_cents,
+            "current_usage_cents": current_usage_cents,
+            "projected_usage_cents": projected_usage_cents,
+            "has_prepaid_wallet": has_prepaid_wallet,
+            "credit_balance_cents": credit_balance_cents,
+            "cap_cents": req.cap_cents,
+        }
+    })))
 }
