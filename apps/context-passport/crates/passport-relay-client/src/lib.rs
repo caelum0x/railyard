@@ -101,6 +101,7 @@ impl RelayConditioningSink for RelayClient {
 fn build_inference_request(request: &RelayGenerationRequest) -> Value {
     json!({
         "function_name": format!("passport_{}", request.modality),
+        "variant_name": provider_variant(&request.provider),
         "input": {
             "messages": [
                 { "role": "user", "content": assemble_conditioning_prompt(request) }
@@ -115,6 +116,19 @@ fn build_inference_request(request: &RelayGenerationRequest) -> Value {
         },
         "stream": false,
     })
+}
+
+/// Map the passport's `provider` to the Relay `passport_text` variant that runs
+/// it. Relay names one variant per supported text provider (the lowercased
+/// provider id — see `config/tensorzero.toml`), and pinning `variant_name`
+/// makes the gateway route to exactly that model instead of the single
+/// hardcoded default. The provider is lowercased to match Relay's variant
+/// naming (the resolver already lowercases providers for capability lookup). An
+/// unsupported provider names a variant Relay does not define, so the gateway
+/// rejects it with `UnknownVariant` and the generation fails closed rather than
+/// silently running on the wrong model.
+fn provider_variant(provider: &str) -> String {
+    provider.trim().to_ascii_lowercase()
 }
 
 /// Assemble the resolved conditioning payload into a single instruction string.
@@ -276,6 +290,9 @@ mod tests {
     fn maps_request_to_modality_function_with_conditioning_input() {
         let request = build_inference_request(&sample_request());
         assert_eq!(request["function_name"], "passport_text");
+        // The passport's provider pins the routed variant so the gateway runs
+        // that provider's model instead of one hardcoded default.
+        assert_eq!(request["variant_name"], "openai");
         assert_eq!(request["stream"], false);
         assert_eq!(request["tags"]["passport_id"], "psp_1");
         assert_eq!(request["tags"]["passport_version"], "3");
@@ -287,6 +304,24 @@ mod tests {
         assert!(content.contains("hook in 3s"));
         assert!(content.contains("call to action"));
         assert!(content.contains("Avoid: no jargon"));
+    }
+
+    #[test]
+    fn provider_selects_matching_routed_variant() {
+        let mut request = sample_request();
+        request.provider = "anthropic".into();
+        let inference = build_inference_request(&request);
+        assert_eq!(inference["variant_name"], "anthropic");
+        // Same modality function, different pinned provider variant.
+        assert_eq!(inference["function_name"], "passport_text");
+    }
+
+    #[test]
+    fn provider_variant_is_normalized_to_relay_naming() {
+        // Relay names variants by the lowercased provider id; casing/padding in
+        // the passport's provider field must still route to the right variant.
+        assert_eq!(provider_variant("OpenAI"), "openai");
+        assert_eq!(provider_variant(" Anthropic "), "anthropic");
     }
 
     #[test]

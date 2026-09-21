@@ -85,13 +85,36 @@ weight = 1.0
 # client assembles the resolved conditioning into the request input and the
 # gateway runs it through a real provider model. `provider`/`modality` and the
 # owning `passport_id` arrive as `tensorzero::tags::*` for provenance.
+#
+# PROVIDER ROUTING. The passport's `provider` field selects which model runs:
+# the passport-relay-client pins the variant named for that provider via the
+# inference request's `variant_name` (lowercased provider id). Pinning bypasses
+# weighted sampling, so each provider deterministically maps to its own model,
+# and a `provider` with no variant here is rejected with `UnknownVariant` —
+# i.e. an unsupported text provider fails closed rather than silently running
+# on the wrong model. To add a text provider, add its `[models.*]` entry above
+# and a variant below whose name is the lowercased provider id.
+#
+# `openai` also carries weight = 1.0 so a passport_text call that does NOT pin a
+# variant still resolves (to the historical default model); the other routed
+# variants are weight = 0.0 (reachable only by explicit provider pin, never by
+# random sampling). Billing prices are per function selector
+# (`tensorzero::function_name::passport_text`), so every provider variant bills
+# at the one operator-published passport_text price regardless of model.
 [functions.passport_text]
 type = "chat"
 
-[functions.passport_text.variants.default]
+# provider = "openai"  -> gpt-4o-mini (also the unpinned default).
+[functions.passport_text.variants.openai]
 type = "chat_completion"
 model = "gpt-4o-mini"
 weight = 1.0
+
+# provider = "anthropic" -> claude-sonnet.
+[functions.passport_text.variants.anthropic]
+type = "chat_completion"
+model = "claude-sonnet"
+weight = 0.0
 
 # NON-TEXT MODALITIES (image / voice / video).
 #
