@@ -13,6 +13,7 @@
 use bevy::prelude::*;
 
 pub mod deck_builder;
+pub mod collection;
 pub mod r#match;
 pub mod menu;
 pub mod shop;
@@ -25,6 +26,8 @@ pub enum AppScreen {
     Menu,
     /// The deck-building screen.
     DeckBuilder,
+    /// Owned cards and copy counts.
+    Collection,
     /// The live match.
     Match,
     /// The card shop / pack opening.

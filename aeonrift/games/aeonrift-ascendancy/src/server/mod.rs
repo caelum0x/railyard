@@ -7,5 +7,7 @@
 //! the engine's `net` crate and are out of scope for this crate.)
 
 pub mod matchmaking;
+pub mod product;
 
 pub use matchmaking::{Lobby, Matchmaker, QueuedPlayer};
+pub use product::*;

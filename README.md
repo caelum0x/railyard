@@ -10,17 +10,17 @@ The durable asset is the **settlement rail underneath every app**: **Mint** (a f
 |---|---|---|
 | **mint** | Settlement ledger — double-entry, Ed25519 receipts, reserve conservation. The core asset. | ship-ready core |
 | **relay** | Model gateway (TensorZero fork) + success-only Mint billing. The model rail. | needs price catalog |
-| **agent-runtime** | Shared AITP-402 payment SDK substrate (ed25519 signing, paid-inference decorator). | payment SDK ready |
+| **agent-runtime** | Shared Rig/AITP-402 runtime: policy signing, paid SSE/multipart, cancellation reconciliation, pinned Mint-proof verification. | payment SDK ready |
 | **vend** | Stripe-meets-OpenRouter: resellable metered AI SDK on the rail. | needs crash reaper |
 | **abacus** | Inline proxy enforcing hard, receipted per-agent spend budgets (kill-switch). | single-process |
-| **turnstile** | Drop-in agent paywall middleware ("Stripe for AI agents"). | engine solid, SDK thin |
-| **context-passport** | **Character Lock Passport** — provider-agnostic locked character/brand/personalization identity, resolved to any AI provider via Relay for consistent generation. | vision (see apps/context-passport/VISION.md) |
+| **turnstile** | Drop-in agent paywall middleware ("Stripe for AI agents"). | durable paywall core + Axum adapter |
+| **identity-lock** | Provider-agnostic locked character/brand/persona identity, resolved through Relay for consistent generation. Legacy source path: `apps/context-passport`. | runnable Sx0 |
 | **ledgerline** | Gross-margin lens: revenue + provider COGS on one Mint-backed ledger. | non-atomic settle |
 
 ## Consumed by
 Menivor (`../videogen`) and other products call Railyard over HTTP + shared contract packages — they do **not** own it.
 
 ## Shared workstreams (from evaluation)
-1. **Shared transactional datastore** — abacus/turnstile/vend keep holds/nonces/receipts in-process; horizontal scale needs a shared store + a hold-reaper for panic-orphaned holds.
+1. **Shared transactional datastore** — Turnstile and Abacus now ship Postgres ownership + leased recovery; remaining datastore work is concentrated in the apps still using local/file state.
 2. **Per-model price catalog** — relay bills every model at one flat default; needs real per-model pricing.
 3. **Ledgerline atomicity** — the hold+capture+COGS trio needs a durable outbox/compensation.

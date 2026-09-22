@@ -101,6 +101,10 @@ fn run_windowed(options: RunOptions) {
         // Action-based input VIEW (leafwing-input-manager): keyboard/touch card
         // verbs alongside the existing pointer flow. Deterministic core untouched.
         .add_plugins(CardInputPlugin)
+        .add_plugins((
+            screens::shop::ShopScreenPlugin,
+            screens::collection::CollectionScreenPlugin,
+        ))
         .add_systems(Startup, hud::setup)
         .add_systems(FixedUpdate, tick::advance_match)
         .add_systems(

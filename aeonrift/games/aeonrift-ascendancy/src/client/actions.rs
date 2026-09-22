@@ -40,6 +40,8 @@ pub enum CardAction {
     DeployToLane,
     /// Toggle the item/card shop overlay.
     OpenShop,
+    /// Buy the first visible pack offer (desktop/test binding; touch UI emits the same verb).
+    BuyPack,
 }
 
 impl CardAction {
@@ -64,6 +66,7 @@ pub fn card_input_map() -> InputMap<CardAction> {
         .with(CardAction::SelectCard4, KeyCode::Digit4)
         .with(CardAction::DeployToLane, KeyCode::Space)
         .with(CardAction::OpenShop, KeyCode::KeyS)
+        .with(CardAction::BuyPack, KeyCode::KeyB)
 }
 
 /// The client-side elixir pool mirror (presentation only). Refreshed each frame from
@@ -126,6 +129,8 @@ fn handle_action_input(
     mut selection: ResMut<Selection>,
     mut status: ResMut<StatusMessage>,
     mut shop: ResMut<ShopOpen>,
+    mut shop_commands: ResMut<super::screens::shop::ShopCommandQueue>,
+    product: Res<super::screens::shop::ProductClientState>,
     pool: Res<ClientElixir>,
 ) {
     let Ok(state) = controller.single() else {
@@ -157,6 +162,23 @@ fn handle_action_input(
     if state.just_pressed(&CardAction::OpenShop) {
         shop.0 = !shop.0;
         status.set(if shop.0 { "Shop opened" } else { "Shop closed" });
+    }
+
+    if state.just_pressed(&CardAction::BuyPack) && shop.0 {
+        if let Some(offer) = product.offers.first() {
+            shop_commands.0.push(super::screens::shop::PurchasePackCommand {
+                pack_id: offer.pack_id.clone(),
+                idempotency_key: format!(
+                    "client-{}-{}",
+                    offer.pack_id,
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|value| value.as_millis())
+                        .unwrap_or(0)
+                ),
+            });
+            status.set("Purchase queued — server will pay and roll the pack");
+        }
     }
 
     // 3) Deploy the selected card into the centre lane.

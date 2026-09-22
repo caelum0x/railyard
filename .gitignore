@@ -25,3 +25,11 @@ train/*.png
 
 # matte-v2 tool intermediate meshes/previews (per-champion out subdirs)
 aeonrift/tools/aeonrift_matte_v2/out/*/
+
+# --- vendored OSS build bases (independent git repos; see clone-these mapping) ---
+lago/
+cua/
+buzz/
+buzz-huddle/
+buzz-gitgram/
+buzz-recoder/

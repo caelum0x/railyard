@@ -61,6 +61,9 @@ aeonrift-ability-dsl = { path = "../../engine/ability-dsl" }
 # content/cards). Same crates the champion DSL uses, so no new format is introduced.
 serde = { version = "1", features = ["derive"] }
 ron = "0.12"
+serde_json = "1"
+rand = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
 # Bevy for the cross-platform 2D touch client (optional — see the `client` feature).
 bevy = { version = "0.19", default-features = true, optional = true }
