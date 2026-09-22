@@ -76,6 +76,7 @@ Two facts drive the design (from the provider research):
 | `POST /v1/passports/:id/resolve` | `X-API-Key` | Resolve a locked version → provider `ConditioningPayload` |
 | `POST /v1/passports/:id/generate` | `X-API-Key` | Generate via Relay; require principal/request-correlated signed settlement evidence; record it in provenance |
 | `GET /v1/passports/:id/generations` | `X-API-Key` | Provenance: assets conditioned by this passport |
+| `GET /v1/passports/:id/generations/:gen/manifest` | `X-API-Key` | Export one generation's C2PA-aligned Content Credential manifest |
 
 ## Run locally
 

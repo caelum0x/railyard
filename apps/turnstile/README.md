@@ -30,6 +30,18 @@ machine-readable AITP-402 challenge; a valid authorization is verified through
 Mint and successful work is captured for actual usage.
 The demo defaults to port `8101`, leaving Mint's default `8080` free.
 
+The reference server also exposes:
+
+- `GET /v1/tools` and `GET /.well-known/aitp-tools` — an OPEN discovery catalog
+  of the provider's priced tools (payee, currency, and price per tool), built
+  from the same config the gate quotes so it can never drift.
+- `POST /mcp` — a minimal JSON-RPC MCP endpoint exposing the SAME paid `echo`
+  tool over the Model Context Protocol. Agents pay by putting their signed
+  `AITP-Authorization` in the reserved `_aitp_authorization` tool argument; an
+  unpaid `tools/call` returns a JSON-RPC error whose `data` carries the AITP-402
+  challenge, and a paid call captures actual usage and returns the signed receipt
+  in the result `_meta`.
+
 **Turnstile** is the drop-in agent-paywall SDK + reference verifier — *"Stripe for
 AI agents."* It makes any HTTP endpoint or MCP tool **paid-per-call in under 10
 lines**: the calling agent pays with a fiat-backed, gasless, **success-only**
@@ -91,6 +103,8 @@ and uses in-memory challenge and settlement stores with the same state machine.
 
 The framework-agnostic engine, Axum adapter, shared Postgres challenge and
 settlement stores, lease recovery worker, settlement-status API
-(`GET /v1/settlements/:request_id`), and reference server exist. Other
-framework adapters, the MCP helper, provider registry/discovery, and published
-SDK packages do not.
+(`GET /v1/settlements/:request_id`), provider registry/discovery
+(`ToolRegistry`/`ToolCatalog` + `GET /v1/tools`), the framework-agnostic MCP
+paywall helper (`turnstile_core::mcp` + a reference `POST /mcp` JSON-RPC
+endpoint), and the reference server exist. Other framework adapters (Actix,
+Tower-for-non-axum, Python/TS SDKs) and published SDK packages do not.

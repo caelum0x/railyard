@@ -11,7 +11,7 @@ use passport_core::{
     PassportFilter, PassportStore, PassportVersion, PassportView, RelayConditioningSink,
     RelayGenerationRequest, VersionStatus,
 };
-use passport_provenance::{GenerationRecord, ProvenanceLog};
+use passport_provenance::{to_c2pa_manifest, GenerationRecord, ProvenanceLog};
 use passport_resolve::{ConditioningPayload, Modality, ProviderRegistry};
 
 /// Result of a create call, carrying whether it was a fresh insert or a replay.
@@ -317,6 +317,24 @@ impl PassportService {
     pub async fn generations(&self, id: &str) -> Result<Vec<GenerationRecord>, PassportError> {
         self.require_passport(id).await?;
         self.provenance.list(id).await
+    }
+
+    /// Render the C2PA-aligned Content Credential manifest for a single recorded
+    /// generation. Fail-closed: the generation must exist AND belong to this
+    /// passport, so a caller cannot read another passport's provenance by id.
+    pub async fn generation_manifest(
+        &self,
+        id: &str,
+        generation_id: &str,
+    ) -> Result<serde_json::Value, PassportError> {
+        self.require_passport(id).await?;
+        let record = self
+            .provenance
+            .get(generation_id)
+            .await?
+            .filter(|record| record.passport_id == id)
+            .ok_or(PassportError::NotFound)?;
+        Ok(to_c2pa_manifest(&record))
     }
 
     pub async fn ready(&self) -> Result<(), PassportError> {

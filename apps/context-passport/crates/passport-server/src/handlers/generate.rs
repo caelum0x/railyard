@@ -77,3 +77,18 @@ pub async fn list_generations(
         data: state.service.generations(&id).await?,
     }))
 }
+
+/// Export the C2PA-aligned Content Credential manifest for one generation.
+pub async fn generation_manifest(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((id, generation_id)): Path<(String, String)>,
+) -> Result<Json<Data<serde_json::Value>>, ApiError> {
+    authorize(&state.api_key, &headers)?;
+    Ok(Json(Data {
+        data: state
+            .service
+            .generation_manifest(&id, &generation_id)
+            .await?,
+    }))
+}

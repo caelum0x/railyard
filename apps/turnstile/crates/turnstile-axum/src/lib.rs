@@ -26,11 +26,13 @@
 //! captures the actual amount the handler reported (via [`PaidRequest`]) on
 //! success or releases the hold on failure, attaching `AITP-Receipt` on capture.
 
+pub mod discovery;
 pub mod extractor;
 pub mod middleware;
 pub mod response;
 pub mod status;
 
+pub use discovery::discover;
 pub use extractor::{PaidContext, PaidRequest};
 pub use middleware::admit;
 pub use status::{settlement_status, SettlementStatus};

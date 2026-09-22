@@ -42,6 +42,10 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/passports/:id/generations",
             get(handlers::generate::list_generations),
         )
+        .route(
+            "/v1/passports/:id/generations/:generation_id/manifest",
+            get(handlers::generate::generation_manifest),
+        )
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
