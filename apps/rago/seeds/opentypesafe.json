@@ -1,0 +1,61 @@
+{
+  "consumer": "opentypesafe",
+  "description": "Rago catalog seed for opentypesafe (System One / Jev typed-decision calls). Pure usage-based plan: a free tier of decision calls, then graduated per-call pricing that drops as volume grows.",
+  "currency": "USD",
+  "billable_metrics": [
+    {
+      "name": "System One Calls",
+      "code": "systemone_call",
+      "description": "One event per System One (Jev) decision/inference call served through the typesafe layer. Counted, not summed.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    }
+  ],
+  "plans": [
+    {
+      "name": "opentypesafe Pro",
+      "code": "opentypesafe_pro",
+      "interval": "monthly",
+      "description": "No base fee; graduated per-call pricing on System One calls with a free monthly allowance.",
+      "amount_cents": 0,
+      "amount_currency": "USD",
+      "pay_in_advance": false,
+      "bill_charges_monthly": true,
+      "charges": [
+        {
+          "billable_metric_code": "systemone_call",
+          "charge_model": "graduated",
+          "invoiceable": true,
+          "properties": {
+            "graduated_ranges": [
+              {
+                "from_value": 0,
+                "to_value": 10000,
+                "per_unit_amount": "0.0",
+                "flat_amount": "0.0"
+              },
+              {
+                "from_value": 10001,
+                "to_value": 100000,
+                "per_unit_amount": "0.001",
+                "flat_amount": "0.0"
+              },
+              {
+                "from_value": 100001,
+                "to_value": null,
+                "per_unit_amount": "0.0005",
+                "flat_amount": "0.0"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "sample_events": [
+    {
+      "code": "systemone_call",
+      "note": "POST /events { event: { transaction_id, external_subscription_id, code: 'systemone_call' } } — one per decision call."
+    }
+  ]
+}

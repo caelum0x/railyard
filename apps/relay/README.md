@@ -78,6 +78,57 @@ effective catalog. `/health` also probes that catalog and, when billing is
 enabled, performs a protected non-mutating Mint ledger read so revoked Mint
 credentials or a failed billing store make Relay unready.
 
+## Production container
+
+`Dockerfile` builds the production gateway image. The build context is this
+directory (`apps/relay/`): a multi-stage Rust builder compiles
+`cargo build -p gateway --release` against the `crates/` workspace, and a
+`debian:trixie-slim` runtime carries only CA certificates, the compiled
+`gateway` binary, and the checked-in `config/` directory. The entrypoint runs
+`gateway --config-file /app/config/tensorzero.toml` and the container listens on
+port `3000` (matching `[gateway] bind_address` in `config/tensorzero.toml`).
+
+```bash
+# Built from the apps/relay directory (build context = .)
+docker build -t railyard-relay -f Dockerfile .
+docker run -p 3000:3000 --env-file relay.env railyard-relay
+```
+
+The image ships a default retail catalog at `config/catalog.json` and defaults
+`RELAY_CATALOG_PATH=/app/config/catalog.json`. That catalog is a
+`relay-catalog` `CatalogSnapshot` (`schema_version: 1`) whose enabled entries
+price every model, embedding model, and non-internal function configured in
+`config/tensorzero.toml` (`chat`, `passport_text`, `gpt-4o-mini`, `gpt-4o`,
+`claude-sonnet`, `text-embedding-3-small`), so paid startup route validation
+passes. Override `RELAY_CATALOG_PATH` (or bind-mount a different file) to publish
+your own operator prices. All provider credentials and the billing variables
+below are supplied at runtime as environment variables — no secret is ever baked
+into the image or the config.
+
+### Fail-closed billing environment
+
+Success-only Mint billing is opt-in and **fails closed**: when
+`RELAY_BILLING_ENABLED` is truthy the gateway aborts startup unless every
+required variable below is present and consistent, rather than silently falling
+back to an unfunded in-memory ledger. Leave `RELAY_BILLING_ENABLED` unset (the
+default) to run the gateway with billing disabled.
+
+| Variable | Required when billing enabled | Purpose |
+| --- | --- | --- |
+| `RELAY_BILLING_ENABLED` | — (the switch) | Truthy (`1`/`true`/`yes`) turns on success-only Mint billing. When unset, billing is off and the other variables are ignored. |
+| `MINT_SERVER_URL` | Yes | Base URL of the Mint server that holds and captures funds. Startup aborts if unset. |
+| `MINT_API_KEY` | Yes | API key Relay uses to authenticate to the Mint server. Startup aborts if unset. |
+| `MINT_PAYEE_ACCOUNT` | Yes | Mint account that receives captured charges. Startup verifies `RELAY_AITP_PAYEE` resolves to this account in Mint. |
+| `RELAY_AITP_PAYEE` | Yes | AITP payee identity advertised to clients; must map to `MINT_PAYEE_ACCOUNT`. Startup aborts if unset or mismatched. |
+| `RELAY_CATALOG_PATH` | Recommended | Absolute path to the operator price catalog JSON (defaults to `/app/config/catalog.json` in the image). Mutually exclusive with the legacy `RELAY_PRICE_CATALOG_PATH`. |
+
+Additional related variables: `MINT_VERIFICATION_KEYS_JSON` (operator-pinned
+Ed25519 verification keys, also required when billing is enabled),
+`MINT_PAYER_ACCOUNT` (optional single-payer override), and
+`RELAY_PRICE_CATALOG_PATH` (legacy price overlay, mutually exclusive with
+`RELAY_CATALOG_PATH`). Billing additionally requires authenticated gateway
+access and Postgres for durable settlement evidence.
+
 The Relay-owned integration surface is split into small crates under
 `crates/` so other Railyard applications never depend on TensorZero gateway
 internals:

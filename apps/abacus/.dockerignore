@@ -1,0 +1,33 @@
+# .dockerignore for apps/abacus.
+#
+# NOTE: the production image builds with the railyard repo ROOT as context
+# (see Dockerfile header), and that build already avoids target/ by copying
+# only manifests + crates. This file additionally keeps the abacus subtree lean
+# for any `docker build apps/abacus` (context = this dir) and for tooling that
+# honors a subtree ignore file.
+
+# Rust build artifacts (493MB+ locally — never ship into a build layer).
+target/
+**/target/
+
+# Local runtime state written by the proxy (audit log, open-holds snapshot).
+*.jsonl
+abacus-open-holds.json
+**/*.jsonl
+
+# Operator-copied real config (secrets/identities). Only the *.example.json
+# templates are tracked; never bake a live copy into an image.
+config/*.json
+!config/*.example.json
+
+# Editor / OS / VCS noise.
+.git
+.gitignore
+.DS_Store
+*.swp
+*~
+
+# Docs and the Dockerfile itself do not belong in the build layer.
+README.md
+Dockerfile
+.dockerignore

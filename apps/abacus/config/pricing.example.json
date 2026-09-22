@@ -1,15 +1,54 @@
 {
-  "_comment": "ABACUS_PRICING_CONFIG template. Copy, then set REAL list prices in µ$ per 1000 tokens for every provider/model you route. Entries overlay the built-in OpenAI table (they override same-key built-ins); models with no entry here and none built in fail with model_not_priced. Rates below are placeholders — verify against each provider's current price sheet before sending paid traffic.",
+  "_comment": "ABACUS_PRICING_CONFIG template. Copy, then set REAL list prices in µ$ per 1000 tokens for every provider/model you route. Entries overlay the built-in OpenAI table (they override same-key built-ins); models with no entry here and none built in fail with model_not_priced. The `provider` key is matched against ABACUS_PROVIDER (single value per proxy instance, default `openai`): point a proxy at Anthropic directly => set ABACUS_PROVIDER=anthropic and use the `anthropic` rows; front traffic through OpenRouter => set ABACUS_PROVIDER=openrouter and use the `openrouter` rows (vendor/model slugs); front through Relay => set ABACUS_PROVIDER=relay. The `model` string must match exactly what the client sends in the request body's `model` field. Rates below are PLACEHOLDERS — verify against each provider's current price sheet before sending paid traffic.",
   "models": [
     {
+      "_comment": "--- OpenAI (also built in; listed for completeness/override) ---",
       "provider": "openai",
       "model": "gpt-4o",
       "input_micros_per_1k": 2500,
       "output_micros_per_1k": 10000
     },
     {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "input_micros_per_1k": 150,
+      "output_micros_per_1k": 600
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4.1",
+      "input_micros_per_1k": 2000,
+      "output_micros_per_1k": 8000
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "input_micros_per_1k": 400,
+      "output_micros_per_1k": 1600
+    },
+    {
+      "provider": "openai",
+      "model": "o4-mini",
+      "input_micros_per_1k": 1100,
+      "output_micros_per_1k": 4400
+    },
+
+    {
+      "_comment": "--- Anthropic (claude): set ABACUS_PROVIDER=anthropic. Both bare aliases and dated/`-latest` model ids are priced so whatever the client sends resolves. ---",
       "provider": "anthropic",
       "model": "claude-3-5-sonnet",
+      "input_micros_per_1k": 3000,
+      "output_micros_per_1k": 15000
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-3-5-sonnet-latest",
+      "input_micros_per_1k": 3000,
+      "output_micros_per_1k": 15000
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-3-5-sonnet-20241022",
       "input_micros_per_1k": 3000,
       "output_micros_per_1k": 15000
     },
@@ -20,10 +59,184 @@
       "output_micros_per_1k": 4000
     },
     {
+      "provider": "anthropic",
+      "model": "claude-3-5-haiku-latest",
+      "input_micros_per_1k": 800,
+      "output_micros_per_1k": 4000
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-3-5-haiku-20241022",
+      "input_micros_per_1k": 800,
+      "output_micros_per_1k": 4000
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-3-7-sonnet-latest",
+      "input_micros_per_1k": 3000,
+      "output_micros_per_1k": 15000
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-3-7-sonnet-20250219",
+      "input_micros_per_1k": 3000,
+      "output_micros_per_1k": 15000
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-20250514",
+      "input_micros_per_1k": 3000,
+      "output_micros_per_1k": 15000
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-opus-4-20250514",
+      "input_micros_per_1k": 15000,
+      "output_micros_per_1k": 75000
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-3-opus-20240229",
+      "input_micros_per_1k": 15000,
+      "output_micros_per_1k": 75000
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-3-haiku-20240307",
+      "input_micros_per_1k": 250,
+      "output_micros_per_1k": 1250
+    },
+
+    {
+      "_comment": "--- Google (direct): set ABACUS_PROVIDER=google ---",
       "provider": "google",
       "model": "gemini-1.5-pro",
       "input_micros_per_1k": 1250,
       "output_micros_per_1k": 5000
+    },
+    {
+      "provider": "google",
+      "model": "gemini-1.5-flash",
+      "input_micros_per_1k": 75,
+      "output_micros_per_1k": 300
+    },
+    {
+      "provider": "google",
+      "model": "gemini-2.0-flash",
+      "input_micros_per_1k": 100,
+      "output_micros_per_1k": 400
+    },
+
+    {
+      "_comment": "--- OpenRouter-fronted: set ABACUS_PROVIDER=openrouter. Models use OpenRouter `vendor/model` slugs exactly as the client sends them, so non-OpenAI traffic is priced instead of rejected with model_not_priced. ---",
+      "provider": "openrouter",
+      "model": "openai/gpt-4o",
+      "input_micros_per_1k": 2500,
+      "output_micros_per_1k": 10000
+    },
+    {
+      "provider": "openrouter",
+      "model": "openai/gpt-4o-mini",
+      "input_micros_per_1k": 150,
+      "output_micros_per_1k": 600
+    },
+    {
+      "provider": "openrouter",
+      "model": "anthropic/claude-3.5-sonnet",
+      "input_micros_per_1k": 3000,
+      "output_micros_per_1k": 15000
+    },
+    {
+      "provider": "openrouter",
+      "model": "anthropic/claude-3.5-haiku",
+      "input_micros_per_1k": 800,
+      "output_micros_per_1k": 4000
+    },
+    {
+      "provider": "openrouter",
+      "model": "anthropic/claude-3-opus",
+      "input_micros_per_1k": 15000,
+      "output_micros_per_1k": 75000
+    },
+    {
+      "provider": "openrouter",
+      "model": "google/gemini-1.5-pro",
+      "input_micros_per_1k": 1250,
+      "output_micros_per_1k": 5000
+    },
+    {
+      "provider": "openrouter",
+      "model": "google/gemini-flash-1.5",
+      "input_micros_per_1k": 75,
+      "output_micros_per_1k": 300
+    },
+    {
+      "provider": "openrouter",
+      "model": "meta-llama/llama-3.1-70b-instruct",
+      "input_micros_per_1k": 520,
+      "output_micros_per_1k": 750
+    },
+    {
+      "provider": "openrouter",
+      "model": "meta-llama/llama-3.1-8b-instruct",
+      "input_micros_per_1k": 55,
+      "output_micros_per_1k": 55
+    },
+    {
+      "provider": "openrouter",
+      "model": "mistralai/mistral-large",
+      "input_micros_per_1k": 2000,
+      "output_micros_per_1k": 6000
+    },
+    {
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-chat",
+      "input_micros_per_1k": 140,
+      "output_micros_per_1k": 280
+    },
+    {
+      "provider": "openrouter",
+      "model": "qwen/qwen-2.5-72b-instruct",
+      "input_micros_per_1k": 350,
+      "output_micros_per_1k": 400
+    },
+
+    {
+      "_comment": "--- Relay-fronted (railyard apps/relay normalizer): set ABACUS_PROVIDER=relay. Relay passes the canonical model id through; price the ones you route. ---",
+      "provider": "relay",
+      "model": "gpt-4o",
+      "input_micros_per_1k": 2500,
+      "output_micros_per_1k": 10000
+    },
+    {
+      "provider": "relay",
+      "model": "gpt-4o-mini",
+      "input_micros_per_1k": 150,
+      "output_micros_per_1k": 600
+    },
+    {
+      "provider": "relay",
+      "model": "claude-3-5-sonnet",
+      "input_micros_per_1k": 3000,
+      "output_micros_per_1k": 15000
+    },
+    {
+      "provider": "relay",
+      "model": "claude-3-5-haiku",
+      "input_micros_per_1k": 800,
+      "output_micros_per_1k": 4000
+    },
+    {
+      "provider": "relay",
+      "model": "gemini-1.5-pro",
+      "input_micros_per_1k": 1250,
+      "output_micros_per_1k": 5000
+    },
+    {
+      "provider": "relay",
+      "model": "llama-3.1-70b-instruct",
+      "input_micros_per_1k": 520,
+      "output_micros_per_1k": 750
     }
   ]
 }

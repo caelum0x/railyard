@@ -1,0 +1,57 @@
+# apps/mint — local/production-shaped stack: Postgres 17 + mint-server.
+#
+# The server enters production mode whenever DATABASE_URL is set (it is, here),
+# which hardens the signer, KYC gate, and funding ramp. It runs the embedded
+# migrations against Postgres at startup, then serves on :8080.
+#
+# Secrets are read from the host environment (or a sibling `.env` file — see
+# `.env.example`). Nothing is hard-coded:
+#   MINT_API_KEY          shared X-API-Key / Bearer for all non-health routes.
+#   MINT_SIGNING_KEY      hex-encoded 32-byte receipt-signing seed.
+#   MINT_PAYER_KEYS_JSON  AITP-402 payer verification keys (JSON array).
+#
+# Usage:
+#   export MINT_API_KEY=... MINT_SIGNING_KEY=... MINT_PAYER_KEYS_JSON='[]'
+#   docker compose up --build
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mint
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mint}
+      POSTGRES_DB: mint
+    volumes:
+      - mint-pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mint -d mint"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mint-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MINT_BIND_ADDR: 0.0.0.0:8080
+      # PgStore (production) DSN — points at the postgres service above.
+      DATABASE_URL: ${DATABASE_URL:-postgres://mint:${POSTGRES_PASSWORD:-mint}@postgres:5432/mint}
+      # Required secrets (no defaults — must be supplied via env / .env).
+      MINT_API_KEY: ${MINT_API_KEY:?MINT_API_KEY is required}
+      MINT_SIGNING_KEY: ${MINT_SIGNING_KEY:?MINT_SIGNING_KEY is required}
+      MINT_PAYER_KEYS_JSON: ${MINT_PAYER_KEYS_JSON:-[]}
+      # Optional on-ramp webhook secret.
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+    ports:
+      - "8080:8080"
+
+volumes:
+  mint-pgdata:

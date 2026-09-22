@@ -1,0 +1,29 @@
+# Keep the build context small and reproducible. The builder recompiles from
+# source, so no host artifacts, deps, or secrets should enter the image.
+
+# Rust build output (rebuilt inside the image).
+target/
+**/target/
+
+# Local env / secrets — never bake these in.
+.env
+.env.*
+!.env.example
+
+# Node / TS SDK artifacts (not part of the server build).
+sdks/**/node_modules/
+**/node_modules/
+
+# Docker + VCS metadata.
+Dockerfile
+docker-compose.yml
+.dockerignore
+.git/
+.gitignore
+
+# Editor / OS / test caches.
+.pytest_cache/
+.idea/
+.vscode/
+.DS_Store
+*.log

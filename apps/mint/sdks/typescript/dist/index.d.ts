@@ -144,6 +144,12 @@ export interface VerificationKey {
     public_key_hex: string;
     status: string;
 }
+export interface AitpSettlement {
+    scheme: "transfer" | "hold";
+    receipt: Record<string, unknown>;
+    hold_id?: string;
+    signed_receipt: Receipt;
+}
 export interface TransferReceipt {
     first_seq: number;
     from_balance: Record<string, unknown>;
@@ -230,5 +236,16 @@ export declare class MintClient {
     verificationKeys(): Promise<{
         keys: VerificationKey[];
     }>;
+    /** Issue the single-use 402 challenge that the payer signs locally. */
+    issueAitpChallenge(input: {
+        payee: string;
+        amount_micros: number;
+        resource: string;
+        scheme: AitpScheme;
+        ttl_ms: number;
+    }): Promise<PaymentChallenge>;
+    /** Settle only after the payer's wallet/HSM signs the challenge intent. */
+    settleAitp(authorization: PaymentAuthorization): Promise<AitpSettlement>;
     private request;
+    private requestWithHeaders;
 }

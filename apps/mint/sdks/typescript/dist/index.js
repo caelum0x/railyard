@@ -284,7 +284,47 @@ export class MintClient {
     verificationKeys() {
         return this.request("GET", ".well-known/mint-verification-keys.json");
     }
+    /** Issue the single-use 402 challenge that the payer signs locally. */
+    async issueAitpChallenge(input) {
+        validatePositiveMoney("challenge amount_micros", input.amount_micros);
+        validatePositiveMoney("challenge ttl_ms", input.ttl_ms);
+        const response = await this.fetcher(new URL("v1/aitp/challenge", this.baseUrl), {
+            method: "POST",
+            headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json",
+                "X-API-Key": this.apiKey,
+            },
+            body: JSON.stringify(input),
+        });
+        const payload = await response.json().catch(() => null);
+        if (response.status !== 402 || !isRecord(payload)) {
+            throw apiError(response.status, payload);
+        }
+        const encoded = response.headers.get(HEADER_CHALLENGE);
+        if (!encoded)
+            throw new MintApiError(402, "invalid_response", payload, "Mint challenge header is missing");
+        const header = decodeChallenge(encoded);
+        const body = payload;
+        validateChallenge(body);
+        if (!sameChallenge(header, body)) {
+            throw new MintApiError(402, "invalid_response", payload, "Mint challenge header and body disagree");
+        }
+        return body;
+    }
+    /** Settle only after the payer's wallet/HSM signs the challenge intent. */
+    async settleAitp(authorization) {
+        const { data, headers } = await this.requestWithHeaders("POST", "v1/aitp/verify", authorization);
+        const encoded = headers.get(HEADER_RECEIPT);
+        if (!encoded) {
+            throw new MintApiError(200, "invalid_response", data, "Mint settlement receipt is missing");
+        }
+        return { ...data, signed_receipt: decodeReceipt(encoded) };
+    }
     async request(method, path, body) {
+        return (await this.requestWithHeaders(method, path, body)).data;
+    }
+    async requestWithHeaders(method, path, body) {
         const headers = new Headers({ Accept: "application/json", "X-API-Key": this.apiKey });
         if (body !== undefined)
             headers.set("Content-Type", "application/json");
@@ -299,15 +339,27 @@ export class MintClient {
             || !isRecord(payload)
             || payload.success !== true
             || (!isRecord(data) && !Array.isArray(data))) {
-            const detail = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
-            const code = detail && typeof detail.code === "string" ? detail.code : "http_error";
-            const message = detail && typeof detail.message === "string"
-                ? detail.message
-                : `Mint request failed with HTTP ${response.status}`;
-            throw new MintApiError(response.status, code, payload, message);
+            throw apiError(response.status, payload);
         }
-        return data;
+        return { data: data, headers: response.headers };
     }
+}
+function apiError(status, payload) {
+    const detail = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
+    const code = detail && typeof detail.code === "string" ? detail.code : "http_error";
+    const message = detail && typeof detail.message === "string"
+        ? detail.message
+        : `Mint request failed with HTTP ${status}`;
+    return new MintApiError(status, code, payload, message);
+}
+function sameChallenge(left, right) {
+    return left.payee === right.payee
+        && left.amount_micros === right.amount_micros
+        && left.currency === right.currency
+        && left.resource === right.resource
+        && left.nonce === right.nonce
+        && left.expiry === right.expiry
+        && left.scheme === right.scheme;
 }
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);

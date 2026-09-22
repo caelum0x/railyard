@@ -1,6 +1,8 @@
 {
+  "_note": "ABACUS_AGENT_CONFIG template. Copy to a private path (e.g. /tmp/abacus-agents.json) and replace EVERY placeholder below with REAL Mint identities before sending paid traffic. Each entry maps an authenticated agent to its Mint accounts + budget policy: `agent_id` (agent_...) is the X-Abacus-Agent header value the proxy authenticates; `agent_acct`/`treasury` are Mint ledger accounts (acct_...); `payee` is the provider payout address (ait1...) resolved to an account at capture time; `budget.funding_path` is `direct_hold` (reserve against `treasury`) or `allowance_ceiling` (spend against a delegated `allowance_id`). `budget.per_request_max_micros` is a local hard ceiling in µ$ (defence-in-depth atop the Mint ceiling). Extra keys prefixed `_` (like this one) are ignored by the loader.",
   "agents": [
     {
+      "_note": "Placeholder direct-hold agent — for wiring/smoke tests only. Replace agent_acct/treasury/payee with real Mint identities before ANY paid traffic.",
       "agent_id": "agent_01ARZ3NDEKTSV4RRFFQ69G5FAV",
       "agent_acct": "acct_agent_example",
       "treasury": "acct_treasury_example",
@@ -10,6 +12,19 @@
         "funding_path": "direct_hold",
         "allowance_id": null,
         "per_request_max_micros": 5000000
+      }
+    },
+    {
+      "_note": "REAL-IDENTITY TEMPLATE. Fill each <...> with a value minted in your Mint server, then delete this note. This example uses the allowance_ceiling path: the reserve is a hold-backed spend against a delegated allowance ceiling (set allowance_id; treasury is still required for the account graph). For a direct-hold agent instead, set funding_path=\"direct_hold\" and allowance_id=null. Formats: agent_id=agent_<ulid>, agent_acct/treasury=acct_<...>, payee=ait1<...>, budget_id=budget_<ulid>, allowance_id=alw_<...>, per_request_max_micros=integer µ$ (1_000_000 = $1.00).",
+      "agent_id": "agent_<REPLACE_WITH_REAL_AGENT_ULID>",
+      "agent_acct": "acct_<REPLACE_WITH_REAL_AGENT_ACCOUNT>",
+      "treasury": "acct_<REPLACE_WITH_REAL_TREASURY_ACCOUNT>",
+      "payee": "ait1<REPLACE_WITH_REAL_PROVIDER_PAYEE_ADDRESS>",
+      "budget": {
+        "budget_id": "budget_<REPLACE_WITH_REAL_BUDGET_ULID>",
+        "funding_path": "allowance_ceiling",
+        "allowance_id": "alw_<REPLACE_WITH_REAL_ALLOWANCE_ID>",
+        "per_request_max_micros": 2000000
       }
     }
   ]

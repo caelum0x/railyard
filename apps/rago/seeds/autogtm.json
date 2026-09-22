@@ -1,0 +1,63 @@
+{
+  "consumer": "autogtm",
+  "description": "Rago catalog seed for AutoGTM (VCPeer cold-email / GTM automation). Bills outbound cold emails and AI-generated drafts as usage on top of a flat monthly seat.",
+  "currency": "USD",
+  "billable_metrics": [
+    {
+      "name": "GTM Emails Sent",
+      "code": "gtm_email_sent",
+      "description": "One event per cold/outbound email actually handed to the sending transport (Postal). Counted, not summed.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "GTM AI Drafts",
+      "code": "gtm_draft",
+      "description": "One event per AI-generated email/sequence draft produced by the decisions engine. Counted regardless of whether the draft is later sent.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    }
+  ],
+  "plans": [
+    {
+      "name": "AutoGTM Growth",
+      "code": "autogtm_growth",
+      "interval": "monthly",
+      "description": "Flat monthly platform fee plus metered email volume and AI draft generation.",
+      "amount_cents": 4900,
+      "amount_currency": "USD",
+      "pay_in_advance": true,
+      "bill_charges_monthly": true,
+      "charges": [
+        {
+          "billable_metric_code": "gtm_email_sent",
+          "charge_model": "package",
+          "invoiceable": true,
+          "properties": {
+            "amount": "8.0",
+            "package_size": 1000,
+            "free_units": 2000
+          }
+        },
+        {
+          "billable_metric_code": "gtm_draft",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.02"
+          }
+        }
+      ]
+    }
+  ],
+  "sample_events": [
+    {
+      "code": "gtm_email_sent",
+      "note": "POST /events { event: { transaction_id, external_subscription_id, code: 'gtm_email_sent' } } — one per send."
+    },
+    {
+      "code": "gtm_draft",
+      "note": "POST /events { event: { transaction_id, external_subscription_id, code: 'gtm_draft' } } — one per generated draft."
+    }
+  ]
+}

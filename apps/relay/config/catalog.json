@@ -1,0 +1,231 @@
+{
+  "schema_version": 1,
+  "revision": "relay-default-catalog-v1",
+  "generated_at_ms": 1758585600000,
+  "models": [
+    {
+      "id": "tensorzero::function_name::chat",
+      "provider": "tensorzero",
+      "display_name": "Relay Chat",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "embeddings": false,
+        "tools": true,
+        "vision": false,
+        "json_schema": true,
+        "streaming": true,
+        "batch": false
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 150000,
+        "output_micro_usd_per_million": 600000,
+        "source": "operator_override"
+      },
+      "enabled": true
+    },
+    {
+      "id": "tensorzero::function_name::passport_text",
+      "provider": "tensorzero",
+      "display_name": "Relay Passport Text",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "embeddings": false,
+        "tools": false,
+        "vision": false,
+        "json_schema": true,
+        "streaming": true,
+        "batch": false
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 3000000,
+        "output_micro_usd_per_million": 15000000,
+        "source": "operator_override"
+      },
+      "enabled": true
+    },
+    {
+      "id": "tensorzero::model_name::gpt-4o-mini",
+      "provider": "tensorzero",
+      "display_name": "GPT-4o mini",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "embeddings": false,
+        "tools": true,
+        "vision": true,
+        "json_schema": true,
+        "streaming": true,
+        "batch": true
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 150000,
+        "output_micro_usd_per_million": 600000,
+        "source": "operator_override"
+      },
+      "context_window_tokens": 128000,
+      "max_output_tokens": 16384,
+      "enabled": true
+    },
+    {
+      "id": "tensorzero::model_name::gpt-4o",
+      "provider": "tensorzero",
+      "display_name": "GPT-4o",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "embeddings": false,
+        "tools": true,
+        "vision": true,
+        "json_schema": true,
+        "streaming": true,
+        "batch": true
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 2500000,
+        "output_micro_usd_per_million": 10000000,
+        "source": "operator_override"
+      },
+      "context_window_tokens": 128000,
+      "max_output_tokens": 16384,
+      "enabled": true
+    },
+    {
+      "id": "tensorzero::model_name::claude-sonnet",
+      "provider": "tensorzero",
+      "display_name": "Claude Sonnet 4.5",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "embeddings": false,
+        "tools": true,
+        "vision": true,
+        "json_schema": true,
+        "streaming": true,
+        "batch": false
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 3000000,
+        "output_micro_usd_per_million": 15000000,
+        "source": "operator_override"
+      },
+      "context_window_tokens": 200000,
+      "max_output_tokens": 64000,
+      "enabled": true
+    },
+    {
+      "id": "tensorzero::model_name::text-embedding-3-small",
+      "provider": "tensorzero",
+      "display_name": "Text Embedding 3 Small",
+      "aliases": [],
+      "capabilities": {
+        "chat": false,
+        "embeddings": true,
+        "tools": false,
+        "vision": false,
+        "json_schema": false,
+        "streaming": false,
+        "batch": true
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 20000,
+        "output_micro_usd_per_million": 0,
+        "source": "operator_override"
+      },
+      "context_window_tokens": 8192,
+      "enabled": true
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "provider": "openai",
+      "display_name": "OpenAI GPT-4o mini",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "embeddings": false,
+        "tools": true,
+        "vision": true,
+        "json_schema": true,
+        "streaming": true,
+        "batch": true
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 150000,
+        "output_micro_usd_per_million": 600000,
+        "source": "provider_list"
+      },
+      "context_window_tokens": 128000,
+      "max_output_tokens": 16384,
+      "enabled": true
+    },
+    {
+      "id": "openai/gpt-4o",
+      "provider": "openai",
+      "display_name": "OpenAI GPT-4o",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "embeddings": false,
+        "tools": true,
+        "vision": true,
+        "json_schema": true,
+        "streaming": true,
+        "batch": true
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 2500000,
+        "output_micro_usd_per_million": 10000000,
+        "source": "provider_list"
+      },
+      "context_window_tokens": 128000,
+      "max_output_tokens": 16384,
+      "enabled": true
+    },
+    {
+      "id": "anthropic/claude-sonnet-4.5",
+      "provider": "anthropic",
+      "display_name": "Anthropic Claude Sonnet 4.5",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "embeddings": false,
+        "tools": true,
+        "vision": true,
+        "json_schema": true,
+        "streaming": true,
+        "batch": false
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 3000000,
+        "output_micro_usd_per_million": 15000000,
+        "source": "provider_list"
+      },
+      "context_window_tokens": 200000,
+      "max_output_tokens": 64000,
+      "enabled": true
+    },
+    {
+      "id": "openai/text-embedding-3-small",
+      "provider": "openai",
+      "display_name": "OpenAI Text Embedding 3 Small",
+      "aliases": [],
+      "capabilities": {
+        "chat": false,
+        "embeddings": true,
+        "tools": false,
+        "vision": false,
+        "json_schema": false,
+        "streaming": false,
+        "batch": true
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 20000,
+        "output_micro_usd_per_million": 0,
+        "source": "provider_list"
+      },
+      "context_window_tokens": 8192,
+      "enabled": true
+    }
+  ]
+}

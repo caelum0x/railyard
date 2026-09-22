@@ -1,0 +1,42 @@
+{
+  "consumer": "menivor",
+  "description": "Rago catalog seed for Menivor (video/reel generation + LLM relay). Bills the real provider spend of media renders and LLM calls as a pass-through metric, so the invoice line equals the metered cost carried on each event.",
+  "currency": "USD",
+  "billable_metrics": [
+    {
+      "name": "Menivor Media & LLM Spend",
+      "code": "menivor_media_spend",
+      "description": "One event per media render or LLM call. `units` sums the billable units consumed (render-seconds or 1k-token blocks); each event also carries `precise_total_amount_cents` = the actual upstream provider spend, which the dynamic charge bills through at cost + margin.",
+      "aggregation_type": "sum_agg",
+      "field_name": "units",
+      "recurring": false
+    }
+  ],
+  "plans": [
+    {
+      "name": "Menivor Studio",
+      "code": "menivor_studio",
+      "interval": "monthly",
+      "description": "Monthly studio seat plus metered, pass-through media and LLM spend.",
+      "amount_cents": 2900,
+      "amount_currency": "USD",
+      "pay_in_advance": true,
+      "bill_charges_monthly": true,
+      "charges": [
+        {
+          "billable_metric_code": "menivor_media_spend",
+          "charge_model": "dynamic",
+          "invoiceable": true,
+          "min_amount_cents": 0,
+          "properties": {}
+        }
+      ]
+    }
+  ],
+  "sample_events": [
+    {
+      "code": "menivor_media_spend",
+      "note": "POST /events { event: { transaction_id, external_subscription_id, code: 'menivor_media_spend', properties: { units: 12 }, precise_total_amount_cents: '340' } } — units for the sum aggregation, precise_total_amount_cents for the dynamic pass-through price (in cents)."
+    }
+  ]
+}

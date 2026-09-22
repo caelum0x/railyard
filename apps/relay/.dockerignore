@@ -1,20 +1,46 @@
+# Build context for apps/relay/Dockerfile (the RELAY gateway image).
+# The Rust build only needs `crates/` and `config/`; everything below is
+# excluded to keep the context small and to avoid leaking local secrets.
+
+# Rust / cargo build artifacts
 target
 target-rust-analyzer
-**/target-rust-analyzer
 **/target
+**/target-rust-analyzer
+/release
+recipe.json
+**/recipe.json
+
+# Node / UI build artifacts (not needed by the gateway image)
+**/node_modules
 **/build
 **/dist
-**/.venv
-**/node_modules
-**/.env*
-**/.vscode
-**/.claude
+ui
 ui/fixtures/small-fixtures
 ui/fixtures/large-fixtures
+pnpm-lock.yaml
+
+# Python
+**/.venv
+
+# Editor / tooling / CI metadata
+**/.vscode
+**/.claude
 **/test-results
-/recipes
+.buildkite
+.github
+
+# Secrets and local environment — NEVER copy into the image
+**/.env*
 gcp_jwt_key.json
 .credentials/
+
+# Repo docs / examples / clients not required at runtime
+/recipes
 /clients
 /docs
 /examples
+
+# VCS
+.git
+.gitignore
