@@ -9,7 +9,7 @@ description = "In-memory PassportStore + ProvenanceLog for tests and embedded de
 passport-core = { workspace = true }
 passport-provenance = { workspace = true }
 async-trait = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
-chrono = { workspace = true }

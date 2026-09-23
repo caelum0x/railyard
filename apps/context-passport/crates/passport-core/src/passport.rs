@@ -21,6 +21,17 @@ pub struct Passport {
     pub version: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Set while the passport is archived: it stays readable (versions,
+    /// provenance, manifests) but cannot be edited, locked, branched or used to
+    /// generate until it is unarchived.
+    #[serde(default)]
+    pub archived_at: Option<DateTime<Utc>>,
+}
+
+impl Passport {
+    pub fn is_archived(&self) -> bool {
+        self.archived_at.is_some()
+    }
 }
 
 /// A create request. The passport `id` is generated server-side; `idempotency_key`
@@ -69,10 +80,26 @@ pub struct PassportView {
     pub head: PassportVersion,
 }
 
-/// Optional filters for listing passports.
+/// Optional filters for listing passports. Archived passports are hidden
+/// unless `include_archived` (both) or `archived_only` is set.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct PassportFilter {
     pub owner: Option<String>,
     pub kind: Option<PassportKind>,
     pub limit: Option<i64>,
+    #[serde(default)]
+    pub include_archived: bool,
+    #[serde(default)]
+    pub archived_only: bool,
+}
+
+impl PassportFilter {
+    /// Whether `passport` passes the archive part of this filter.
+    pub fn admits_archive_state(&self, passport: &Passport) -> bool {
+        if self.archived_only {
+            passport.is_archived()
+        } else {
+            self.include_archived || !passport.is_archived()
+        }
+    }
 }

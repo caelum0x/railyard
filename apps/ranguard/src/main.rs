@@ -371,11 +371,7 @@ fn run_demo() -> std::io::Result<()> {
     // 6. Heartbeat challenge/response with rolling HMAC (anti-replay).
     // ------------------------------------------------------------------
     section("6. Heartbeat challenge/response (rolling HMAC anti-replay)");
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(12345);
-    let mut server = Server::new(DEMO_HEARTBEAT_KEY, seed);
+    let mut server = Server::new_secure(DEMO_HEARTBEAT_KEY)?;
     let mut client = Client::new(DEMO_HEARTBEAT_KEY);
 
     // Three honest rounds. The client advances its rolling chain only after the

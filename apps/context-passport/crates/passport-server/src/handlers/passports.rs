@@ -74,6 +74,28 @@ pub async fn update_draft(
     }))
 }
 
+pub async fn archive(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Data<PassportView>>, ApiError> {
+    authorize_passport(&state, &headers, &id).await?;
+    Ok(Json(Data {
+        data: state.service.archive(&id).await?,
+    }))
+}
+
+pub async fn unarchive(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Data<PassportView>>, ApiError> {
+    authorize_passport(&state, &headers, &id).await?;
+    Ok(Json(Data {
+        data: state.service.unarchive(&id).await?,
+    }))
+}
+
 pub async fn lock(
     State(state): State<AppState>,
     headers: HeaderMap,

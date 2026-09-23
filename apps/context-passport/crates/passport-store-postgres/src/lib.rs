@@ -206,15 +206,38 @@ impl PassportStore for PostgresStore {
             "SELECT * FROM passports \
              WHERE ($1::TEXT IS NULL OR owner = $1) \
                AND ($2::TEXT IS NULL OR kind = $2) \
+               AND (CASE WHEN $4 THEN archived_at IS NOT NULL \
+                         WHEN $5 THEN TRUE \
+                         ELSE archived_at IS NULL END) \
              ORDER BY created_at DESC LIMIT $3",
         )
         .bind(&filter.owner)
         .bind(&kind)
         .bind(limit)
+        .bind(filter.archived_only)
+        .bind(filter.include_archived)
         .fetch_all(&self.pool)
         .await
         .map_err(storage_error)?;
         rows.iter().map(row_to_passport).collect()
+    }
+
+    async fn set_archived(
+        &self,
+        id: &str,
+        archived_at: Option<DateTime<Utc>>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<Option<Passport>, PassportError> {
+        let row = sqlx::query(
+            "UPDATE passports SET archived_at = $2, updated_at = $3 WHERE id = $1 RETURNING *",
+        )
+        .bind(id)
+        .bind(archived_at)
+        .bind(updated_at)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage_error)?;
+        row.as_ref().map(row_to_passport).transpose()
     }
 
     async fn ready(&self) -> Result<(), PassportError> {
@@ -339,6 +362,9 @@ fn row_to_passport(row: &PgRow) -> Result<Passport, PassportError> {
             .map_err(storage_error)?,
         updated_at: row
             .try_get::<DateTime<Utc>, _>("updated_at")
+            .map_err(storage_error)?,
+        archived_at: row
+            .try_get::<Option<DateTime<Utc>>, _>("archived_at")
             .map_err(storage_error)?,
     })
 }

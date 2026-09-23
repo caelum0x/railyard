@@ -50,7 +50,7 @@ Confirmed against the actual source, this program **does NOT**:
 | **Read, write, or scan another process's memory** | `src/process.rs` only calls `Child::try_wait` / `Child::kill` on a handle it owns |
 | Attach to, debug, or anti-debug **arbitrary PIDs** | It never looks up a PID; it retains the `std::process::Child` it spawned itself |
 | Touch **files it did not create** | `src/manifest.rs` only walks a sandbox directory passed to it; the demo seeds that from a temp copy of `assets/` |
-| Perform **stealth, evasion, rootkit, or telemetry** behavior | No network code, no hiding, no persistence — the whole run is printed to stdout |
+| Perform **stealth, evasion, rootkit, or telemetry** behavior | The `ranguard` CLI has no network code, no hiding, no persistence — the whole run is printed to stdout. The separate `ranguard-server` binary only receives fingerprints and heartbeats a game backend chooses to send it; it never reaches into a client machine |
 
 Everything it does is confined to **two things it exclusively owns**:
 
@@ -327,6 +327,44 @@ test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 ```
 
 ---
+
+## HTTP service (`ranguard-server`)
+
+`ranguard-server` exposes the same core as a network service for a game
+backend. It is still zero-dependency (`std::net` HTTP/1.1, one thread per
+connection, capped) and should run behind a TLS-terminating proxy.
+
+```bash
+RANGUARD_KEY=$(head -c32 /dev/urandom | base64) \
+RANGUARD_API_TOKEN=$(head -c24 /dev/urandom | base64) \
+RANGUARD_DATA_DIR=./ranguard-data \
+cargo run --release --bin ranguard-server
+```
+
+Every `/v1` route requires `Authorization: Bearer $RANGUARD_API_TOKEN`; the
+service is called by your backend, never by players directly.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/healthz` | Liveness (public) |
+| GET | `/v1/stats` | Open sessions and registered manifests |
+| POST | `/v1/manifests` | Sign and register a release baseline: `{root?, label?, entries:[{path,size,sha256}]}` |
+| GET | `/v1/manifests`, `/v1/manifests/:id` | List / fetch (the fetch includes the signed manifest text) |
+| DELETE | `/v1/manifests/:id` | Remove a registered manifest |
+| POST | `/v1/manifests/verify` | Check the HMAC of a signed manifest text: `{manifest}` |
+| POST | `/v1/manifests/scan` | Diff client-reported fingerprints: `{manifest_id` or `manifest, files:[{path,size,sha256}]}` returns modified / added / removed |
+| POST | `/v1/sessions` | Open a heartbeat session: returns `session_id` and the per-session key |
+| GET / DELETE | `/v1/sessions/:id` | Session status (accepted / rejected counts) / close |
+| POST | `/v1/sessions/:id/challenge` | Issue `{counter, nonce}` (nonce from the OS CSPRNG) |
+| POST | `/v1/sessions/:id/heartbeat` | Verify `{counter, nonce, tag}` where `tag = HMAC-SHA256(session_key, counter_be64 ‖ nonce ‖ previous_accepted_tag)` |
+
+Configuration: `RANGUARD_KEY` (>= 16 bytes, signs manifests and derives
+session keys), `RANGUARD_API_TOKEN` (>= 24 chars), `RANGUARD_BIND` (default
+`0.0.0.0:8110`), `RANGUARD_DATA_DIR` (persist registered manifests; otherwise
+memory only), `RANGUARD_SESSION_TTL_SECS` (default 3600),
+`RANGUARD_MAX_SESSIONS` (default 100000), `RANGUARD_MAX_CONNECTIONS` (default 256).
+Heartbeat sessions are in memory: they are lost on restart, and clients simply
+open a new session.
 
 ## Testing
 

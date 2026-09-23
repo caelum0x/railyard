@@ -68,6 +68,7 @@ fn new_passport(owner: &str, kind: PassportKind, now: DateTime<Utc>) -> Passport
         version: 1,
         created_at: now,
         updated_at: now,
+        archived_at: None,
     }
 }
 
@@ -91,6 +92,7 @@ async fn count_for_owner(store: &PostgresStore, owner: &str) -> usize {
             owner: Some(owner.to_string()),
             kind: None,
             limit: Some(1_000),
+            ..PassportFilter::default()
         })
         .await
         .expect("list_passports")

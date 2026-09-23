@@ -22,7 +22,7 @@ fn status_for(error: &PassportError) -> StatusCode {
         Invalid(_) | KindMismatch(_) | ResolveUnavailable { .. } | NeedsArtifact { .. } => {
             StatusCode::UNPROCESSABLE_ENTITY
         }
-        IdempotencyConflict | VersionLocked | VersionNotLocked => StatusCode::CONFLICT,
+        IdempotencyConflict | VersionLocked | VersionNotLocked | Archived => StatusCode::CONFLICT,
         NotFound | VersionNotFound => StatusCode::NOT_FOUND,
         Unauthorized => StatusCode::UNAUTHORIZED,
         Relay(_) | Mint(_) => StatusCode::BAD_GATEWAY,

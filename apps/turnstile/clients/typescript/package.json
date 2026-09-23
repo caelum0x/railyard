@@ -1,0 +1,17 @@
+{
+  "name": "@railyard/turnstile-client",
+  "version": "0.1.0",
+  "description": "Agent-side AITP-402 payment client for Turnstile-gated HTTP endpoints and MCP tools. Zero dependencies.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": ["src", "README.md"],
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p ."
+  }
+}

@@ -105,6 +105,7 @@ impl PassportService {
             version: 1,
             created_at: now,
             updated_at: now,
+            archived_at: None,
         };
         let head = PassportVersion {
             passport_id: id,
@@ -158,13 +159,42 @@ impl PassportService {
         self.store.list_passports(filter).await
     }
 
+    /// Archive a passport: it stays readable (versions, provenance,
+    /// manifests) but refuses edits, locks, new versions, generation and
+    /// attestation until unarchived. Idempotent.
+    pub async fn archive(&self, id: &str) -> Result<PassportView, PassportError> {
+        let passport = self.require_passport(id).await?;
+        if passport.is_archived() {
+            return self.get(id).await;
+        }
+        let now = Utc::now();
+        self.store
+            .set_archived(id, Some(now), now)
+            .await?
+            .ok_or(PassportError::NotFound)?;
+        self.get(id).await
+    }
+
+    /// Restore an archived passport to normal use. Idempotent.
+    pub async fn unarchive(&self, id: &str) -> Result<PassportView, PassportError> {
+        let passport = self.require_passport(id).await?;
+        if !passport.is_archived() {
+            return self.get(id).await;
+        }
+        self.store
+            .set_archived(id, None, Utc::now())
+            .await?
+            .ok_or(PassportError::NotFound)?;
+        self.get(id).await
+    }
+
     /// Apply a typed patch to the head DRAFT version. A locked head is immutable.
     pub async fn update_draft(
         &self,
         id: &str,
         patch: &AssetsPatch,
     ) -> Result<PassportView, PassportError> {
-        let mut passport = self.require_passport(id).await?;
+        let mut passport = self.require_active(id).await?;
         let mut head = self
             .store
             .head_version(id)
@@ -191,7 +221,7 @@ impl PassportService {
     /// Lock the head version: validate rights, content-address it, freeze forever.
     /// Idempotent — locking a locked head returns it unchanged.
     pub async fn lock(&self, id: &str) -> Result<PassportView, PassportError> {
-        let mut passport = self.require_passport(id).await?;
+        let mut passport = self.require_active(id).await?;
         let head = self
             .store
             .head_version(id)
@@ -213,7 +243,7 @@ impl PassportService {
 
     /// Branch a new DRAFT from the LOCKED head (VISION: fork from a locked one).
     pub async fn new_version(&self, id: &str) -> Result<PassportView, PassportError> {
-        let mut passport = self.require_passport(id).await?;
+        let mut passport = self.require_active(id).await?;
         let head = self
             .store
             .head_version(id)
@@ -281,8 +311,8 @@ impl PassportService {
                 "prompt must be at most {MAX_PROMPT_CHARS} characters"
             )));
         }
+        let principal = self.require_active(id).await?.owner;
         let target = self.locked_target(id, version).await?;
-        let principal = self.require_passport(id).await?.owner;
         let payload = self.registry.resolve(&target, provider, modality)?;
 
         let request = RelayGenerationRequest {
@@ -350,6 +380,7 @@ impl PassportService {
         evidence: passport_core::PaymentEvidence,
         settled_at_ms: i64,
     ) -> Result<GenerationRecord, PassportError> {
+        self.require_active(id).await?;
         let target = self.locked_target(id, version).await?;
         // Prove this exact locked version has a real conditioning path for the
         // selected provider/modality. An unsupported combination cannot be
@@ -421,6 +452,15 @@ impl PassportService {
     }
 
     // ---- helpers ---------------------------------------------------------
+
+    /// Like `require_passport`, but refuses an archived passport.
+    async fn require_active(&self, id: &str) -> Result<Passport, PassportError> {
+        let passport = self.require_passport(id).await?;
+        if passport.is_archived() {
+            return Err(PassportError::Archived);
+        }
+        Ok(passport)
+    }
 
     async fn require_passport(&self, id: &str) -> Result<Passport, PassportError> {
         self.store

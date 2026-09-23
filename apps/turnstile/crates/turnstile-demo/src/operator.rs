@@ -14,6 +14,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -22,7 +23,7 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
 use turnstile_axum::SettlementStatus;
-use turnstile_core::{SettlementJournal, SettlementPhase};
+use turnstile_core::{reconcile_once, PaymentVerifier, SettlementJournal, SettlementPhase};
 
 /// Most rows one admin list call returns.
 const MAX_LIST: usize = 500;
@@ -33,6 +34,10 @@ const SUMMARY_WINDOW: usize = 5_000;
 pub struct OperatorState {
     pub journal: Arc<dyn SettlementJournal>,
     pub admin_token: Option<Arc<str>>,
+    /// Mint verifier used to replay recorded settlement commands.
+    pub verifier: Arc<dyn PaymentVerifier>,
+    /// Lease a recovery claim holds (same as the background reaper).
+    pub lease: Duration,
 }
 
 impl OperatorState {
@@ -137,6 +142,52 @@ pub async fn list_settlements(
             Json(json!({ "settlements": items })).into_response()
         }
         Err(e) => error(StatusCode::SERVICE_UNAVAILABLE, "journal_unavailable", &e.to_string()),
+    }
+}
+
+#[derive(Deserialize, Default)]
+pub struct RecoveryRequest {
+    limit: Option<usize>,
+}
+
+/// `POST /v1/admin/recovery` — run one settlement recovery pass now instead of
+/// waiting for the background reaper. It uses the same lease protocol, so it
+/// only claims commands whose owner's lease has expired (abandoned holds are
+/// released, pending captures/releases replay their recorded direction) and is
+/// safe to run on any replica at any time.
+pub async fn run_recovery(
+    State(state): State<OperatorState>,
+    headers: HeaderMap,
+    body: Option<Json<RecoveryRequest>>,
+) -> Response {
+    if let Err(response) = state.require_operator(&headers) {
+        return response;
+    }
+    let limit = body
+        .and_then(|Json(req)| req.limit)
+        .unwrap_or(100)
+        .clamp(1, MAX_LIST);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let worker_token = format!("operator-{}-{nanos}", std::process::id());
+    match reconcile_once(
+        state.journal.clone(),
+        state.verifier.clone(),
+        &worker_token,
+        state.lease,
+        limit,
+    )
+    .await
+    {
+        Ok(report) => Json(json!({
+            "claimed": report.claimed,
+            "completed": report.completed,
+            "failed": report.failed,
+        }))
+        .into_response(),
+        Err(e) => error(StatusCode::SERVICE_UNAVAILABLE, "recovery_failed", &e.to_string()),
     }
 }
 

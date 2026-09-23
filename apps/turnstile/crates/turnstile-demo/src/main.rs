@@ -25,10 +25,12 @@
 //! [`tools`]) and every declared upstream endpoint becomes a paid tool over
 //! HTTP (`POST /v1/tools/<name>/call`) and MCP, each priced independently. The
 //! built-in `echo` tool (priced by `TURNSTILE_PRICE_MICROS`) is served only
-//! when no registry is configured.
+//! when explicitly requested with `TURNSTILE_DEMO_ECHO=1`; with neither set the
+//! server refuses to start.
 //!
-//! Operator access: `TURNSTILE_ADMIN_TOKEN` enables `GET /v1/admin/settlements`
-//! and `GET /v1/admin/summary` (captured revenue, pending captures, failures).
+//! Operator access: `TURNSTILE_ADMIN_TOKEN` enables `GET /v1/admin/settlements`,
+//! `GET /v1/admin/summary` (captured revenue, pending captures, failures) and
+//! `POST /v1/admin/recovery` (run a settlement recovery pass now).
 
 mod mcp;
 mod operator;
@@ -41,7 +43,7 @@ use aitp_client::{ReqwestTransport, Scheme};
 use axum::http::StatusCode;
 use axum::middleware::from_fn_with_state;
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{get, on, post, MethodFilter};
 use axum::Router;
 use turnstile_axum::{admit, discover, PaidRequest};
 use turnstile_core::{
@@ -52,7 +54,7 @@ use turnstile_core::{
 };
 
 use crate::mcp::{echo_schema, mcp_endpoint, McpState, McpTool, McpToolKind, MCP_ECHO_RESOURCE};
-use crate::operator::{list_settlements, settlement_for_payer, summary, OperatorState};
+use crate::operator::{list_settlements, run_recovery, settlement_for_payer, summary, OperatorState};
 use crate::tools::{load_specs, proxy_http, UpstreamTool};
 
 #[tokio::main]
@@ -131,10 +133,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         price,
                         Scheme::Hold,
                     ));
+                    let method: axum::http::Method = spec
+                        .http_method
+                        .parse()
+                        .map_err(|_| format!("tool {}: invalid http_method", spec.name))?;
+                    let filter = MethodFilter::try_from(method)
+                        .map_err(|_| format!("tool {}: unsupported http_method", spec.name))?;
                     let route = Router::new()
                         .route(
                             &spec.http_path(),
-                            post(proxy_http).route_layer(from_fn_with_state(gate.clone(), admit)),
+                            on(filter, proxy_http)
+                                .route_layer(from_fn_with_state(gate.clone(), admit)),
                         )
                         .with_state(upstream.clone());
                     paid_routes = paid_routes.merge(route);
@@ -161,8 +170,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("paid tool {} -> {} ({} micros)", spec.name, spec.upstream_url, spec.price_micros);
             }
         }
+        _ if !demo_echo_enabled() => {
+            return Err(
+                "TURNSTILE_TOOLS_PATH must point at a paid-tool registry (set TURNSTILE_DEMO_ECHO=1 to run the built-in echo demo instead)"
+                    .into(),
+            );
+        }
         _ => {
-            // Demo mode: the built-in echo tool at TURNSTILE_PRICE_MICROS.
+            // Demo mode (explicit TURNSTILE_DEMO_ECHO=1): the built-in echo tool
+            // at TURNSTILE_PRICE_MICROS. Never served by accident, so a
+            // misconfigured deploy cannot charge real money for an echo.
+            eprintln!("TURNSTILE_DEMO_ECHO=1: serving the built-in echo demo tool");
             let gate = make_gate(config.price_micros);
             // <10 lines to gate a route: attach the admit middleware as a route layer.
             let protected = post(echo).route_layer(from_fn_with_state(gate.clone(), admit));
@@ -218,11 +236,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let operator_state = OperatorState {
         journal: status_journal,
         admin_token: admin_token.map(Arc::from),
+        verifier: verifier.clone(),
+        lease: settlement_lease,
     };
     let status_api = Router::new()
         .route("/v1/settlements/:request_id", get(settlement_for_payer))
         .route("/v1/admin/settlements", get(list_settlements))
         .route("/v1/admin/summary", get(summary))
+        .route("/v1/admin/recovery", post(run_recovery))
         .with_state(operator_state);
 
     let app = Router::new()
@@ -241,6 +262,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// The built-in echo tool is opt-in only.
+fn demo_echo_enabled() -> bool {
+    matches!(
+        std::env::var("TURNSTILE_DEMO_ECHO")
+            .map(|v| v.trim().to_ascii_lowercase())
+            .as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    )
 }
 
 /// Open liveness probe — never gated.

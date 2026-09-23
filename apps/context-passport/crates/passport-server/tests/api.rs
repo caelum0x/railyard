@@ -595,3 +595,33 @@ async fn generate_on_draft_fails_closed_without_calling_relay() {
     assert_eq!(err, passport_core::PassportError::VersionNotLocked);
     assert_eq!(h.relay.call_count(), 0);
 }
+
+#[tokio::test]
+async fn archived_passport_is_hidden_read_only_and_restorable() {
+    let h = harness();
+    let id = create_locked_character(&h.app).await;
+
+    let (status, archived) = send(&h.app, "POST", &format!("/v1/passports/{id}/archive"), Some(API_KEY), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(archived["data"]["archived_at"].is_string());
+
+    // Hidden from the default list, shown with archived_only.
+    let (_, active) = send(&h.app, "GET", "/v1/passports", Some(API_KEY), None).await;
+    assert!(active["data"].as_array().unwrap().iter().all(|p| p["id"] != id.as_str()));
+    let (_, only) = send(&h.app, "GET", "/v1/passports?archived_only=true", Some(API_KEY), None).await;
+    assert!(only["data"].as_array().unwrap().iter().any(|p| p["id"] == id.as_str()));
+
+    // Still readable, but generation and branching are refused without touching Relay.
+    let (status, _) = send(&h.app, "GET", &format!("/v1/passports/{id}"), Some(API_KEY), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let err = h.service.generate(&id, "runway", Modality::Image, None, None).await.unwrap_err();
+    assert_eq!(err, passport_core::PassportError::Archived);
+    assert_eq!(h.relay.call_count(), 0);
+    let (status, body) = send(&h.app, "POST", &format!("/v1/passports/{id}/versions"), Some(API_KEY), None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "passport_archived");
+
+    let (status, restored) = send(&h.app, "POST", &format!("/v1/passports/{id}/unarchive"), Some(API_KEY), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(restored["data"]["archived_at"].is_null());
+}

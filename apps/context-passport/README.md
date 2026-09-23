@@ -67,10 +67,12 @@ Two facts drive the design (from the provider research):
 | `GET /healthz` | public | Liveness |
 | `GET /readyz` | public | Postgres readiness |
 | `POST /v1/passports` | `X-API-Key` | Create a draft passport (idempotent on `idempotency_key`) |
-| `GET /v1/passports` | `X-API-Key` | List; optional `owner`, `kind`, `limit` |
+| `GET /v1/passports` | `X-API-Key` | List; optional `owner`, `kind`, `limit`, `include_archived`, `archived_only` (archived passports are hidden by default) |
 | `GET /v1/passports/:id` | `X-API-Key` | Fetch a passport + head version |
 | `PATCH /v1/passports/:id` | `X-API-Key` | Merge a typed asset patch into the head **draft** (locked → `409`) |
 | `POST /v1/passports/:id/lock` | `X-API-Key` | Lock the head version (validates rights, content-addresses, immutable) |
+| `POST /v1/passports/:id/archive` | `X-API-Key` | Archive: hidden from the default list, read-only (edit/lock/branch/generate/attest answer `409 passport_archived`); versions, generations and manifests stay readable |
+| `POST /v1/passports/:id/unarchive` | `X-API-Key` | Restore an archived passport |
 | `POST /v1/passports/:id/versions` | `X-API-Key` | Branch a new draft from the locked head |
 | `GET /v1/passports/:id/versions` | `X-API-Key` | Full version history, oldest first |
 | `GET /v1/passports/:id/versions/:v` | `X-API-Key` | Fetch a specific version |
@@ -79,7 +81,7 @@ Two facts drive the design (from the provider research):
 | `POST /v1/passports/:id/attest` | `X-API-Key` | Record a generation made elsewhere; the Mint receipt signature is verified (Ed25519) and a receipt can back only one generation |
 | `GET /v1/passports/:id/generations` | `X-API-Key` | Provenance: assets conditioned by this passport |
 | `GET /v1/passports/:id/generations/:gen/manifest` | `X-API-Key` | Export one generation's C2PA-aligned Content Credential manifest |
-| `GET /console` | page (key entered in browser) | Web console: create/edit/lock/version passports, generate, browse generations + manifests |
+| `GET /console` | page (key entered in browser) | Web console: create/edit/lock/version/archive passports, view any version, preview resolved conditioning, generate against a chosen locked version, attest external generations, browse generations + manifests |
 
 Access control: the operator key (`PASSPORT_API_KEY`) sees everything; tenant
 keys from `PASSPORT_OWNER_KEYS` act only as their owner (creates are stamped with

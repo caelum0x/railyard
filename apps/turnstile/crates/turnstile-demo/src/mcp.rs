@@ -220,10 +220,21 @@ async fn handle_upstream_call(
         McpAdmit::Challenge(error) | McpAdmit::Rejected(error) => rpc_error_value(id, error),
         McpAdmit::Admitted(settled) => {
             let args = tool_arguments(params);
-            let body = serde_json::to_vec(&args).unwrap_or_else(|_| b"{}".to_vec());
-            let reply = upstream
-                .call(Some("application/json"), axum::body::Bytes::from(body))
-                .await;
+            let reply = if upstream.spec.upstream_is_bodyless() {
+                match crate::tools::arguments_to_query(&args) {
+                    Ok(query) => {
+                        upstream
+                            .call(None, axum::body::Bytes::new(), Some(&query))
+                            .await
+                    }
+                    Err(error) => Err(error),
+                }
+            } else {
+                let body = serde_json::to_vec(&args).unwrap_or_else(|_| b"{}".to_vec());
+                upstream
+                    .call(Some("application/json"), axum::body::Bytes::from(body), None)
+                    .await
+            };
             let reply = match reply {
                 Ok(reply) if reply.status.is_success() => reply,
                 Ok(reply) => {

@@ -475,7 +475,7 @@ the schema below is chosen so each one is a bounded walk from a known node.
 | # | node | identity | key attributes |
 |---|---|---|---|
 | E1 | **Owner** | principal id | account, org, verified-likeness holder |
-| E2 | **Passport** | `PassportId` | kind (character/brand/persona/voice/style), status, head version |
+| E2 | **Passport** | `PassportId` | kind (character/brand/persona shipped; voice/style planned with `passport-assets`), status, archived_at, head version |
 | E3 | **PassportVersion** | `(PassportId, version)` | status (draft/locked), created/locked_at |
 | E4 | **AssetBundle** | content hash | the typed asset payload of a version (face refs, palette, voice profile, style) |
 | E5 | **Rights** | attached to version | consent basis, disclosure level, license terms, deepfake policy |
@@ -483,7 +483,7 @@ the schema below is chosen so each one is a bounded walk from a known node.
 | E7 | **Provider** | provider id | Veo/Runway/Kling/HeyGen/Hedra/ElevenLabs/Cartesia/gpt-image/Flux/Imagen/LoRA-host |
 | E8 | **ProviderCapability** | `(Provider, Modality)` | identity mechanism (Family A ref vs Family B artifact), needs_artifact |
 | E9 | **ConditioningPayload** | resolve result id | provider-neutral conditioning resolved for a target |
-| E10 | **TrainedArtifact** | artifact id | kind (LoRA/voice-clone/avatar/style), status, provider binding |
+| E10 | **TrainedArtifact** | artifact id | kind (LoRA/voice-clone/avatar/style), status, provider binding. *Planned*: today a Family-B artifact is referenced from the character assets (`lora_ref`, `voice_id`, `avatar_ref`, `embedding_ref`), not modelled as its own entity |
 | E11 | **Generation (Output)** | `GenerationId` | provider, modality, output ref, timestamp |
 | E12 | **ConsistencyScore** | attached to generation | face/voice/style dims + composite + bar |
 | E13 | **ProvenanceManifest** | manifest id | C2PA assertions, signature, Merkle anchor |

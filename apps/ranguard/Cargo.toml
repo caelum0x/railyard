@@ -13,6 +13,11 @@ license = "MIT"
 name = "ranguard"
 path = "src/main.rs"
 
+# HTTP service over the same library (std-only HTTP/1.1, still zero deps).
+[[bin]]
+name = "ranguard-server"
+path = "src/bin/ranguard-server.rs"
+
 [lib]
 name = "ranguard"
 path = "src/lib.rs"

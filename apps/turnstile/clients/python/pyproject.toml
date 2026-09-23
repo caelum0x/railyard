@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "turnstile-client"
+version = "0.1.0"
+description = "Agent-side AITP-402 payment client for Turnstile-gated HTTP endpoints and MCP tools."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+# Constant-time Ed25519 and native BLAKE3 when available; the client works without them.
+fast = ["cryptography>=42", "blake3>=0.4"]
+
+[tool.setuptools]
+packages = ["turnstile_client"]

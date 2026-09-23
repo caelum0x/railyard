@@ -54,6 +54,16 @@ pub trait PassportStore: Send + Sync {
     async fn list_passports(&self, filter: &PassportFilter)
         -> Result<Vec<Passport>, PassportError>;
 
+    /// Archive (`Some(at)`) or unarchive (`None`) a passport, touching only the
+    /// archive marker and `updated_at`. Returns the updated passport, or
+    /// `None` when it does not exist.
+    async fn set_archived(
+        &self,
+        id: &str,
+        archived_at: Option<chrono::DateTime<chrono::Utc>>,
+        updated_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<Passport>, PassportError>;
+
     async fn ready(&self) -> Result<(), PassportError>;
 }
 

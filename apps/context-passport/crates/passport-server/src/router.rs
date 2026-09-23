@@ -23,6 +23,14 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/v1/passports/:id/lock", post(handlers::passports::lock))
         .route(
+            "/v1/passports/:id/archive",
+            post(handlers::passports::archive),
+        )
+        .route(
+            "/v1/passports/:id/unarchive",
+            post(handlers::passports::unarchive),
+        )
+        .route(
             "/v1/passports/:id/versions",
             post(handlers::versions::new_version).get(handlers::versions::list_versions),
         )

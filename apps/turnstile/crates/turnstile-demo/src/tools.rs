@@ -6,9 +6,9 @@
 //! - builds its OWN gate priced at `price_micros` (so every 402 quotes exactly
 //!   that tool's price) sharing the nonce store, Mint verifier and settlement
 //!   journal;
-//! - mounts `POST /v1/tools/<name>/call` behind that gate, proxying the paid
-//!   request body to `upstream_url` (success-only: a non-2xx upstream releases
-//!   the hold, a 2xx captures);
+//! - mounts `<http_method> /v1/tools/<name>/call` (default `POST`) behind that
+//!   gate, proxying the paid request body and query string to `upstream_url`
+//!   (success-only: a non-2xx upstream releases the hold, a 2xx captures);
 //! - exposes the same tool over MCP (`tools/call` with `name = <name>`), sending
 //!   the call `arguments` to the upstream as the JSON body;
 //! - advertises it in `/v1/tools` + `/.well-known/aitp-tools`.
@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Bytes;
-use axum::extract::State;
+use axum::extract::{RawQuery, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
@@ -63,9 +63,15 @@ pub struct ToolSpec {
     pub price_micros: i64,
     /// Upstream endpoint the paid call is forwarded to.
     pub upstream_url: String,
-    /// Upstream HTTP method (`POST` default, or `PUT`/`PATCH`).
+    /// Upstream HTTP method (`POST` default; `GET`, `PUT`, `PATCH`, `DELETE`).
+    /// `GET`/`DELETE` upstreams receive no body: HTTP calls forward the query
+    /// string, MCP calls send their flat scalar arguments as query parameters.
     #[serde(default = "default_method")]
     pub upstream_method: String,
+    /// Method agents use on `/v1/tools/<name>/call` (`POST` default; `GET`,
+    /// `PUT`, `PATCH`, `DELETE`). The 402 challenge binds to this method.
+    #[serde(default = "default_method")]
+    pub http_method: String,
     /// Env var holding the upstream credential (optional).
     #[serde(default)]
     pub upstream_auth_env: Option<String>,
@@ -97,7 +103,12 @@ impl ToolSpec {
 
     /// The gate resource for the HTTP route (`"<METHOD> <path>"`).
     pub fn http_resource(&self) -> String {
-        format!("POST {}", self.http_path())
+        format!("{} {}", self.http_method, self.http_path())
+    }
+
+    /// Whether the upstream call carries no request body.
+    pub fn upstream_is_bodyless(&self) -> bool {
+        matches!(self.upstream_method.as_str(), "GET" | "DELETE")
     }
 
     /// The gate resource for the MCP tool.
@@ -121,8 +132,18 @@ impl ToolSpec {
         if !(self.upstream_url.starts_with("https://") || self.upstream_url.starts_with("http://")) {
             return Err(format!("tool {} upstream_url must be http(s)", self.name));
         }
-        if !matches!(self.upstream_method.as_str(), "POST" | "PUT" | "PATCH") {
-            return Err(format!("tool {} upstream_method must be POST, PUT or PATCH", self.name));
+        const METHODS: [&str; 5] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+        if !METHODS.contains(&self.upstream_method.as_str()) {
+            return Err(format!(
+                "tool {} upstream_method must be GET, POST, PUT, PATCH or DELETE",
+                self.name
+            ));
+        }
+        if !METHODS.contains(&self.http_method.as_str()) {
+            return Err(format!(
+                "tool {} http_method must be GET, POST, PUT, PATCH or DELETE",
+                self.name
+            ));
         }
         if !self.http && !self.mcp {
             return Err(format!("tool {} must be exposed over http and/or mcp", self.name));
@@ -189,15 +210,27 @@ impl UpstreamTool {
         Ok(Self { spec, client, auth })
     }
 
-    /// Forward a paid call upstream.
-    pub async fn call(&self, content_type: Option<&str>, body: Bytes) -> Result<UpstreamReply, String> {
+    /// Forward a paid call upstream. `query` (already URL-encoded, without the
+    /// leading `?`) is appended to `upstream_url`.
+    pub async fn call(
+        &self,
+        content_type: Option<&str>,
+        body: Bytes,
+        query: Option<&str>,
+    ) -> Result<UpstreamReply, String> {
         let method = reqwest::Method::from_bytes(self.spec.upstream_method.as_bytes())
             .map_err(|e| e.to_string())?;
-        let mut request = self
-            .client
-            .request(method, &self.spec.upstream_url)
-            .header("content-type", content_type.unwrap_or("application/json"))
-            .body(body.to_vec());
+        let url = match query.filter(|q| !q.is_empty()) {
+            Some(q) if self.spec.upstream_url.contains('?') => format!("{}&{q}", self.spec.upstream_url),
+            Some(q) => format!("{}?{q}", self.spec.upstream_url),
+            None => self.spec.upstream_url.clone(),
+        };
+        let mut request = self.client.request(method, &url);
+        if !self.spec.upstream_is_bodyless() {
+            request = request
+                .header("content-type", content_type.unwrap_or("application/json"))
+                .body(body.to_vec());
+        }
         if let Some((header, value)) = &self.auth {
             request = request.header(header.as_str(), value.as_str());
         }
@@ -241,18 +274,57 @@ impl UpstreamTool {
     }
 }
 
-/// `POST /v1/tools/<name>/call` — the paid proxy handler (behind `admit`).
+/// Encode MCP `arguments` as a query string for a bodyless (`GET`/`DELETE`)
+/// upstream. Only a flat object of scalars can be expressed this way.
+pub fn arguments_to_query(args: &Value) -> Result<String, String> {
+    let Some(map) = args.as_object() else {
+        return Ok(String::new());
+    };
+    let mut pairs = Vec::with_capacity(map.len());
+    for (key, value) in map {
+        let text = match value {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            Value::Bool(b) => b.to_string(),
+            Value::Null => continue,
+            _ => {
+                return Err(format!(
+                    "argument {key:?} must be a string, number or boolean for a {} upstream",
+                    "GET/DELETE"
+                ))
+            }
+        };
+        pairs.push(format!("{}={}", percent_encode(key), percent_encode(&text)));
+    }
+    Ok(pairs.join("&"))
+}
+
+/// RFC 3986 percent-encoding of everything except unreserved characters.
+fn percent_encode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// `<http_method> /v1/tools/<name>/call` — the paid proxy handler (behind `admit`).
 pub async fn proxy_http(
     State(tool): State<Arc<UpstreamTool>>,
     paid: PaidRequest,
     headers: HeaderMap,
+    RawQuery(query): RawQuery,
     body: Bytes,
 ) -> Response {
     if body.len() > MAX_BODY_BYTES {
         return (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response();
     }
     let content_type = headers.get("content-type").and_then(|v| v.to_str().ok());
-    match tool.call(content_type, body).await {
+    match tool.call(content_type, body, query.as_deref()).await {
         Ok(reply) => {
             if reply.status.is_success() {
                 paid.report_actual(tool.billable(paid.price().get(), reply.usage_micros));

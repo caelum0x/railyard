@@ -28,6 +28,8 @@ pub enum PassportError {
     Storage(String),
     #[error("unauthorized")]
     Unauthorized,
+    #[error("passport is archived; unarchive it to edit, lock, branch or generate")]
+    Archived,
 }
 
 impl PassportError {
@@ -47,6 +49,7 @@ impl PassportError {
             Self::Mint(_) => "mint_unavailable",
             Self::Storage(_) => "storage_unavailable",
             Self::Unauthorized => "unauthorized",
+            Self::Archived => "passport_archived",
         }
     }
 }

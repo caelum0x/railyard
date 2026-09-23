@@ -122,11 +122,13 @@
     sessionStorage.setItem(TOKEN_KEY, el("token").value.trim());
     run();
   };
-  async function api(path) {
+  async function api(path, method, body) {
     const headers = { "Accept": "application/json" };
     const token = sessionStorage.getItem(TOKEN_KEY);
     if (token) headers["Authorization"] = "Bearer " + token;
-    const res = await fetch(path, { headers });
+    const opts = { headers, method: method || "GET" };
+    if (body !== undefined) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+    const res = await fetch(path, opts);
     if (res.status === 404) throw new Error("Not found: " + path);
     if (res.status === 401) throw new Error("Operator token required or invalid.");
     if (res.status === 503) {
@@ -206,6 +208,25 @@
       btn.textContent = "Refresh";
       btn.onclick = run;
       bar.appendChild(btn);
+      if (active.id === "calls") {
+        const rec = document.createElement("button");
+        rec.textContent = "Run recovery now";
+        rec.title = "Replay abandoned holds and pending captures/releases whose lease expired";
+        rec.onclick = async () => {
+          rec.disabled = true;
+          setStatus("Running settlement recovery...", "");
+          try {
+            const r = await api("/v1/admin/recovery", "POST", { limit: 200 });
+            setStatus("Recovery pass: " + r.claimed + " claimed, " + r.completed + " completed, " + r.failed + " failed", r.failed ? "err" : "ok");
+            await loadCalls();
+          } catch (e) {
+            setStatus(e.message, "err");
+          } finally {
+            rec.disabled = false;
+          }
+        };
+        bar.appendChild(rec);
+      }
       const c = document.createElement("span");
       c.id = "count"; c.className = "count";
       bar.appendChild(c);

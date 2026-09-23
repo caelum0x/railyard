@@ -12,8 +12,15 @@
 //! chains in lockstep — a dropped or rejected heartbeat advances neither side, so
 //! an honest client never permanently desyncs.
 //!
-//! SCOPE: this is a local shared-secret demo of anti-replay. It is NOT a
-//! network security protocol and provides no confidentiality.
+//! Nonces: [`Server::new_secure`] draws every nonce from the OS CSPRNG
+//! (`/dev/urandom`), which is what the network service (`ranguard-server`)
+//! uses. [`Server::new`] keeps a seeded SplitMix64 source for deterministic
+//! tests only — its nonces are predictable and must not face a network.
+//!
+//! SCOPE: anti-replay and key possession only. It provides no confidentiality;
+//! run the HTTP service behind TLS.
+
+use std::io;
 
 use crate::hmac::{constant_time_eq, hmac_sha256};
 
@@ -73,6 +80,14 @@ fn message(counter: u64, nonce: &[u8; 16], prev_tag: &[u8; 32]) -> Vec<u8> {
     m
 }
 
+/// Where challenge nonces come from.
+enum NonceSource {
+    /// Deterministic PRNG (tests / offline demos only).
+    Seeded(SplitMix64),
+    /// OS CSPRNG — required for anything network-facing.
+    Os,
+}
+
 /// The verifying side ("server").
 pub struct Server {
     key: Vec<u8>,
@@ -80,32 +95,74 @@ pub struct Server {
     last_accepted: u64,
     rolling_prev: [u8; 32],
     pending: Option<Challenge>,
-    rng: SplitMix64,
+    nonces: NonceSource,
 }
 
 impl Server {
+    /// A server with a deterministic, SEEDED nonce source. Predictable: use
+    /// only for tests and offline demos. Network services use
+    /// [`Server::new_secure`].
     pub fn new(key: &[u8], seed: u64) -> Self {
+        Self::with_source(key, NonceSource::Seeded(SplitMix64::new(seed)))
+    }
+
+    /// A server whose nonces come from the OS CSPRNG. Fails if OS randomness
+    /// is unavailable rather than falling back to a predictable source.
+    pub fn new_secure(key: &[u8]) -> io::Result<Self> {
+        // Probe once so a missing /dev/urandom fails at construction.
+        crate::rng::fill_random(&mut [0u8; 1])?;
+        Ok(Self::with_source(key, NonceSource::Os))
+    }
+
+    fn with_source(key: &[u8], nonces: NonceSource) -> Self {
         Server {
             key: key.to_vec(),
             counter: 0,
             last_accepted: 0,
             rolling_prev: [0u8; 32],
             pending: None,
-            rng: SplitMix64::new(seed),
+            nonces,
         }
     }
 
     /// Issue the next challenge (monotonic counter + fresh nonce).
+    ///
+    /// Panics only if the OS CSPRNG fails mid-run on a [`Server::new_secure`]
+    /// server; services should call [`Server::try_issue_challenge`].
     pub fn issue_challenge(&mut self) -> Challenge {
-        self.counter += 1;
+        self.try_issue_challenge()
+            .expect("OS randomness failed while issuing a heartbeat challenge")
+    }
+
+    /// Issue the next challenge, surfacing an OS randomness failure.
+    pub fn try_issue_challenge(&mut self) -> io::Result<Challenge> {
         let mut nonce = [0u8; 16];
-        self.rng.fill(&mut nonce);
+        match &mut self.nonces {
+            NonceSource::Seeded(rng) => rng.fill(&mut nonce),
+            NonceSource::Os => crate::rng::fill_random(&mut nonce)?,
+        }
+        self.counter += 1;
         let challenge = Challenge {
             counter: self.counter,
             nonce,
         };
         self.pending = Some(challenge.clone());
-        challenge
+        Ok(challenge)
+    }
+
+    /// Counter of the most recently issued challenge.
+    pub fn issued(&self) -> u64 {
+        self.counter
+    }
+
+    /// Counter of the most recently accepted heartbeat (0 before the first).
+    pub fn last_accepted(&self) -> u64 {
+        self.last_accepted
+    }
+
+    /// The outstanding (issued, not yet accepted) challenge, if any.
+    pub fn pending(&self) -> Option<&Challenge> {
+        self.pending.as_ref()
     }
 
     /// Verify a heartbeat against the last issued challenge and the chain state.
@@ -181,6 +238,19 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secure_server_accepts_honest_client_with_unpredictable_nonces() {
+        let key = b"shared-secret";
+        let mut server = Server::new_secure(key).unwrap();
+        let mut client = Client::new(key);
+        let a = server.try_issue_challenge().unwrap();
+        let hb = client.respond(&a);
+        assert_eq!(server.verify(&hb), Outcome::Accepted);
+        client.commit(&hb);
+        let b = server.try_issue_challenge().unwrap();
+        assert_ne!(a.nonce, b.nonce);
+    }
 
     #[test]
     fn honest_client_is_accepted() {

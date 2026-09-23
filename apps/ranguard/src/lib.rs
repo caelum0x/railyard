@@ -8,6 +8,10 @@
 //! * `process`   — attestation of a child process the tool ITSELF spawned.
 //! * `heartbeat` — challenge/response with a rolling HMAC (anti-replay).
 //! * `report`    — change/tamper reporting types.
+//! * `rng`       — OS CSPRNG access (`/dev/urandom`) for network-facing nonces.
+//! * `json`      — a small dependency-free JSON reader/writer for the service.
+//! * `service`   — the HTTP service core behind the `ranguard-server` binary:
+//!   signed-manifest registry + verification and heartbeat sessions.
 //!
 //! It deliberately does NOT do any of the things a real kernel anti-cheat does:
 //! no kernel driver, no ring-0, no scanning of other processes' memory, no
@@ -20,5 +24,8 @@ pub mod heartbeat;
 pub mod hmac;
 pub mod manifest;
 pub mod process;
+pub mod json;
 pub mod report;
+pub mod rng;
+pub mod service;
 pub mod sha256;

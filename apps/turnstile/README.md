@@ -22,6 +22,7 @@ TURNSTILE_PAYEE=ait1qprovider \
 TURNSTILE_PRICE_MICROS=4200 \
 TURNSTILE_DATABASE_URL=postgres://localhost/turnstile \
 BIND_ADDR=0.0.0.0:8101 \
+TURNSTILE_DEMO_ECHO=1 \
 cargo run -p turnstile-demo
 ```
 
@@ -51,15 +52,24 @@ priced independently. Works for upstreams written in anything (Node, Python, Go)
   so the agent is never charged for a failed call.
 - Upstream credentials are read from the named environment variable; they never
   live in the registry file.
-- When `TURNSTILE_TOOLS_PATH` is unset the server runs the built-in `echo` demo
-  tool priced by `TURNSTILE_PRICE_MICROS`.
+- `http_method` (default `POST`; also `GET`, `PUT`, `PATCH`, `DELETE`) is the
+  method agents call `/v1/tools/<name>/call` with, and the 402 challenge binds
+  to it. `upstream_method` accepts the same set. A `GET`/`DELETE` upstream gets
+  the caller's query string (HTTP) or the flat scalar MCP arguments as query
+  parameters instead of a body.
+- The built-in `echo` demo tool (priced by `TURNSTILE_PRICE_MICROS`) is served
+  only with `TURNSTILE_DEMO_ECHO=1`. With neither `TURNSTILE_TOOLS_PATH` nor
+  that flag set, the server refuses to start, so a misconfigured deploy cannot
+  charge for an echo.
 
 ### Operator console and settlement access
 
 - `TURNSTILE_ADMIN_TOKEN` (24+ chars) enables `GET /v1/admin/summary` (captured
   revenue, pending captures, per-tool revenue) and
-  `GET /v1/admin/settlements?limit=&phase=` (recent paid calls). `GET /admin`
-  is the console over those endpoints.
+  `GET /v1/admin/settlements?limit=&phase=` (recent paid calls) and
+  `POST /v1/admin/recovery` (run a settlement recovery pass now, using the
+  same lease protocol as the background reaper). `GET /admin` is the console
+  over those endpoints, with a "Run recovery now" action on the Paid Calls tab.
 - `GET /v1/settlements/:request_id` is scoped to the payer: present the exact
   `AITP-Authorization` you paid with (or the operator bearer token). A bare
   request id no longer reveals payer, amounts or the receipt.
@@ -146,6 +156,11 @@ settlement stores, lease recovery worker, settlement-status API
 (`ToolRegistry`/`ToolCatalog` + `GET /v1/tools`), the framework-agnostic MCP
 paywall helper (`turnstile_core::mcp` + a reference `POST /mcp` JSON-RPC
 endpoint), the config-driven upstream tool registry, the operator summary/list
-APIs, and the reference server exist. Native in-process middleware for other
-frameworks (Actix, Express, FastAPI) and agent-side TS/Python payment clients
-do not yet; non-Rust providers use the upstream proxy mode instead.
+APIs, the reference server, and agent-side payment clients for TypeScript
+(`clients/typescript`) and Python (`clients/python`) exist. The clients have
+no dependencies. They read `/v1/tools`, pay `402` / MCP `-32402` challenges
+under a spend policy, sign with Ed25519 over Mint's BLAKE3 `op_hash`
+(cross-checked byte for byte against `aitp-client`), and poll
+`/v1/settlements/:request_id`. Native in-process middleware for other
+provider frameworks (Actix, Express, FastAPI) does not exist yet; non-Rust
+providers use the upstream proxy mode instead.

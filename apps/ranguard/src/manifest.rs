@@ -95,6 +95,35 @@ fn canonical_body(created_at: u64, root: &str, entries: &[Entry]) -> String {
     body
 }
 
+/// Reject values that would corrupt the tab/newline-delimited canonical body.
+fn validate_field(name: &str, value: &str) -> io::Result<()> {
+    if value.contains('\t') || value.contains('\n') || value.contains('\r') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{name} contains an unsupported tab or newline"),
+        ));
+    }
+    Ok(())
+}
+
+/// Validate one client-supplied fingerprint.
+pub fn validate_entry(e: &Entry) -> io::Result<()> {
+    if e.rel_path.is_empty() || e.rel_path.len() > 1024 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "path must be 1..=1024 bytes",
+        ));
+    }
+    validate_field("path", &e.rel_path)?;
+    if e.sha256_hex.len() != 64 || !e.sha256_hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("sha256 for {:?} must be 64 hex characters", e.rel_path),
+        ));
+    }
+    Ok(())
+}
+
 impl Manifest {
     /// Build a signed manifest over `root` at the current ("trusted") moment.
     pub fn build(root: &Path, signing_key: &[u8]) -> io::Result<Manifest> {
@@ -127,6 +156,90 @@ impl Manifest {
             entries,
             mac_hex: to_hex(&mac),
         })
+    }
+
+    /// Build a signed manifest from fingerprints a client computed itself
+    /// (the HTTP service signs a release baseline without ever touching the
+    /// client's filesystem). Entries are validated and sorted canonically.
+    pub fn from_entries(root: &str, entries: Vec<Entry>, signing_key: &[u8]) -> io::Result<Manifest> {
+        validate_field("root", root)?;
+        let mut seen = std::collections::BTreeSet::new();
+        for e in &entries {
+            validate_entry(e)?;
+            if !seen.insert(e.rel_path.as_str()) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("duplicate path in manifest: {:?}", e.rel_path),
+                ));
+            }
+        }
+        let mut entries = entries;
+        entries.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+        let created_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let body = canonical_body(created_at, root, &entries);
+        let mac = hmac_sha256(signing_key, body.as_bytes());
+        Ok(Manifest {
+            created_at,
+            root: root.to_string(),
+            entries,
+            mac_hex: to_hex(&mac),
+        })
+    }
+
+    /// Diff client-reported fingerprints against this trusted manifest
+    /// (modified / added / removed), without touching the filesystem. A
+    /// reported file whose size differs is reported as modified even when the
+    /// hash matches, since a size mismatch means the report is inconsistent.
+    pub fn diff_entries(&self, reported: &[Entry]) -> ScanReport {
+        let current: BTreeMap<&str, &Entry> =
+            reported.iter().map(|e| (e.rel_path.as_str(), e)).collect();
+        let mut changes = Vec::new();
+        let mut checked = 0usize;
+        for trusted in &self.entries {
+            match current.get(trusted.rel_path.as_str()) {
+                Some(now) => {
+                    checked += 1;
+                    let hash_differs = !now.sha256_hex.eq_ignore_ascii_case(&trusted.sha256_hex);
+                    if hash_differs || now.size != trusted.size {
+                        changes.push(Change {
+                            kind: ChangeKind::Modified,
+                            path: trusted.rel_path.clone(),
+                            detail: format!(
+                                "size {} -> {}, hash {}... -> {}...",
+                                trusted.size,
+                                now.size,
+                                &trusted.sha256_hex[..12.min(trusted.sha256_hex.len())],
+                                &now.sha256_hex[..12.min(now.sha256_hex.len())]
+                            ),
+                        });
+                    }
+                }
+                None => changes.push(Change {
+                    kind: ChangeKind::Removed,
+                    path: trusted.rel_path.clone(),
+                    detail: "file present in manifest is missing from the report".to_string(),
+                }),
+            }
+        }
+        let trusted: std::collections::BTreeSet<&str> =
+            self.entries.iter().map(|e| e.rel_path.as_str()).collect();
+        for path in current.keys() {
+            if !trusted.contains(path) {
+                changes.push(Change {
+                    kind: ChangeKind::Added,
+                    path: (*path).to_string(),
+                    detail: "unexpected file not in trusted manifest".to_string(),
+                });
+            }
+        }
+        changes.sort_by(|a, b| a.path.cmp(&b.path));
+        ScanReport {
+            files_checked: checked,
+            changes,
+        }
     }
 
     /// Serialize to a stable, line-based text format (no external deps).

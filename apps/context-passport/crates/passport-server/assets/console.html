@@ -32,6 +32,10 @@
   .badge { display:inline-block; padding:1px 8px; border-radius:20px; font-size:11px; border:1px solid var(--border);
     text-transform:uppercase; letter-spacing:.4px; }
   .badge.locked { color:var(--ok); border-color:var(--ok); } .badge.draft { color:var(--warn); border-color:var(--warn); }
+  .badge.archived { color:var(--muted); border-color:var(--muted); }
+  .banner { background:var(--row); border-left:3px solid var(--warn); padding:10px 12px; border-radius:4px; margin:12px 0; }
+  details.box { background:var(--row); border-radius:6px; padding:8px 12px; margin-top:10px; }
+  details.box summary { cursor:pointer; color:var(--muted); }
   .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0; }
   .field { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
   .field label { font-size:12px; color:var(--muted); }
@@ -66,6 +70,7 @@
     <div class="panel" style="margin-top:16px">
       <h2>Passports</h2>
       <div class="row"><select id="filter-kind"><option value="">All kinds</option><option value="character">Character</option><option value="brand">Brand</option><option value="persona">Persona</option></select>
+        <select id="filter-archive"><option value="active">Active</option><option value="archived">Archived</option><option value="all">All</option></select>
         <button id="refresh">Refresh</button></div>
       <div id="list"><div class="empty">Not connected.</div></div>
     </div>
@@ -104,6 +109,7 @@
   };
   document.getElementById("refresh").onclick = loadList;
   document.getElementById("filter-kind").onchange = loadList;
+  document.getElementById("filter-archive").onchange = loadList;
   document.getElementById("create").onclick = function () {
     var kind = document.getElementById("new-kind").value;
     var owner = document.getElementById("new-owner").value.trim();
@@ -118,12 +124,21 @@
     var list = document.getElementById("list");
     list.innerHTML = '<div class="empty">Loading...</div>';
     var kind = document.getElementById("filter-kind").value;
-    api("GET", "/v1/passports" + (kind ? "?kind=" + kind : "")).then(function (items) {
+    var archive = document.getElementById("filter-archive").value;
+    var q = [];
+    if (kind) q.push("kind=" + encodeURIComponent(kind));
+    if (archive === "archived") q.push("archived_only=true");
+    if (archive === "all") q.push("include_archived=true");
+    api("GET", "/v1/passports" + (q.length ? "?" + q.join("&") : "")).then(function (items) {
       st.list = items; setStatus("Connected", "ok");
-      if (!items.length) { list.innerHTML = '<div class="empty">No passports yet. Create one above.</div>'; return; }
+      if (!items.length) {
+        list.innerHTML = '<div class="empty">' + (archive === "archived" ? "No archived passports." : "No passports yet. Create one above.") + "</div>";
+        return;
+      }
       list.innerHTML = items.map(function (p) {
         return '<div class="list-item' + (p.id === st.selected ? " active" : "") + '" data-id="' + esc(p.id) + '">' +
-          '<div><b>' + esc(p.kind) + '</b> <span class="badge ' + esc(p.status) + '">' + esc(p.status) + '</span> <span class="muted">v' + p.version + '</span></div>' +
+          '<div><b>' + esc(p.kind) + '</b> <span class="badge ' + esc(p.status) + '">' + esc(p.status) + '</span> <span class="muted">v' + p.version + '</span>' +
+          (p.archived_at ? ' <span class="badge archived">archived</span>' : "") + '</div>' +
           '<div class="mono muted">' + esc(p.id) + '</div><div class="muted">' + esc(p.owner) + "</div></div>";
       }).join("");
       list.querySelectorAll(".list-item").forEach(function (el) { el.onclick = function () { st.selected = el.dataset.id; loadList(); loadDetail(); }; });
@@ -132,7 +147,7 @@
   }
 
   function assetInputs(view) {
-    var a = view.head.assets || {}, locked = view.head.status === "locked";
+    var a = view.head.assets || {}, locked = view.head.status === "locked" || !!view.archived_at;
     return FIELDS[view.kind].map(function (f) {
       var v = a[f[0]]; if (f[1] === "list") v = (v || []).join(", ");
       return '<div class="field"><label>' + esc(f[0].replace(/_/g, " ")) + (f[1] === "list" ? " (comma separated)" : "") +
@@ -148,30 +163,54 @@
       .catch(function (e) { el.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
   }
 
+  function modalityOptions() {
+    return '<option value="text">Text</option><option value="image">Image</option><option value="voice">Voice</option><option value="video">Video</option>';
+  }
+
   function renderDetail(view, versions, gens) {
-    var el = document.getElementById("detail"), locked = view.head.status === "locked";
+    var el = document.getElementById("detail"), archived = !!view.archived_at;
+    var locked = view.head.status === "locked" || archived;
     var rights = view.head.rights || {};
+    var lockedVersions = versions.filter(function (v) { return v.status === "locked"; }).map(function (v) { return v.version; }).reverse();
+    var versionSelect = function (sid) {
+      return '<select id="' + sid + '"><option value="">Latest locked</option>' + lockedVersions.map(function (n) {
+        return '<option value="' + n + '">v' + n + "</option>"; }).join("") + "</select>";
+    };
+    var actions = archived ? '<button id="unarchive" class="primary">Unarchive</button>'
+      : (view.head.status === "locked" ? '<button id="branch">Branch new version</button>' : '<button id="save">Save draft</button><button id="lock" class="primary">Lock version</button>') +
+        '<button id="archive">Archive</button>';
     el.innerHTML =
       '<div class="row"><b style="font-size:16px">' + esc(view.kind) + '</b><span class="badge ' + esc(view.head.status) + '">' + esc(view.head.status) +
-      '</span><span class="muted">version ' + view.head.version + '</span><div class="spacer"></div>' +
-      (locked ? '<button id="branch">Branch new version</button>' : '<button id="save">Save draft</button><button id="lock" class="primary">Lock version</button>') + "</div>" +
+      "</span>" + (archived ? '<span class="badge archived">archived</span>' : "") +
+      '<span class="muted">version ' + view.head.version + '</span><div class="spacer"></div>' + actions + "</div>" +
       '<div class="mono muted">' + esc(view.id) + " &middot; owner " + esc(view.owner) + "</div>" +
+      (archived ? '<div class="banner">Archived ' + esc(new Date(view.archived_at).toLocaleString()) +
+        ". Versions, generations and manifests stay readable; editing, locking, branching and generating are disabled until you unarchive it.</div>" : "") +
       (view.head.content_digest ? '<div class="mono muted">digest ' + esc(view.head.content_digest) + "</div>" : "") +
       '<div class="section"><h2 class="muted">Identity assets</h2><div class="grid2">' + assetInputs(view) + "</div>" +
-      (locked ? '<div class="muted">Locked versions are immutable. Branch a new version to edit.</div>' : "") + "</div>" +
+      (view.head.status === "locked" && !archived ? '<div class="muted">Locked versions are immutable. Branch a new version to edit.</div>' : "") + "</div>" +
       '<div class="section"><h2 class="muted">Rights</h2><div class="muted">basis ' + esc(rights.basis) + " &middot; disclosure " + esc(rights.disclosure) +
       " &middot; consent " + (rights.consent_obtained ? "obtained" : "not recorded") + (rights.scope && rights.scope.length ? " &middot; scope " + esc(rights.scope.join(", ")) : "") + "</div></div>" +
       '<div class="section"><h2 class="muted">Generate as this passport</h2>' +
-      (locked || versions.some(function (v) { return v.status === "locked"; }) ?
-        '<div class="row"><select id="gen-modality"><option value="text">Text</option><option value="image">Image</option><option value="voice">Voice</option><option value="video">Video</option></select>' +
-        '<input id="gen-provider" value="openai" placeholder="provider" /></div><textarea id="gen-prompt" placeholder="What should this identity produce?"></textarea>' +
-        '<div class="row"><button id="gen" class="primary">Generate</button></div><div id="gen-out"></div>'
-        : '<div class="muted">Lock a version before generating.</div>') + "</div>" +
-      '<div class="section"><h2 class="muted">Versions</h2><table><thead><tr><th>Version</th><th>Status</th><th>Locked</th><th>Digest</th></tr></thead><tbody>' +
+      (!lockedVersions.length ? '<div class="muted">Lock a version before generating or previewing conditioning.</div>' :
+        '<div class="row"><select id="gen-modality">' + modalityOptions() + "</select>" +
+        '<input id="gen-provider" value="openai" placeholder="provider" />' + versionSelect("gen-version") + "</div>" +
+        (archived ? "" : '<textarea id="gen-prompt" placeholder="What should this identity produce?"></textarea>') +
+        '<div class="row">' + (archived ? "" : '<button id="gen" class="primary">Generate</button>') +
+        '<button id="resolve">Preview conditioning</button></div><div id="gen-out"></div>' +
+        (archived ? "" :
+        '<details class="box"><summary>Attach an external generation (attest)</summary>' +
+        '<div class="muted" style="margin:8px 0">Record a generation made outside Identity Lock with its signed Mint settlement. Uses the provider, modality and version above.</div>' +
+        '<div class="field"><label>Output reference</label><input id="att-output" placeholder="s3://bucket/asset.png or https://..." /></div>' +
+        '<div class="field"><label>Asset hash (optional)</label><input id="att-hash" placeholder="sha256:..." /></div>' +
+        '<div class="field"><label>Settled at (unix ms)</label><input id="att-settled" placeholder="' + Date.now() + '" /></div>' +
+        '<div class="field"><label>Payment evidence (JSON: request_id, payer_account, receipt)</label><textarea id="att-evidence" placeholder=\'{"request_id":"...","payer_account":"acct_...","receipt":{"sequence":1,"operation":"hold.capture","operation_hash":"...","amount_micros":1000,"receipt_hash":"...","signature":"..."}}\'></textarea></div>' +
+        '<div class="row"><button id="attest" class="primary">Attest generation</button></div><div id="att-out"></div></details>')) + "</div>" +
+      '<div class="section"><h2 class="muted">Versions</h2><table><thead><tr><th>Version</th><th>Status</th><th>Locked</th><th>Digest</th><th></th></tr></thead><tbody>' +
       versions.slice().reverse().map(function (v) {
         return "<tr><td>v" + v.version + '</td><td><span class="badge ' + esc(v.status) + '">' + esc(v.status) + "</span></td><td>" + esc(v.locked_at ? new Date(v.locked_at).toLocaleString() : "-") +
-          '</td><td class="mono">' + esc(v.content_digest || "-") + "</td></tr>";
-      }).join("") + "</tbody></table></div>" +
+          '</td><td class="mono">' + esc(v.content_digest || "-") + '</td><td><button data-version="' + v.version + '">View</button></td></tr>';
+      }).join("") + '</tbody></table><div id="version-view"></div></div>' +
       '<div class="section"><h2 class="muted">Generations</h2>' + (gens.length ?
         '<table><thead><tr><th>When</th><th>Provider</th><th>Output</th><th></th></tr></thead><tbody>' + gens.map(function (g) {
           return "<tr><td>" + esc(new Date(g.created_at).toLocaleString()) + "<div class=\"muted\">v" + g.version + " " + esc(g.modality) + "</div></td><td>" + esc(g.provider) +
@@ -198,13 +237,77 @@
     };
     var branch = document.getElementById("branch");
     if (branch) branch.onclick = function () { act(api("POST", "/v1/passports/" + id + "/versions").then(function () { setStatus("New draft version created", "ok"); })); };
-    var gen = document.getElementById("gen");
-    if (gen) gen.onclick = function () {
-      var out = document.getElementById("gen-out");
-      gen.disabled = true; out.innerHTML = '<div class="muted">Generating...</div>';
-      api("POST", "/v1/passports/" + id + "/generate", {
+    var archiveBtn = document.getElementById("archive");
+    if (archiveBtn) archiveBtn.onclick = function () {
+      if (!confirm("Archive this passport? It stays readable, but it cannot be edited or used to generate until you unarchive it.")) return;
+      archiveBtn.disabled = true;
+      act(api("POST", "/v1/passports/" + id + "/archive").then(function () {
+        setStatus("Passport archived", "ok");
+        if (document.getElementById("filter-archive").value === "active") st.selected = null;
+        document.getElementById("detail").innerHTML = st.selected ? '<div class="empty">Loading...</div>' : '<div class="empty">Passport archived. Switch the list filter to Archived to find it.</div>';
+      }));
+    };
+    var unarchiveBtn = document.getElementById("unarchive");
+    if (unarchiveBtn) unarchiveBtn.onclick = function () {
+      unarchiveBtn.disabled = true;
+      act(api("POST", "/v1/passports/" + id + "/unarchive").then(function () { setStatus("Passport restored", "ok"); }));
+    };
+    function genTarget() {
+      var v = document.getElementById("gen-version").value;
+      return {
         provider: document.getElementById("gen-provider").value.trim(),
         modality: document.getElementById("gen-modality").value,
+        version: v ? Number(v) : null
+      };
+    }
+    var resolveBtn = document.getElementById("resolve");
+    if (resolveBtn) resolveBtn.onclick = function () {
+      var out = document.getElementById("gen-out"), t = genTarget();
+      if (!t.provider) { setStatus("Provider is required", "err"); return; }
+      resolveBtn.disabled = true; out.innerHTML = '<div class="muted">Resolving...</div>';
+      api("POST", "/v1/passports/" + id + "/resolve", t)
+        .then(function (payload) { out.innerHTML = '<div class="muted">Conditioning sent to ' + esc(t.provider) + " for " + esc(t.modality) + "</div><pre>" + esc(JSON.stringify(payload, null, 2)) + "</pre>"; })
+        .catch(function (e) { out.innerHTML = '<div class="output" style="border-color:var(--danger)">' + esc(e.message) + "</div>"; })
+        .then(function () { resolveBtn.disabled = false; });
+    };
+    var attestBtn = document.getElementById("attest");
+    if (attestBtn) attestBtn.onclick = function () {
+      var out = document.getElementById("att-out"), t = genTarget(), evidence;
+      try { evidence = JSON.parse(document.getElementById("att-evidence").value); }
+      catch (e) { out.innerHTML = '<div class="output" style="border-color:var(--danger)">Payment evidence must be valid JSON.</div>'; return; }
+      var outputRef = document.getElementById("att-output").value.trim();
+      var settled = Number(document.getElementById("att-settled").value.trim());
+      if (!outputRef) { out.innerHTML = '<div class="output" style="border-color:var(--danger)">Output reference is required.</div>'; return; }
+      if (!Number.isInteger(settled) || settled <= 0) { out.innerHTML = '<div class="output" style="border-color:var(--danger)">Settled at must be a unix timestamp in milliseconds.</div>'; return; }
+      var body = { provider: t.provider, modality: t.modality, version: t.version, output_ref: outputRef, payment_evidence: evidence, settled_at_ms: settled };
+      var hash = document.getElementById("att-hash").value.trim();
+      if (hash) body.asset_hash = hash;
+      attestBtn.disabled = true; out.innerHTML = '<div class="muted">Verifying settlement...</div>';
+      api("POST", "/v1/passports/" + id + "/attest", body)
+        .then(function (g) { setStatus("Generation attested (" + g.id + ")", "ok"); loadDetail(); })
+        .catch(function (e) { out.innerHTML = '<div class="output" style="border-color:var(--danger)">' + esc(e.message) + "</div>"; attestBtn.disabled = false; });
+    };
+    el.querySelectorAll("button[data-version]").forEach(function (b) {
+      b.onclick = function () {
+        var box = document.getElementById("version-view");
+        box.innerHTML = '<div class="muted">Loading version...</div>';
+        api("GET", "/v1/passports/" + id + "/versions/" + b.dataset.version).then(function (v) {
+          box.innerHTML = '<div class="row" style="margin-top:10px"><b>v' + v.version + '</b><span class="badge ' + esc(v.status) + '">' + esc(v.status) + "</span>" +
+            (v.status === "locked" && !archived && lockedVersions.length ? '<button id="use-version">Generate with this version</button>' : "") + "</div>" +
+            "<pre>" + esc(JSON.stringify({ assets: v.assets, rights: v.rights, content_digest: v.content_digest }, null, 2)) + "</pre>";
+          var use = document.getElementById("use-version");
+          if (use) use.onclick = function () { document.getElementById("gen-version").value = String(v.version); document.getElementById("gen-version").scrollIntoView({ behavior: "smooth" }); };
+        }).catch(function (e) { box.innerHTML = '<div class="output" style="border-color:var(--danger)">' + esc(e.message) + "</div>"; });
+      };
+    });
+    var gen = document.getElementById("gen");
+    if (gen) gen.onclick = function () {
+      var out = document.getElementById("gen-out"), t = genTarget();
+      gen.disabled = true; out.innerHTML = '<div class="muted">Generating...</div>';
+      api("POST", "/v1/passports/" + id + "/generate", {
+        provider: t.provider,
+        modality: t.modality,
+        version: t.version,
         prompt: document.getElementById("gen-prompt").value
       }).then(function (g) {
         out.innerHTML = (g.output_text ? '<div class="output">' + esc(g.output_text) + "</div>" : '<div class="mono">' + esc(g.output_ref) + "</div>") +

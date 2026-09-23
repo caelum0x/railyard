@@ -146,12 +146,27 @@ impl PassportStore for MemoryStore {
             .filter(|p| {
                 filter.owner.as_ref().is_none_or(|owner| &p.owner == owner)
                     && filter.kind.as_ref().is_none_or(|kind| &p.kind == kind)
+                    && filter.admits_archive_state(p)
             })
             .cloned()
             .collect();
         result.sort_by_key(|p| std::cmp::Reverse(p.created_at));
         result.truncate(limit);
         Ok(result)
+    }
+
+    async fn set_archived(
+        &self,
+        id: &str,
+        archived_at: Option<chrono::DateTime<chrono::Utc>>,
+        updated_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<Passport>, PassportError> {
+        let mut state = self.write()?;
+        Ok(state.passports.get_mut(id).map(|passport| {
+            passport.archived_at = archived_at;
+            passport.updated_at = updated_at;
+            passport.clone()
+        }))
     }
 
     async fn ready(&self) -> Result<(), PassportError> {
