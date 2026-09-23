@@ -49,9 +49,23 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
 
+# --- Postgres game state (game-economy-store-postgres) ---
+# RUNTIME query API only (sqlx::query + .bind), never the query! macros, so the
+# crate compiles with no live DATABASE_URL. Same feature set as the other
+# Railyard sqlx consumers (context-passport, turnstile).
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "macros",
+    "migrate",
+    "json",
+] }
+
 # --- internal path deps (the game-economy crate graph) ---
 game-economy-core = { path = "crates/game-economy-core" }
 game-economy-testkit = { path = "crates/game-economy-testkit" }
 game-economy-mint-client = { path = "crates/game-economy-mint-client" }
 game-economy-store = { path = "crates/game-economy-store" }
+game-economy-store-postgres = { path = "crates/game-economy-store-postgres" }
 mint-protocol = { path = "../mint/crates/mint-protocol" }

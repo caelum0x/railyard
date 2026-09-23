@@ -1,0 +1,14 @@
+[package]
+name = "game-economy-store-postgres"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "Transactional Postgres GameStateRepository: multi-instance safe purchases, inventories, single-owner reservations and refunds."
+
+[dependencies]
+game-economy-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

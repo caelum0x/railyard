@@ -21,8 +21,8 @@ use async_trait::async_trait;
 
 use game_economy_core::error::GameError;
 use game_economy_core::transport::{
-    Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Release, ReleaseReceipt,
-    SettlementProof,
+    Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Refund, RefundReceipt, Release,
+    ReleaseReceipt, SettlementProof,
 };
 
 /// A mutating transport call, recorded in order for test assertions.
@@ -38,6 +38,8 @@ pub enum Call {
     },
     /// `release_hold(hold_id)`.
     Release { hold_id: String },
+    /// `refund(from -> to, amount)` — a direct transfer back to the player.
+    Refund { from: String, to: String, amount: i64 },
 }
 
 /// The lifecycle of a hold, mirroring `mint_store::HoldStatus`.
@@ -61,6 +63,7 @@ enum StoredOutcome {
     Hold(HoldReceipt),
     Capture(CaptureReceipt),
     Release(ReleaseReceipt),
+    Refund(RefundReceipt),
 }
 
 #[derive(Clone)]
@@ -400,6 +403,52 @@ impl MintTransport for FakeMint {
             StoredCommit {
                 op_hash: oh,
                 outcome: StoredOutcome::Release(receipt.clone()),
+            },
+        );
+        Ok(receipt)
+    }
+
+    async fn refund(&self, req: Refund) -> Result<RefundReceipt, GameError> {
+        let mut l = self.inner.lock().unwrap();
+        l.calls.push(Call::Refund {
+            from: req.from.clone(),
+            to: req.to.clone(),
+            amount: req.amount_micros,
+        });
+
+        let oh = op_hash(&["transfer", &req.from, &req.to, &req.amount_micros.to_string()]);
+        if let Some(stored) = l.idem.get(&req.idem_key) {
+            if stored.op_hash != oh {
+                return Err(GameError::IdempotencyConflict);
+            }
+            if let StoredOutcome::Refund(r) = &stored.outcome {
+                let mut r = r.clone();
+                r.idempotent_replay = true;
+                return Ok(r);
+            }
+            return Err(GameError::IdempotencyConflict);
+        }
+
+        let from_bal = *l.balances.get(&req.from).unwrap_or(&0);
+        if from_bal < req.amount_micros {
+            return Err(GameError::InsufficientFunds);
+        }
+        l.balances.insert(req.from.clone(), from_bal - req.amount_micros);
+        let to_bal = *l.balances.get(&req.to).unwrap_or(&0);
+        l.balances.insert(req.to.clone(), to_bal + req.amount_micros);
+        l.seq += 1;
+        let seq = l.seq;
+        let receipt = RefundReceipt {
+            refunded_micros: req.amount_micros,
+            settlement_seq: seq,
+            receipt_hash: Some(format!("transfer_{}", &oh[..12])),
+            idempotent_replay: false,
+        };
+        l.idem.insert(
+            req.idem_key.clone(),
+            StoredCommit {
+                op_hash: oh,
+                outcome: StoredOutcome::Refund(receipt.clone()),
             },
         );
         Ok(receipt)

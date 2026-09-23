@@ -36,8 +36,11 @@ use crate::catalog::{Catalog, Product};
 use crate::entitlement::{EntitlementId, Inventory, OwnedPack};
 use crate::error::GameError;
 use crate::pack::{content_item_id, derive_pack_contents, GrantedItem};
-use crate::state::{CompletedPurchase, GameStateRepository, MemoryGameState, PurchaseRecord};
-use crate::transport::{Capture, Hold, MintTransport, Release, SettlementProof};
+use crate::state::{
+    CompletedPurchase, GameStateRepository, MemoryGameState, PurchaseRecord, PurchaseReversal,
+    ReversalKind, ReverseOutcome,
+};
+use crate::transport::{Capture, Hold, MintTransport, Refund, Release, SettlementProof};
 
 /// The post-authorization delivery seam. After the hold opens, the store asks the
 /// fulfiller whether the good can actually be delivered (stock, region-lock, a
@@ -77,6 +80,15 @@ pub struct PurchaseOutcome {
     pub settlement_proof: SettlementProof,
     /// `true` when this purchase was an idempotent replay (no new charge, no new
     /// entitlement — the same result as the original call).
+    pub idempotent_replay: bool,
+}
+
+/// The outcome of [`GameStore::refund`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RefundOutcome {
+    /// The purchase, now carrying its `refunded` reversal record.
+    pub purchase: CompletedPurchase,
+    /// `true` when the purchase had already been refunded (no second payout).
     pub idempotent_replay: bool,
 }
 
@@ -145,6 +157,21 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
     /// Borrow the catalog.
     pub fn catalog(&self) -> &Catalog {
         &self.catalog
+    }
+
+    /// The Mint account captures settle to (and refunds are paid from).
+    pub fn revenue_account(&self) -> &str {
+        &self.revenue_account
+    }
+
+    /// The newest `limit` completed purchases across all players (operator view).
+    pub fn recent_purchases(&self, limit: usize) -> Result<Vec<CompletedPurchase>, GameError> {
+        self.state.recent_purchases(limit)
+    }
+
+    /// Store-wide purchase / refund totals (operator view).
+    pub fn summary(&self) -> Result<crate::state::PurchaseSummary, GameError> {
+        self.state.summary()
     }
 
     /// Borrow the underlying Mint transport (for inspection / test assertions).
@@ -315,17 +342,14 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             .await?;
 
         // 4. Grant the entitlement (idempotent by deterministic id). Held under
-        //    the inventory lock (no awaits follow) so a concurrent pack open or
-        //    pass advance cannot clobber this read-modify-write.
+        //    the in-process inventory lock (no awaits follow) and applied inside
+        //    the state adapter's atomic commit, so a concurrent pack open or pass
+        //    advance — on this or another instance — cannot clobber it.
         let _guard = self.lock_inventory()?;
-        let inventory = self.grant(
-            self.state.inventory(player)?,
-            &product,
-            &entitlement_id,
-            &capture.receipt_id,
-            capture.settlement_seq,
-        );
+        let receipt_id = capture.receipt_id.clone();
+        let settlement_seq = capture.settlement_seq;
 
+        let entitlement_id_for_grant = entitlement_id.clone();
         let outcome = PurchaseOutcome {
             entitlement_id,
             product_sku: product_sku.to_string(),
@@ -339,13 +363,12 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         // 5. Memoize the completed purchase so a later retry under the same key
         //    replays this exact outcome (see step 0) instead of re-charging or
         //    tripping the ownership guard.
-        self.state.commit_purchase(
+        self.state.commit_purchase_with(
             idem_key,
-            &CompletedPurchase {
-                player: player.to_string(),
-                outcome: outcome.clone(),
+            &CompletedPurchase::new(player, outcome.clone()),
+            &|inventory: &mut Inventory| {
+                grant_into(inventory, &product, &entitlement_id_for_grant, &receipt_id, settlement_seq)
             },
-            &inventory,
         )?;
 
         Ok(outcome)
@@ -363,32 +386,32 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         seed: u64,
     ) -> Result<Vec<GrantedItem>, GameError> {
         let _guard = self.lock_inventory()?;
-        let mut inv = self.state.inventory(player)?;
-        let pack = inv
-            .packs
-            .get(entitlement_id)
-            .cloned()
-            .ok_or_else(|| GameError::PackNotOwned(entitlement_id.to_string()))?;
-        if pack.is_opened() {
-            return Err(GameError::PackAlreadyOpened(entitlement_id.to_string()));
-        }
-
-        let tier = match self.catalog.get(&pack.pack_sku) {
-            Some(Product::CardPack(t)) => t.clone(),
-            _ => return Err(GameError::UnknownProduct(pack.pack_sku.clone())),
-        };
-
-        let contents = derive_pack_contents(&tier, &self.catalog, &pack.receipt_id, seed);
-
-        // Materialize + unlock each drop's cosmetic (idempotent).
-        if let Some(p) = inv.packs.get_mut(entitlement_id) {
-            p.contents = Some(contents.clone());
-        }
-        for item in &contents {
-            inv.grant_cosmetic(&item.item_id, &item.name);
-        }
-        self.state.save_inventory(player, &inv)?;
-        Ok(contents)
+        let mut opened: Vec<GrantedItem> = Vec::new();
+        self.state.update_inventory(player, &mut |inv: &mut Inventory| {
+            let pack = inv
+                .packs
+                .get(entitlement_id)
+                .cloned()
+                .ok_or_else(|| GameError::PackNotOwned(entitlement_id.to_string()))?;
+            if pack.is_opened() {
+                return Err(GameError::PackAlreadyOpened(entitlement_id.to_string()));
+            }
+            let tier = match self.catalog.get(&pack.pack_sku) {
+                Some(Product::CardPack(t)) => t.clone(),
+                _ => return Err(GameError::UnknownProduct(pack.pack_sku.clone())),
+            };
+            let contents = derive_pack_contents(&tier, &self.catalog, &pack.receipt_id, seed);
+            // Materialize + unlock each drop's cosmetic (idempotent).
+            if let Some(p) = inv.packs.get_mut(entitlement_id) {
+                p.contents = Some(contents.clone());
+            }
+            for item in &contents {
+                inv.grant_cosmetic(&item.item_id, &item.name);
+            }
+            opened = contents;
+            Ok(())
+        })?;
+        Ok(opened)
     }
 
     /// Advance a player's owned battle-pass to `target` tier.
@@ -413,37 +436,145 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         };
 
         let _guard = self.lock_inventory()?;
-        let mut inv = self.state.inventory(player)?;
-        let pass = inv
-            .battle_pass
-            .as_mut()
-            .filter(|bp| bp.pass_sku == pass_sku)
-            .ok_or_else(|| GameError::BattlePassNotOwned(pass_sku.to_string()))?;
-        let tier = pass.advance_to(target, max_tiers);
-        self.state.save_inventory(player, &inv)?;
+        let mut tier = 0;
+        self.state.update_inventory(player, &mut |inv: &mut Inventory| {
+            let pass = inv
+                .battle_pass
+                .as_mut()
+                .filter(|bp| bp.pass_sku == pass_sku)
+                .ok_or_else(|| GameError::BattlePassNotOwned(pass_sku.to_string()))?;
+            tier = pass.advance_to(target, max_tiers);
+            Ok(())
+        })?;
         Ok(tier)
     }
 
-    /// Revoke the entitlement granted by `player`'s purchase `receipt_id` (the
-    /// chargeback / support-refund path, called by the game backend after the
-    /// money side has been reversed in Mint). Removes the pack (and any
-    /// cosmetics it dropped), the cosmetic, or the battle pass. Returns the
-    /// revoked purchase, or `None` when no such receipt exists for the player.
+    /// Revoke the entitlement granted by `player`'s purchase `receipt_id`
+    /// WITHOUT moving money — the chargeback path, where the card network has
+    /// already reversed the payment outside Mint. Removes the pack (and any
+    /// cosmetics it dropped), the cosmetic, or the battle pass, and marks the
+    /// purchase `revoked` so it cannot be refunded afterwards. Use
+    /// [`Self::refund`] to return money through Mint instead.
     pub fn revoke_entitlement(
         &self,
         player: &str,
         receipt_id: &str,
-    ) -> Result<Option<CompletedPurchase>, GameError> {
+        reason: Option<&str>,
+    ) -> Result<ReverseOutcome, GameError> {
         let _guard = self.lock_inventory()?;
-        let Some(purchase) = self
-            .state
-            .purchases_for(player)?
-            .into_iter()
-            .find(|p| p.outcome.receipt_id == receipt_id)
-        else {
-            return Ok(None);
+        let ownership_key = self.ownership_key_for_receipt(player, receipt_id)?;
+        let reversal = PurchaseReversal {
+            kind: ReversalKind::Revoked,
+            at_unix: now_unix(),
+            refunded_micros: 0,
+            mint_seq: None,
+            mint_receipt: None,
+            reason: reason.map(str::to_string),
         };
-        let mut inv = self.state.inventory(player)?;
+        self.state.reverse_purchase(
+            player,
+            receipt_id,
+            &reversal,
+            ownership_key.as_deref(),
+            &|purchase, inv| self.remove_grant(purchase, inv),
+        )
+    }
+
+    /// Refund `player`'s purchase `receipt_id` through Mint and remove what it
+    /// granted.
+    ///
+    /// 1. The purchase must exist and not be reversed yet (a revoked purchase is
+    ///    [`GameError::AlreadyReversed`]; an already-refunded one replays).
+    /// 2. Mint transfers the captured amount from the revenue account back to
+    ///    the player under the deterministic key `<receipt_id>:refund`, so a
+    ///    retried or concurrent refund can never pay out twice.
+    /// 3. The reversal and the entitlement removal commit atomically in the
+    ///    state adapter.
+    pub async fn refund(
+        &self,
+        player: &str,
+        receipt_id: &str,
+        reason: Option<&str>,
+    ) -> Result<RefundOutcome, GameError> {
+        let purchase = self
+            .receipt(player, receipt_id)?
+            .ok_or_else(|| GameError::PurchaseNotFound(receipt_id.to_string()))?;
+        match purchase.reversal.as_ref().map(|r| r.kind) {
+            Some(ReversalKind::Refunded) => {
+                return Ok(RefundOutcome {
+                    purchase,
+                    idempotent_replay: true,
+                })
+            }
+            Some(ReversalKind::Revoked) => {
+                return Err(GameError::AlreadyReversed(receipt_id.to_string()))
+            }
+            None => {}
+        }
+
+        let amount = purchase.outcome.charged_micros;
+        let (mint_seq, mint_receipt) = if amount > 0 {
+            let receipt = self
+                .mint
+                .refund(Refund {
+                    from: self.revenue_account.clone(),
+                    to: player.to_string(),
+                    amount_micros: amount,
+                    idem_key: format!("{receipt_id}:refund"),
+                    reference: Some(format!("game-refund:{receipt_id}")),
+                })
+                .await?;
+            (Some(receipt.settlement_seq), receipt.receipt_hash)
+        } else {
+            (None, None)
+        };
+
+        let reversal = PurchaseReversal {
+            kind: ReversalKind::Refunded,
+            at_unix: now_unix(),
+            refunded_micros: amount.max(0),
+            mint_seq,
+            mint_receipt,
+            reason: reason.map(str::to_string),
+        };
+        let _guard = self.lock_inventory()?;
+        let ownership_key = single_owner_key_for_sku(&self.catalog, &purchase.outcome.product_sku);
+        match self.state.reverse_purchase(
+            player,
+            receipt_id,
+            &reversal,
+            ownership_key.as_deref(),
+            &|purchase, inv| self.remove_grant(purchase, inv),
+        )? {
+            ReverseOutcome::Reversed(purchase) => Ok(RefundOutcome {
+                purchase,
+                idempotent_replay: false,
+            }),
+            ReverseOutcome::AlreadyReversed(existing) => match existing.reversal.as_ref().map(|r| r.kind) {
+                // A concurrent refund of the same receipt won the race; Mint
+                // collapsed both transfers under one key, so nothing was paid twice.
+                Some(ReversalKind::Refunded) => Ok(RefundOutcome {
+                    purchase: existing,
+                    idempotent_replay: true,
+                }),
+                _ => Err(GameError::AlreadyReversed(receipt_id.to_string())),
+            },
+            ReverseOutcome::NotFound => Err(GameError::PurchaseNotFound(receipt_id.to_string())),
+        }
+    }
+
+    fn ownership_key_for_receipt(
+        &self,
+        player: &str,
+        receipt_id: &str,
+    ) -> Result<Option<String>, GameError> {
+        Ok(self
+            .receipt(player, receipt_id)?
+            .and_then(|p| single_owner_key_for_sku(&self.catalog, &p.outcome.product_sku)))
+    }
+
+    /// Remove what `purchase` granted from `inv`.
+    fn remove_grant(&self, purchase: &CompletedPurchase, inv: &mut Inventory) {
         match self.catalog.get(&purchase.outcome.product_sku) {
             Some(Product::CardPack(_)) | None => {
                 if let Some(pack) = inv.packs.remove(&purchase.outcome.entitlement_id) {
@@ -461,35 +592,6 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
                 }
             }
         }
-        self.state.save_inventory(player, &inv)?;
-        Ok(Some(purchase))
-    }
-
-    /// Grant the entitlement for a captured purchase. Idempotent — a replayed
-    /// purchase re-derives the same entitlement id and no-ops.
-    fn grant(
-        &self,
-        mut inv: Inventory,
-        product: &Product,
-        entitlement_id: &str,
-        receipt_id: &str,
-        settlement_seq: u64,
-    ) -> Inventory {
-        match product {
-            Product::CardPack(t) => inv.grant_pack(OwnedPack {
-                entitlement_id: entitlement_id.to_string(),
-                pack_sku: t.sku.clone(),
-                settlement_seq,
-                receipt_id: receipt_id.to_string(),
-                contents: None,
-            }),
-            Product::Cosmetic(c) => {
-                let item_id = content_item_id(c.rarity, &c.name);
-                inv.grant_cosmetic(&item_id, &c.name);
-            }
-            Product::BattlePass(b) => inv.grant_battle_pass(&b.sku),
-        }
-        inv
     }
 
     /// Reject a purchase of a single-owner good the player already holds, BEFORE
@@ -515,12 +617,51 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
     }
 }
 
+/// Grant the entitlement for a captured purchase into `inv`. Idempotent — a
+/// replayed purchase re-derives the same entitlement id and no-ops.
+fn grant_into(
+    inv: &mut Inventory,
+    product: &Product,
+    entitlement_id: &str,
+    receipt_id: &str,
+    settlement_seq: u64,
+) {
+    match product {
+        Product::CardPack(t) => inv.grant_pack(OwnedPack {
+            entitlement_id: entitlement_id.to_string(),
+            pack_sku: t.sku.clone(),
+            settlement_seq,
+            receipt_id: receipt_id.to_string(),
+            contents: None,
+        }),
+        Product::Cosmetic(c) => {
+            let item_id = content_item_id(c.rarity, &c.name);
+            inv.grant_cosmetic(&item_id, &c.name);
+        }
+        Product::BattlePass(b) => inv.grant_battle_pass(&b.sku),
+    }
+}
+
+fn single_owner_key_for_sku(catalog: &Catalog, sku: &str) -> Option<String> {
+    catalog
+        .get(sku)
+        .and_then(single_owner_key)
+        .map(|(ownership_key, _)| ownership_key)
+}
+
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// The `(ownership_key, sku)` a single-owner good is reserved under, or `None`
 /// for consumable packs (which never reserve). The `ownership_key` is namespaced
 /// per shape and matches exactly what [`GameStore::reject_if_already_owned`]
 /// checks against the persisted inventory, so the concurrency reservation and the
 /// persisted-ownership guard agree on identity.
-fn single_owner_key(product: &Product) -> Option<(String, String)> {
+pub fn single_owner_key(product: &Product) -> Option<(String, String)> {
     match product {
         Product::Cosmetic(c) => {
             let item_id = content_item_id(c.rarity, &c.name);

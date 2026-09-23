@@ -234,6 +234,50 @@ where
     }
 }
 
+/// Middleware guarding the operator console API (`/v1/admin/*`). Requires
+/// `Authorization: Bearer <GAME_ADMIN_TOKEN>`; fails closed with `503` when no
+/// admin token is configured. Player tokens and the game-server key are never
+/// accepted here.
+pub async fn require_admin<M, F>(
+    State(state): State<AppState<M, F>>,
+    req: Request,
+    next: Next,
+) -> Response
+where
+    M: MintTransport + 'static,
+    F: Fulfiller + 'static,
+{
+    let Some(expected) = state.admin_key() else {
+        return crate::error(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "admin_not_configured",
+            "GAME_ADMIN_TOKEN is not configured; the operator console is disabled",
+        );
+    };
+    let presented = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|header| header.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| admin_credential(v.as_bytes()));
+    match presented {
+        Some(hash) if hash == *expected => next.run(req).await,
+        _ => crate::error(
+            axum::http::StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "missing or invalid admin token",
+        ),
+    }
+}
+
+/// Hash of the operator admin token (domain-separated from the server key so
+/// the two secrets can never be confused).
+pub fn admin_credential(secret: &[u8]) -> blake3::Hash {
+    blake3::derive_key("game-economy admin token v1", secret).into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

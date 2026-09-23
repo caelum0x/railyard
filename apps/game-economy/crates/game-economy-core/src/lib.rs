@@ -27,10 +27,14 @@ pub use entitlement::{BattlePassState, EntitlementId, Inventory, OwnedPack};
 pub use error::GameError;
 pub use pack::{content_item_id, derive_pack_contents, GrantedItem};
 pub use state::{
-    completed_for, CompletedPurchase, GameStateRepository, MemoryGameState, PurchaseRecord,
+    completed_for, recent_of, reverse_in, summarize, CompletedPurchase, GameStateRepository, MemoryGameState,
+    PurchaseRecord, PurchaseReversal, PurchaseSummary, ReversalKind, ReverseOutcome,
 };
-pub use store::{entitlement_id, AlwaysFulfill, Fulfiller, GameStore, PurchaseOutcome};
+pub use store::{
+    entitlement_id, single_owner_key, AlwaysFulfill, Fulfiller, GameStore, PurchaseOutcome,
+    RefundOutcome,
+};
 pub use transport::{
-    Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Release, ReleaseReceipt,
-    SettlementProof,
+    Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Refund, RefundReceipt, Release,
+    ReleaseReceipt, SettlementProof,
 };

@@ -52,6 +52,14 @@ pub enum GameError {
     #[error("pack already opened: {0}")]
     PackAlreadyOpened(String),
 
+    /// No completed purchase with this receipt id exists for the player.
+    #[error("purchase not found: {0}")]
+    PurchaseNotFound(String),
+
+    /// The purchase was already refunded or revoked; it cannot be reversed twice.
+    #[error("purchase already reversed: {0}")]
+    AlreadyReversed(String),
+
     /// A transport/ledger error with no more specific mapping.
     #[error("mint error: {0}")]
     Mint(String),

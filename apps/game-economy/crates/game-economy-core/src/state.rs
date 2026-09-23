@@ -17,6 +17,103 @@ use crate::{GameError, Inventory, PurchaseOutcome};
 pub struct CompletedPurchase {
     pub player: String,
     pub outcome: PurchaseOutcome,
+    /// Set once the purchase has been refunded (money returned through Mint) or
+    /// revoked (money reversed outside the store, e.g. a card chargeback). A
+    /// purchase can be reversed at most once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reversal: Option<PurchaseReversal>,
+}
+
+impl CompletedPurchase {
+    /// A freshly settled purchase (not reversed).
+    pub fn new(player: impl Into<String>, outcome: PurchaseOutcome) -> Self {
+        Self {
+            player: player.into(),
+            outcome,
+            reversal: None,
+        }
+    }
+
+    /// `completed`, `refunded` or `revoked` — the status the history APIs show.
+    pub fn status(&self) -> &'static str {
+        match &self.reversal {
+            None => "completed",
+            Some(r) => r.kind.as_str(),
+        }
+    }
+
+    /// Same settled purchase, ignoring the reversal and replay flag. Used by
+    /// adapters to decide whether a re-commit is an idempotent replay.
+    pub fn same_settlement(&self, other: &CompletedPurchase) -> bool {
+        self.player == other.player
+            && self.outcome.receipt_id == other.outcome.receipt_id
+            && self.outcome.entitlement_id == other.outcome.entitlement_id
+            && self.outcome.product_sku == other.outcome.product_sku
+            && self.outcome.charged_micros == other.outcome.charged_micros
+    }
+}
+
+/// How a purchase was reversed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReversalKind {
+    /// Money returned to the player by a Mint transfer from the revenue account.
+    Refunded,
+    /// Entitlement removed; money reversed outside the store (chargeback).
+    Revoked,
+}
+
+impl ReversalKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReversalKind::Refunded => "refunded",
+            ReversalKind::Revoked => "revoked",
+        }
+    }
+}
+
+/// The durable record of a refund or revocation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PurchaseReversal {
+    pub kind: ReversalKind,
+    /// Unix seconds the reversal was committed.
+    pub at_unix: u64,
+    /// Amount returned to the player through Mint (0 for a revocation).
+    pub refunded_micros: i64,
+    /// Mint ledger sequence of the refund transfer (refunds only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mint_seq: Option<u64>,
+    /// Mint receipt hash of the refund transfer (refunds only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mint_receipt: Option<String>,
+    /// Operator / game-backend supplied reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Result of [`GameStateRepository::reverse_purchase`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReverseOutcome {
+    /// No completed purchase with that receipt for the player.
+    NotFound,
+    /// The purchase had already been reversed; nothing changed.
+    AlreadyReversed(CompletedPurchase),
+    /// Reversal recorded and the entitlement removed, atomically.
+    Reversed(CompletedPurchase),
+}
+
+/// Store-wide totals for the operator console.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PurchaseSummary {
+    pub completed_purchases: u64,
+    pub pending_purchases: u64,
+    pub players: u64,
+    pub gross_micros: i64,
+    pub refunded_count: u64,
+    pub refunded_micros: i64,
+    pub revoked_count: u64,
+    /// Gross minus money returned through refunds.
+    pub net_micros: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,13 +159,12 @@ pub trait GameStateRepository: Send + Sync {
     ///   e.g. recovering a pending purchase, must not deadlock itself).
     /// - Reservation held by a DIFFERENT key → `Err(AlreadyOwned(sku))`.
     ///
-    /// Reservations are process-local (not persisted): they guard concurrent
-    /// in-flight purchases within ONE server process and are cleared on
-    /// [`GameStateRepository::release_single_owner`] (failure path) while a
-    /// committed grant keeps the good out of contention via the persisted
-    /// inventory. A horizontally-scaled deployment MUST back this with a database
-    /// unique constraint / row lock instead — the JSON/in-memory adapters are
-    /// honestly single-instance only.
+    /// The memory/JSON adapters keep reservations process-local (single
+    /// instance only). The Postgres adapter (`game-economy-store-postgres`)
+    /// backs them with a `(player, ownership_key)` primary key, so the guard
+    /// holds across horizontally-scaled instances. Reservations are cleared on
+    /// [`GameStateRepository::release_single_owner`] (failure path) and when the
+    /// purchase is reversed ([`GameStateRepository::reverse_purchase`]).
     fn reserve_single_owner(
         &self,
         player: &str,
@@ -82,6 +178,56 @@ pub trait GameStateRepository: Send + Sync {
     /// same good can proceed). A no-op unless the reservation is currently held by
     /// this exact `idem_key`.
     fn release_single_owner(&self, player: &str, ownership_key: &str, idem_key: &str);
+
+    /// Atomic read-modify-write of one player's inventory. Transactional
+    /// adapters (Postgres) row-lock the player for the duration of `apply`, so
+    /// concurrent pack opens / pass advances on DIFFERENT server instances
+    /// serialize. The default is read → apply → save, which is only safe when
+    /// the caller serializes (the in-process `GameStore` lock does).
+    fn update_inventory(
+        &self,
+        player: &str,
+        apply: &mut dyn FnMut(&mut Inventory) -> Result<(), GameError>,
+    ) -> Result<Inventory, GameError> {
+        let mut inventory = self.inventory(player)?;
+        apply(&mut inventory)?;
+        self.save_inventory(player, &inventory)?;
+        Ok(inventory)
+    }
+
+    /// Commit a settled purchase, applying `grant` to the player's CURRENT
+    /// inventory inside the same atomic unit (no lost update when another
+    /// instance granted to the same player concurrently).
+    fn commit_purchase_with(
+        &self,
+        idem_key: &str,
+        completed: &CompletedPurchase,
+        grant: &dyn Fn(&mut Inventory),
+    ) -> Result<(), GameError> {
+        let mut inventory = self.inventory(&completed.player)?;
+        grant(&mut inventory);
+        self.commit_purchase(idem_key, completed, &inventory)
+    }
+
+    /// Atomically mark `player`'s purchase `receipt_id` reversed, remove what it
+    /// granted (`revoke`), and free its single-owner reservation
+    /// (`ownership_key`) so the good can be bought again. A purchase is reversed
+    /// at most once: a second call returns [`ReverseOutcome::AlreadyReversed`].
+    fn reverse_purchase(
+        &self,
+        player: &str,
+        receipt_id: &str,
+        reversal: &PurchaseReversal,
+        ownership_key: Option<&str>,
+        revoke: &dyn Fn(&CompletedPurchase, &mut Inventory),
+    ) -> Result<ReverseOutcome, GameError>;
+
+    /// The most recent completed purchases across ALL players, newest first
+    /// (operator console).
+    fn recent_purchases(&self, limit: usize) -> Result<Vec<CompletedPurchase>, GameError>;
+
+    /// Store-wide totals (operator console).
+    fn summary(&self) -> Result<PurchaseSummary, GameError>;
 }
 
 #[derive(Default)]
@@ -173,7 +319,7 @@ impl GameStateRepository for MemoryGameState {
             .lock()
             .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
         if let Some(PurchaseRecord::Completed(existing)) = state.purchases.get(idem_key) {
-            if existing != completed {
+            if !existing.same_settlement(completed) {
                 return Err(GameError::IdempotencyConflict);
             }
             return Ok(());
@@ -227,6 +373,123 @@ impl GameStateRepository for MemoryGameState {
             }
         }
     }
+
+    fn reverse_purchase(
+        &self,
+        player: &str,
+        receipt_id: &str,
+        reversal: &PurchaseReversal,
+        ownership_key: Option<&str>,
+        revoke: &dyn Fn(&CompletedPurchase, &mut Inventory),
+    ) -> Result<ReverseOutcome, GameError> {
+        let mut state = self
+            .inner
+            .lock()
+            .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
+        let snapshot = &mut *state;
+        let outcome = reverse_in(
+            &mut snapshot.purchases,
+            &mut snapshot.inventories,
+            player,
+            receipt_id,
+            reversal,
+            revoke,
+        );
+        if let (ReverseOutcome::Reversed(_), Some(key)) = (&outcome, ownership_key) {
+            snapshot
+                .reservations
+                .remove(&(player.to_string(), key.to_string()));
+        }
+        Ok(outcome)
+    }
+
+    fn recent_purchases(&self, limit: usize) -> Result<Vec<CompletedPurchase>, GameError> {
+        let guard = self
+            .inner
+            .lock()
+            .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
+        Ok(recent_of(guard.purchases.values(), limit))
+    }
+
+    fn summary(&self) -> Result<PurchaseSummary, GameError> {
+        let guard = self
+            .inner
+            .lock()
+            .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
+        Ok(summarize(guard.purchases.values()))
+    }
+}
+
+/// Shared reversal logic for the map-backed adapters (memory + JSON file):
+/// find the completed purchase by `(player, receipt_id)`, refuse a second
+/// reversal, apply `revoke` to the inventory and stamp the reversal.
+pub fn reverse_in(
+    purchases: &mut HashMap<String, PurchaseRecord>,
+    inventories: &mut HashMap<String, Inventory>,
+    player: &str,
+    receipt_id: &str,
+    reversal: &PurchaseReversal,
+    revoke: &dyn Fn(&CompletedPurchase, &mut Inventory),
+) -> ReverseOutcome {
+    let Some(record) = purchases.values_mut().find(|r| {
+        matches!(r, PurchaseRecord::Completed(done)
+            if done.player == player && done.outcome.receipt_id == receipt_id)
+    }) else {
+        return ReverseOutcome::NotFound;
+    };
+    let PurchaseRecord::Completed(done) = record else {
+        return ReverseOutcome::NotFound;
+    };
+    if done.reversal.is_some() {
+        return ReverseOutcome::AlreadyReversed(done.clone());
+    }
+    let inventory = inventories.entry(player.to_string()).or_default();
+    revoke(done, inventory);
+    done.reversal = Some(reversal.clone());
+    ReverseOutcome::Reversed(done.clone())
+}
+
+/// The newest `limit` completed purchases across all players.
+pub fn recent_of<'a>(
+    records: impl Iterator<Item = &'a PurchaseRecord>,
+    limit: usize,
+) -> Vec<CompletedPurchase> {
+    let mut out: Vec<CompletedPurchase> = records
+        .filter_map(|record| match record {
+            PurchaseRecord::Completed(done) => Some(done.clone()),
+            PurchaseRecord::Pending { .. } => None,
+        })
+        .collect();
+    out.sort_by(|a, b| b.outcome.settlement_seq.cmp(&a.outcome.settlement_seq));
+    out.truncate(limit);
+    out
+}
+
+/// Aggregate store-wide totals from purchase records.
+pub fn summarize<'a>(records: impl Iterator<Item = &'a PurchaseRecord>) -> PurchaseSummary {
+    let mut summary = PurchaseSummary::default();
+    let mut players = std::collections::HashSet::new();
+    for record in records {
+        match record {
+            PurchaseRecord::Pending { .. } => summary.pending_purchases += 1,
+            PurchaseRecord::Completed(done) => {
+                summary.completed_purchases += 1;
+                summary.gross_micros += done.outcome.charged_micros;
+                players.insert(done.player.as_str());
+                match done.reversal.as_ref().map(|r| (r.kind, r.refunded_micros)) {
+                    Some((ReversalKind::Refunded, micros)) => {
+                        summary.refunded_count += 1;
+                        summary.refunded_micros += micros;
+                    }
+                    Some((ReversalKind::Revoked, _)) => summary.revoked_count += 1,
+                    None => {}
+                }
+            }
+        }
+    }
+    summary.players = players.len() as u64;
+    summary.net_micros = summary.gross_micros - summary.refunded_micros;
+    summary
 }
 
 /// Collect `player`'s completed purchases, newest settlement first. Shared by

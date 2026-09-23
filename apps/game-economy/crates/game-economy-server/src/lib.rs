@@ -22,9 +22,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use game_economy_core::{
-    AlwaysFulfill, Fulfiller, GameError, GameStore, MintTransport, Product,
+    AlwaysFulfill, CompletedPurchase, Fulfiller, GameError, GameStore, MintTransport, Product,
+    ReverseOutcome,
 };
 
+mod admin;
 pub mod auth;
 pub mod fulfill;
 mod storefront;
@@ -44,6 +46,8 @@ pub struct AppState<M: MintTransport, F: Fulfiller = AlwaysFulfill> {
     allow_legacy_tokens: bool,
     /// Default lifetime of tokens issued by `POST /v1/tokens`.
     token_ttl_secs: u64,
+    /// Hashed operator console token (`GAME_ADMIN_TOKEN`).
+    admin_key: Option<blake3::Hash>,
 }
 
 impl<M: MintTransport, F: Fulfiller> Clone for AppState<M, F> {
@@ -55,6 +59,7 @@ impl<M: MintTransport, F: Fulfiller> Clone for AppState<M, F> {
             server_key: self.server_key,
             allow_legacy_tokens: self.allow_legacy_tokens,
             token_ttl_secs: self.token_ttl_secs,
+            admin_key: self.admin_key,
         }
     }
 }
@@ -76,7 +81,19 @@ impl<M: MintTransport + 'static, F: Fulfiller + 'static> AppState<M, F> {
             server_key: None,
             allow_legacy_tokens: true,
             token_ttl_secs: DEFAULT_TOKEN_TTL_SECS,
+            admin_key: None,
         }
+    }
+
+    /// Enable the operator console API (`/v1/admin/*`), authenticated by
+    /// `Authorization: Bearer <token>`.
+    pub fn with_admin_token(mut self, token: &[u8]) -> Self {
+        self.admin_key = Some(auth::admin_credential(token));
+        self
+    }
+
+    pub(crate) fn admin_key(&self) -> Option<&blake3::Hash> {
+        self.admin_key.as_ref()
     }
 
     /// Enable the server-to-server routes, authenticated by `secret`.
@@ -125,6 +142,7 @@ where
     let public = Router::new()
         .route("/healthz", get(healthz))
         .route("/store", get(storefront::page))
+        .route("/admin", get(admin::page))
         .route("/v1/catalog", get(catalog_handler::<M, F>));
 
     let guarded = Router::new()
@@ -152,14 +170,22 @@ where
             "/v1/entitlements/revoke",
             post(revoke_handler::<M, F>),
         )
+        .route("/v1/refunds", post(refund_handler::<M, F>))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_server::<M, F>,
         ));
 
+    // Operator console API (GAME_ADMIN_TOKEN).
+    let admin = admin::routes::<M, F>().route_layer(middleware::from_fn_with_state(
+        state.clone(),
+        auth::require_admin::<M, F>,
+    ));
+
     public
         .merge(guarded)
         .merge(server)
+        .merge(admin)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -367,7 +393,7 @@ where
     }
     match state.store().purchase_history(&player) {
         Ok(purchases) => {
-            let items: Vec<_> = purchases.into_iter().map(|p| p.outcome).collect();
+            let items: Vec<_> = purchases.iter().map(purchase_view).collect();
             ok(json!({ "purchases": items }))
         }
         Err(err) => game_error(&err),
@@ -388,7 +414,7 @@ where
         return forbidden();
     }
     match state.store().receipt(&player, &receipt_id) {
-        Ok(Some(p)) => ok(serde_json::to_value(p.outcome).unwrap_or_else(|_| json!({}))),
+        Ok(Some(p)) => ok(purchase_view(&p)),
         Ok(None) => error(StatusCode::NOT_FOUND, "receipt_not_found", "no such receipt"),
         Err(err) => game_error(&err),
     }
@@ -429,39 +455,131 @@ where
 }
 
 #[derive(Deserialize)]
-struct RevokeReq {
-    player: String,
-    receipt_id: String,
+pub(crate) struct ReverseReq {
+    pub(crate) player: String,
+    pub(crate) receipt_id: String,
+    #[serde(default)]
+    pub(crate) reason: Option<String>,
+}
+
+impl ReverseReq {
+    fn validate(&self) -> Result<(), Response> {
+        if self.player.trim().is_empty() || self.receipt_id.trim().is_empty() {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                "player and receipt_id are required",
+            ));
+        }
+        if self.reason.as_deref().is_some_and(|r| r.len() > 500) {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                "reason must be at most 500 characters",
+            ));
+        }
+        Ok(())
+    }
+
+    fn reason(&self) -> Option<&str> {
+        self.reason.as_deref().map(str::trim).filter(|r| !r.is_empty())
+    }
 }
 
 /// `POST /v1/entitlements/revoke` — SERVER-TO-SERVER: remove what a purchase
-/// granted (chargeback / support refund). The money side is reversed in Mint
-/// by the operator; this keeps the game inventory consistent with it.
+/// granted WITHOUT moving money (card chargeback: the payment was already
+/// reversed outside Mint). The purchase is marked `revoked` and can no longer
+/// be refunded. To return money through Mint use `POST /v1/refunds`.
 async fn revoke_handler<M, F>(
     State(state): State<AppState<M, F>>,
-    Json(req): Json<RevokeReq>,
+    Json(req): Json<ReverseReq>,
 ) -> Response
 where
     M: MintTransport + 'static,
     F: Fulfiller + 'static,
 {
-    if req.player.trim().is_empty() || req.receipt_id.trim().is_empty() {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "bad_request",
-            "player and receipt_id are required",
-        );
+    revoke_response(&state, &req)
+}
+
+pub(crate) fn revoke_response<M, F>(state: &AppState<M, F>, req: &ReverseReq) -> Response
+where
+    M: MintTransport + 'static,
+    F: Fulfiller + 'static,
+{
+    if let Err(response) = req.validate() {
+        return response;
     }
-    match state.store().revoke_entitlement(&req.player, &req.receipt_id) {
-        Ok(Some(p)) => ok(json!({
+    match state
+        .store()
+        .revoke_entitlement(&req.player, &req.receipt_id, req.reason())
+    {
+        Ok(ReverseOutcome::Reversed(p)) => ok(json!({
             "revoked": true,
-            "product_sku": p.outcome.product_sku,
-            "entitlement_id": p.outcome.entitlement_id,
-            "receipt_id": p.outcome.receipt_id,
+            "already_reversed": false,
+            "purchase": purchase_view(&p),
         })),
-        Ok(None) => error(StatusCode::NOT_FOUND, "receipt_not_found", "no such receipt"),
+        Ok(ReverseOutcome::AlreadyReversed(p)) => ok(json!({
+            "revoked": false,
+            "already_reversed": true,
+            "purchase": purchase_view(&p),
+        })),
+        Ok(ReverseOutcome::NotFound) => {
+            error(StatusCode::NOT_FOUND, "receipt_not_found", "no such receipt")
+        }
         Err(err) => game_error(&err),
     }
+}
+
+/// `POST /v1/refunds` — SERVER-TO-SERVER: refund a purchase through Mint (the
+/// captured amount moves from the revenue account back to the player) and
+/// remove what it granted. Idempotent per receipt: a repeated call returns the
+/// original refund and never pays out twice.
+async fn refund_handler<M, F>(
+    State(state): State<AppState<M, F>>,
+    Json(req): Json<ReverseReq>,
+) -> Response
+where
+    M: MintTransport + 'static,
+    F: Fulfiller + 'static,
+{
+    refund_response(&state, &req).await
+}
+
+pub(crate) async fn refund_response<M, F>(state: &AppState<M, F>, req: &ReverseReq) -> Response
+where
+    M: MintTransport + 'static,
+    F: Fulfiller + 'static,
+{
+    if let Err(response) = req.validate() {
+        return response;
+    }
+    match state
+        .store()
+        .refund(&req.player, &req.receipt_id, req.reason())
+        .await
+    {
+        Ok(outcome) => ok(json!({
+            "refunded": true,
+            "idempotent_replay": outcome.idempotent_replay,
+            "purchase": purchase_view(&outcome.purchase),
+        })),
+        Err(err) => game_error(&err),
+    }
+}
+
+/// JSON view of a completed purchase: the Mint outcome plus its `status`
+/// (`completed` / `refunded` / `revoked`) and reversal record.
+pub(crate) fn purchase_view(purchase: &CompletedPurchase) -> serde_json::Value {
+    let mut value = serde_json::to_value(&purchase.outcome).unwrap_or_else(|_| json!({}));
+    if let Some(map) = value.as_object_mut() {
+        map.insert("player".into(), json!(purchase.player));
+        map.insert("status".into(), json!(purchase.status()));
+        map.insert(
+            "reversal".into(),
+            serde_json::to_value(&purchase.reversal).unwrap_or(serde_json::Value::Null),
+        );
+    }
+    value
 }
 
 pub(crate) fn ok(data: serde_json::Value) -> Response {
@@ -513,6 +631,8 @@ pub(crate) fn game_error(err: &GameError) -> Response {
         GameError::PackAlreadyOpened(_) => (StatusCode::CONFLICT, "pack_already_opened"),
         GameError::FulfillmentFailed(_) => (StatusCode::BAD_GATEWAY, "fulfillment_failed"),
         GameError::Mint(_) => (StatusCode::BAD_GATEWAY, "mint_error"),
+        GameError::PurchaseNotFound(_) => (StatusCode::NOT_FOUND, "receipt_not_found"),
+        GameError::AlreadyReversed(_) => (StatusCode::CONFLICT, "already_reversed"),
         GameError::Storage(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage_error"),
     };
     // Log the detailed error server-side; return a client-safe message.

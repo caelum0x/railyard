@@ -13,6 +13,7 @@ use std::sync::Mutex;
 
 use game_economy_core::{
     CompletedPurchase, GameError, GameStateRepository, Inventory, PurchaseRecord,
+    PurchaseReversal, PurchaseSummary, ReverseOutcome,
 };
 use serde::{Deserialize, Serialize};
 
@@ -159,7 +160,7 @@ impl GameStateRepository for JsonFileGameState {
             .lock()
             .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
         if let Some(PurchaseRecord::Completed(existing)) = state.purchases.get(idem_key) {
-            return if existing == completed {
+            return if existing.same_settlement(completed) {
                 Ok(())
             } else {
                 Err(GameError::IdempotencyConflict)
@@ -215,6 +216,78 @@ impl GameStateRepository for JsonFileGameState {
             }
         }
     }
+
+    fn update_inventory(
+        &self,
+        player: &str,
+        apply: &mut dyn FnMut(&mut Inventory) -> Result<(), GameError>,
+    ) -> Result<Inventory, GameError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
+        let mut inventory = state.inventories.get(player).cloned().unwrap_or_default();
+        apply(&mut inventory)?;
+        state.inventories.insert(player.into(), inventory.clone());
+        self.persist(&state)?;
+        Ok(inventory)
+    }
+
+    fn reverse_purchase(
+        &self,
+        player: &str,
+        receipt_id: &str,
+        reversal: &PurchaseReversal,
+        ownership_key: Option<&str>,
+        revoke: &dyn Fn(&CompletedPurchase, &mut Inventory),
+    ) -> Result<ReverseOutcome, GameError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
+        // Work on copies so a failed persist leaves the live snapshot untouched.
+        let mut purchases = state.purchases.clone();
+        let mut inventories = state.inventories.clone();
+        let outcome = game_economy_core::reverse_in(
+            &mut purchases,
+            &mut inventories,
+            player,
+            receipt_id,
+            reversal,
+            revoke,
+        );
+        if let ReverseOutcome::Reversed(_) = &outcome {
+            let previous_purchases = std::mem::replace(&mut state.purchases, purchases);
+            let previous_inventories = std::mem::replace(&mut state.inventories, inventories);
+            if let Err(error) = self.persist(&state) {
+                state.purchases = previous_purchases;
+                state.inventories = previous_inventories;
+                return Err(error);
+            }
+            if let Some(key) = ownership_key {
+                state
+                    .reservations
+                    .remove(&(player.to_string(), key.to_string()));
+            }
+        }
+        Ok(outcome)
+    }
+
+    fn recent_purchases(&self, limit: usize) -> Result<Vec<CompletedPurchase>, GameError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
+        Ok(game_economy_core::recent_of(guard.purchases.values(), limit))
+    }
+
+    fn summary(&self) -> Result<PurchaseSummary, GameError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
+        Ok(game_economy_core::summarize(guard.purchases.values()))
+    }
 }
 
 fn temp_path(path: &Path) -> PathBuf {
@@ -266,10 +339,7 @@ mod tests {
             },
             idempotent_replay: false,
         };
-        let completed = CompletedPurchase {
-            player: "acct_player".into(),
-            outcome,
-        };
+        let completed = CompletedPurchase::new("acct_player", outcome);
         let mut inventory = Inventory::default();
         inventory.grant_cosmetic("skin_1", "Blade");
         state

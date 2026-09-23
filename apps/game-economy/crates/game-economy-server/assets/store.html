@@ -52,6 +52,7 @@
   .drops { display: flex; flex-wrap: wrap; gap: 6px; }
   .bar { height: 8px; background: var(--row); border-radius: 4px; overflow: hidden; }
   .bar > div { height: 100%; background: var(--accent); }
+  .st-completed { color: var(--ok); } .st-refunded { color: var(--accent); } .st-revoked { color: var(--danger); }
 </style>
 </head>
 <body>
@@ -216,9 +217,13 @@
     main.innerHTML = '<div class="loading">Loading purchases...</div>';
     api("GET", "/v1/purchases/" + encodeURIComponent(state.player)).then(function (d) {
       if (!d.purchases.length) { main.innerHTML = '<div class="empty">No purchases yet.</div>'; return; }
-      main.innerHTML = '<div class="card" style="margin-top:16px"><table><thead><tr><th>Item</th><th>Charged</th><th>Settlement</th><th>Receipt</th></tr></thead><tbody>' +
+      main.innerHTML = '<div class="card" style="margin-top:16px"><table><thead><tr><th>Item</th><th>Charged</th><th>Status</th><th>Settlement</th><th>Receipt</th></tr></thead><tbody>' +
         d.purchases.map(function (p) {
-          return "<tr><td>" + esc(p.product_sku) + "</td><td>" + money(p.charged_micros) + "</td><td>#" + esc(p.settlement_seq) +
+          var st = p.status || "completed", rv = p.reversal;
+          var stHtml = '<span class="badge st-' + esc(st) + '">' + esc(st) + "</span>";
+          if (rv && rv.kind === "refunded") stHtml += '<div class="muted">' + money(rv.refunded_micros) + " returned to your balance</div>";
+          if (rv && rv.kind === "revoked") stHtml += '<div class="muted">Item removed after a payment reversal</div>';
+          return "<tr><td>" + esc(p.product_sku) + "</td><td>" + money(p.charged_micros) + "</td><td>" + stHtml + "</td><td>#" + esc(p.settlement_seq) +
             '</td><td class="mono">' + esc(p.receipt_id) + "</td></tr>";
         }).join("") + "</tbody></table></div>";
     }).catch(function (e) { main.innerHTML = '<div class="empty">Could not load purchases: ' + esc(e.message) + "</div>"; });

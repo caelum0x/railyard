@@ -12,7 +12,7 @@
 //! - `create_hold`  -> `POST /v1/holds`               `{ from, amount_micros, idem_key, ref? }`
 //! - `capture_hold` -> `POST /v1/holds/:id/capture`   `{ amount_micros, to, idem_key, ref? }`
 //! - `release_hold` -> `POST /v1/holds/:id/release`   `{ idem_key, ref? }`
-//! - `transfer`     -> `POST /v1/transfers`           `{ from, to, amount_micros, idem_key, ref? }`
+//! - `refund` / `transfer` -> `POST /v1/transfers`    `{ from, to, amount_micros, idem_key, ref? }`
 //!
 //! Every amount is a bare `i64` microdollar — never a float. Auth is the
 //! `x-api-key` header, sent from config/env (never a literal). Responses are the
@@ -50,8 +50,8 @@ use serde::Deserialize;
 
 use game_economy_core::error::GameError;
 use game_economy_core::transport::{
-    Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Release, ReleaseReceipt,
-    SettlementProof,
+    Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Refund, RefundReceipt, Release,
+    ReleaseReceipt, SettlementProof,
 };
 
 /// The HTTP header carrying the shared Mint API key (matches mint-server's
@@ -278,6 +278,8 @@ struct TransferReq<'a> {
     to: &'a str,
     amount_micros: i64,
     idem_key: &'a str,
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+    ref_: Option<&'a str>,
 }
 
 // ---- wire response payloads (mint-server views.rs `hold_receipt`) ----------
@@ -330,6 +332,9 @@ struct TransferData {
     first_seq: u64,
     #[serde(default)]
     idempotent_replay: bool,
+    /// The signed sender-chain receipt (`{ body, hash, sig }`).
+    #[serde(default)]
+    receipt: Option<serde_json::Value>,
 }
 
 /// The receipt from a direct `POST /v1/transfers` settlement.
@@ -360,6 +365,7 @@ impl HttpMintTransport {
                     to,
                     amount_micros,
                     idem_key,
+                    ref_: None,
                 },
             )
             .await?;
@@ -414,6 +420,43 @@ impl MintTransport for HttpMintTransport {
             settlement_seq: proof.sequence,
             receipt_id: proof.receipt_hash.clone(),
             proof,
+            idempotent_replay: data.idempotent_replay,
+        })
+    }
+
+    async fn refund(&self, req: Refund) -> Result<RefundReceipt, GameError> {
+        let data: TransferData = self
+            .post_json(
+                "/v1/transfers",
+                &TransferReq {
+                    from: &req.from,
+                    to: &req.to,
+                    amount_micros: req.amount_micros,
+                    idem_key: &req.idem_key,
+                    ref_: req.reference.as_deref(),
+                },
+            )
+            .await
+            .map_err(|error| match error {
+                // A transfer has no hold; a 404 here means an unknown account.
+                GameError::HoldNotFound => {
+                    GameError::Mint("refund transfer: Mint account not found".to_string())
+                }
+                GameError::InsufficientFunds => GameError::Mint(
+                    "refund transfer: revenue account has insufficient funds".to_string(),
+                ),
+                other => other,
+            })?;
+        let receipt_hash = data
+            .receipt
+            .as_ref()
+            .and_then(|r| r.get("hash"))
+            .and_then(|h| h.as_str())
+            .map(str::to_owned);
+        Ok(RefundReceipt {
+            refunded_micros: req.amount_micros,
+            settlement_seq: data.first_seq,
+            receipt_hash,
             idempotent_replay: data.idempotent_replay,
         })
     }

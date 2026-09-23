@@ -1,7 +1,7 @@
 //! The Mint data-plane seam — the direct holds path only.
 //!
 //! This is a faithful port of `abacus-core::transport::MintTransport`, trimmed to
-//! the three calls a fixed-price storefront needs: `create_hold` reserves the
+//! the calls a fixed-price storefront needs: `create_hold` reserves the
 //! price, `capture_hold` settles it to the revenue account (terminal, once), and
 //! `release_hold` frees an unfulfilled reservation. The trait lives HERE so the
 //! store depends on the abstraction, not on HTTP: the real client would map these
@@ -95,6 +95,37 @@ pub struct ReleaseReceipt {
     pub proof: SettlementProof,
 }
 
+/// Refund a settled purchase: a direct Mint transfer from the storefront's
+/// revenue account back to the player's funding account. `idem_key` is derived
+/// from the purchase receipt (`<receipt_id>:refund`), so a retried or concurrent
+/// refund of the same receipt collapses in Mint and can never pay out twice.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Refund {
+    /// The revenue account the original capture settled to (debited).
+    pub from: String,
+    /// The player's Mint account (credited).
+    pub to: String,
+    /// Amount to return, in µ$ (the originally captured amount).
+    pub amount_micros: i64,
+    /// Deterministic idempotency key for the refund transfer.
+    pub idem_key: String,
+    /// Free-form reference recorded on the Mint journal (e.g. the receipt id).
+    pub reference: Option<String>,
+}
+
+/// Result of a refund transfer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundReceipt {
+    /// Amount moved back to the player, in µ$.
+    pub refunded_micros: i64,
+    /// Ledger sequence of the refund transfer (sender journal leg).
+    pub settlement_seq: u64,
+    /// Mint receipt hash of the refund transfer, when Mint returned one.
+    pub receipt_hash: Option<String>,
+    /// `true` when Mint reported this as an idempotent replay.
+    pub idempotent_replay: bool,
+}
+
 /// The Mint holds seam. Object-safe (async_trait boxes the futures) so a store
 /// can hold an `Arc<dyn MintTransport>`.
 #[async_trait]
@@ -107,4 +138,8 @@ pub trait MintTransport: Send + Sync {
 
     /// `POST /v1/holds/:id/release` — free the unfulfilled reservation.
     async fn release_hold(&self, hold_id: &str, req: Release) -> Result<ReleaseReceipt, GameError>;
+
+    /// `POST /v1/transfers` — return a captured purchase's money from the
+    /// revenue account to the player (refund path).
+    async fn refund(&self, req: Refund) -> Result<RefundReceipt, GameError>;
 }

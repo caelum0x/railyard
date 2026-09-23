@@ -157,6 +157,23 @@ impl GameStateRepository for FailFirstCommit {
     fn save_inventory(&self, player: &str, inventory: &Inventory) -> Result<(), GameError> {
         self.inner.save_inventory(player, inventory)
     }
+    fn reverse_purchase(
+        &self,
+        player: &str,
+        receipt_id: &str,
+        reversal: &game_economy_core::PurchaseReversal,
+        ownership_key: Option<&str>,
+        revoke: &dyn Fn(&CompletedPurchase, &mut Inventory),
+    ) -> Result<game_economy_core::ReverseOutcome, GameError> {
+        self.inner
+            .reverse_purchase(player, receipt_id, reversal, ownership_key, revoke)
+    }
+    fn recent_purchases(&self, limit: usize) -> Result<Vec<CompletedPurchase>, GameError> {
+        self.inner.recent_purchases(limit)
+    }
+    fn summary(&self) -> Result<game_economy_core::PurchaseSummary, GameError> {
+        self.inner.summary()
+    }
     fn reserve_single_owner(
         &self,
         player: &str,

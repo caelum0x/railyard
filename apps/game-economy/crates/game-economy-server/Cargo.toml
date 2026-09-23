@@ -17,6 +17,7 @@ path = "src/main.rs"
 game-economy-core = { workspace = true }
 game-economy-mint-client = { workspace = true }
 game-economy-store = { workspace = true }
+game-economy-store-postgres = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
 tower-http = { workspace = true }
