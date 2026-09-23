@@ -319,7 +319,8 @@ fn payout_from_record(r: &PayoutRecord) -> Payout {
         status: match r.status {
             PayoutRecordStatus::Paid => PayoutStatus::Paid,
             PayoutRecordStatus::Pending => PayoutStatus::Pending,
-            PayoutRecordStatus::Failed => PayoutStatus::Failed,
+            // A cancelled payout was never delivered (the burn was re-credited).
+            PayoutRecordStatus::Failed | PayoutRecordStatus::Cancelled => PayoutStatus::Failed,
         },
         provider_ref: r.provider_ref.clone(),
     }

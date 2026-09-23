@@ -18,6 +18,7 @@ use serde_json::json;
 
 use crate::dto::parse_account;
 use crate::error::{ok, ApiError, ApiResult};
+use crate::handlers::reversals;
 use crate::state::AppState;
 use crate::views;
 
@@ -57,7 +58,36 @@ pub async fn provider_webhook<S: LedgerStore + 'static>(
         .await
     {
         Ok(ev) => ev,
-        Err(WebhookError::Ignored(kind)) => return Ok(ok(json!({ "ignored": kind }))),
+        Err(WebhookError::Ignored(kind)) => {
+            // Not a deposit: it may be a refund / chargeback of one we already
+            // minted, which must be clawed back so supply stays backed.
+            return match registry.verify_reversal(provider, &AxumHeaders(&headers), &body) {
+                Ok(rev) => {
+                    let out = reversals::apply_reversal(
+                        &st,
+                        &rev.namespaced_ref(),
+                        Some(rev.amount_micros),
+                        rev.reason.as_str(),
+                        Some(format!("{} webhook", provider.tag())),
+                    )
+                    .await;
+                    match out {
+                        Ok(o) => Ok(ok(json!({
+                            "reversal": reversals::reversal_view(&o.record),
+                            "burned_now_micros": o.burned_now_micros,
+                        }))),
+                        // A reversal of a deposit Mint never minted (e.g. a
+                        // payment for something else on the same account) is
+                        // acknowledged so the provider stops retrying.
+                        Err(ApiError::NotFound(m)) => Ok(ok(json!({ "ignored": m }))),
+                        Err(e) => Err(e),
+                    }
+                }
+                Err(WebhookError::BadSignature) => Err(ApiError::Unauthorized),
+                Err(WebhookError::Malformed(m)) => Err(ApiError::BadRequest(m)),
+                Err(_) => Ok(ok(json!({ "ignored": kind }))),
+            };
+        }
         Err(WebhookError::BadSignature) => return Err(ApiError::Unauthorized),
         Err(WebhookError::NotConfigured) => {
             return Err(ApiError::Internal("provider not configured".into()))

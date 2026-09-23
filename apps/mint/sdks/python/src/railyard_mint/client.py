@@ -6,7 +6,7 @@ import json
 from dataclasses import asdict
 from typing import Any, Mapping, NotRequired, TypedDict, cast
 from urllib.error import HTTPError
-from urllib.parse import quote, urljoin, urlparse
+from urllib.parse import quote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -220,6 +220,151 @@ class MintClient:
         _validate_positive_money("redeem amount_micros", request.get("amount_micros"))
         return self._request("POST", "v1/redeem", request)
 
+    # ---- accounts: listing, statements, KYC, lifecycle -------------------
+
+    def list_accounts(self, *, after: str | None = None, limit: int | None = None) -> dict[str, Any]:
+        """Operator listing of accounts with live balances (keyset paginated)."""
+        return self._request("GET", f"v1/accounts{_query(after=after, limit=limit)}")
+
+    def statement(
+        self, account_id: str, *, from_ms: int | None = None, to_ms: int | None = None
+    ) -> dict[str, Any]:
+        return self._request(
+            "GET",
+            f"v1/accounts/{_segment(account_id)}/statement{_query(from_ms=from_ms, to_ms=to_ms)}",
+        )
+
+    def kyc_status(self, account_id: str) -> dict[str, Any]:
+        return self._request("GET", f"v1/accounts/{_segment(account_id)}/kyc")
+
+    def start_kyc_session(self, account_id: str) -> dict[str, Any]:
+        return self._request("POST", f"v1/accounts/{_segment(account_id)}/kyc/session", {})
+
+    def freeze_account(self, account_id: str) -> dict[str, Any]:
+        """Block outgoing movement from an account (operator key)."""
+        return self._request("POST", f"v1/accounts/{_segment(account_id)}/freeze", {})
+
+    def unfreeze_account(self, account_id: str) -> dict[str, Any]:
+        return self._request("POST", f"v1/accounts/{_segment(account_id)}/unfreeze", {})
+
+    def close_account(self, account_id: str) -> dict[str, Any]:
+        """Permanently close a zero-balance account (operator key)."""
+        return self._request("POST", f"v1/accounts/{_segment(account_id)}/close", {})
+
+    # ---- payouts --------------------------------------------------------
+
+    def list_payouts(
+        self,
+        *,
+        status: str | None = None,
+        account_id: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "GET",
+            f"v1/payouts{_query(status=status, account_id=account_id, limit=limit, cursor=cursor)}",
+        )
+
+    def payout(self, payout_ref: str) -> dict[str, Any]:
+        """One payout; a pending payout is refreshed from the provider first."""
+        return self._request("GET", f"v1/payouts/{_segment(payout_ref)}")
+
+    def retry_payout(self, payout_ref: str) -> dict[str, Any]:
+        return self._request("POST", f"v1/payouts/{_segment(payout_ref)}/retry", {})
+
+    def cancel_payout(self, payout_ref: str, note: str | None = None) -> dict[str, Any]:
+        """Abandon a failed payout and re-credit the burned amount (operator key)."""
+        return self._request("POST", f"v1/payouts/{_segment(payout_ref)}/cancel", {"note": note})
+
+    def mark_payout_paid(self, payout_ref: str, provider_ref: str | None = None) -> dict[str, Any]:
+        """Record an out-of-band settlement of a payout (operator key)."""
+        return self._request(
+            "POST", f"v1/payouts/{_segment(payout_ref)}/mark-paid", {"provider_ref": provider_ref}
+        )
+
+    # ---- reconciliation -------------------------------------------------
+
+    def reconciliation(self) -> dict[str, Any]:
+        return self._request("GET", "v1/reconciliation")
+
+    def import_provider_report(
+        self,
+        provider: str,
+        content: str,
+        *,
+        label: str | None = None,
+        format: str | None = None,
+        amount_unit: str | None = None,
+        reference_column: str | None = None,
+    ) -> dict[str, Any]:
+        """Import a provider settlement report (CSV / JSON) and get its match results."""
+        if not content:
+            raise ValueError("report content cannot be empty")
+        body: dict[str, Any] = {"provider": provider, "content": content}
+        for key, value in (
+            ("label", label),
+            ("format", format),
+            ("amount_unit", amount_unit),
+            ("reference_column", reference_column),
+        ):
+            if value is not None:
+                body[key] = value
+        return self._request("POST", "v1/reconciliation/reports", body)
+
+    def provider_reports(self) -> dict[str, Any]:
+        return self._request("GET", "v1/reconciliation/reports")
+
+    def provider_report(self, report_id: str) -> dict[str, Any]:
+        return self._request("GET", f"v1/reconciliation/reports/{_segment(report_id)}")
+
+    def delete_provider_report(self, report_id: str) -> dict[str, Any]:
+        return self._request("DELETE", f"v1/reconciliation/reports/{_segment(report_id)}")
+
+    # ---- deposit reversals ----------------------------------------------
+
+    def record_reversal(
+        self,
+        deposit_ref: str,
+        *,
+        amount_micros: int | None = None,
+        reason: str = "refund",
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a refund / chargeback and claw it back (operator key)."""
+        body: dict[str, Any] = {"deposit_ref": deposit_ref, "reason": reason, "note": note}
+        if amount_micros is not None:
+            _validate_positive_money("reversal amount_micros", amount_micros)
+            body["amount_micros"] = amount_micros
+        return self._request("POST", "v1/reversals", body)
+
+    def reversals(self, *, status: str | None = None, limit: int | None = None) -> dict[str, Any]:
+        return self._request("GET", f"v1/reversals{_query(status=status, limit=limit)}")
+
+    def retry_reversal(self, deposit_ref: str) -> dict[str, Any]:
+        return self._request("POST", f"v1/reversals/{_segment(deposit_ref)}/retry", {})
+
+    def write_off_reversal(self, deposit_ref: str, note: str | None = None) -> dict[str, Any]:
+        return self._request(
+            "POST", f"v1/reversals/{_segment(deposit_ref)}/write-off", {"note": note}
+        )
+
+    # ---- API keys -------------------------------------------------------
+
+    def api_keys(self) -> dict[str, Any]:
+        return self._request("GET", "v1/keys")
+
+    def create_api_key(
+        self, name: str, scopes: list[str], *, accounts: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Create a DB-backed key. The response `secret` is returned ONCE."""
+        return self._request(
+            "POST", "v1/keys", {"name": name, "scopes": scopes, "accounts": accounts}
+        )
+
+    def revoke_api_key(self, key_id: str) -> dict[str, Any]:
+        return self._request("POST", f"v1/keys/{_segment(key_id)}/revoke", {})
+
     def verification_keys(self) -> dict[str, Any]:
         return self._request("GET", ".well-known/mint-verification-keys.json")
 
@@ -313,6 +458,11 @@ class MintClient:
 
 def _segment(value: str) -> str:
     return quote(value, safe="")
+
+
+def _query(**params: Any) -> str:
+    pairs = {k: str(v) for k, v in params.items() if v is not None and v != ""}
+    return f"?{urlencode(pairs)}" if pairs else ""
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:

@@ -7,8 +7,10 @@
 //! - `DATABASE_URL`     — Postgres DSN. When set → `PgStore` (production).
 //! - `MINT_API_KEY`     — master `X-API-Key` (full authority) for all API routes.
 //! - `MINT_API_KEYS_JSON` — optional named, scoped service keys:
-//!   `[{"name":"ledgerline","key":"…","scopes":["read","spend"]}]`; scopes are
-//!   `read | accounts | spend | funding | payouts | admin`.
+//!   `[{"name":"ledgerline","key":"…","scopes":["read","spend"],"accounts":["acct_…"]}]`;
+//!   scopes are `read | accounts | spend | funding | payouts | admin`; the
+//!   optional `accounts` list restricts the key to those accounts. Keys can
+//!   also be created / revoked at runtime (`/v1/keys`, stored hashed).
 //! - `MINT_SIGNING_KEY` — hex 32-byte receipt-signing seed (required with Postgres).
 //! - `MINT_PAYER_KEYS_JSON` — JSON payer-key registrations for AITP-402.
 //! - `STRIPE_WEBHOOK_SECRET` — HMAC secret for the Stripe on-ramp webhook.

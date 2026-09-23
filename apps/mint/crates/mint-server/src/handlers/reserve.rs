@@ -3,6 +3,7 @@
 use axum::extract::State;
 use mint_store::{
     provider_tag_of, LedgerStore, PayoutQuery, PayoutRecordStatus, ReserveMovementTotal,
+    ReversalStatus,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -40,6 +41,11 @@ struct ProviderRecon {
     failed_micros: i64,
     failed_count: u64,
     pending_count: u64,
+    cancelled_micros: i64,
+    cancelled_count: u64,
+    reversed_micros: i64,
+    clawed_back_micros: i64,
+    reversal_shortfall_micros: i64,
 }
 
 /// `GET /v1/reconciliation` → per-provider reconciliation of the ledger's
@@ -71,6 +77,7 @@ pub async fn reconciliation<S: LedgerStore + 'static>(
         PayoutRecordStatus::Paid,
         PayoutRecordStatus::Pending,
         PayoutRecordStatus::Failed,
+        PayoutRecordStatus::Cancelled,
     ] {
         let rows = store
             .list_payouts(PayoutQuery {
@@ -93,7 +100,26 @@ pub async fn reconciliation<S: LedgerStore + 'static>(
                     slot.failed_micros = slot.failed_micros.saturating_add(amt);
                     slot.failed_count += 1;
                 }
+                PayoutRecordStatus::Cancelled => {
+                    slot.cancelled_micros = slot.cancelled_micros.saturating_add(amt);
+                    slot.cancelled_count += 1;
+                }
             }
+        }
+    }
+    // Deposit reversals (refunds / chargebacks): the claw-back burns are
+    // redeem rows in the journal, so they are netted out of the payout math.
+    let reversals = store
+        .list_deposit_reversals(None, RECON_PAYOUT_SCAN)
+        .await?;
+    for r in &reversals {
+        let slot = by_provider.entry(provider_tag_of(&r.deposit_ref)).or_default();
+        slot.reversed_micros = slot.reversed_micros.saturating_add(r.amount_micros);
+        slot.clawed_back_micros = slot.clawed_back_micros.saturating_add(r.clawed_micros);
+        if r.status == ReversalStatus::Shortfall {
+            slot.reversal_shortfall_micros = slot
+                .reversal_shortfall_micros
+                .saturating_add(r.amount_micros.saturating_sub(r.clawed_micros));
         }
     }
 
@@ -108,26 +134,53 @@ pub async fn reconciliation<S: LedgerStore + 'static>(
             json!({
                 "provider": tag,
                 "active": active.contains(&tag.as_str()),
-                "deposits_minted": { "count": r.minted_count, "micros": r.minted_micros },
-                "burned_for_payout": { "count": r.burned_count, "micros": r.burned_micros },
+                // Cancelled payouts are re-credited with a mint and claw-backs
+                // are burns; both are netted out so these figures describe
+                // real customer deposits and real cash-outs.
+                "deposits_minted": {
+                    "count": r.minted_count.saturating_sub(r.cancelled_count),
+                    "micros": r.minted_micros.saturating_sub(r.cancelled_micros),
+                },
+                "burned_for_payout": {
+                    "count": r.burned_count,
+                    "micros": r.burned_micros.saturating_sub(r.clawed_back_micros),
+                },
                 "payouts": {
                     "paid_micros": r.paid_micros,
                     "pending_micros": r.pending_micros,
                     "pending_count": r.pending_count,
                     "failed_micros": r.failed_micros,
                     "failed_count": r.failed_count,
+                    "cancelled_micros": r.cancelled_micros,
+                    "cancelled_count": r.cancelled_count,
                 },
-                "burned_unpaid_micros": r.burned_micros.saturating_sub(r.paid_micros),
+                "reversals": {
+                    "reversed_micros": r.reversed_micros,
+                    "clawed_back_micros": r.clawed_back_micros,
+                    "shortfall_micros": r.reversal_shortfall_micros,
+                },
+                "burned_unpaid_micros": r
+                    .burned_micros
+                    .saturating_sub(r.clawed_back_micros)
+                    .saturating_sub(r.paid_micros)
+                    .saturating_sub(r.cancelled_micros),
             })
         })
         .collect();
-    let totals = by_provider.values().fold((0i64, 0i64, 0i64), |acc, r| {
+    let totals = by_provider.values().fold((0i64, 0i64, 0i64, 0i64), |acc, r| {
         (
             acc.0.saturating_add(r.minted_micros),
             acc.1.saturating_add(r.burned_micros),
             acc.2.saturating_add(r.paid_micros),
+            acc.3
+                .saturating_add(r.cancelled_micros)
+                .saturating_add(r.clawed_back_micros),
         )
     });
+    let shortfall: i64 = by_provider
+        .values()
+        .map(|r| r.reversal_shortfall_micros)
+        .sum();
     Ok(ok(json!({
         "solvency": {
             "supply_micros": proof.supply_micros.get(),
@@ -138,7 +191,8 @@ pub async fn reconciliation<S: LedgerStore + 'static>(
             "minted_micros": totals.0,
             "burned_micros": totals.1,
             "paid_out_micros": totals.2,
-            "burned_unpaid_micros": totals.1.saturating_sub(totals.2),
+            "burned_unpaid_micros": totals.1.saturating_sub(totals.2).saturating_sub(totals.3),
+            "reversal_shortfall_micros": shortfall,
             // Supply identity: everything minted minus everything burned is
             // exactly the outstanding reserve.
             "expected_supply_micros": totals.0.saturating_sub(totals.1),

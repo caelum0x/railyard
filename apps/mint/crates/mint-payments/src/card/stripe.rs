@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::card::{is_whole_cents, Checkout, CheckoutUrls};
 use crate::config::ProviderConfig;
-use crate::event::{DepositEvent, WebhookError};
+use crate::event::{DepositEvent, ReversalEvent, ReversalReason, WebhookError};
 use crate::http::{map_status, Headers, HttpTransport};
 use crate::money::cents_to_micros;
 use crate::provider::ProviderId;
@@ -181,12 +181,56 @@ impl Ramp for StripeRamp {
     }
 }
 
-/// Verify a Stripe webhook over RAW bytes, returning the confirmed deposit.
-pub fn verify_webhook<H: Headers>(
+/// Verify a Stripe webhook over RAW bytes and, when it is a refund or a
+/// dispute of a PaymentIntent-backed charge, return the reversal. Any other
+/// verified event is `Ignored`.
+///
+/// - `charge.refunded` → cumulative `amount_refunded` of the charge;
+/// - `charge.dispute.created` / `charge.dispute.funds_withdrawn` → the
+///   disputed `amount`.
+pub fn verify_reversal_webhook<H: Headers>(
     cfg: &ProviderConfig,
     headers: &H,
     raw: &[u8],
-) -> Result<DepositEvent, WebhookError> {
+) -> Result<ReversalEvent, WebhookError> {
+    verify_signature(cfg, headers, raw)?;
+    let v: Value =
+        serde_json::from_slice(raw).map_err(|e| WebhookError::Malformed(e.to_string()))?;
+    let event_type = v["type"].as_str().unwrap_or("");
+    let obj = &v["data"]["object"];
+    let (reason, cents) = match event_type {
+        "charge.refunded" => (ReversalReason::Refund, obj["amount_refunded"].as_i64()),
+        "charge.dispute.created" | "charge.dispute.funds_withdrawn" => {
+            (ReversalReason::Dispute, obj["amount"].as_i64())
+        }
+        other => return Err(WebhookError::Ignored(other.to_string())),
+    };
+    let cents = cents.ok_or_else(|| WebhookError::Malformed("missing amount".into()))?;
+    let deposit_ref = obj["payment_intent"]
+        .as_str()
+        .ok_or_else(|| WebhookError::Ignored(format!("{event_type} without a payment_intent")))?
+        .to_string();
+    let amount_micros =
+        cents_to_micros(cents).ok_or_else(|| WebhookError::Malformed("amount overflow".into()))?;
+    if amount_micros <= 0 {
+        return Err(WebhookError::Ignored(format!(
+            "{event_type} with zero amount"
+        )));
+    }
+    Ok(ReversalEvent {
+        provider: ProviderId::Stripe,
+        deposit_ref,
+        amount_micros,
+        reason,
+    })
+}
+
+/// Verify the `Stripe-Signature` HMAC over the RAW body.
+fn verify_signature<H: Headers>(
+    cfg: &ProviderConfig,
+    headers: &H,
+    raw: &[u8],
+) -> Result<(), WebhookError> {
     let secret = cfg
         .webhook_secret
         .as_deref()
@@ -201,7 +245,16 @@ pub fn verify_webhook<H: Headers>(
     message.extend_from_slice(t.as_bytes());
     message.push(b'.');
     message.extend_from_slice(raw);
-    hmac_sha256_hex_verify(secret.as_bytes(), &message, v1)?;
+    hmac_sha256_hex_verify(secret.as_bytes(), &message, v1)
+}
+
+/// Verify a Stripe webhook over RAW bytes, returning the confirmed deposit.
+pub fn verify_webhook<H: Headers>(
+    cfg: &ProviderConfig,
+    headers: &H,
+    raw: &[u8],
+) -> Result<DepositEvent, WebhookError> {
+    verify_signature(cfg, headers, raw)?;
 
     let v: Value =
         serde_json::from_slice(raw).map_err(|e| WebhookError::Malformed(e.to_string()))?;

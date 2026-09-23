@@ -34,6 +34,48 @@ impl DepositEvent {
     }
 }
 
+/// Why a provider took a deposit back.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ReversalReason {
+    /// The merchant (or provider) refunded the payment.
+    Refund,
+    /// The payer's bank opened a chargeback / dispute.
+    Dispute,
+}
+
+impl ReversalReason {
+    /// Stable lowercase name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ReversalReason::Refund => "refund",
+            ReversalReason::Dispute => "dispute",
+        }
+    }
+}
+
+/// A verified provider event that takes back (part of) an already-confirmed
+/// deposit: a refund or a chargeback. The handler claws the amount back from
+/// the credited account (or records a shortfall for the operator).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ReversalEvent {
+    /// The provider the original deposit came from.
+    pub provider: ProviderId,
+    /// The ORIGINAL deposit's raw reference (e.g. the PaymentIntent id),
+    /// WITHOUT the `<provider>:` prefix.
+    pub deposit_ref: String,
+    /// The CUMULATIVE amount reversed so far, in microdollars.
+    pub amount_micros: i64,
+    /// Refund or dispute.
+    pub reason: ReversalReason,
+}
+
+impl ReversalEvent {
+    /// The `<provider>:<ref>` key of the original deposit.
+    pub fn namespaced_ref(&self) -> String {
+        self.provider.namespaced(&self.deposit_ref)
+    }
+}
+
 /// The outcome of verifying a provider webhook. The handler maps:
 /// `BadSignature` → 401, `NotConfigured` → 500 (`"provider not configured"`),
 /// `Ignored(_)` → 200 no-op, `Malformed(_)` → 400.

@@ -26,8 +26,9 @@ use mint_store::{
     SystemClock, TransferCommit,
 };
 use mint_store::{
-    AccountSummary, PayoutQuery, PayoutRecord, PayoutRecordStatus, ReceiptQuery,
-    ReserveMovementTotal,
+    AccountStatus, AccountSummary, ApiKeyRecord, DepositReversal, PayoutQuery, PayoutRecord,
+    PayoutRecordStatus, ProviderReport, ProviderReportLine, ReceiptQuery, ReportLineKind,
+    ReserveMovement, ReserveMovementTotal, ReversalStatus,
 };
 use sqlx::postgres::{PgPoolOptions, PgRow};
 use sqlx::{PgConnection, PgPool, Row};
@@ -129,6 +130,88 @@ impl PgStore {
             })
             .collect()
     }
+
+    /// Decode an `accounts ⋈ balances` row (columns: id, owner_ref, status,
+    /// created_ms, available_micros, held_micros, updated_seq).
+    fn account_summary_from_row(r: &PgRow) -> Result<AccountSummary, MintError> {
+        let id = AccountId::parse(&r.get::<String, _>("id")).map_err(|_| MintError::Storage)?;
+        Ok(AccountSummary {
+            balance: Balance {
+                account_id: id,
+                available_micros: Micros::new(r.get::<i64, _>("available_micros")),
+                held_micros: Micros::new(r.get::<i64, _>("held_micros")),
+                updated_seq: r.get::<i64, _>("updated_seq") as u64,
+            },
+            owner_ref: r.get("owner_ref"),
+            created_ms: r.get("created_ms"),
+            status: AccountStatus::from_i16(r.get::<i16, _>("status")),
+        })
+    }
+
+    /// The single-account summary query.
+    const ACCOUNT_SUMMARY_SQL: &'static str =
+        "SELECT a.id, a.owner_ref, a.status, \
+                (extract(epoch FROM a.created_at) * 1000)::bigint AS created_ms, \
+                COALESCE(b.available_micros, 0) AS available_micros, \
+                COALESCE(b.held_micros, 0) AS held_micros, \
+                COALESCE(b.updated_seq, 0) AS updated_seq \
+         FROM accounts a LEFT JOIN balances b ON b.account_id = a.id \
+         WHERE a.id = $1";
+
+    fn api_key_from_row(r: &PgRow) -> Result<ApiKeyRecord, MintError> {
+        let scopes: Vec<String> = serde_json::from_str(&r.get::<String, _>("scopes"))
+            .map_err(|_| MintError::Storage)?;
+        let accounts: Option<Vec<String>> = match r.get::<Option<String>, _>("accounts") {
+            Some(raw) => Some(serde_json::from_str(&raw).map_err(|_| MintError::Storage)?),
+            None => None,
+        };
+        Ok(ApiKeyRecord {
+            id: r.get("id"),
+            name: r.get("name"),
+            key_hash: r.get("key_hash"),
+            prefix: r.get("prefix"),
+            scopes,
+            accounts,
+            created_ms: r.get("created_ms"),
+            revoked_ms: r.get("revoked_ms"),
+        })
+    }
+
+    const API_KEY_COLS: &'static str =
+        "id, name, key_hash, prefix, scopes::text AS scopes, accounts::text AS accounts, \
+         created_ms, revoked_ms";
+
+    fn report_from_row(r: &PgRow) -> ProviderReport {
+        ProviderReport {
+            id: r.get("id"),
+            provider: r.get("provider"),
+            label: r.get("label"),
+            imported_ms: r.get("imported_ms"),
+            line_count: u64::try_from(r.get::<i64, _>("line_count")).unwrap_or(0),
+            period_start_ms: r.get("period_start_ms"),
+            period_end_ms: r.get("period_end_ms"),
+        }
+    }
+
+    fn reversal_from_row(r: &PgRow) -> Result<DepositReversal, MintError> {
+        Ok(DepositReversal {
+            deposit_ref: r.get("deposit_ref"),
+            account_id: r.get("account_id"),
+            amount_micros: r.get("amount_micros"),
+            clawed_micros: r.get("clawed_micros"),
+            reason: r.get("reason"),
+            status: ReversalStatus::parse(&r.get::<String, _>("status"))
+                .ok_or(MintError::Storage)?,
+            attempts: u32::try_from(r.get::<i32, _>("attempts")).unwrap_or(0),
+            note: r.get("note"),
+            created_ms: r.get("created_ms"),
+            updated_ms: r.get("updated_ms"),
+        })
+    }
+
+    const REVERSAL_COLS: &'static str =
+        "deposit_ref, account_id, amount_micros, clawed_micros, reason, status, attempts, \
+         note, created_ms, updated_ms";
 
     fn payout_from_row(row: &PgRow) -> Result<PayoutRecord, MintError> {
         let account_id =
@@ -2238,7 +2321,7 @@ impl LedgerStore for PgStore {
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         let after = after.map(|a| a.as_str().to_string());
         let rows = sqlx::query(
-            "SELECT a.id, a.owner_ref, \
+            "SELECT a.id, a.owner_ref, a.status, \
                     (extract(epoch FROM a.created_at) * 1000)::bigint AS created_ms, \
                     COALESCE(b.available_micros, 0) AS available_micros, \
                     COALESCE(b.held_micros, 0) AS held_micros, \
@@ -2252,22 +2335,7 @@ impl LedgerStore for PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(db_err)?;
-        rows.iter()
-            .map(|r| {
-                let id = AccountId::parse(&r.get::<String, _>("id"))
-                    .map_err(|_| MintError::Storage)?;
-                Ok(AccountSummary {
-                    balance: Balance {
-                        account_id: id,
-                        available_micros: Micros::new(r.get::<i64, _>("available_micros")),
-                        held_micros: Micros::new(r.get::<i64, _>("held_micros")),
-                        updated_seq: r.get::<i64, _>("updated_seq") as u64,
-                    },
-                    owner_ref: r.get("owner_ref"),
-                    created_ms: r.get("created_ms"),
-                })
-            })
-            .collect()
+        rows.iter().map(Self::account_summary_from_row).collect()
     }
 
     async fn upsert_payout(&self, record: PayoutRecord) -> Result<PayoutRecord, MintError> {
@@ -2363,6 +2431,345 @@ impl LedgerStore for PgStore {
                 total_micros: r.get("total"),
             })
             .collect())
+    }
+
+    async fn list_reserve_movements(
+        &self,
+        provider: &str,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<ReserveMovement>, MintError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = sqlx::query(
+            "SELECT r.kind, r.source, r.amount_micros, r.ts, j.account_id \
+             FROM reserve_ledger r LEFT JOIN journal j ON j.seq = r.journal_seq \
+             WHERE COALESCE(NULLIF(split_part(COALESCE(r.source, ''), ':', 1), ''), 'unknown') = $1 \
+               AND ($2::bigint IS NULL OR r.ts >= $2) \
+               AND ($3::bigint IS NULL OR r.ts <= $3) \
+             ORDER BY r.seq ASC LIMIT $4",
+        )
+        .bind(provider)
+        .bind(from_ms)
+        .bind(to_ms)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(rows
+            .iter()
+            .map(|r| ReserveMovement {
+                kind: r.get("kind"),
+                reference: r.get::<Option<String>, _>("source").unwrap_or_default(),
+                account_id: r.get("account_id"),
+                amount_micros: r.get::<i64, _>("amount_micros").saturating_abs(),
+                ts_ms: r.get("ts"),
+            })
+            .collect())
+    }
+
+    async fn get_account(&self, account_id: &AccountId) -> Result<AccountSummary, MintError> {
+        let row = sqlx::query(Self::ACCOUNT_SUMMARY_SQL)
+            .bind(account_id.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?
+            .ok_or(MintError::AccountNotFound)?;
+        Self::account_summary_from_row(&row)
+    }
+
+    async fn set_account_status(
+        &self,
+        account_id: &AccountId,
+        status: AccountStatus,
+    ) -> Result<AccountSummary, MintError> {
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+        // Lock the account AND its balance row: every money path locks the
+        // balance row FOR UPDATE, so the zero-balance check for a close cannot
+        // race a concurrent credit.
+        let row = sqlx::query(
+            "SELECT a.status, b.available_micros, b.held_micros \
+             FROM accounts a JOIN balances b ON b.account_id = a.id \
+             WHERE a.id = $1 FOR UPDATE",
+        )
+        .bind(account_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?
+        .ok_or(MintError::AccountNotFound)?;
+        let current = AccountStatus::from_i16(row.get::<i16, _>("status"));
+        if current == AccountStatus::Closed && status != AccountStatus::Closed {
+            return Err(MintError::AccountClosed);
+        }
+        if status == AccountStatus::Closed
+            && current != AccountStatus::Closed
+            && (row.get::<i64, _>("available_micros") != 0 || row.get::<i64, _>("held_micros") != 0)
+        {
+            return Err(MintError::AccountNotEmpty);
+        }
+        sqlx::query("UPDATE accounts SET status = $2 WHERE id = $1")
+            .bind(account_id.as_str())
+            .bind(status.as_i16())
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        let summary = sqlx::query(Self::ACCOUNT_SUMMARY_SQL)
+            .bind(account_id.as_str())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        tx.commit().await.map_err(db_err)?;
+        Self::account_summary_from_row(&summary)
+    }
+
+    async fn get_hold(&self, id: &HoldId) -> Result<HoldRecord, MintError> {
+        let mut conn = self.pool.acquire().await.map_err(db_err)?;
+        PgStore::get_hold(self, &mut conn, id, false).await
+    }
+
+    async fn insert_api_key(&self, record: ApiKeyRecord) -> Result<ApiKeyRecord, MintError> {
+        let scopes = serde_json::to_string(&record.scopes).map_err(|_| MintError::Storage)?;
+        let accounts = record
+            .accounts
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|_| MintError::Storage)?;
+        let res = sqlx::query(
+            "INSERT INTO api_keys (id, name, key_hash, prefix, scopes, accounts, created_ms, revoked_ms) \
+             VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8) ON CONFLICT DO NOTHING",
+        )
+        .bind(&record.id)
+        .bind(&record.name)
+        .bind(&record.key_hash)
+        .bind(&record.prefix)
+        .bind(scopes)
+        .bind(accounts)
+        .bind(record.created_ms)
+        .bind(record.revoked_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        if res.rows_affected() == 0 {
+            return Err(MintError::IdempotencyConflict);
+        }
+        Ok(record)
+    }
+
+    async fn list_api_keys(&self) -> Result<Vec<ApiKeyRecord>, MintError> {
+        let sql = format!(
+            "SELECT {} FROM api_keys ORDER BY created_ms DESC, id DESC",
+            Self::API_KEY_COLS
+        );
+        let rows = sqlx::query(&sql)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)?;
+        rows.iter().map(Self::api_key_from_row).collect()
+    }
+
+    async fn find_api_key(&self, key_hash: &str) -> Result<Option<ApiKeyRecord>, MintError> {
+        let sql = format!(
+            "SELECT {} FROM api_keys WHERE key_hash = $1 AND revoked_ms IS NULL",
+            Self::API_KEY_COLS
+        );
+        let row = sqlx::query(&sql)
+            .bind(key_hash)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?;
+        row.as_ref().map(Self::api_key_from_row).transpose()
+    }
+
+    async fn revoke_api_key(&self, id: &str) -> Result<Option<ApiKeyRecord>, MintError> {
+        let sql = format!(
+            "UPDATE api_keys SET revoked_ms = COALESCE(revoked_ms, $2) WHERE id = $1 RETURNING {}",
+            Self::API_KEY_COLS
+        );
+        let row = sqlx::query(&sql)
+            .bind(id)
+            .bind(self.clock.now())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?;
+        row.as_ref().map(Self::api_key_from_row).transpose()
+    }
+
+    async fn insert_provider_report(
+        &self,
+        report: ProviderReport,
+        lines: Vec<ProviderReportLine>,
+    ) -> Result<ProviderReport, MintError> {
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+        let res = sqlx::query(
+            "INSERT INTO provider_reports (id, provider, label, imported_ms, line_count, \
+                                           period_start_ms, period_end_ms) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING",
+        )
+        .bind(&report.id)
+        .bind(&report.provider)
+        .bind(&report.label)
+        .bind(report.imported_ms)
+        .bind(i64::try_from(report.line_count).unwrap_or(i64::MAX))
+        .bind(report.period_start_ms)
+        .bind(report.period_end_ms)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        if res.rows_affected() == 0 {
+            return Err(MintError::IdempotencyConflict);
+        }
+        for line in &lines {
+            sqlx::query(
+                "INSERT INTO provider_report_lines (report_id, line_no, kind, reference, \
+                                                    amount_micros, currency, occurred_ms) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            )
+            .bind(&report.id)
+            .bind(i32::try_from(line.line_no).unwrap_or(i32::MAX))
+            .bind(line.kind.as_str())
+            .bind(&line.reference)
+            .bind(line.amount_micros)
+            .bind(&line.currency)
+            .bind(line.occurred_ms)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(report)
+    }
+
+    async fn list_provider_reports(&self, limit: usize) -> Result<Vec<ProviderReport>, MintError> {
+        let rows = sqlx::query(
+            "SELECT id, provider, label, imported_ms, line_count, period_start_ms, period_end_ms \
+             FROM provider_reports ORDER BY imported_ms DESC, id DESC LIMIT $1",
+        )
+        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(rows.iter().map(Self::report_from_row).collect())
+    }
+
+    async fn get_provider_report(
+        &self,
+        id: &str,
+    ) -> Result<Option<(ProviderReport, Vec<ProviderReportLine>)>, MintError> {
+        let Some(head) = sqlx::query(
+            "SELECT id, provider, label, imported_ms, line_count, period_start_ms, period_end_ms \
+             FROM provider_reports WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        else {
+            return Ok(None);
+        };
+        let rows = sqlx::query(
+            "SELECT line_no, kind, reference, amount_micros, currency, occurred_ms \
+             FROM provider_report_lines WHERE report_id = $1 ORDER BY line_no ASC",
+        )
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        let lines = rows
+            .iter()
+            .map(|r| {
+                Ok(ProviderReportLine {
+                    line_no: u32::try_from(r.get::<i32, _>("line_no")).unwrap_or(0),
+                    kind: ReportLineKind::parse(&r.get::<String, _>("kind"))
+                        .ok_or(MintError::Storage)?,
+                    reference: r.get("reference"),
+                    amount_micros: r.get("amount_micros"),
+                    currency: r.get("currency"),
+                    occurred_ms: r.get("occurred_ms"),
+                })
+            })
+            .collect::<Result<Vec<_>, MintError>>()?;
+        Ok(Some((Self::report_from_row(&head), lines)))
+    }
+
+    async fn delete_provider_report(&self, id: &str) -> Result<bool, MintError> {
+        let res = sqlx::query("DELETE FROM provider_reports WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn upsert_deposit_reversal(
+        &self,
+        record: DepositReversal,
+    ) -> Result<DepositReversal, MintError> {
+        let now = self.clock.now();
+        let sql = format!(
+            "INSERT INTO deposit_reversals (deposit_ref, account_id, amount_micros, clawed_micros, \
+                                            reason, status, attempts, note, created_ms, updated_ms) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) \
+             ON CONFLICT (deposit_ref) DO UPDATE SET \
+                 amount_micros = EXCLUDED.amount_micros, \
+                 clawed_micros = EXCLUDED.clawed_micros, \
+                 reason = EXCLUDED.reason, \
+                 status = EXCLUDED.status, \
+                 attempts = EXCLUDED.attempts, \
+                 note = EXCLUDED.note, \
+                 updated_ms = EXCLUDED.updated_ms \
+             RETURNING {}",
+            Self::REVERSAL_COLS
+        );
+        let row = sqlx::query(&sql)
+            .bind(&record.deposit_ref)
+            .bind(&record.account_id)
+            .bind(record.amount_micros)
+            .bind(record.clawed_micros)
+            .bind(&record.reason)
+            .bind(record.status.as_str())
+            .bind(i32::try_from(record.attempts).unwrap_or(i32::MAX))
+            .bind(&record.note)
+            .bind(now)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Self::reversal_from_row(&row)
+    }
+
+    async fn get_deposit_reversal(
+        &self,
+        deposit_ref: &str,
+    ) -> Result<Option<DepositReversal>, MintError> {
+        let sql = format!(
+            "SELECT {} FROM deposit_reversals WHERE deposit_ref = $1",
+            Self::REVERSAL_COLS
+        );
+        let row = sqlx::query(&sql)
+            .bind(deposit_ref)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?;
+        row.as_ref().map(Self::reversal_from_row).transpose()
+    }
+
+    async fn list_deposit_reversals(
+        &self,
+        status: Option<ReversalStatus>,
+        limit: usize,
+    ) -> Result<Vec<DepositReversal>, MintError> {
+        let sql = format!(
+            "SELECT {} FROM deposit_reversals WHERE ($1::text IS NULL OR status = $1) \
+             ORDER BY created_ms DESC, deposit_ref DESC LIMIT $2",
+            Self::REVERSAL_COLS
+        );
+        let rows = sqlx::query(&sql)
+            .bind(status.map(|s| s.as_str()))
+            .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)?;
+        rows.iter().map(Self::reversal_from_row).collect()
     }
 }
 

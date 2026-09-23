@@ -276,8 +276,90 @@ export interface RedeemRequest {
   kyc_tier: "none" | "basic" | "verified";
   payout_dest:
     | { kind: "stripe"; account: string }
-    | { kind: "crypto"; chain: string; address: string };
+    | { kind: "crypto"; chain: string; address: string }
+    | { kind: "paypal"; email: string };
   idem_key: string;
+}
+
+export type AccountStatus = "active" | "frozen" | "closed";
+
+export interface AccountSummary {
+  id: string;
+  account_id: string;
+  kind: string;
+  owner_ref: string | null;
+  status: AccountStatus;
+  created_ms: number | null;
+  available_micros: number;
+  held_micros: number;
+  updated_seq: number;
+}
+
+export interface Page<T> {
+  items: T[];
+  next_cursor?: string | null;
+}
+
+export type PayoutStatus = "pending" | "paid" | "failed" | "cancelled";
+
+export interface PayoutRecord {
+  payout_ref: string;
+  provider: string;
+  account_id: string;
+  amount_micros: number;
+  dest: Record<string, unknown>;
+  status: PayoutStatus;
+  provider_ref: string | null;
+  attempts: number;
+  last_error: string | null;
+  burn_seq: number;
+  created_ms: number;
+  updated_ms: number;
+}
+
+export type ApiScope = "read" | "accounts" | "spend" | "funding" | "payouts" | "admin";
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: ApiScope[];
+  accounts: string[] | null;
+  created_ms: number;
+  revoked_ms: number | null;
+  active: boolean;
+}
+
+export interface CreatedApiKey extends ApiKey {
+  /** The plaintext secret. Returned ONCE; store it in your secret manager. */
+  secret: string;
+}
+
+export interface ImportReportRequest {
+  provider: string;
+  content: string;
+  label?: string;
+  format?: "csv" | "json";
+  amount_unit?: "major" | "cents" | "micros";
+  reference_column?: string;
+}
+
+export type ReversalStatus = "clawed_back" | "shortfall" | "written_off";
+
+export interface DepositReversal {
+  deposit_ref: string;
+  provider: string;
+  account_id: string;
+  amount_micros: number;
+  clawed_micros: number;
+  outstanding_micros: number;
+  reason: "refund" | "dispute";
+  status: ReversalStatus;
+  attempts: number;
+  note: string | null;
+  created_ms: number;
+  updated_ms: number;
+  burned_now_micros?: number;
 }
 
 export interface VerificationKey {
@@ -501,6 +583,128 @@ export class MintClient {
     return this.request("POST", "v1/redeem", input);
   }
 
+  /** Operator listing of accounts with live balances (keyset paginated). */
+  listAccounts(params: { after?: string; limit?: number } = {}): Promise<Page<AccountSummary>> {
+    return this.request("GET", `v1/accounts${query(params)}`);
+  }
+
+  /** Period statement: opening balance, entries, totals, closing balance. */
+  statement(
+    accountId: string,
+    params: { from_ms?: number; to_ms?: number } = {},
+  ): Promise<Record<string, unknown>> {
+    return this.request("GET", `v1/accounts/${segment(accountId)}/statement${query(params)}`);
+  }
+
+  kycStatus(accountId: string): Promise<Record<string, unknown>> {
+    return this.request("GET", `v1/accounts/${segment(accountId)}/kyc`);
+  }
+
+  startKycSession(accountId: string): Promise<{ provider: string; url: string } & Record<string, unknown>> {
+    return this.request("POST", `v1/accounts/${segment(accountId)}/kyc/session`, {});
+  }
+
+  /** Block outgoing movement from an account (operator key). */
+  freezeAccount(accountId: string): Promise<AccountSummary> {
+    return this.request("POST", `v1/accounts/${segment(accountId)}/freeze`, {});
+  }
+
+  unfreezeAccount(accountId: string): Promise<AccountSummary> {
+    return this.request("POST", `v1/accounts/${segment(accountId)}/unfreeze`, {});
+  }
+
+  /** Permanently close a zero-balance account (operator key). */
+  closeAccount(accountId: string): Promise<AccountSummary> {
+    return this.request("POST", `v1/accounts/${segment(accountId)}/close`, {});
+  }
+
+  listPayouts(
+    params: { status?: PayoutStatus; account_id?: string; limit?: number; cursor?: string } = {},
+  ): Promise<Page<PayoutRecord>> {
+    return this.request("GET", `v1/payouts${query(params)}`);
+  }
+
+  /** One payout; a pending payout is refreshed from the provider first. */
+  payout(payoutRef: string): Promise<PayoutRecord> {
+    return this.request("GET", `v1/payouts/${segment(payoutRef)}`);
+  }
+
+  retryPayout(payoutRef: string): Promise<PayoutRecord> {
+    return this.request("POST", `v1/payouts/${segment(payoutRef)}/retry`, {});
+  }
+
+  /** Abandon a failed payout and re-credit the burned amount (operator key). */
+  cancelPayout(payoutRef: string, note?: string): Promise<PayoutRecord> {
+    return this.request("POST", `v1/payouts/${segment(payoutRef)}/cancel`, { note: note ?? null });
+  }
+
+  /** Record an out-of-band settlement of a payout (operator key). */
+  markPayoutPaid(payoutRef: string, providerRef?: string): Promise<PayoutRecord> {
+    return this.request("POST", `v1/payouts/${segment(payoutRef)}/mark-paid`, {
+      provider_ref: providerRef ?? null,
+    });
+  }
+
+  reconciliation(): Promise<Record<string, unknown>> {
+    return this.request("GET", "v1/reconciliation");
+  }
+
+  /** Import a provider settlement report and get its match results. */
+  importProviderReport(input: ImportReportRequest): Promise<Record<string, unknown>> {
+    if (!input.content) throw new Error("report content cannot be empty");
+    return this.request("POST", "v1/reconciliation/reports", input);
+  }
+
+  providerReports(): Promise<{ items: Record<string, unknown>[] }> {
+    return this.request("GET", "v1/reconciliation/reports");
+  }
+
+  providerReport(reportId: string): Promise<Record<string, unknown>> {
+    return this.request("GET", `v1/reconciliation/reports/${segment(reportId)}`);
+  }
+
+  deleteProviderReport(reportId: string): Promise<{ deleted: string }> {
+    return this.request("DELETE", `v1/reconciliation/reports/${segment(reportId)}`);
+  }
+
+  /** Record a refund / chargeback and claw it back (operator key). */
+  recordReversal(input: {
+    deposit_ref: string;
+    amount_micros?: number;
+    reason?: "refund" | "dispute";
+    note?: string;
+  }): Promise<DepositReversal> {
+    if (input.amount_micros !== undefined) {
+      validatePositiveMoney("reversal amount_micros", input.amount_micros);
+    }
+    return this.request("POST", "v1/reversals", input);
+  }
+
+  reversals(params: { status?: ReversalStatus; limit?: number } = {}): Promise<{ items: DepositReversal[] }> {
+    return this.request("GET", `v1/reversals${query(params)}`);
+  }
+
+  retryReversal(depositRef: string): Promise<DepositReversal> {
+    return this.request("POST", `v1/reversals/${segment(depositRef)}/retry`, {});
+  }
+
+  writeOffReversal(depositRef: string, note?: string): Promise<DepositReversal> {
+    return this.request("POST", `v1/reversals/${segment(depositRef)}/write-off`, { note: note ?? null });
+  }
+
+  /** DB-backed API keys (operator key). */
+  apiKeys(): Promise<{ items: ApiKey[]; env_keys: Record<string, unknown>[] }> {
+    return this.request("GET", "v1/keys");
+  }
+
+  createApiKey(input: { name: string; scopes: ApiScope[]; accounts?: string[] }): Promise<CreatedApiKey> {
+    return this.request("POST", "v1/keys", input);
+  }
+
+  revokeApiKey(keyId: string): Promise<ApiKey> {
+    return this.request("POST", `v1/keys/${segment(keyId)}/revoke`, {});
+  }
+
   verificationKeys(): Promise<{ keys: VerificationKey[] }> {
     return this.request("GET", ".well-known/mint-verification-keys.json");
   }
@@ -583,6 +787,15 @@ export class MintClient {
     }
     return { data: data as T, headers: response.headers };
   }
+}
+
+function query(params: Record<string, string | number | undefined | null>): string {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") qs.set(key, String(value));
+  }
+  const text = qs.toString();
+  return text ? `?${text}` : "";
 }
 
 function apiError(status: number, payload: unknown): MintApiError {

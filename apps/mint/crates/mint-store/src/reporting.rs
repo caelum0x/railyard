@@ -21,6 +21,9 @@ pub enum PayoutRecordStatus {
     /// The provider rejected / could not send it. The burn is durable; the
     /// payout can be retried against the same `payout_ref`.
     Failed,
+    /// Terminal: an operator cancelled a payout that could not be delivered
+    /// and re-credited the burned amount to the account.
+    Cancelled,
 }
 
 impl PayoutRecordStatus {
@@ -30,6 +33,7 @@ impl PayoutRecordStatus {
             PayoutRecordStatus::Pending => "pending",
             PayoutRecordStatus::Paid => "paid",
             PayoutRecordStatus::Failed => "failed",
+            PayoutRecordStatus::Cancelled => "cancelled",
         }
     }
 
@@ -39,6 +43,7 @@ impl PayoutRecordStatus {
             "pending" => Some(PayoutRecordStatus::Pending),
             "paid" => Some(PayoutRecordStatus::Paid),
             "failed" => Some(PayoutRecordStatus::Failed),
+            "cancelled" => Some(PayoutRecordStatus::Cancelled),
             _ => None,
         }
     }
@@ -108,6 +113,8 @@ pub struct AccountSummary {
     pub owner_ref: Option<String>,
     /// Creation time (unix ms), when the backend records it.
     pub created_ms: Option<i64>,
+    /// Lifecycle state (active / frozen / closed).
+    pub status: crate::operator::AccountStatus,
 }
 
 /// Aggregated reserve movements (mints / burns) per provider — the ledger side

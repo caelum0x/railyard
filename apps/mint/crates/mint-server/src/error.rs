@@ -45,14 +45,18 @@ pub fn status_for(err: &MintError) -> StatusCode {
         | MintError::DepositNotConfirmed
         | MintError::DepositAmountMismatch => StatusCode::PAYMENT_REQUIRED,
         // 403 Forbidden — frozen account / insufficient KYC.
-        MintError::AccountFrozen | MintError::KycRequired => StatusCode::FORBIDDEN,
+        MintError::AccountFrozen | MintError::AccountClosed | MintError::KycRequired => {
+            StatusCode::FORBIDDEN
+        }
         // 404 Not Found — unknown entity.
         MintError::AccountNotFound
         | MintError::HoldNotFound
         | MintError::AllowanceNotFound
         | MintError::StreamNotFound => StatusCode::NOT_FOUND,
         // 409 Conflict — idempotency / nonce replay.
-        MintError::IdempotencyConflict | MintError::NonceReplayed => StatusCode::CONFLICT,
+        MintError::IdempotencyConflict | MintError::NonceReplayed | MintError::AccountNotEmpty => {
+            StatusCode::CONFLICT
+        }
         // 422 Unprocessable — semantically invalid but well-formed request.
         MintError::CaptureExceedsHold
         | MintError::AuthorizationExpired

@@ -77,8 +77,47 @@ Every payout attempt is persisted:
   the provider: PayPal batch status, on-chain receipt);
 - `POST /v1/payouts/{payout_ref}/retry` — re-send a failed payout with the same
   provider idempotency key (paid/pending payouts are never re-sent);
+- `POST /v1/payouts/{payout_ref}/cancel` `{"note":…}` (admin) — abandon a failed
+  payout and re-credit the burned amount (a compensating mint tagged
+  `<payout_ref>#cancel`); status becomes `cancelled`;
+- `POST /v1/payouts/{payout_ref}/mark-paid` `{"provider_ref":…}` (admin) —
+  record an out-of-band settlement (manual wire) of a failed/pending payout;
 - `GET /v1/reconciliation` — per-provider deposits minted vs. burns vs. payout
-  outcomes, the burned-but-unpaid worklist and the supply identity check.
+  outcomes (net of cancellations and claw-backs), the burned-but-unpaid
+  worklist, the chargeback shortfall and the supply identity check.
+
+### Reconciliation against provider reports
+
+Import the provider's own books and match them against the ledger:
+
+- `POST /v1/reconciliation/reports` (admin)
+  `{"provider":"stripe","label":"itemized.csv","content":"<csv or json>","amount_unit":"major|cents|micros","reference_column":"payment_intent_id"}`
+  — parses a CSV (Stripe itemized balance / payouts export, PayPal settlement
+  report, …) or a JSON array / `{data:[…]}` list, stores the lines and returns
+  the match. Columns are detected by name (`payment_intent_id`, `transaction_id`,
+  `tx_hash`, `id` … / `amount`, `gross` … / `type`, `reporting_category` … /
+  `created`, `date` …);
+- `GET /v1/reconciliation/reports`, `GET /v1/reconciliation/reports/{id}`
+  (re-matched live), `DELETE /v1/reconciliation/reports/{id}`.
+
+Each line is `matched`, `amount_mismatch`, `status_mismatch` (provider paid,
+Mint still unpaid), `missing_in_mint`, `reversal_unrecorded` (a provider refund
+or chargeback Mint has not clawed back) or `informational` (fees); Mint
+movements inside the report period that the report lacks are listed as
+`missing_at_provider`.
+
+### Refunds and chargebacks
+
+A refund or dispute of a deposit Mint already minted must be clawed back or the
+supply stops being backed. Stripe `charge.refunded` and
+`charge.dispute.created` webhooks (same `/v1/deposits/stripe/webhook` route) do
+this automatically; other providers are recorded by operators:
+
+- `POST /v1/reversals` `{"deposit_ref":"stripe:pi_…","amount_micros":…,"reason":"refund|dispute"}`
+  (admin) — burns what the account still holds (even when frozen), up to the
+  cumulative reversed amount; any remainder is a `shortfall`;
+- `GET /v1/reversals?status=shortfall`, `POST /v1/reversals/{deposit_ref}/retry`,
+  `POST /v1/reversals/{deposit_ref}/write-off`.
 
 ## KYC onboarding
 
@@ -90,7 +129,13 @@ Every payout attempt is persisted:
 
 ## Statements and accounts
 
-- `GET /v1/accounts?after=&limit=` — accounts with live balances;
+- `GET /v1/accounts?after=&limit=` — accounts with live balances and status;
+- `GET /v1/accounts/{id}` — kind, owner ref, creation time, status, balance;
+- `POST /v1/accounts/{id}/freeze` | `/unfreeze` | `/close` (admin) — a frozen
+  account cannot send (transfers, holds, streams, allowances, AITP, redeem:
+  `403 account_frozen`) but still receives deposits; a closed account can do
+  neither (`403 account_closed`) and only a zero-balance account can be closed
+  (`409 account_not_empty`);
 - `GET /v1/accounts/{id}/statement?from_ms=&to_ms=` — opening balance, every
   entry with its signed delta, credit/debit totals and closing balance;
 - `GET /v1/accounts/{id}/receipts?after_seq=&limit=&from_ms=&to_ms=` — a page of
@@ -98,9 +143,13 @@ Every payout attempt is persisted:
 
 ## Operator console
 
-`GET /admin` serves the operator console (reserve and solvency, Merkle audit
-root, reconciliation, accounts and statements, KYC, payouts with retry, hosted
-checkout creation). It holds no data itself; every panel calls the API with the
+`GET /admin` serves the operator console: reserve and solvency, Merkle audit
+root, reconciliation; accounts (create, freeze / unfreeze / close, receive
+addresses, operator transfers, redeem, statements, signed receipt chain,
+hold / stream / allowance lookup, KYC); payouts (retry, cancel and re-credit,
+mark paid); funding (hosted checkouts, manual deposit-gated mint); provider
+report import with discrepancy review and one-click claw-back; refunds and
+chargebacks; API key management. It holds no data itself; every panel calls the API with the
 operator's `X-API-Key`.
 
 ## API keys
@@ -118,8 +167,19 @@ export MINT_API_KEYS_JSON='[
 
 Scopes: `read` (all GETs), `accounts`, `spend` (transfers/holds/streams/
 allowances/AITP), `funding` (checkouts, mint), `payouts` (redeem, retry),
-`admin`. Rotate a key by adding the new one under the same name, redeploying
-callers, then removing the old one.
+`admin` (lifecycle, cancellations, reports, reversals, key management).
+Rotate a key by adding the new one under the same name, redeploying callers,
+then removing the old one.
+
+Add `"accounts":["acct_…"]` to restrict a key to specific accounts: it may then
+only move money out of, fund, redeem from and read those accounts, and it is
+refused on global views (account listing, audit log, reconciliation) and on
+every admin route.
+
+Keys can also be managed at runtime from the console or the API
+(`GET /v1/keys`, `POST /v1/keys {"name","scopes","accounts"?}`,
+`POST /v1/keys/{id}/revoke`, all admin). Only the SHA-256 of the secret is
+stored; the secret is returned once at creation.
 
 Mint turns AI credits into a first-class **transferable token (AIT)** —
 sendable/receivable/deliverable between accounts, agents, providers, and models —

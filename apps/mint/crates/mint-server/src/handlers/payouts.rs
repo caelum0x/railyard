@@ -3,7 +3,9 @@
 //! against their already-burned supply.
 
 use axum::extract::{Path, Query, State};
-use mint_store::{LedgerStore, PayoutQuery, PayoutRecordStatus};
+use axum::Json;
+use mint_core::{op_hash, TransferAmount};
+use mint_store::{LedgerStore, MintCommit, PayoutQuery, PayoutRecord, PayoutRecordStatus};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -51,7 +53,7 @@ pub async fn list<S: LedgerStore + 'static>(
 ) -> ApiResult {
     let status = match p.status.as_deref().filter(|s| !s.is_empty()) {
         Some(raw) => Some(PayoutRecordStatus::parse(raw).ok_or_else(|| {
-            ApiError::BadRequest("status must be one of: pending, paid, failed".into())
+            ApiError::BadRequest("status must be one of: pending, paid, failed, cancelled".into())
         })?),
         None => None,
     };
@@ -110,4 +112,114 @@ pub async fn retry<S: LedgerStore + 'static>(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("no payout {payout_ref}")))?;
     Ok(ok(views::payout_record(&rec)))
+}
+
+/// `POST /v1/payouts/:payout_ref/cancel` body.
+#[derive(Debug, Default, Deserialize)]
+pub struct CancelReq {
+    /// Why the payout is being abandoned (kept on the record).
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// `POST /v1/payouts/:payout_ref/cancel` → abandon a `failed` payout and
+/// re-credit its already-burned amount to the account (a compensating mint,
+/// idempotent per payout). Operator-only.
+pub async fn cancel<S: LedgerStore + 'static>(
+    State(st): State<AppState<S>>,
+    Path(payout_ref): Path<String>,
+    body: Option<Json<CancelReq>>,
+) -> ApiResult {
+    let note = body.and_then(|Json(b)| b.note).map(|n| n.trim().to_string());
+    let store = st.ledger.store();
+    let rec = store
+        .get_payout(&payout_ref)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("no payout {payout_ref}")))?;
+    match rec.status {
+        PayoutRecordStatus::Failed => {}
+        PayoutRecordStatus::Cancelled => return Ok(ok(views::payout_record(&rec))),
+        PayoutRecordStatus::Pending | PayoutRecordStatus::Paid => {
+            return Err(ApiError::BadRequest(format!(
+                "only a failed payout can be cancelled (this one is {})",
+                rec.status.as_str()
+            )))
+        }
+    }
+    let amount = TransferAmount::new(rec.amount_micros).map_err(ApiError::from)?;
+    // The re-credit is a mint tagged with the payout's own provider namespace
+    // (`<provider>:<ref>#cancel`) so per-provider reconciliation nets it out.
+    let hash = op_hash(&json!({
+        "op": "payout_cancel",
+        "to": rec.account_id.as_str(),
+        "amount": amount.get(),
+        "payout_ref": rec.payout_ref,
+    }));
+    store
+        .commit_mint(MintCommit {
+            to: rec.account_id.clone(),
+            amount,
+            deposit_ref: format!("{}#cancel", rec.payout_ref),
+            idem_key: format!("payout-cancel:{}", rec.payout_ref),
+            op_hash: hash,
+        })
+        .await?;
+    let reason = note
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "cancelled by operator".to_string());
+    let updated = store
+        .upsert_payout(PayoutRecord {
+            status: PayoutRecordStatus::Cancelled,
+            last_error: Some(format!("cancelled: {reason}")),
+            ..rec
+        })
+        .await?;
+    tracing::info!(payout = %updated.payout_ref, "payout cancelled and re-credited");
+    Ok(ok(views::payout_record(&updated)))
+}
+
+/// `POST /v1/payouts/:payout_ref/mark-paid` body.
+#[derive(Debug, Default, Deserialize)]
+pub struct MarkPaidReq {
+    /// The provider-side id of the out-of-band settlement (wire ref, tx hash).
+    #[serde(default)]
+    pub provider_ref: Option<String>,
+}
+
+/// `POST /v1/payouts/:payout_ref/mark-paid` → record an out-of-band settlement
+/// of a `failed` / `pending` payout (e.g. a manual bank wire). No money moves:
+/// the burn already happened. Operator-only.
+pub async fn mark_paid<S: LedgerStore + 'static>(
+    State(st): State<AppState<S>>,
+    Path(payout_ref): Path<String>,
+    body: Option<Json<MarkPaidReq>>,
+) -> ApiResult {
+    let provider_ref = body
+        .and_then(|Json(b)| b.provider_ref)
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty());
+    let store = st.ledger.store();
+    let rec = store
+        .get_payout(&payout_ref)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("no payout {payout_ref}")))?;
+    match rec.status {
+        PayoutRecordStatus::Failed | PayoutRecordStatus::Pending => {}
+        PayoutRecordStatus::Paid => return Ok(ok(views::payout_record(&rec))),
+        PayoutRecordStatus::Cancelled => {
+            return Err(ApiError::BadRequest(
+                "a cancelled payout was re-credited and cannot be marked paid".into(),
+            ))
+        }
+    }
+    let updated = store
+        .upsert_payout(PayoutRecord {
+            status: PayoutRecordStatus::Paid,
+            provider_ref: provider_ref.or(rec.provider_ref.clone()),
+            last_error: None,
+            ..rec
+        })
+        .await?;
+    tracing::info!(payout = %updated.payout_ref, "payout marked paid by operator");
+    Ok(ok(views::payout_record(&updated)))
 }

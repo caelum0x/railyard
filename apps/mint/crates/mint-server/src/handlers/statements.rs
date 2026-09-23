@@ -46,20 +46,7 @@ pub async fn list<S: LedgerStore + 'static>(
     let next_cursor = (rows.len() == limit)
         .then(|| rows.last().map(|r| r.balance.account_id.as_str().to_string()))
         .flatten();
-    let items: Vec<Value> = rows
-        .iter()
-        .map(|r| {
-            json!({
-                "account_id": r.balance.account_id.as_str(),
-                "kind": r.balance.account_id.kind(),
-                "owner_ref": r.owner_ref,
-                "created_ms": r.created_ms,
-                "available_micros": r.balance.available_micros.get(),
-                "held_micros": r.balance.held_micros.get(),
-                "updated_seq": r.balance.updated_seq,
-            })
-        })
-        .collect();
+    let items: Vec<Value> = rows.iter().map(crate::views::account_summary).collect();
     Ok(ok(json!({ "items": items, "next_cursor": next_cursor })))
 }
 

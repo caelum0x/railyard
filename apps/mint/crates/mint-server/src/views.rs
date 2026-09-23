@@ -119,3 +119,18 @@ pub fn redeem_receipt(r: &RedeemReceipt) -> Value {
         "idempotent_replay": r.idempotent_replay,
     })
 }
+
+/// Operator / API projection of one account (live balance + lifecycle).
+pub fn account_summary(a: &mint_store::AccountSummary) -> Value {
+    json!({
+        "id": a.balance.account_id.as_str(),
+        "account_id": a.balance.account_id.as_str(),
+        "kind": a.balance.account_id.kind(),
+        "owner_ref": a.owner_ref,
+        "status": a.status.as_str(),
+        "created_ms": a.created_ms,
+        "available_micros": a.balance.available_micros.get(),
+        "held_micros": a.balance.held_micros.get(),
+        "updated_seq": a.balance.updated_seq,
+    })
+}

@@ -25,6 +25,10 @@ use ulid::Ulid;
 use crate::balance::Balance;
 use crate::clock::{Clock, SystemClock};
 use crate::journal::{Bucket, JournalEntry, OpKind};
+use crate::operator::{
+    AccountStatus, ApiKeyRecord, DepositReversal, ProviderReport, ProviderReportLine,
+    ReserveMovement, ReversalStatus,
+};
 use crate::reporting::{
     provider_tag_of, AccountSummary, PayoutQuery, PayoutRecord, ReserveMovementTotal,
 };
@@ -92,6 +96,14 @@ struct State {
     account_meta: HashMap<AccountId, (Option<String>, i64)>,
     /// The durable post-burn payout log, keyed by `payout_ref`.
     payouts: HashMap<String, PayoutRecord>,
+    /// Operator lifecycle state per account (absent ⇒ `Active`).
+    account_status: HashMap<AccountId, AccountStatus>,
+    /// DB-backed API keys (hashed secrets only).
+    api_keys: Vec<ApiKeyRecord>,
+    /// Imported provider settlement reports with their parsed lines.
+    provider_reports: Vec<(ProviderReport, Vec<ProviderReportLine>)>,
+    /// Deposit reversals (refund / chargeback claw-backs), keyed by deposit ref.
+    reversals: HashMap<String, DepositReversal>,
     /// Set to `true` only while a critical section is mid-write (between its
     /// first and last mutation). If a panic poisons the lock while this is set,
     /// the state is torn and `lock()` refuses to serve it; a panic before any
@@ -2512,6 +2524,7 @@ impl LedgerStore for InMemoryStore {
                         .unwrap_or_else(|| Balance::zeroed(id.clone())),
                     owner_ref: meta.and_then(|m| m.0.clone()),
                     created_ms: meta.map(|m| m.1),
+                    status: st.account_status.get(id).copied().unwrap_or_default(),
                 }
             })
             .collect())
@@ -2585,6 +2598,224 @@ impl LedgerStore for InMemoryStore {
             .collect();
         out.sort_by(|a, b| (&a.kind, &a.provider).cmp(&(&b.kind, &b.provider)));
         Ok(out)
+    }
+
+    async fn list_reserve_movements(
+        &self,
+        provider: &str,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<ReserveMovement>, MintError> {
+        let st = self.lock();
+        Ok(st
+            .journal
+            .iter()
+            .filter_map(|e| {
+                let kind = match e.op {
+                    OpKind::Mint => "mint",
+                    OpKind::Redeem => "redeem",
+                    _ => return None,
+                };
+                let reference = e.ref_.clone().unwrap_or_default();
+                if provider_tag_of(&reference) != provider {
+                    return None;
+                }
+                if from_ms.is_some_and(|f| e.ts < f) || to_ms.is_some_and(|t| e.ts > t) {
+                    return None;
+                }
+                Some(ReserveMovement {
+                    kind: kind.to_string(),
+                    reference,
+                    account_id: Some(e.account_id.as_str().to_string()),
+                    amount_micros: e.delta_micros.get().saturating_abs(),
+                    ts_ms: e.ts,
+                })
+            })
+            .take(limit)
+            .collect())
+    }
+
+    async fn get_account(&self, account_id: &AccountId) -> Result<AccountSummary, MintError> {
+        let st = self.lock();
+        Self::summary_locked(&st, account_id)
+    }
+
+    async fn set_account_status(
+        &self,
+        account_id: &AccountId,
+        status: AccountStatus,
+    ) -> Result<AccountSummary, MintError> {
+        let mut st = self.lock();
+        if !st.accounts.contains_key(account_id) {
+            return Err(MintError::AccountNotFound);
+        }
+        let current = st.account_status.get(account_id).copied().unwrap_or_default();
+        if current == AccountStatus::Closed && status != AccountStatus::Closed {
+            return Err(MintError::AccountClosed);
+        }
+        if status == AccountStatus::Closed && current != AccountStatus::Closed {
+            let bal = st
+                .balances
+                .get(account_id)
+                .cloned()
+                .unwrap_or_else(|| Balance::zeroed(account_id.clone()));
+            if bal.available_micros.get() != 0 || bal.held_micros.get() != 0 {
+                return Err(MintError::AccountNotEmpty);
+            }
+        }
+        st.account_status.insert(account_id.clone(), status);
+        Self::summary_locked(&st, account_id)
+    }
+
+    async fn get_hold(&self, id: &HoldId) -> Result<HoldRecord, MintError> {
+        self.lock()
+            .holds
+            .get(id)
+            .cloned()
+            .ok_or(MintError::HoldNotFound)
+    }
+
+    async fn insert_api_key(&self, record: ApiKeyRecord) -> Result<ApiKeyRecord, MintError> {
+        let mut st = self.lock();
+        if st.api_keys.iter().any(|k| k.id == record.id || k.key_hash == record.key_hash) {
+            return Err(MintError::IdempotencyConflict);
+        }
+        st.api_keys.push(record.clone());
+        Ok(record)
+    }
+
+    async fn list_api_keys(&self) -> Result<Vec<ApiKeyRecord>, MintError> {
+        let mut keys = self.lock().api_keys.clone();
+        keys.sort_by(|a, b| (b.created_ms, &b.id).cmp(&(a.created_ms, &a.id)));
+        Ok(keys)
+    }
+
+    async fn find_api_key(&self, key_hash: &str) -> Result<Option<ApiKeyRecord>, MintError> {
+        Ok(self
+            .lock()
+            .api_keys
+            .iter()
+            .find(|k| k.key_hash == key_hash && k.revoked_ms.is_none())
+            .cloned())
+    }
+
+    async fn revoke_api_key(&self, id: &str) -> Result<Option<ApiKeyRecord>, MintError> {
+        let now = self.clock.now();
+        let mut st = self.lock();
+        let Some(k) = st.api_keys.iter_mut().find(|k| k.id == id) else {
+            return Ok(None);
+        };
+        if k.revoked_ms.is_none() {
+            k.revoked_ms = Some(now);
+        }
+        Ok(Some(k.clone()))
+    }
+
+    async fn insert_provider_report(
+        &self,
+        report: ProviderReport,
+        lines: Vec<ProviderReportLine>,
+    ) -> Result<ProviderReport, MintError> {
+        let mut st = self.lock();
+        if st.provider_reports.iter().any(|(r, _)| r.id == report.id) {
+            return Err(MintError::IdempotencyConflict);
+        }
+        st.provider_reports.push((report.clone(), lines));
+        Ok(report)
+    }
+
+    async fn list_provider_reports(&self, limit: usize) -> Result<Vec<ProviderReport>, MintError> {
+        let st = self.lock();
+        let mut out: Vec<ProviderReport> =
+            st.provider_reports.iter().map(|(r, _)| r.clone()).collect();
+        out.sort_by(|a, b| (b.imported_ms, &b.id).cmp(&(a.imported_ms, &a.id)));
+        out.truncate(limit);
+        Ok(out)
+    }
+
+    async fn get_provider_report(
+        &self,
+        id: &str,
+    ) -> Result<Option<(ProviderReport, Vec<ProviderReportLine>)>, MintError> {
+        Ok(self
+            .lock()
+            .provider_reports
+            .iter()
+            .find(|(r, _)| r.id == id)
+            .cloned())
+    }
+
+    async fn delete_provider_report(&self, id: &str) -> Result<bool, MintError> {
+        let mut st = self.lock();
+        let before = st.provider_reports.len();
+        st.provider_reports.retain(|(r, _)| r.id != id);
+        Ok(st.provider_reports.len() != before)
+    }
+
+    async fn upsert_deposit_reversal(
+        &self,
+        record: DepositReversal,
+    ) -> Result<DepositReversal, MintError> {
+        let now = self.clock.now();
+        let mut st = self.lock();
+        let created_ms = st
+            .reversals
+            .get(&record.deposit_ref)
+            .map(|r| r.created_ms)
+            .unwrap_or(now);
+        let stored = DepositReversal {
+            created_ms,
+            updated_ms: now,
+            ..record
+        };
+        st.reversals
+            .insert(stored.deposit_ref.clone(), stored.clone());
+        Ok(stored)
+    }
+
+    async fn get_deposit_reversal(
+        &self,
+        deposit_ref: &str,
+    ) -> Result<Option<DepositReversal>, MintError> {
+        Ok(self.lock().reversals.get(deposit_ref).cloned())
+    }
+
+    async fn list_deposit_reversals(
+        &self,
+        status: Option<ReversalStatus>,
+        limit: usize,
+    ) -> Result<Vec<DepositReversal>, MintError> {
+        let st = self.lock();
+        let mut out: Vec<DepositReversal> = st
+            .reversals
+            .values()
+            .filter(|r| status.is_none_or(|s| r.status == s))
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| (b.created_ms, &b.deposit_ref).cmp(&(a.created_ms, &a.deposit_ref)));
+        out.truncate(limit);
+        Ok(out)
+    }
+}
+
+impl InMemoryStore {
+    /// One account's summary, read under the held lock.
+    fn summary_locked(st: &State, account_id: &AccountId) -> Result<AccountSummary, MintError> {
+        if !st.accounts.contains_key(account_id) {
+            return Err(MintError::AccountNotFound);
+        }
+        let meta = st.account_meta.get(account_id);
+        Ok(AccountSummary {
+            balance: st
+                .balances
+                .get(account_id)
+                .cloned()
+                .unwrap_or_else(|| Balance::zeroed(account_id.clone())),
+            owner_ref: meta.and_then(|m| m.0.clone()),
+            created_ms: meta.map(|m| m.1),
+            status: st.account_status.get(account_id).copied().unwrap_or_default(),
+        })
     }
 }
 

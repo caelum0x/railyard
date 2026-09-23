@@ -17,6 +17,10 @@ use mint_receipts::{merkle_root, Receipt, ReceiptHash, ReceiptLog};
 use serde::{Deserialize, Serialize};
 
 use crate::balance::Balance;
+use crate::operator::{
+    AccountStatus, ApiKeyRecord, DepositReversal, ProviderReport, ProviderReportLine,
+    ReserveMovement, ReversalStatus,
+};
 use crate::reporting::{AccountSummary, PayoutQuery, PayoutRecord, ReceiptQuery, ReserveMovementTotal};
 
 /// The validated input to the atomic transfer commit. Built by `mint-ledger`
@@ -766,4 +770,98 @@ pub trait LedgerStore: Send + Sync {
 
     /// Reserve movements (mints / redeem burns) aggregated per provider tag.
     async fn reserve_movement_totals(&self) -> Result<Vec<ReserveMovementTotal>, MintError>;
+
+    /// Individual reserve movements whose ref carries the `<provider>:` tag,
+    /// optionally bounded to `[from_ms, to_ms]`, oldest first, capped at
+    /// `limit` rows — the Mint side of a provider-report match.
+    async fn list_reserve_movements(
+        &self,
+        provider: &str,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<ReserveMovement>, MintError>;
+
+    // ---- account lifecycle -------------------------------------------------
+
+    /// One account's summary (live balance, owner ref, creation time, status).
+    /// [`MintError::AccountNotFound`] when absent.
+    async fn get_account(&self, account_id: &AccountId) -> Result<AccountSummary, MintError>;
+
+    /// Transition an account's lifecycle state. `Closed` is terminal (any
+    /// further change is [`MintError::AccountClosed`]) and requires a zero
+    /// available + held balance, checked atomically with the update
+    /// ([`MintError::AccountNotEmpty`] otherwise).
+    async fn set_account_status(
+        &self,
+        account_id: &AccountId,
+        status: AccountStatus,
+    ) -> Result<AccountSummary, MintError>;
+
+    /// Read one hold record. The default folds the hold journal; stores with a
+    /// live `holds` projection answer it with a point read.
+    async fn get_hold(&self, id: &HoldId) -> Result<HoldRecord, MintError> {
+        self.rebuild_holds()
+            .await?
+            .remove(id)
+            .ok_or(MintError::HoldNotFound)
+    }
+
+    // ---- DB-backed API keys -----------------------------------------------
+
+    /// Persist a new API key record (the secret itself is never stored).
+    async fn insert_api_key(&self, record: ApiKeyRecord) -> Result<ApiKeyRecord, MintError>;
+
+    /// Every API key record (active and revoked), newest first.
+    async fn list_api_keys(&self) -> Result<Vec<ApiKeyRecord>, MintError>;
+
+    /// The ACTIVE (non-revoked) key whose secret hashes to `key_hash`.
+    async fn find_api_key(&self, key_hash: &str) -> Result<Option<ApiKeyRecord>, MintError>;
+
+    /// Revoke a key (idempotent). `None` when no key has that id.
+    async fn revoke_api_key(&self, id: &str) -> Result<Option<ApiKeyRecord>, MintError>;
+
+    // ---- provider settlement reports ---------------------------------------
+
+    /// Persist an imported provider report and its parsed lines atomically.
+    async fn insert_provider_report(
+        &self,
+        report: ProviderReport,
+        lines: Vec<ProviderReportLine>,
+    ) -> Result<ProviderReport, MintError>;
+
+    /// Imported reports, newest first.
+    async fn list_provider_reports(&self, limit: usize) -> Result<Vec<ProviderReport>, MintError>;
+
+    /// One report with its lines (in line order). `None` when absent.
+    async fn get_provider_report(
+        &self,
+        id: &str,
+    ) -> Result<Option<(ProviderReport, Vec<ProviderReportLine>)>, MintError>;
+
+    /// Delete an imported report and its lines (a mis-uploaded file). Returns
+    /// `false` when absent. Never touches money.
+    async fn delete_provider_report(&self, id: &str) -> Result<bool, MintError>;
+
+    // ---- deposit reversals (refund / chargeback claw-backs) ----------------
+
+    /// Insert or update a reversal keyed by `deposit_ref`. The store assigns
+    /// `created_ms` on first insert and stamps `updated_ms` on every call.
+    async fn upsert_deposit_reversal(
+        &self,
+        record: DepositReversal,
+    ) -> Result<DepositReversal, MintError>;
+
+    /// One reversal by its deposit ref.
+    async fn get_deposit_reversal(
+        &self,
+        deposit_ref: &str,
+    ) -> Result<Option<DepositReversal>, MintError>;
+
+    /// Reversals newest first, optionally filtered by status.
+    async fn list_deposit_reversals(
+        &self,
+        status: Option<ReversalStatus>,
+        limit: usize,
+    ) -> Result<Vec<DepositReversal>, MintError>;
 }

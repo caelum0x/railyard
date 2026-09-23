@@ -67,6 +67,22 @@
   code { background: var(--row); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
   .hidden { display: none !important; }
   svg.icon { width: 14px; height: 14px; vertical-align: -2px; stroke: currentColor; fill: none; stroke-width: 2; }
+  .badge.frozen, .badge.shortfall, .badge.amount_mismatch, .badge.status_mismatch, .badge.reversal_unrecorded { color: var(--warn); border-color: #6a5130; }
+  .badge.closed, .badge.revoked, .badge.missing_in_mint, .badge.missing_at_provider { color: var(--danger); border-color: #6a2c3d; }
+  .badge.active, .badge.matched, .badge.clawed_back { color: var(--ok); border-color: #2c5a41; }
+  button.danger { color: var(--danger); border-color: #6a2c3d; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 18px; }
+  .panel h3 { margin: 0; padding: 12px 16px 0; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; font-weight: 600; }
+  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 12px; }
+  .checks { display: flex; gap: 12px; flex-wrap: wrap; }
+  .checks label { color: var(--fg); display: flex; gap: 4px; align-items: center; }
+  textarea { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); background: var(--row); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; min-height: 60px; resize: vertical; }
+  .secret { margin: 0 16px 16px; padding: 12px; border: 1px solid #6a5130; border-radius: 6px; background: #221d14; }
+  .secret code { font-size: 13px; word-break: break-all; }
+  dl.kv { display: grid; grid-template-columns: 180px 1fr; gap: 6px 12px; margin: 0; padding: 16px; }
+  dl.kv dt { color: var(--muted); font-size: 12px; }
+  dl.kv dd { margin: 0; font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -77,6 +93,9 @@
     <button data-tab="accounts">Accounts</button>
     <button data-tab="payouts">Payouts</button>
     <button data-tab="funding">Funding</button>
+    <button data-tab="reconcile">Reconciliation</button>
+    <button data-tab="reversals">Reversals</button>
+    <button data-tab="keys">API keys</button>
   </nav>
   <div class="spacer"></div>
   <input id="key" type="password" placeholder="X-API-Key (MINT_API_KEY)" autocomplete="off" style="min-width:240px" />
@@ -102,23 +121,80 @@
 
   <!-- Accounts -->
   <section id="tab-accounts" class="hidden">
+    <div class="panel">
+      <h3>New account</h3>
+      <div class="form">
+        <label for="na-kind">Kind</label>
+        <select id="na-kind">
+          <option value="User">User</option>
+          <option value="Org">Org</option>
+          <option value="Agent">Agent</option>
+          <option value="Provider">Provider</option>
+          <option value="Model">Model</option>
+          <option value="Treasury">Treasury</option>
+        </select>
+        <label for="na-owner">Owner ref (optional)</label><input id="na-owner" placeholder="your system's user / org id" />
+        <span></span><button id="na-create" class="primary">Create account</button>
+      </div>
+      <div class="result" id="na-result"></div>
+    </div>
     <div class="toolbar">
       <input id="acct-lookup" placeholder="acct_... (open an account)" style="min-width:320px" />
       <button id="acct-open">Open</button>
+      <input id="obj-lookup" placeholder="hold_... / strm_... / alw_..." style="min-width:260px" />
+      <button id="obj-open">Look up</button>
       <div class="spacer"></div>
       <button id="acct-more" class="hidden">Load more</button>
     </div>
+    <div class="card hidden" id="obj-result"></div>
     <div class="card" id="accounts"></div>
     <div id="account-detail" class="hidden">
       <div class="section-title" id="detail-title">Account</div>
       <div class="grid" id="detail-tiles"></div>
       <div class="toolbar">
-        <label>From <input id="stmt-from" type="date" /></label>
-        <label>To <input id="stmt-to" type="date" /></label>
-        <button id="stmt-run">Load statement</button>
+        <button id="acct-freeze">Freeze</button>
+        <button id="acct-unfreeze">Unfreeze</button>
+        <button id="acct-close" class="danger">Close account</button>
+        <button id="acct-address">New receive address</button>
         <button id="kyc-start">Start KYC verification</button>
       </div>
       <div class="result" id="kyc-result"></div>
+      <div class="two">
+        <div class="panel">
+          <h3>Transfer out (operator adjustment)</h3>
+          <div class="form">
+            <label for="tr-to">To (acct_ or ait1 address)</label><input id="tr-to" placeholder="acct_..." />
+            <label for="tr-amount">Amount (USD)</label><input id="tr-amount" type="number" min="0.000001" step="0.01" placeholder="10.00" />
+            <label for="tr-ref">Reference (optional)</label><input id="tr-ref" placeholder="adjustment:ticket-123" />
+            <span></span><button id="tr-send" class="primary">Send transfer</button>
+          </div>
+          <div class="result" id="tr-result"></div>
+        </div>
+        <div class="panel">
+          <h3>Redeem (cash out)</h3>
+          <div class="form">
+            <label for="rd-amount">Amount (USD)</label><input id="rd-amount" type="number" min="0.01" step="0.01" placeholder="50.00" />
+            <label for="rd-kind">Destination</label>
+            <select id="rd-kind">
+              <option value="stripe">Stripe connected account</option>
+              <option value="paypal">PayPal email</option>
+              <option value="crypto">Crypto address</option>
+            </select>
+            <label for="rd-dest" id="rd-dest-label">Stripe account</label><input id="rd-dest" placeholder="acct_1Abc..." />
+            <label for="rd-chain" class="hidden" id="rd-chain-label">Chain</label><input id="rd-chain" class="hidden" placeholder="base" />
+            <label for="rd-tier">KYC tier presented</label>
+            <select id="rd-tier"><option value="verified">Verified</option><option value="basic">Basic</option><option value="none">None</option></select>
+            <span></span><button id="rd-send" class="primary">Burn and pay out</button>
+          </div>
+          <div class="result" id="rd-result"></div>
+        </div>
+      </div>
+      <div class="toolbar">
+        <label>From <input id="stmt-from" type="date" /></label>
+        <label>To <input id="stmt-to" type="date" /></label>
+        <button id="stmt-run">Load statement</button>
+        <button id="rcpt-run">Signed receipt chain</button>
+      </div>
       <div class="card" id="statement"></div>
     </div>
   </section>
@@ -131,6 +207,7 @@
         <option value="failed">Failed</option>
         <option value="pending">Pending</option>
         <option value="paid">Paid</option>
+        <option value="cancelled">Cancelled</option>
       </select>
       <input id="payout-account" placeholder="Filter by acct_..." style="min-width:260px" />
       <button id="payout-load">Apply</button>
@@ -159,6 +236,109 @@
       </div>
       <div class="result" id="co-result"></div>
     </div>
+    <div class="panel">
+      <h3>Credit a confirmed deposit (manual mint)</h3>
+      <div class="form">
+        <label for="mm-account">Account</label><input id="mm-account" placeholder="acct_..." />
+        <label for="mm-amount">Amount (USD)</label><input id="mm-amount" type="number" min="0.01" step="0.01" placeholder="100.00" />
+        <label for="mm-ref">Deposit ref</label><input id="mm-ref" placeholder="stripe:pi_... (must be confirmed by the provider)" />
+        <span></span><button id="mm-create" class="primary">Mint against deposit</button>
+      </div>
+      <div class="result" id="mm-result"></div>
+    </div>
+  </section>
+
+  <!-- Reconciliation against provider reports -->
+  <section id="tab-reconcile" class="hidden">
+    <div class="panel">
+      <h3>Import a provider report</h3>
+      <div class="form">
+        <label for="rp-provider">Provider</label>
+        <select id="rp-provider">
+          <option value="stripe">Stripe</option>
+          <option value="paypal">PayPal</option>
+          <option value="creem">Creem</option>
+          <option value="polar">Polar</option>
+          <option value="revenuecat">RevenueCat</option>
+          <option value="adapty">Adapty</option>
+          <option value="usdc">USDC</option>
+          <option value="iyzico">Iyzico</option>
+        </select>
+        <label for="rp-file">Report file (CSV or JSON)</label><input id="rp-file" type="file" accept=".csv,.json,text/csv,application/json" />
+        <label for="rp-unit">Amount column unit</label>
+        <select id="rp-unit"><option value="major">Dollars (12.34)</option><option value="cents">Cents (1234)</option><option value="micros">Micros</option></select>
+        <label for="rp-refcol">Reference column (optional)</label><input id="rp-refcol" placeholder="auto: payment_intent_id, transaction_id, tx_hash, id ..." />
+        <span></span><button id="rp-import" class="primary">Import and match</button>
+      </div>
+      <div class="result" id="rp-result"></div>
+    </div>
+    <div class="toolbar"><button id="rp-refresh">Refresh reports</button></div>
+    <div class="card" id="reports"></div>
+    <div id="report-detail" class="hidden">
+      <div class="section-title" id="report-title">Report</div>
+      <div class="grid" id="report-tiles"></div>
+      <div class="toolbar">
+        <label class="checks"><label><input type="checkbox" id="rp-all" /> Show matched lines</label></label>
+        <div class="spacer"></div>
+        <button id="rp-delete" class="danger">Delete report</button>
+      </div>
+      <div class="section-title">Provider lines</div>
+      <div class="card" id="report-lines"></div>
+      <div class="section-title">In Mint, missing from the provider report</div>
+      <div class="card" id="report-missing"></div>
+    </div>
+  </section>
+
+  <!-- Deposit reversals -->
+  <section id="tab-reversals" class="hidden">
+    <div class="panel">
+      <h3>Record a refund or chargeback</h3>
+      <div class="form">
+        <label for="rv-ref">Deposit ref</label><input id="rv-ref" placeholder="stripe:pi_..." />
+        <label for="rv-amount">Amount reversed (USD)</label><input id="rv-amount" type="number" min="0.01" step="0.01" placeholder="blank = whole deposit" />
+        <label for="rv-reason">Reason</label>
+        <select id="rv-reason"><option value="refund">Refund</option><option value="dispute">Dispute / chargeback</option></select>
+        <label for="rv-note">Note</label><input id="rv-note" placeholder="optional" />
+        <span></span><button id="rv-create" class="primary">Record and claw back</button>
+      </div>
+      <div class="result" id="rv-result"></div>
+    </div>
+    <div class="toolbar">
+      <select id="rv-status">
+        <option value="">All</option>
+        <option value="shortfall">Shortfall</option>
+        <option value="clawed_back">Clawed back</option>
+        <option value="written_off">Written off</option>
+      </select>
+      <button id="rv-load">Apply</button>
+    </div>
+    <div class="card" id="reversals"></div>
+  </section>
+
+  <!-- API keys -->
+  <section id="tab-keys" class="hidden">
+    <div class="panel">
+      <h3>Create an API key</h3>
+      <div class="form">
+        <label for="ky-name">Name</label><input id="ky-name" placeholder="ledgerline-prod" />
+        <label>Scopes</label>
+        <div class="checks" id="ky-scopes">
+          <label><input type="checkbox" value="read" checked /> read</label>
+          <label><input type="checkbox" value="accounts" /> accounts</label>
+          <label><input type="checkbox" value="spend" /> spend</label>
+          <label><input type="checkbox" value="funding" /> funding</label>
+          <label><input type="checkbox" value="payouts" /> payouts</label>
+          <label><input type="checkbox" value="admin" /> admin</label>
+        </div>
+        <label for="ky-accounts">Restrict to accounts</label><textarea id="ky-accounts" placeholder="blank = all accounts; otherwise one acct_... per line"></textarea>
+        <span></span><button id="ky-create" class="primary">Create key</button>
+      </div>
+      <div id="ky-result"></div>
+    </div>
+    <div class="section-title">Console-managed keys</div>
+    <div class="card" id="keys"></div>
+    <div class="section-title">Environment keys (MINT_API_KEYS_JSON, read-only)</div>
+    <div class="card" id="env-keys"></div>
   </section>
 </main>
 
@@ -187,7 +367,25 @@
     for (const k of kids) n.append(k instanceof Node ? k : document.createTextNode(k === null || k === undefined ? "-" : String(k)));
     return n;
   };
-  const badge = (text) => el("span", { class: "badge " + String(text).toLowerCase() }, text);
+  const badge = (text) => el("span", { class: "badge " + String(text).toLowerCase() }, String(text).replace(/_/g, " "));
+  const toMicros = (dollars) => Math.round(Number(dollars) * 1e6);
+  const idem = (prefix) => prefix + ":" + (window.crypto && crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random().toString(16).slice(2));
+  const enc = encodeURIComponent;
+  // Run an async action from a button: disable while running, report errors.
+  async function run(btn, out, busyText, fn) {
+    if (btn) btn.disabled = true;
+    if (out && busyText) { out.classList.remove("error"); out.textContent = busyText; }
+    try { await fn(); }
+    catch (e) { if (out) out.textContent = e.message; setStatus(e.message, "err"); }
+    finally { if (btn) btn.disabled = false; }
+  }
+  const kv = (obj) => {
+    const dl = el("dl", { class: "kv" });
+    for (const [k, v] of Object.entries(obj || {})) {
+      dl.append(el("dt", null, k), el("dd", null, v !== null && typeof v === "object" ? JSON.stringify(v) : v));
+    }
+    return dl;
+  };
   const placeholder = (node, cls, text) => { node.replaceChildren(el("div", { class: cls }, text)); };
 
   async function api(method, path, body) {
@@ -230,6 +428,7 @@
         tile("Supply (reserve)", usd(reserve.supply_micros)),
         tile("Backing (balances)", usd(reserve.backing_micros)),
         tile("Burned, not yet paid", usd(recon.totals.burned_unpaid_micros)),
+        tile("Chargeback shortfall", usd(recon.totals.reversal_shortfall_micros)),
         tile("Journal epoch", audit.epoch),
         tile("Receipt Merkle root", audit.merkle_root, true),
       );
@@ -238,7 +437,7 @@
         placeholder($("recon"), "empty", "No deposits or payouts yet. Active providers: " + (recon.active_providers.join(", ") || "none"));
       } else {
         $("recon").replaceChildren(table(
-          ["Provider", "Active", "Deposits minted", "Burned for payout", "Paid", "Pending", "Failed", "Burned unpaid"],
+          ["Provider", "Active", "Deposits minted", "Burned for payout", "Paid", "Pending", "Failed", "Cancelled", "Reversed / clawed", "Burned unpaid"],
           recon.providers.map((p) => el("tr", null,
             el("td", null, p.provider),
             el("td", null, badge(p.active ? "ok" : "inactive")),
@@ -247,6 +446,8 @@
             el("td", { class: "num" }, usd(p.payouts.paid_micros)),
             el("td", { class: "num" }, usd(p.payouts.pending_micros) + " (" + p.payouts.pending_count + ")"),
             el("td", { class: "num" }, usd(p.payouts.failed_micros) + " (" + p.payouts.failed_count + ")"),
+            el("td", { class: "num" }, usd(p.payouts.cancelled_micros) + " (" + p.payouts.cancelled_count + ")"),
+            el("td", { class: "num" }, usd(p.reversals.reversed_micros) + " / " + usd(p.reversals.clawed_back_micros)),
             el("td", { class: "num" }, usd(p.burned_unpaid_micros)),
           )),
         ));
@@ -271,7 +472,7 @@
       $("acct-more").classList.toggle("hidden", !acctCursor);
       const rows = page.items.map((a) => {
         const tr = el("tr", { class: "clickable" },
-          el("td", { class: "mono" }, a.account_id), el("td", null, a.kind), el("td", null, a.owner_ref),
+          el("td", { class: "mono" }, a.account_id), el("td", null, a.kind), el("td", null, badge(a.status)), el("td", null, a.owner_ref),
           el("td", { class: "num" }, usd(a.available_micros)), el("td", { class: "num" }, usd(a.held_micros)),
           el("td", null, when(a.created_ms)));
         tr.onclick = () => openAccount(a.account_id);
@@ -282,7 +483,7 @@
       } else if (!rows.length) {
         placeholder(box, "empty", "No accounts yet.");
       } else {
-        box.replaceChildren(table(["Account", "Kind", "Owner ref", "Available", "Held", "Created"], rows));
+        box.replaceChildren(table(["Account", "Kind", "Status", "Owner ref", "Available", "Held", "Created"], rows));
       }
     } catch (e) { placeholder(box, "error", "Could not load accounts: " + e.message); }
   }
@@ -293,23 +494,148 @@
     currentAccount = id;
     $("account-detail").classList.remove("hidden");
     $("detail-title").textContent = "Account " + id;
-    $("kyc-result").replaceChildren();
+    ["kyc-result", "tr-result", "rd-result"].forEach((k) => $(k).replaceChildren());
     const tiles = $("detail-tiles");
     placeholder(tiles, "loading", "Loading account...");
     try {
-      const [bal, kyc] = await Promise.all([
-        api("GET", "/v1/accounts/" + encodeURIComponent(id) + "/balance"),
-        api("GET", "/v1/accounts/" + encodeURIComponent(id) + "/kyc").catch((e) => ({ status: "error", provider: e.message })),
+      const [acct, kyc] = await Promise.all([
+        api("GET", "/v1/accounts/" + enc(id)),
+        api("GET", "/v1/accounts/" + enc(id) + "/kyc").catch((e) => ({ status: "unavailable", provider: e.message })),
       ]);
       const tile = (label, value) => el("div", { class: "tile" }, el("div", { class: "label" }, label), el("div", { class: "value" }, value));
       tiles.replaceChildren(
-        tile("Available", usd(bal.available_micros)),
-        tile("Held", usd(bal.held_micros)),
+        tile("Status", badge(acct.status)),
+        tile("Available", usd(acct.available_micros)),
+        tile("Held", usd(acct.held_micros)),
+        tile("Kind / owner", acct.kind + (acct.owner_ref ? " / " + acct.owner_ref : "")),
+        tile("Created", when(acct.created_ms)),
         el("div", { class: "tile" }, el("div", { class: "label" }, "KYC " + (kyc.provider || "")), el("div", { class: "value" }, badge(kyc.status))),
       );
       $("kyc-start").disabled = !kyc.can_start;
+      $("acct-freeze").disabled = acct.status !== "active";
+      $("acct-unfreeze").disabled = acct.status !== "frozen";
+      $("acct-close").disabled = acct.status === "closed";
+      $("tr-send").disabled = acct.status !== "active";
+      $("rd-send").disabled = acct.status !== "active";
+      $("acct-address").disabled = acct.status === "closed";
       await loadStatement();
     } catch (e) { placeholder(tiles, "error", "Could not open account: " + e.message); }
+  }
+
+  async function createAccount() {
+    const out = $("na-result");
+    await run($("na-create"), out, "Creating account...", async () => {
+      const owner = $("na-owner").value.trim();
+      const r = await api("POST", "/v1/accounts", { kind: $("na-kind").value, owner_ref: owner || null });
+      out.replaceChildren("Created ", el("code", null, r.account_id), " ");
+      const open = el("button", { class: "small" }, "Open");
+      open.onclick = () => openAccount(r.account_id);
+      out.append(open);
+      $("na-owner").value = "";
+      loadAccounts(false);
+    });
+  }
+
+  async function accountLifecycle(action) {
+    if (!currentAccount) return;
+    const warn = {
+      freeze: "Freeze this account? Outgoing transfers, holds, streams, allowances and redemptions will be refused until it is unfrozen.",
+      unfreeze: "Unfreeze this account and allow outgoing movement again?",
+      close: "Permanently close this account? This cannot be undone. The balance must be zero.",
+    }[action];
+    if (!window.confirm(warn)) return;
+    await run($("acct-" + action), $("kyc-result"), "Updating account...", async () => {
+      const a = await api("POST", "/v1/accounts/" + enc(currentAccount) + "/" + action, {});
+      $("kyc-result").textContent = "Account is now " + a.status + ".";
+      setStatus("Account " + a.account_id + " is " + a.status, "ok");
+      await openAccount(currentAccount);
+      loadAccounts(false);
+    });
+  }
+
+  async function newAddress() {
+    if (!currentAccount) return;
+    const purpose = window.prompt("Purpose label for the address (optional)", "") ;
+    if (purpose === null) return;
+    const out = $("kyc-result");
+    await run($("acct-address"), out, "Creating address...", async () => {
+      const r = await api("POST", "/v1/accounts/" + enc(currentAccount) + "/addresses", { purpose: purpose.trim() || null });
+      out.replaceChildren("Receive address: ", el("code", null, r.address || JSON.stringify(r)));
+    });
+  }
+
+  async function sendTransfer() {
+    if (!currentAccount) return;
+    const out = $("tr-result");
+    const to = $("tr-to").value.trim();
+    const amount = toMicros($("tr-amount").value);
+    if (!to || !(amount > 0)) { out.textContent = "Enter a recipient and a positive amount."; return; }
+    if (!window.confirm("Transfer " + usd(amount) + " from " + currentAccount + " to " + to + "?")) return;
+    await run($("tr-send"), out, "Sending transfer...", async () => {
+      const ref = $("tr-ref").value.trim();
+      const r = await api("POST", "/v1/transfers", { from: currentAccount, to, amount_micros: amount, idem_key: idem("console-transfer"), ref: ref || null });
+      out.textContent = "Transferred " + usd(amount) + ". Sender available now " + usd(r.from_balance && r.from_balance.available_micros) + ".";
+      $("tr-amount").value = "";
+      await openAccount(currentAccount);
+    });
+  }
+
+  function syncRedeemFields() {
+    const kind = $("rd-kind").value;
+    $("rd-dest-label").textContent = kind === "stripe" ? "Stripe account" : kind === "paypal" ? "PayPal email" : "Address";
+    $("rd-dest").placeholder = kind === "stripe" ? "acct_1Abc..." : kind === "paypal" ? "payee@example.com" : "0x...";
+    ["rd-chain", "rd-chain-label"].forEach((k) => $(k).classList.toggle("hidden", kind !== "crypto"));
+  }
+
+  async function redeem() {
+    if (!currentAccount) return;
+    const out = $("rd-result");
+    const amount = toMicros($("rd-amount").value);
+    const kind = $("rd-kind").value;
+    const dest = $("rd-dest").value.trim();
+    if (!(amount > 0) || !dest) { out.textContent = "Enter a positive amount and a destination."; return; }
+    const payout_dest = kind === "stripe" ? { kind, account: dest } : kind === "paypal" ? { kind, email: dest } : { kind, chain: $("rd-chain").value.trim() || "base", address: dest };
+    const provider = kind === "crypto" ? "usdc" : kind;
+    if (!window.confirm("Burn " + usd(amount) + " from " + currentAccount + " and pay it out via " + provider + "?")) return;
+    await run($("rd-send"), out, "Burning and paying out...", async () => {
+      const payout_ref = provider + ":" + idem("po").split(":")[1];
+      const r = await api("POST", "/v1/redeem", { from: currentAccount, amount_micros: amount, payout_ref, kyc_tier: $("rd-tier").value, payout_dest });
+      out.textContent = "Burned " + usd(amount) + " (" + r.payout_ref + "). Payout status: " + (r.payout ? r.payout.status : "unknown") + ".";
+      $("rd-amount").value = "";
+      await openAccount(currentAccount);
+    });
+  }
+
+  async function loadReceipts() {
+    if (!currentAccount) return;
+    const box = $("statement");
+    placeholder(box, "loading", "Loading signed receipts...");
+    try {
+      const chain = await api("GET", "/v1/accounts/" + enc(currentAccount) + "/receipts?limit=200");
+      if (!chain.length) { placeholder(box, "empty", "No receipts yet: this account has no activity."); return; }
+      box.replaceChildren(table(["Seq", "Time", "Op", "Amount", "From", "To", "Available after", "Hash", "Prev hash"],
+        chain.map((r) => el("tr", null,
+          el("td", { class: "num" }, r.body.account_seq), el("td", null, when(r.body.ts)), el("td", null, r.body.op),
+          el("td", { class: "num" }, usd(r.body.amount_micros)),
+          el("td", { class: "mono" }, r.body.from), el("td", { class: "mono" }, r.body.to),
+          el("td", { class: "num" }, usd(r.body.balance_after_available_micros)),
+          el("td", { class: "mono" }, String(r.hash).slice(0, 16) + "..."),
+          el("td", { class: "mono" }, String(r.body.prev_hash).slice(0, 16) + "...")))));
+    } catch (e) { placeholder(box, "error", "Could not load receipts: " + e.message); }
+  }
+
+  async function lookupObject() {
+    const id = $("obj-lookup").value.trim();
+    const box = $("obj-result");
+    if (!id) return;
+    box.classList.remove("hidden");
+    const path = id.startsWith("hold_") ? "/v1/holds/" : id.startsWith("strm_") ? "/v1/streams/" : id.startsWith("alw_") ? "/v1/allowances/" : null;
+    if (!path) { placeholder(box, "error", "Enter a hold_, strm_ or alw_ id."); return; }
+    placeholder(box, "loading", "Looking up " + id + "...");
+    try {
+      const obj = await api("GET", path + enc(id));
+      box.replaceChildren(kv(obj));
+    } catch (e) { placeholder(box, "error", "Not found: " + e.message); }
   }
 
   async function loadStatement() {
@@ -379,21 +705,49 @@
   function payoutRow(p) {
     const action = el("td");
     const ref = encodeURIComponent(p.payout_ref);
-    const act = (label, method, path) => {
+    const act = (label, method, path, body) => {
       const b = el("button", { class: "small" }, label);
       b.onclick = async (ev) => {
         ev.stopPropagation();
         b.disabled = true;
         try {
-          const updated = await api(method, path);
+          const updated = await api(method, path, body);
           tr.replaceWith(payoutRow(updated));
           setStatus("Payout " + updated.payout_ref + " is " + updated.status, "ok");
         } catch (e) { setStatus(e.message, "err"); b.disabled = false; }
       };
       return b;
     };
-    if (p.status === "failed") action.append(act("Retry", "POST", "/v1/payouts/" + ref + "/retry"));
-    if (p.status === "pending") action.append(act("Check status", "GET", "/v1/payouts/" + ref));
+    const confirmAct = (label, method, path, question, body, cls) => {
+      const b = act(label, method, path, body);
+      if (cls) b.classList.add(cls);
+      const inner = b.onclick;
+      b.onclick = (ev) => { ev.stopPropagation(); if (window.confirm(question)) inner(ev); };
+      return b;
+    };
+    const wrap = el("div", { class: "actions" });
+    if (p.status === "failed") {
+      wrap.append(act("Retry", "POST", "/v1/payouts/" + ref + "/retry"));
+      wrap.append(confirmAct("Cancel and re-credit", "POST", "/v1/payouts/" + ref + "/cancel",
+        "Cancel this payout and re-credit " + usd(p.amount_micros) + " to " + p.account_id + "?", {}, "danger"));
+    }
+    if (p.status === "pending") wrap.append(act("Check status", "GET", "/v1/payouts/" + ref));
+    if (p.status === "failed" || p.status === "pending") {
+      const mark = el("button", { class: "small" }, "Mark paid");
+      mark.onclick = async (ev) => {
+        ev.stopPropagation();
+        const pref = window.prompt("Provider reference of the manual settlement (wire id, tx hash). Leave blank if none.", "");
+        if (pref === null) return;
+        mark.disabled = true;
+        try {
+          const updated = await api("POST", "/v1/payouts/" + ref + "/mark-paid", { provider_ref: pref.trim() || null });
+          tr.replaceWith(payoutRow(updated));
+          setStatus("Payout " + updated.payout_ref + " marked paid", "ok");
+        } catch (e) { setStatus(e.message, "err"); mark.disabled = false; }
+      };
+      wrap.append(mark);
+    }
+    action.append(wrap);
     const tr = el("tr", null,
       el("td", null, when(p.created_ms)), el("td", { class: "mono" }, p.payout_ref),
       el("td", { class: "mono" }, p.account_id), el("td", { class: "num" }, usd(p.amount_micros)),
@@ -422,13 +776,247 @@
     finally { btn.disabled = false; }
   }
 
+  async function manualMint() {
+    const out = $("mm-result");
+    const to = $("mm-account").value.trim();
+    const amount = toMicros($("mm-amount").value);
+    const deposit_ref = $("mm-ref").value.trim();
+    if (!to || !(amount > 0) || !deposit_ref.includes(":")) { out.textContent = "Enter an account, a positive amount and a <provider>:<ref> deposit reference."; return; }
+    await run($("mm-create"), out, "Confirming deposit with the provider and minting...", async () => {
+      const r = await api("POST", "/v1/mint", { to, amount_micros: amount, deposit_ref, idem_key: deposit_ref });
+      out.textContent = (r.idempotent_replay ? "Already minted earlier: " : "Minted ") + usd(amount) + " to " + to + ". Reserve now " + usd(r.reserve_after_micros) + ".";
+    });
+  }
+
+  // ---- reconciliation against provider reports -------------------------
+  let currentReport = null;
+
+  async function loadReports() {
+    const box = $("reports");
+    placeholder(box, "loading", "Loading imported reports...");
+    try {
+      const r = await api("GET", "/v1/reconciliation/reports");
+      if (!r.items.length) { placeholder(box, "empty", "No provider reports imported yet. Export a balance / settlement / payouts report from the provider and import it above."); return; }
+      box.replaceChildren(table(["Imported", "Provider", "Label", "Lines", "Period"],
+        r.items.map((rep) => {
+          const tr = el("tr", { class: "clickable" },
+            el("td", null, when(rep.imported_ms)), el("td", null, rep.provider), el("td", null, rep.label),
+            el("td", { class: "num" }, rep.line_count),
+            el("td", null, rep.period_start_ms ? when(rep.period_start_ms) + " to " + when(rep.period_end_ms) : "undated"));
+          tr.onclick = () => openReport(rep.id);
+          return tr;
+        })));
+    } catch (e) { placeholder(box, "error", "Could not load reports: " + e.message); }
+  }
+
+  async function importReport() {
+    const out = $("rp-result");
+    const file = $("rp-file").files[0];
+    if (!file) { out.textContent = "Choose a report file first."; return; }
+    if (file.size > 20 * 1024 * 1024) { out.textContent = "The file exceeds 20 MiB; split it by date range."; return; }
+    await run($("rp-import"), out, "Uploading and matching " + file.name + "...", async () => {
+      const content = await file.text();
+      const res = await api("POST", "/v1/reconciliation/reports", {
+        provider: $("rp-provider").value, label: file.name, content,
+        amount_unit: $("rp-unit").value, reference_column: $("rp-refcol").value.trim() || null,
+      });
+      out.textContent = "Imported " + res.report.line_count + " lines; " + res.discrepancies + " discrepancies.";
+      $("rp-file").value = "";
+      await loadReports();
+      renderReport(res);
+    });
+  }
+
+  async function openReport(id) {
+    $("report-detail").classList.remove("hidden");
+    placeholder($("report-lines"), "loading", "Matching against the ledger...");
+    $("report-missing").replaceChildren();
+    try { renderReport(await api("GET", "/v1/reconciliation/reports/" + enc(id))); }
+    catch (e) { placeholder($("report-lines"), "error", "Could not load report: " + e.message); }
+  }
+
+  function renderReport(res) {
+    currentReport = res;
+    $("report-detail").classList.remove("hidden");
+    $("report-title").textContent = res.report.provider + " report " + (res.report.label || res.report.id);
+    const tile = (label, v) => el("div", { class: "tile" }, el("div", { class: "label" }, label), el("div", { class: "value" }, v.count + " / " + usd(v.micros)));
+    const s = res.summary;
+    $("report-tiles").replaceChildren(
+      tile("Matched", s.matched), tile("Amount mismatch", s.amount_mismatch), tile("Status mismatch", s.status_mismatch),
+      tile("Missing in Mint", s.missing_in_mint), tile("Refund not clawed back", s.reversal_unrecorded),
+      tile("Missing at provider", s.missing_at_provider));
+    const showAll = $("rp-all").checked;
+    const lines = res.lines.filter((l) => showAll || (l.status !== "matched" && l.status !== "informational"));
+    if (!lines.length) {
+      placeholder($("report-lines"), "empty", showAll ? "The report has no lines." : "Every provider line matches the ledger.");
+    } else {
+      $("report-lines").replaceChildren(table(["Line", "Kind", "Reference", "Provider amount", "Mint amount", "Mint account", "Status", ""],
+        lines.map((l) => {
+          const action = el("td");
+          if (l.status === "reversal_unrecorded" && l.mint) {
+            const b = el("button", { class: "small" }, "Claw back");
+            b.onclick = async () => {
+              if (!window.confirm("Record a " + l.kind + " of " + usd(l.amount_micros) + " against " + l.mint.reference + " and burn it from " + l.mint.account_id + "?")) return;
+              b.disabled = true;
+              try {
+                const r = await api("POST", "/v1/reversals", { deposit_ref: l.mint.reference, amount_micros: Math.min(l.amount_micros, l.mint.amount_micros), reason: l.kind === "dispute" ? "dispute" : "refund", note: "from report " + res.report.id });
+                setStatus("Reversal " + r.status.replace(/_/g, " ") + ": burned " + usd(r.burned_now_micros), "ok");
+                openReport(res.report.id);
+              } catch (e) { setStatus(e.message, "err"); b.disabled = false; }
+            };
+            action.append(b);
+          }
+          return el("tr", null,
+            el("td", { class: "num" }, l.line_no), el("td", null, l.kind), el("td", { class: "mono" }, l.reference),
+            el("td", { class: "num" }, usd(l.amount_micros)), el("td", { class: "num" }, l.mint ? usd(l.mint.amount_micros) : "-"),
+            el("td", { class: "mono" }, l.mint ? l.mint.account_id : "-"), el("td", null, badge(l.status)), action);
+        })));
+    }
+    if (!res.missing_at_provider.length) {
+      placeholder($("report-missing"), "empty", "Every Mint movement in the report period appears in the report.");
+    } else {
+      $("report-missing").replaceChildren(table(["Time", "Kind", "Mint reference", "Amount", "Account"],
+        res.missing_at_provider.map((m) => el("tr", null,
+          el("td", null, when(m.ts_ms)), el("td", null, m.kind), el("td", { class: "mono" }, m.reference),
+          el("td", { class: "num" }, usd(m.amount_micros)), el("td", { class: "mono" }, m.account_id)))));
+    }
+  }
+
+  async function deleteReport() {
+    if (!currentReport || !window.confirm("Delete this imported report? The ledger is not affected.")) return;
+    await run($("rp-delete"), null, null, async () => {
+      await api("DELETE", "/v1/reconciliation/reports/" + enc(currentReport.report.id));
+      currentReport = null;
+      $("report-detail").classList.add("hidden");
+      setStatus("Report deleted", "ok");
+      await loadReports();
+    });
+  }
+
+  // ---- reversals ---------------------------------------------------------
+  async function loadReversals() {
+    const box = $("reversals");
+    placeholder(box, "loading", "Loading reversals...");
+    const qs = new URLSearchParams({ limit: "200" });
+    if ($("rv-status").value) qs.set("status", $("rv-status").value);
+    try {
+      const r = await api("GET", "/v1/reversals?" + qs);
+      if (!r.items.length) { placeholder(box, "empty", "No refunds or chargebacks recorded."); return; }
+      box.replaceChildren(table(["Recorded", "Deposit", "Account", "Reason", "Reversed", "Clawed back", "Outstanding", "Status", "Note", ""],
+        r.items.map(reversalRow)));
+    } catch (e) { placeholder(box, "error", "Could not load reversals: " + e.message); }
+  }
+
+  function reversalRow(r) {
+    const action = el("td");
+    const ref = enc(r.deposit_ref);
+    if (r.status === "shortfall") {
+      const retry = el("button", { class: "small" }, "Retry claw-back");
+      retry.onclick = async () => {
+        retry.disabled = true;
+        try { const u = await api("POST", "/v1/reversals/" + ref + "/retry", {}); tr.replaceWith(reversalRow(u)); setStatus("Burned " + usd(u.burned_now_micros), "ok"); }
+        catch (e) { setStatus(e.message, "err"); retry.disabled = false; }
+      };
+      const wo = el("button", { class: "small danger" }, "Write off");
+      wo.onclick = async () => {
+        const note = window.prompt("Write off " + usd(r.outstanding_micros) + " as a loss. Note:", "");
+        if (note === null) return;
+        wo.disabled = true;
+        try { const u = await api("POST", "/v1/reversals/" + ref + "/write-off", { note: note.trim() || null }); tr.replaceWith(reversalRow(u)); }
+        catch (e) { setStatus(e.message, "err"); wo.disabled = false; }
+      };
+      action.append(el("div", { class: "actions" }, retry, wo));
+    }
+    const tr = el("tr", null,
+      el("td", null, when(r.created_ms)), el("td", { class: "mono" }, r.deposit_ref), el("td", { class: "mono" }, r.account_id),
+      el("td", null, r.reason), el("td", { class: "num" }, usd(r.amount_micros)), el("td", { class: "num" }, usd(r.clawed_micros)),
+      el("td", { class: "num" }, usd(r.outstanding_micros)), el("td", null, badge(r.status)), el("td", null, r.note), action);
+    return tr;
+  }
+
+  async function createReversal() {
+    const out = $("rv-result");
+    const deposit_ref = $("rv-ref").value.trim();
+    if (!deposit_ref.includes(":")) { out.textContent = "Enter the <provider>:<ref> of the minted deposit."; return; }
+    const amountRaw = $("rv-amount").value;
+    const body = { deposit_ref, reason: $("rv-reason").value, note: $("rv-note").value.trim() || null };
+    if (amountRaw) body.amount_micros = toMicros(amountRaw);
+    if (!window.confirm("Record this " + body.reason + " and burn the reversed amount from the credited account?")) return;
+    await run($("rv-create"), out, "Recording reversal...", async () => {
+      const r = await api("POST", "/v1/reversals", body);
+      out.textContent = "Burned " + usd(r.burned_now_micros) + "; status " + r.status.replace(/_/g, " ") + (r.outstanding_micros > 0 ? " (" + usd(r.outstanding_micros) + " outstanding)." : ".");
+      $("rv-ref").value = ""; $("rv-amount").value = ""; $("rv-note").value = "";
+      await loadReversals();
+    });
+  }
+
+  // ---- API keys ----------------------------------------------------------
+  async function loadKeys() {
+    const box = $("keys");
+    placeholder(box, "loading", "Loading keys...");
+    placeholder($("env-keys"), "loading", "Loading...");
+    try {
+      const r = await api("GET", "/v1/keys");
+      if (!r.items.length) placeholder(box, "empty", "No console-managed keys yet.");
+      else box.replaceChildren(table(["Name", "Key", "Scopes", "Accounts", "Created", "Status", ""], r.items.map(keyRow)));
+      if (!r.env_keys.length) placeholder($("env-keys"), "empty", "No MINT_API_KEYS_JSON keys configured.");
+      else $("env-keys").replaceChildren(table(["Name", "Scopes", "Accounts"], r.env_keys.map((k) => el("tr", null,
+        el("td", null, k.name), el("td", null, k.scopes.join(", ")), el("td", { class: "mono" }, k.accounts ? k.accounts.join(", ") : "all")))));
+    } catch (e) {
+      placeholder(box, "error", "Could not load keys: " + e.message);
+      $("env-keys").replaceChildren();
+    }
+  }
+
+  function keyRow(k) {
+    const action = el("td");
+    if (k.active) {
+      const b = el("button", { class: "small danger" }, "Revoke");
+      b.onclick = async () => {
+        if (!window.confirm("Revoke key " + k.name + "? Services using it will get 401 immediately.")) return;
+        b.disabled = true;
+        try { const u = await api("POST", "/v1/keys/" + enc(k.id) + "/revoke", {}); tr.replaceWith(keyRow(u)); setStatus("Key revoked", "ok"); }
+        catch (e) { setStatus(e.message, "err"); b.disabled = false; }
+      };
+      action.append(b);
+    }
+    const tr = el("tr", null,
+      el("td", null, k.name), el("td", { class: "mono" }, k.prefix + "..."), el("td", null, k.scopes.join(", ")),
+      el("td", { class: "mono" }, k.accounts ? k.accounts.join(", ") : "all"), el("td", null, when(k.created_ms)),
+      el("td", null, badge(k.active ? "active" : "revoked")), action);
+    return tr;
+  }
+
+  async function createKey() {
+    const out = $("ky-result");
+    const name = $("ky-name").value.trim();
+    const scopes = Array.from(document.querySelectorAll("#ky-scopes input:checked")).map((i) => i.value);
+    const accounts = $("ky-accounts").value.split(/[\s,]+/).map((a) => a.trim()).filter(Boolean);
+    if (!name || !scopes.length) { out.replaceChildren(el("div", { class: "result" }, "Enter a name and pick at least one scope.")); return; }
+    await run($("ky-create"), null, null, async () => {
+      out.replaceChildren(el("div", { class: "result" }, "Creating key..."));
+      try {
+        const k = await api("POST", "/v1/keys", { name, scopes, accounts: accounts.length ? accounts : null });
+        const copy = el("button", { class: "small" }, "Copy");
+        copy.onclick = () => navigator.clipboard && navigator.clipboard.writeText(k.secret).then(() => setStatus("Key copied", "ok"));
+        out.replaceChildren(el("div", { class: "secret" },
+          "Copy this key now. It is shown only once and cannot be recovered: ", el("br"), el("code", null, k.secret), " ", copy));
+        $("ky-name").value = ""; $("ky-accounts").value = "";
+        await loadKeys();
+      } catch (e) { out.replaceChildren(el("div", { class: "result error" }, "Could not create key: " + e.message)); }
+    });
+  }
+
   // ---- shell -----------------------------------------------------------
   function showTab(name) {
     document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
-    ["overview", "accounts", "payouts", "funding"].forEach((t) => $("tab-" + t).classList.toggle("hidden", t !== name));
+    ["overview", "accounts", "payouts", "funding", "reconcile", "reversals", "keys"].forEach((t) => $("tab-" + t).classList.toggle("hidden", t !== name));
     if (name === "overview") loadOverview();
     if (name === "accounts") loadAccounts(false);
     if (name === "payouts") loadPayouts(false);
+    if (name === "reconcile") loadReports();
+    if (name === "reversals") loadReversals();
+    if (name === "keys") loadKeys();
   }
 
   function logout() {
@@ -471,6 +1059,25 @@
   $("payout-load").onclick = () => loadPayouts(false);
   $("payout-more").onclick = () => loadPayouts(true);
   $("co-create").onclick = createCheckout;
+  $("na-create").onclick = createAccount;
+  $("obj-open").onclick = lookupObject;
+  $("obj-lookup").addEventListener("keydown", (e) => { if (e.key === "Enter") lookupObject(); });
+  $("acct-freeze").onclick = () => accountLifecycle("freeze");
+  $("acct-unfreeze").onclick = () => accountLifecycle("unfreeze");
+  $("acct-close").onclick = () => accountLifecycle("close");
+  $("acct-address").onclick = newAddress;
+  $("tr-send").onclick = sendTransfer;
+  $("rd-kind").onchange = syncRedeemFields;
+  $("rd-send").onclick = redeem;
+  $("rcpt-run").onclick = loadReceipts;
+  $("mm-create").onclick = manualMint;
+  $("rp-import").onclick = importReport;
+  $("rp-refresh").onclick = loadReports;
+  $("rp-all").onchange = () => currentReport && renderReport(currentReport);
+  $("rp-delete").onclick = deleteReport;
+  $("rv-load").onclick = loadReversals;
+  $("rv-create").onclick = createReversal;
+  $("ky-create").onclick = createKey;
   if (apiKey) connect();
 })();
 </script>

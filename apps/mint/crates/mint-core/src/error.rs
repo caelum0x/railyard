@@ -109,6 +109,15 @@ pub enum MintError {
     /// amount). Rejected BEFORE the burn so no funds are destroyed.
     #[error("payout_unroutable")]
     PayoutUnroutable,
+    // ---- account lifecycle (operator freeze / close) -----------------------
+    /// The referenced account has been permanently closed by an operator and
+    /// can neither send nor receive funds.
+    #[error("account_closed")]
+    AccountClosed,
+    /// An account close was refused because the account still carries an
+    /// available or held balance (drain / release it first).
+    #[error("account_not_empty")]
+    AccountNotEmpty,
 }
 
 impl MintError {
@@ -142,6 +151,8 @@ impl MintError {
             MintError::DepositNotConfirmed => "deposit_not_confirmed",
             MintError::DepositAmountMismatch => "deposit_amount_mismatch",
             MintError::PayoutUnroutable => "payout_unroutable",
+            MintError::AccountClosed => "account_closed",
+            MintError::AccountNotEmpty => "account_not_empty",
         }
     }
 
@@ -179,6 +190,8 @@ impl MintError {
             "deposit_not_confirmed" => MintError::DepositNotConfirmed,
             "deposit_amount_mismatch" => MintError::DepositAmountMismatch,
             "payout_unroutable" => MintError::PayoutUnroutable,
+            "account_closed" => MintError::AccountClosed,
+            "account_not_empty" => MintError::AccountNotEmpty,
             _ => return None,
         };
         Some(err)
@@ -222,6 +235,8 @@ mod tests {
             (MintError::DepositNotConfirmed, "deposit_not_confirmed"),
             (MintError::DepositAmountMismatch, "deposit_amount_mismatch"),
             (MintError::PayoutUnroutable, "payout_unroutable"),
+            (MintError::AccountClosed, "account_closed"),
+            (MintError::AccountNotEmpty, "account_not_empty"),
         ];
         for (err, code) in cases {
             assert_eq!(err.code(), code);
@@ -262,6 +277,8 @@ mod tests {
             MintError::DepositNotConfirmed,
             MintError::DepositAmountMismatch,
             MintError::PayoutUnroutable,
+            MintError::AccountClosed,
+            MintError::AccountNotEmpty,
         ];
         for err in all {
             assert_eq!(MintError::from_code(err.code()), Some(err));

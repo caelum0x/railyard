@@ -3,15 +3,16 @@
 //! `/readyz` unauthenticated.
 
 use axum::middleware;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use mint_store::LedgerStore;
 use tower_http::trace::TraceLayer;
 
 use crate::auth;
 use crate::handlers::{
-    accounts, addresses, admin, aitp, allowances, checkouts, deposits, health, holds, kyc,
-    mint_redeem, payouts, receipts, reserve, statements, streams, transfers, verification_keys,
+    accounts, addresses, admin, aitp, allowances, checkouts, deposits, health, holds, keys, kyc,
+    mint_redeem, payouts, provider_reports, receipts, reserve, reversals, statements, streams,
+    transfers, verification_keys,
 };
 use crate::state::AppState;
 
@@ -25,6 +26,10 @@ pub fn build_router<S: LedgerStore + 'static>(state: AppState<S>) -> Router {
         )
         .route("/v1/accounts/:id", get(accounts::get::<S>))
         .route("/v1/accounts/:id/balance", get(accounts::balance::<S>))
+        // account lifecycle (operator-only)
+        .route("/v1/accounts/:id/freeze", post(accounts::freeze::<S>))
+        .route("/v1/accounts/:id/unfreeze", post(accounts::unfreeze::<S>))
+        .route("/v1/accounts/:id/close", post(accounts::close::<S>))
         .route("/v1/accounts/:id/addresses", post(addresses::create::<S>))
         .route(
             "/v1/accounts/:id/receipts",
@@ -70,7 +75,31 @@ pub fn build_router<S: LedgerStore + 'static>(state: AppState<S>) -> Router {
         .route("/v1/payouts", get(payouts::list::<S>))
         .route("/v1/payouts/:payout_ref", get(payouts::get::<S>))
         .route("/v1/payouts/:payout_ref/retry", post(payouts::retry::<S>))
+        .route("/v1/payouts/:payout_ref/cancel", post(payouts::cancel::<S>))
+        .route("/v1/payouts/:payout_ref/mark-paid", post(payouts::mark_paid::<S>))
         .route("/v1/reconciliation", get(reserve::reconciliation::<S>))
+        // provider settlement report imports + matching
+        .route(
+            "/v1/reconciliation/reports",
+            post(provider_reports::import::<S>).get(provider_reports::list::<S>),
+        )
+        .route(
+            "/v1/reconciliation/reports/:id",
+            get(provider_reports::get::<S>).merge(delete(provider_reports::delete::<S>)),
+        )
+        // deposit reversals (refund / chargeback claw-backs)
+        .route(
+            "/v1/reversals",
+            post(reversals::create::<S>).get(reversals::list::<S>),
+        )
+        .route("/v1/reversals/:deposit_ref/retry", post(reversals::retry::<S>))
+        .route(
+            "/v1/reversals/:deposit_ref/write-off",
+            post(reversals::write_off::<S>),
+        )
+        // DB-backed API keys (operator-only)
+        .route("/v1/keys", get(keys::list::<S>).post(keys::create::<S>))
+        .route("/v1/keys/:id/revoke", post(keys::revoke::<S>))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_api_key::<S>,

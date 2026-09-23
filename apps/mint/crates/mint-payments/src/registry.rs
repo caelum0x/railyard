@@ -194,6 +194,30 @@ impl PaymentRegistry {
         }
     }
 
+    /// Verify a webhook as a deposit REVERSAL (refund / chargeback). Called
+    /// after [`PaymentRegistry::verify_webhook`] reported the event as
+    /// `Ignored`. Providers whose webhooks cannot be tied back to the original
+    /// deposit reference return `Ignored` (operators record those reversals
+    /// from the console / a provider-report import).
+    pub fn verify_reversal<H: Headers>(
+        &self,
+        provider: ProviderId,
+        headers: &H,
+        raw: &[u8],
+    ) -> Result<crate::event::ReversalEvent, WebhookError> {
+        let cfg = self
+            .webhook_secrets
+            .get(&provider)
+            .ok_or(WebhookError::NotConfigured)?;
+        match provider {
+            ProviderId::Stripe => crate::card::stripe::verify_reversal_webhook(cfg, headers, raw),
+            other => Err(WebhookError::Ignored(format!(
+                "{} reversals are recorded by operators",
+                other.tag()
+            ))),
+        }
+    }
+
     /// The composite ramp injected as `AppState.reserve`'s [`Ramp`]. Falls back
     /// to [`FakeRamp`] when the registry is empty.
     pub fn ramp(&self) -> Arc<dyn Ramp> {
