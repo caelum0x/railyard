@@ -8,7 +8,7 @@
 //! `base64(HMAC-SHA256(org.hmac_key, payload_json))`, sent in
 //! `X-Lago-Signature` with `X-Lago-Signature-Algorithm: hmac` and a unique key.
 //!
-//! The full 76-entry Lago webhook catalog lives in [`catalog`] ([`WebhookKind`]);
+//! The full 75-entry Lago webhook catalog lives in [`catalog`] ([`WebhookKind`]);
 //! the bespoke non-model payload shapes (error / checkout / vies_check envelopes)
 //! live in [`payloads`]. Prefer [`WebhookKind::build`] as the single per-type
 //! emit entry point so every outbound webhook uses the correct

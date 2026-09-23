@@ -89,101 +89,199 @@ use super::Webhook;
 /// The variant order mirrors the Lago registry grouping. Use
 /// [`WebhookKind::webhook_type`] / [`WebhookKind::object_type`] for the wire
 /// strings and [`WebhookKind::build`] to assemble the envelope.
+///
+/// Variants marked **no-op** have their type and envelope defined for parity but
+/// have no live trigger call-site in Rago yet. They will emit once the noted
+/// service/path is implemented — do NOT add fabricated emissions before then.
+/// The full trigger map is in `rago-jobs/src/webhook_emit.rs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WebhookKind {
-    // usage monitoring
+    // ── usage monitoring ────────────────────────────────────────────────────
+    /// Fired by rago-api `evaluate_usage_alerts` / `evaluate_lifetime_alerts`.
     AlertTriggered,
-    // billable metrics
+
+    // ── billable metrics ────────────────────────────────────────────────────
+    /// Fired by rago-graphql `create_billable_metric`.
     BillableMetricCreated,
+    /// Fired by rago-graphql `update_billable_metric`.
     BillableMetricUpdated,
+    /// Fired by rago-graphql `delete_billable_metric`.
     BillableMetricDeleted,
-    // dunning
+
+    // ── dunning ─────────────────────────────────────────────────────────────
+    /// Fired by rago-jobs dunning sweep when all currencies are exhausted.
     DunningCampaignFinished,
-    // invoices
+
+    // ── invoices ────────────────────────────────────────────────────────────
+    /// Fired by rago-jobs `finalize_invoices` clock and `scheduler` billing cycle.
     InvoiceCreated,
+    /// no-op until `Invoices::CreateOneOffService` is implemented.
     InvoiceOneOffCreated,
+    /// no-op until `Credits::AppliedPrepaidCreditService` is implemented.
     InvoicePaidCreditAdded,
+    /// no-op until `Invoices::GeneratePdfService` (PDF generation path) is implemented.
     InvoiceGenerated,
+    /// Fired by rago-jobs `refresh_draft_invoices` clock.
     InvoiceDrafted,
+    /// no-op until `Invoices::PullTaxesAndApplyService` (tax pull) is implemented.
     InvoiceReadyToFinalize,
+    /// no-op until `Invoices::VoidService` is implemented.
     InvoiceVoided,
+    /// no-op until `Invoices::Payments::DeleteService` is implemented.
     InvoiceDeleted,
+    /// no-op until `Invoices::LoseDisputeService` (payment dispute) is implemented.
     InvoicePaymentDisputeLost,
+    /// Fired by rago-jobs `scheduler` (post-charge) and rago-api Stripe webhook handler.
     InvoicePaymentStatusUpdated,
+    /// Fired by rago-jobs `mark_invoices_as_payment_overdue` clock.
     InvoicePaymentOverdue,
+    /// no-op until `PaymentProviders::DeliverErrorWebhookService` (payment failure) is implemented.
     InvoicePaymentFailure,
+    /// no-op until `Integrations::Aggregator::SyncService` (accounting resync) is implemented.
     InvoiceResynced,
-    // events
+
+    // ── events ──────────────────────────────────────────────────────────────
+    /// no-op until `Events::PostProcessService` (event post-process) is implemented.
     EventError,
+    /// no-op until `Events::PostValidationService` (event batch validation) is implemented.
     EventsErrors,
-    // fees
+
+    // ── fees ────────────────────────────────────────────────────────────────
+    /// Fired by rago-jobs `scheduler` billing cycle (one per assembled fee).
     FeeCreated,
+    /// no-op until `Integrations::Aggregator::Taxes` fee error path is implemented.
     FeeTaxProviderError,
-    // customers
+
+    // ── customers ───────────────────────────────────────────────────────────
+    /// Fired by rago-api `upsert_customer` (create path).
     CustomerCreated,
+    /// Fired by rago-api `upsert_customer` (update path).
     CustomerUpdated,
+    /// no-op until `Integrations::Aggregator::Contacts::CreateService` is implemented.
     CustomerAccountingProviderCreated,
+    /// no-op until accounting contact error path is implemented.
     CustomerAccountingProviderError,
+    /// no-op until CRM contact create path is implemented.
     CustomerCrmProviderCreated,
+    /// no-op until CRM contact error path is implemented.
     CustomerCrmProviderError,
+    /// no-op until `PaymentProviderCustomers::*Service` create path is implemented.
     CustomerPaymentProviderCreated,
+    /// no-op until payment provider customer error path is implemented.
     CustomerPaymentProviderError,
+    /// no-op until `PaymentProviderCustomers::*::GenerateCheckoutUrlService` is implemented.
     CustomerCheckoutUrlGenerated,
+    /// no-op until tax provider customer error path is implemented.
     CustomerTaxProviderError,
+    /// no-op until `Customers::EuAutoTaxesService` (VIES check) is implemented.
     CustomerViesCheck,
-    // credit notes
+
+    // ── credit notes ────────────────────────────────────────────────────────
+    /// Fired by rago-api `create_credit_note` and rago-graphql `create_credit_note`.
     CreditNoteCreated,
+    /// no-op until `CreditNotes::GeneratePdfService` (PDF generation) is implemented.
     CreditNoteGenerated,
+    /// no-op until `CreditNotes::Refunds::*` refund failure path is implemented.
     CreditNoteRefundFailure,
-    // integrations
+
+    // ── integrations ────────────────────────────────────────────────────────
+    /// no-op until `Integrations::Aggregator::*` provider error path is implemented.
     IntegrationProviderError,
-    // orders (DEFERRED: no Rago schema)
+
+    // ── orders ──────────────────────────────────────────────────────────────
+    /// no-op until orders schema is implemented (`is_schema_deferred`).
     OrderCreated,
+    /// Fired by rago-graphql `execute_order`.
     OrderExecuted,
+    /// no-op until order_forms schema is implemented (`is_schema_deferred`).
     OrderFormCreated,
+    /// Fired by rago-graphql `sign_order_form`.
     OrderFormSigned,
+    /// no-op until order_forms schema is implemented (`is_schema_deferred`).
     OrderFormExpired,
+    /// Fired by rago-graphql `void_order_form`.
     OrderFormVoided,
-    // payments
+
+    // ── payments ────────────────────────────────────────────────────────────
+    /// no-op until `Payments::CreateService` (3DS / SCA flow) is implemented.
     PaymentRequiresAction,
+    /// no-op until provider payment success webhook path is implemented.
     PaymentSucceeded,
+    /// no-op until `PaymentProviders::*` generic error path is implemented.
     PaymentProviderError,
-    // payment receipts (DEFERRED: no Rago schema)
+
+    // ── payment receipts ────────────────────────────────────────────────────
+    /// no-op until payment_receipts schema is implemented (`is_schema_deferred`).
     PaymentReceiptCreated,
+    /// no-op until payment_receipts schema is implemented (`is_schema_deferred`).
     PaymentReceiptGenerated,
-    // payment requests
+
+    // ── payment requests ────────────────────────────────────────────────────
+    /// Fired by rago-jobs dunning sweep (`create_and_charge_payment_request`).
     PaymentRequestCreated,
+    /// no-op until `PaymentProviders::DeliverErrorWebhookService` (payment request failure) is implemented.
     PaymentRequestPaymentFailure,
+    /// no-op until `PaymentRequests::UpdateService` is implemented.
     PaymentRequestPaymentStatusUpdated,
-    // plans
+
+    // ── plans ───────────────────────────────────────────────────────────────
+    /// Fired by rago-graphql `create_plan`.
     PlanCreated,
+    /// Fired by rago-graphql `delete_plan`.
     PlanDeleted,
+    /// Fired by rago-graphql `update_plan`.
     PlanUpdated,
-    // features (entitlements)
+
+    // ── features (entitlements) ─────────────────────────────────────────────
+    /// Fired by rago-api `create_feature`.
     FeatureCreated,
+    /// Fired by rago-api `update_feature`.
     FeatureUpdated,
+    /// Fired by rago-api `delete_feature`.
     FeatureDeleted,
-    // quotes
+
+    // ── quotes ──────────────────────────────────────────────────────────────
+    /// Fired by rago-graphql `create_quote`.
     QuoteCreated,
+    /// Fired by rago-graphql `approve_quote`.
     QuoteApproved,
+    /// Fired by rago-graphql `void_quote`.
     QuoteVoided,
-    // subscriptions
+
+    // ── subscriptions ───────────────────────────────────────────────────────
+    /// no-op until `Subscriptions::CancelService` is implemented.
     SubscriptionCanceled,
+    /// no-op until incomplete-activation path (`Subscriptions::ActivateService` failure) is implemented.
     SubscriptionIncomplete,
+    /// Fired by rago-jobs `terminate_ended_subscriptions` clock.
     SubscriptionTerminated,
+    /// Fired by rago-jobs `activate_subscriptions` clock.
     SubscriptionStarted,
+    /// Fired by rago-jobs `subscriptions_to_be_terminated` clock (15/45-day alert).
     SubscriptionTerminationAlert,
+    /// Fired by rago-jobs `free_trial_biller` clock.
     SubscriptionTrialEnded,
+    /// Fired by rago-graphql `update_subscription`.
     SubscriptionUpdated,
+    /// no-op until `UsageMonitoring::CheckThresholdsService` is implemented.
     SubscriptionUsageThresholdReached,
-    // wallets
+
+    // ── wallets ─────────────────────────────────────────────────────────────
+    /// no-op until `Wallets::CreateService` is implemented.
     WalletCreated,
+    /// no-op until `Wallets::UpdateService` is implemented.
     WalletUpdated,
+    /// Fired by rago-jobs `terminate_wallets` clock.
     WalletTerminated,
+    /// Fired by rago-jobs `refresh_wallets_ongoing_balance` clock (depletion transition).
     WalletDepletedOngoingBalance,
-    // wallet transactions
+
+    // ── wallet transactions ──────────────────────────────────────────────────
+    /// Fired by rago-jobs `create_interval_wallet_transactions` clock.
     WalletTransactionCreated,
+    /// no-op until `WalletTransactions::{Settle,MarkAsFailed}Service` is implemented.
     WalletTransactionUpdated,
+    /// no-op until `PaymentProviders::DeliverErrorWebhookService` (wallet txn failure) is implemented.
     WalletTransactionPaymentFailure,
 }
 

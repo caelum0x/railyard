@@ -374,29 +374,21 @@ pub async fn evaluate_lifetime_alerts(
             .insert_alert_trigger(Uuid::new_v4(), org, id, sub_ext, threshold, current)
             .await?;
         st.db.mark_alert_triggered(id, current).await?;
-        let endpoint = st
-            .db
-            .webhook_endpoint(org)
-            .await?
-            .unwrap_or_else(|| "https://webhook.example/rago".into());
-        let payload = json!({
-            "webhook_type": "alert.triggered",
-            "alert": { "lago_id": id, "external_subscription_id": sub_ext, "alert_type": alert_type, "threshold_cents": threshold, "current_value_cents": current }
-        });
-        let _ = st
-            .db
-            .upsert_webhook(
-                Uuid::new_v4(),
-                org,
-                "alert.triggered",
-                "Alert",
-                &endpoint,
-                &payload,
-                "pending",
-                None,
-                0,
-            )
-            .await;
+        // Fire an outbound `alert.triggered` webhook (catalog-keyed: envelope
+        // carries "alert.triggered"/"triggered_alert" as webhook_type/object_type).
+        crate::emit::webhook(
+            &st.db,
+            org,
+            rago_integrations::webhooks::WebhookKind::AlertTriggered,
+            json!({
+                "lago_id": id,
+                "external_subscription_id": sub_ext,
+                "alert_type": alert_type,
+                "threshold_cents": threshold,
+                "current_value_cents": current,
+            }),
+        )
+        .await;
         fired += 1;
     }
     Ok(fired)

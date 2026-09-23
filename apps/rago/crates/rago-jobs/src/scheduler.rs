@@ -15,6 +15,7 @@ use rago_core::enums::{InvoiceStatus, InvoiceType, PaymentStatus, PlanInterval};
 use rago_core::models::{Fee, Invoice, Subscription};
 use rago_core::money::Currency;
 use rago_db::Db;
+use rago_integrations::webhooks::WebhookKind;
 use rago_integrations::{HttpTransport, PayableStatus};
 use serde_json::json;
 use uuid::Uuid;
@@ -97,8 +98,8 @@ pub async fn run_billing_cycle<T: HttpTransport>(
                 subscription.organization_id,
                 ep,
                 &hmac_key,
-                "invoice.created",
-                "invoice",
+                WebhookKind::InvoiceCreated.webhook_type(),
+                WebhookKind::InvoiceCreated.object_type(),
                 invoice_webhook_object(&invoice),
             )
             .await?;
@@ -111,8 +112,8 @@ pub async fn run_billing_cycle<T: HttpTransport>(
                     subscription.organization_id,
                     ep,
                     &hmac_key,
-                    "fee.created",
-                    "fee",
+                    WebhookKind::FeeCreated.webhook_type(),
+                    WebhookKind::FeeCreated.object_type(),
                     fee_webhook_object(fee, &invoice),
                 )
                 .await?;
@@ -167,8 +168,8 @@ pub async fn run_billing_cycle<T: HttpTransport>(
                     subscription.organization_id,
                     ep,
                     &hmac_key,
-                    "invoice.payment_status_updated",
-                    "invoice",
+                    WebhookKind::InvoicePaymentStatusUpdated.webhook_type(),
+                    WebhookKind::InvoicePaymentStatusUpdated.object_type(),
                     invoice_webhook_object(&paid),
                 )
                 .await?;

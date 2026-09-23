@@ -318,17 +318,23 @@ pub async fn evaluate_usage_alerts(
         st.db.insert_alert_trigger(Uuid::new_v4(), org, id, sub_ext, threshold, current).await?;
         st.db.mark_alert_triggered(id, current).await?;
 
-        // Fire an outbound `alert.triggered` webhook (durably queued).
-        let endpoint = st.db.webhook_endpoint(org).await?.unwrap_or_else(|| "https://webhook.example/rago".into());
-        let payload = json!({
-            "webhook_type": "alert.triggered",
-            "alert": {
-                "lago_id": id, "external_subscription_id": sub_ext, "alert_type": alert_type,
-                "billable_metric_code": metric_code, "threshold_cents": threshold,
+        // Fire an outbound `alert.triggered` webhook (durably queued via the
+        // catalog-keyed path so the envelope carries the correct
+        // `webhook_type`/`object_type` = "alert.triggered"/"triggered_alert").
+        crate::emit::webhook(
+            &st.db,
+            org,
+            rago_integrations::webhooks::WebhookKind::AlertTriggered,
+            json!({
+                "lago_id": id,
+                "external_subscription_id": sub_ext,
+                "alert_type": alert_type,
+                "billable_metric_code": metric_code,
+                "threshold_cents": threshold,
                 "current_value_cents": current,
-            }
-        });
-        let _ = st.db.upsert_webhook(Uuid::new_v4(), org, "alert.triggered", "Alert", &endpoint, &payload, "pending", None, 0).await;
+            }),
+        )
+        .await;
         crate::observability::incr("usage_alerts_fired");
         crate::observability::incr("webhooks_enqueued");
         fired += 1;
