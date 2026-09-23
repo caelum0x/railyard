@@ -47,7 +47,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::backend::{BillingLedger, TerminalSettlement};
+use crate::backend::{
+    AccountCredit, BillingLedger, TerminalSettlement, TopUpCheckout, TopUpCheckoutRequest,
+};
 use crate::domain::{AccountId, JobId, ModelId};
 use crate::error::BillingError;
 use crate::ledger::Reservation;
@@ -436,6 +438,84 @@ impl BillingLedger for MintLedger {
         let env: Envelope<BalanceData> = decode(&resp.body)?;
         Ok(Micros::new(env.data.available_micros))
     }
+
+    /// `POST /v1/checkouts` crediting the key's payer account.
+    async fn create_top_up_checkout(
+        &self,
+        account_id: &AccountId,
+        request: &TopUpCheckoutRequest,
+    ) -> Result<TopUpCheckout, BillingError> {
+        if request.amount_micros <= 0 || request.amount_micros % 10_000 != 0 {
+            return Err(BillingError::InvalidAmount(
+                "top-up amount must be a positive whole number of USD cents".into(),
+            ));
+        }
+        let account = self.payer_account(account_id);
+        let body = serde_json::json!({
+            "provider": request.provider,
+            "account_id": account,
+            "amount_micros": request.amount_micros,
+            "success_url": request.success_url,
+            "cancel_url": request.cancel_url,
+        });
+        let body = serde_json::to_vec(&body)
+            .map_err(|e| BillingError::Store(format!("encode checkout request: {e}")))?;
+        let resp = self
+            .send(HttpRequest::post_json("/v1/checkouts", body))
+            .await?;
+        let env: Envelope<TopUpCheckout> = decode(&resp.body)?;
+        Ok(env.data)
+    }
+
+    /// `POST /v1/transfers` from an operator treasury into the payer wallet.
+    async fn credit_account(
+        &self,
+        from_account: &str,
+        account_id: &AccountId,
+        amount: Micros,
+        idem_key: &str,
+        reference: &str,
+    ) -> Result<AccountCredit, BillingError> {
+        if amount.get() <= 0 {
+            return Err(BillingError::InvalidAmount(
+                "credit amount must be positive".into(),
+            ));
+        }
+        let to = self.payer_account(account_id);
+        let body = serde_json::json!({
+            "from": from_account,
+            "to": to,
+            "amount_micros": amount.get(),
+            "idem_key": idem_key,
+            "ref": reference,
+        });
+        let body = serde_json::to_vec(&body)
+            .map_err(|e| BillingError::Store(format!("encode transfer request: {e}")))?;
+        let resp = self
+            .send(HttpRequest::post_json("/v1/transfers", body))
+            .await
+            .map_err(|fault| match fault {
+                MintFault::Insufficient => BillingError::InsufficientCredits {
+                    available: Micros::new(0),
+                    requested: amount,
+                },
+                other => other.into(),
+            })?;
+        let env: Envelope<TransferData> = decode(&resp.body)?;
+        Ok(AccountCredit {
+            from_account: from_account.to_string(),
+            to_account: to,
+            amount_micros: amount.get(),
+            idempotent_replay: env.data.idempotent_replay,
+        })
+    }
+}
+
+/// `POST /v1/transfers` -> `data` (the fields Relay needs).
+#[derive(Debug, Deserialize)]
+struct TransferData {
+    #[serde(default)]
+    idempotent_replay: bool,
 }
 
 impl MintLedger {

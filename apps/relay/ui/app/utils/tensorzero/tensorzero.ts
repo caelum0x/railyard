@@ -16,12 +16,19 @@ import type {
   KeyBudget,
   KeySpendSeries,
   SettlementHistory,
+  TopUpCheckout,
   WalletBalance,
+  WalletCredit,
 } from "~/types/billing";
 import type {
+  CatalogModel,
   CatalogSnapshot,
+  PriceEditorState,
   PriceQuote,
   ProviderHealthReport,
+  ProviderKey,
+  ProviderKeysState,
+  ProviderKeyTestResult,
 } from "~/types/catalog";
 import { ZodJsonValueSchema } from "~/utils/clickhouse/common";
 import { logger } from "~/utils/logger";
@@ -596,10 +603,14 @@ export class TensorZeroClient extends BaseTensorZeroClient {
   async getBillingSettlements(options?: {
     settlements?: number;
     scope?: BillingScope;
+    before?: string;
   }): Promise<SettlementHistory> {
     const searchParams = new URLSearchParams();
     if (options?.settlements != null) {
       searchParams.append("settlements", String(options.settlements));
+    }
+    if (options?.before) {
+      searchParams.append("before", options.before);
     }
     if (options?.scope === "all") {
       searchParams.append("scope", "all");
@@ -667,8 +678,106 @@ export class TensorZeroClient extends BaseTensorZeroClient {
    * Gets the live Mint balance of the calling key's payer account. Only
    * populated in prepaid (Mint-settled) mode.
    */
-  async getWalletBalance(): Promise<WalletBalance> {
-    return this.getRelayData<WalletBalance>("/relay/billing/wallet");
+  async getWalletBalance(options?: {
+    principal?: string;
+  }): Promise<WalletBalance> {
+    const query = options?.principal
+      ? `?principal=${encodeURIComponent(options.principal)}`
+      : "";
+    return this.getRelayData<WalletBalance>(`/relay/billing/wallet${query}`);
+  }
+
+  /**
+   * Creates a provider-hosted checkout that funds a key's Mint payer wallet.
+   * Operators may pass `principal` to fund another key.
+   */
+  async createWalletTopUp(request: {
+    amount_micros: number;
+    provider?: string;
+    success_url?: string;
+    cancel_url?: string;
+    principal?: string;
+  }): Promise<TopUpCheckout> {
+    return this.sendRelayData<TopUpCheckout>(
+      "/relay/billing/wallet/top_up",
+      "POST",
+      request,
+    );
+  }
+
+  /**
+   * Credits a key's wallet from the operator treasury (operator keys only).
+   * `idempotency_key` makes a retried submit safe.
+   */
+  async creditWallet(request: {
+    principal: string;
+    amount_micros: number;
+    idempotency_key: string;
+    note?: string;
+  }): Promise<WalletCredit> {
+    return this.sendRelayData<WalletCredit>(
+      "/relay/billing/wallet/credit",
+      "POST",
+      request,
+    );
+  }
+
+  /** Lists persisted operator price edits and whether prices are editable. */
+  async getPriceEditor(): Promise<PriceEditorState> {
+    return this.getRelayData<PriceEditorState>("/v1/relay/catalog/prices");
+  }
+
+  /** Sets a catalog model's retail price (operator keys only). */
+  async setModelPrice(request: {
+    model: string;
+    input_micro_usd_per_million: number;
+    output_micro_usd_per_million: number;
+    note?: string | null;
+  }): Promise<CatalogModel> {
+    return this.sendRelayData<CatalogModel>(
+      "/v1/relay/catalog/prices",
+      "PUT",
+      request,
+    );
+  }
+
+  /** Drops a price edit so the deployed catalog price applies again. */
+  async resetModelPrice(model: string): Promise<CatalogModel> {
+    return this.sendRelayData<CatalogModel>(
+      "/v1/relay/catalog/prices/reset",
+      "POST",
+      { model },
+    );
+  }
+
+  /** Lists provider credential slots (hints only, never secrets). */
+  async listProviderKeys(): Promise<ProviderKeysState> {
+    return this.getRelayData<ProviderKeysState>("/v1/relay/provider_keys");
+  }
+
+  /** Stores or rotates a provider API key (operator keys only). */
+  async setProviderKey(name: string, apiKey: string): Promise<ProviderKey> {
+    return this.sendRelayData<ProviderKey>(
+      `/v1/relay/provider_keys/${encodeURIComponent(name)}`,
+      "PUT",
+      { api_key: apiKey },
+    );
+  }
+
+  /** Removes a stored provider key (falls back to the env variable). */
+  async deleteProviderKey(name: string): Promise<ProviderKey> {
+    return this.sendRelayData<ProviderKey>(
+      `/v1/relay/provider_keys/${encodeURIComponent(name)}`,
+      "DELETE",
+    );
+  }
+
+  /** Verifies a provider key against the provider (operator keys only). */
+  async testProviderKey(name: string): Promise<ProviderKeyTestResult> {
+    return this.sendRelayData<ProviderKeyTestResult>(
+      `/v1/relay/provider_keys/${encodeURIComponent(name)}/test`,
+      "POST",
+    );
   }
 
   /**
@@ -798,10 +907,31 @@ export class TensorZeroClient extends BaseTensorZeroClient {
   /**
    * Checks gateway readiness via its `/health` endpoint.
    */
-  async gatewayHealth(): Promise<{ ok: boolean; status: number; body: string }> {
+  async gatewayHealth(): Promise<{
+    ok: boolean;
+    status: number;
+    body: string;
+  }> {
     const response = await this.fetch("/health", { method: "GET" });
     const body = await response.text();
     return { ok: response.ok, status: response.status, body };
+  }
+
+  private async sendRelayData<T>(
+    endpoint: string,
+    method: "POST" | "PUT" | "DELETE",
+    body?: unknown,
+  ): Promise<T> {
+    const response = await this.fetch(endpoint, {
+      method,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    const envelope = (await response.json()) as { data: T };
+    return envelope.data;
   }
 
   private async getRelayData<T>(endpoint: string): Promise<T> {

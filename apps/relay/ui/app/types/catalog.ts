@@ -85,3 +85,64 @@ export interface ProviderHealthReport {
   models: ModelRoutingStatus[];
   unrouted: ProviderRouteStatus[];
 }
+
+/** One persisted operator price edit (`GET /v1/relay/catalog/prices`). */
+export interface PriceEdit {
+  model_id: string;
+  input_micro_usd_per_million: number;
+  output_micro_usd_per_million: number;
+  /** The deployed catalog price this edit replaces. */
+  deployed_input_micro_usd_per_million?: number | null;
+  deployed_output_micro_usd_per_million?: number | null;
+  note?: string;
+  updated_by: string;
+  updated_at_ms: number;
+}
+
+/** Mirrors `catalog_admin::PriceEditorState`. */
+export interface PriceEditorState {
+  storage_available: boolean;
+  operator: boolean;
+  unavailable_reason?: string;
+  deployed_revision: string;
+  edits: PriceEdit[];
+}
+
+export type ProviderKeySource = "stored" | "environment" | "missing";
+
+export interface ProviderKeyTest {
+  ok: boolean;
+  message: string;
+  tested_at_ms: number;
+}
+
+/** Mirrors `provider_keys::ProviderKeyView`. Never carries the secret. */
+export interface ProviderKey {
+  name: string;
+  provider: string;
+  label: string;
+  env_var: string;
+  source: ProviderKeySource;
+  key_hint?: string;
+  stored: boolean;
+  updated_by?: string;
+  updated_at_ms?: number;
+  last_test?: ProviderKeyTest;
+  error?: string;
+}
+
+/** Mirrors `provider_keys::ProviderKeysResponse`. */
+export interface ProviderKeysState {
+  management_available: boolean;
+  unavailable_reason?: string;
+  operator: boolean;
+  keys: ProviderKey[];
+}
+
+/** Mirrors `provider_keys::ProviderKeyTestResult`. */
+export interface ProviderKeyTestResult {
+  name: string;
+  source: ProviderKeySource;
+  ok: boolean;
+  message: string;
+}

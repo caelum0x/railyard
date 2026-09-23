@@ -90,6 +90,56 @@ impl CatalogService {
         Ok(candidate)
     }
 
+    /// Publish `base` with operator retail price edits applied, atomically.
+    ///
+    /// Each edit is `(model id or alias, input rate, output rate)` and must
+    /// name a model already in `base`: the price editor changes prices, it
+    /// never adds routes the gateway cannot serve. Edited rows are marked
+    /// [`PricingSource::OperatorOverride`]. An invalid candidate leaves the
+    /// last-good snapshot serving traffic.
+    pub async fn apply_operator_prices(
+        &self,
+        base: &CatalogSnapshot,
+        edits: impl IntoIterator<Item = (String, i64, i64)>,
+        revision_suffix: &str,
+    ) -> Result<CatalogSnapshot> {
+        let mut candidate = base.clone();
+        let mut edited = false;
+        for (id, input, output) in edits {
+            let canonical = canonical_catalog_id(id.trim());
+            let model = candidate
+                .models
+                .iter_mut()
+                .find(|model| {
+                    model.id == canonical || model.aliases.iter().any(|alias| alias == &canonical)
+                })
+                .ok_or_else(|| CatalogError::NotFound(canonical.clone()))?;
+            model.pricing = ModelPrice::new(input, output, PricingSource::OperatorOverride);
+            edited = true;
+        }
+        if edited && !revision_suffix.is_empty() {
+            candidate.revision = format!("{}+{revision_suffix}", base.revision);
+        }
+        candidate.validate()?;
+        *self.snapshot.write().await = candidate.clone();
+        Ok(candidate)
+    }
+
+    /// Canonical id of an enabled or disabled catalog model, by id or alias.
+    pub async fn canonical_id(&self, id_or_alias: &str) -> Result<String> {
+        let canonical = canonical_catalog_id(id_or_alias.trim());
+        self.snapshot
+            .read()
+            .await
+            .models
+            .iter()
+            .find(|model| {
+                model.id == canonical || model.aliases.iter().any(|alias| alias == &canonical)
+            })
+            .map(|model| model.id.clone())
+            .ok_or(CatalogError::NotFound(canonical))
+    }
+
     pub async fn snapshot(&self) -> CatalogSnapshot {
         self.snapshot.read().await.clone()
     }
@@ -250,6 +300,33 @@ mod tests {
         assert_eq!(model.id, "openai/gpt-4o");
         let quote = service.quote(&model.id, 1_000, 500).await.unwrap();
         assert_eq!(quote.amount_micros.get(), 7_500);
+    }
+
+    #[tokio::test]
+    async fn operator_price_edits_overlay_the_base_snapshot() {
+        let base = CatalogSnapshot::new("base", 1, vec![builtin_model("acme/model", 1, 1)]);
+        let service = CatalogService::initialize(Arc::new(StaticCatalogSource::new(base.clone())))
+            .await
+            .unwrap();
+        let applied = service
+            .apply_operator_prices(&base, [("acme/model".to_string(), 7, 9)], "ops-1")
+            .await
+            .unwrap();
+        assert_eq!(applied.revision, "base+ops-1");
+        let quote = service.quote("acme/model", 1_000_000, 0).await.unwrap();
+        assert_eq!(quote.amount_micros.get(), 7);
+        assert_eq!(quote.pricing.source, PricingSource::OperatorOverride);
+
+        let missing = service
+            .apply_operator_prices(&base, [("acme/other".to_string(), 1, 1)], "ops-2")
+            .await
+            .unwrap_err();
+        assert_eq!(missing, CatalogError::NotFound("acme/other".into()));
+        // The failed edit left the last-good snapshot in place.
+        assert_eq!(service.snapshot().await.revision, "base+ops-1");
+
+        service.apply_operator_prices(&base, [], "").await.unwrap();
+        assert_eq!(service.snapshot().await.revision, "base");
     }
 
     #[tokio::test]

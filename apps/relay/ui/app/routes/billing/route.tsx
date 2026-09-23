@@ -3,6 +3,8 @@ import { Suspense } from "react";
 import {
   Await,
   Link,
+  data,
+  redirect,
   useAsyncError,
   useLocation,
   type RouteHandle,
@@ -26,6 +28,11 @@ import { Skeleton } from "~/components/ui/skeleton";
 import { LayoutErrorBoundary, PageErrorContent } from "~/components/ui/error";
 import { requireValidApiKeyIfEnabled } from "~/utils/auth.server";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
+import { logger } from "~/utils/logger";
+import {
+  WalletPanel,
+  type WalletActionResult,
+} from "~/components/billing/WalletPanel";
 import type {
   BillingScope,
   BillingStatus,
@@ -39,6 +46,7 @@ import {
   formatCount,
   formatTimestamp,
   formatUsd,
+  parseUsdToMicros,
   scopeFromUrl,
 } from "~/components/billing/BillingShared";
 
@@ -48,9 +56,23 @@ export const handle: RouteHandle = {
   crumb: () => ["Billing"],
 };
 
+const KEY_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+const MAX_CREDIT_NOTE_CHARS = 280;
+
 export async function loader({ request }: Route.LoaderArgs) {
   await requireValidApiKeyIfEnabled();
-  const scope = scopeFromUrl(request.url);
+  const url = new URL(request.url);
+  const scope = scopeFromUrl(url);
+  const walletParam = url.searchParams.get("wallet")?.trim() ?? "";
+  const walletPrincipal = KEY_ID_PATTERN.test(walletParam)
+    ? walletParam
+    : undefined;
+  const topUpParam = url.searchParams.get("topup");
+  const topUpReturn: "success" | "cancelled" | null =
+    topUpParam === "success" || topUpParam === "cancelled" ? topUpParam : null;
+  // A fresh key per render: a resubmitted credit form reuses the key it was
+  // rendered with, so the gateway applies it at most once.
+  const creditIdempotencyKey = crypto.randomUUID();
   const client = getTensorZeroClient();
 
   // Deferred: the summary is aggregated by the gateway from the durable
@@ -63,10 +85,119 @@ export async function loader({ request }: Route.LoaderArgs) {
   const page = Promise.all([
     client.getBillingSummary({ settlements: SETTLEMENT_HISTORY_LIMIT, scope }),
     status,
-    client.getWalletBalance().catch((): WalletBalance | null => null),
+    client
+      .getWalletBalance({ principal: walletPrincipal })
+      .catch((): WalletBalance | null => null),
   ]);
 
-  return { page, status, scope };
+  return { page, status, scope, creditIdempotencyKey, topUpReturn };
+}
+
+function actionErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message
+    : "The gateway rejected the request. Try again.";
+}
+
+export async function action({ request }: Route.ActionArgs) {
+  await requireValidApiKeyIfEnabled();
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+  const principal = String(formData.get("principal") ?? "").trim();
+  const client = getTensorZeroClient();
+
+  if (intent === "top_up") {
+    const micros = parseUsdToMicros(String(formData.get("amountUsd") ?? ""));
+    if (micros === null || micros % 10_000 !== 0) {
+      return data<WalletActionResult>(
+        {
+          ok: false,
+          intent: "top_up",
+          error: "Enter a dollar amount with at most two decimals.",
+          fieldErrors: { amountUsd: "For example 25 or 12.50" },
+        },
+        { status: 400 },
+      );
+    }
+    const origin = new URL(request.url).origin;
+    const walletQuery = principal
+      ? `&wallet=${encodeURIComponent(principal)}`
+      : "";
+    try {
+      const checkout = await client.createWalletTopUp({
+        amount_micros: micros,
+        provider: String(formData.get("provider") ?? "") || undefined,
+        principal: principal || undefined,
+        success_url: `${origin}/billing?topup=success${walletQuery}`,
+        cancel_url: `${origin}/billing?topup=cancelled${walletQuery}`,
+      });
+      return redirect(checkout.checkout_url);
+    } catch (error) {
+      logger.error("Failed to create Relay wallet top-up", error);
+      return data<WalletActionResult>(
+        { ok: false, intent: "top_up", error: actionErrorMessage(error) },
+        { status: 502 },
+      );
+    }
+  }
+
+  if (intent === "credit") {
+    const idempotencyKey = String(formData.get("idempotencyKey") ?? "");
+    const fail = (error: string, fieldErrors?: Record<string, string>) =>
+      data<WalletActionResult>(
+        { ok: false, intent: "credit", error, fieldErrors, idempotencyKey },
+        { status: 400 },
+      );
+    if (!KEY_ID_PATTERN.test(principal)) {
+      return fail("Open the wallet of a valid API key first.");
+    }
+    const micros = parseUsdToMicros(String(formData.get("amountUsd") ?? ""));
+    if (micros === null) {
+      return fail("Enter a positive credit in USD.", {
+        amountUsd: "For example 50 or 12.50",
+      });
+    }
+    const note = String(formData.get("note") ?? "").trim();
+    if (note.length > MAX_CREDIT_NOTE_CHARS) {
+      return fail(
+        `Reasons are limited to ${MAX_CREDIT_NOTE_CHARS} characters.`,
+        {
+          note: "Too long",
+        },
+      );
+    }
+    try {
+      const credit = await client.creditWallet({
+        principal,
+        amount_micros: micros,
+        idempotency_key: idempotencyKey,
+        note: note || undefined,
+      });
+      return data<WalletActionResult>({
+        ok: true,
+        intent: "credit",
+        message: credit.idempotent_replay
+          ? `This credit was already applied to ${principal}; nothing was added twice.`
+          : `Credited ${formatUsd(credit.amount_micros)} to ${principal} (${credit.to_account}).`,
+      });
+    } catch (error) {
+      logger.error("Failed to credit Relay wallet", error);
+      return data<WalletActionResult>(
+        {
+          ok: false,
+          intent: "credit",
+          error: actionErrorMessage(error),
+          idempotencyKey,
+        },
+        { status: 502 },
+      );
+    }
+  }
+
+  return data<WalletActionResult>(
+    { ok: false, intent: "top_up", error: "Unknown action." },
+    { status: 400 },
+  );
 }
 
 function BillingPageHeader() {
@@ -164,11 +295,15 @@ function BillingContent({
   status,
   scope,
   wallet: walletBalance,
+  creditIdempotencyKey,
+  topUpReturn,
 }: {
   summary: BillingSummary;
   status: BillingStatus | null;
   scope: BillingScope;
   wallet: WalletBalance | null;
+  creditIdempotencyKey: string;
+  topUpReturn: "success" | "cancelled" | null;
 }) {
   const { wallet, totals, by_key, by_model, recent_settlements } = summary;
   const emptyMessage =
@@ -182,16 +317,17 @@ function BillingContent({
       <BillingPageHeader />
       {status && <BillingToolbar status={status} scope={scope} />}
       <SectionsGroup>
+        {prepaid && (
+          <WalletPanel
+            wallet={walletBalance}
+            operator={status?.operator ?? false}
+            idempotencyKey={creditIdempotencyKey}
+            topUpReturn={topUpReturn}
+          />
+        )}
         <SectionLayout>
-          <SectionHeader heading={prepaid ? "Wallet" : "Spend"} />
+          <SectionHeader heading="Spend" />
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-            {walletBalance?.available_micros != null && (
-              <StatCard
-                label="Mint available balance"
-                value={formatUsd(walletBalance.available_micros)}
-                hint={`Payer account for ${walletBalance.principal}`}
-              />
-            )}
             <StatCard
               label="Total charged"
               value={formatUsd(wallet.total_charged_micros)}
@@ -334,7 +470,9 @@ function BillingContent({
               ) : (
                 recent_settlements.map((row) => (
                   <TableRow key={row.request_id}>
-                    <TableCell className="font-mono">{row.request_id}</TableCell>
+                    <TableCell className="font-mono">
+                      {row.request_id}
+                    </TableCell>
                     <TableCell className="text-right">
                       {formatUsd(row.amount_micros)}
                     </TableCell>
@@ -356,7 +494,7 @@ function BillingContent({
 }
 
 export default function BillingPage({ loaderData }: Route.ComponentProps) {
-  const { page, status, scope } = loaderData;
+  const { page, status, scope, creditIdempotencyKey, topUpReturn } = loaderData;
   const location = useLocation();
 
   return (
@@ -372,6 +510,8 @@ export default function BillingPage({ loaderData }: Route.ComponentProps) {
               status={resolvedStatus}
               scope={scope}
               wallet={resolvedWallet}
+              creditIdempotencyKey={creditIdempotencyKey}
+              topUpReturn={topUpReturn}
             />
           )}
         </Await>

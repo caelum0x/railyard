@@ -106,6 +106,11 @@ pub struct SettlementDetail {
 pub struct SettlementHistory {
     pub principal: String,
     pub settlements: Vec<SettlementDetail>,
+    /// Cursor for the next (older) page; absent on the last page. Pass it
+    /// back as `?before=` to continue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub next_before: Option<String>,
 }
 
 /// One `(key, day-bucket)` spend point for the per-API-key spend drill-down.

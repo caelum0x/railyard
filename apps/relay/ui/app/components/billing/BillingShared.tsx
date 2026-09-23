@@ -19,6 +19,26 @@ export function formatUsd(micros: number): string {
   });
 }
 
+/**
+ * Parse a USD amount like `25` or `12.50` into exact integer micro-USD.
+ * Returns `null` for anything that is not a positive amount.
+ */
+export function parseUsdToMicros(raw: string): number | null {
+  const trimmed = raw.trim().replace(/^\$/, "");
+  if (!/^\d+(\.\d{1,6})?$/.test(trimmed)) {
+    return null;
+  }
+  const [whole, fraction = ""] = trimmed.split(".");
+  const micros =
+    Number(whole) * MICROS_PER_USD + Number(fraction.padEnd(6, "0"));
+  return Number.isSafeInteger(micros) && micros > 0 ? micros : null;
+}
+
+/** Micro-USD rate per million tokens rendered as dollars per million. */
+export function formatUsdPerMillion(micros: number): string {
+  return `${formatUsd(micros)} / 1M`;
+}
+
 export function formatCount(value: number): string {
   return value.toLocaleString();
 }

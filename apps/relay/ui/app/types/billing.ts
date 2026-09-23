@@ -70,6 +70,8 @@ export interface SettlementDetail {
 export interface SettlementHistory {
   principal: string;
   settlements: SettlementDetail[];
+  /** Cursor for the next (older) page; absent on the last page. */
+  next_before?: string;
 }
 
 /**
@@ -195,5 +197,30 @@ export function isMeteredEvent(event: CostEvent): boolean {
 export interface WalletBalance {
   principal: string;
   billing_enabled: boolean;
+  /** Mint account paying for this key's inference (prepaid mode only). */
+  payer_account?: string;
   available_micros?: number;
+  /** Checkout providers offered for self-serve top-ups (empty when none). */
+  top_up_providers: string[];
+  min_top_up_micros: number;
+  max_top_up_micros: number;
+  /** Whether the caller may grant operator credit from the treasury. */
+  operator_credit_available: boolean;
+}
+
+/** Mirrors `relay_billing::TopUpCheckout` (`POST /relay/billing/wallet/top_up`). */
+export interface TopUpCheckout {
+  provider: string;
+  checkout_id: string;
+  checkout_url: string;
+  account_id: string;
+  amount_micros: number;
+}
+
+/** Mirrors `relay_billing::AccountCredit` (`POST /relay/billing/wallet/credit`). */
+export interface WalletCredit {
+  from_account: string;
+  to_account: string;
+  amount_micros: number;
+  idempotent_replay: boolean;
 }

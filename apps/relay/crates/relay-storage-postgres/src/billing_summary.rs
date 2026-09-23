@@ -175,7 +175,20 @@ impl PostgresBillingSummaryStore {
         owner_principal: Option<&str>,
         limit: i64,
     ) -> Result<Vec<SettlementDetail>, sqlx::Error> {
+        self.settlements_before(owner_principal, limit, None).await
+    }
+
+    /// Keyset-paginated settlement history: rows strictly older than
+    /// `before = (settled_at_ms, request_id)`, newest first. Ties on
+    /// `settled_at_ms` are ordered by `request_id` so pages never overlap.
+    pub async fn settlements_before(
+        &self,
+        owner_principal: Option<&str>,
+        limit: i64,
+        before: Option<(i64, Uuid)>,
+    ) -> Result<Vec<SettlementDetail>, sqlx::Error> {
         let limit = limit.clamp(1, MAX_SETTLEMENT_HISTORY_LIMIT);
+        let (before_ms, before_id) = before.unzip();
         sqlx::query(
             "SELECT request_id, \
              COALESCE((receipt->>'amount_micros')::bigint,0)::bigint AS amount, \
@@ -183,10 +196,13 @@ impl PostgresBillingSummaryStore {
              (attestation IS NOT NULL) AS has_attestation, \
              receipt::text AS receipt_json \
              FROM relay_settlement_evidence WHERE ($1::text IS NULL OR principal=$1) \
-             ORDER BY settled_at_ms DESC LIMIT $2",
+             AND ($3::bigint IS NULL OR (settled_at_ms, request_id) < ($3, $4::uuid)) \
+             ORDER BY settled_at_ms DESC, request_id DESC LIMIT $2",
         )
         .bind(owner_principal)
         .bind(limit)
+        .bind(before_ms)
+        .bind(before_id)
         .fetch_all(&self.pool)
         .await?
         .into_iter()

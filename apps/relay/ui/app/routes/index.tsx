@@ -308,7 +308,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               <DirectoryCard
                 source="/providers"
                 icon={Activity}
-                title="Provider Health"
+                title="Providers"
                 description={providerHealthDesc}
               />
             </div>

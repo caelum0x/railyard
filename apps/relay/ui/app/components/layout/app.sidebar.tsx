@@ -89,7 +89,7 @@ const navigation: NavigationSection[] = [
         icon: LayoutGrid,
       },
       {
-        title: "Provider Health",
+        title: "Providers",
         url: "/providers",
         icon: Activity,
       },

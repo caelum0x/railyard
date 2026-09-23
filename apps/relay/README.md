@@ -221,6 +221,31 @@ billing modes. `GET /relay/billing/status` reports the active mode, feed target,
 and any configuration gaps; `GET /v1/relay/provider_health` reports routing and
 circuit-breaker state per model.
 
+Provider batches (`POST /batch_inference`) are metered too: the start records
+the owning key in `relay_metered_batches`, and the first poll that sees the
+batch `completed` records one cost event per inference (keyed by inference id,
+so repeated polls never double-bill). A postpaid stream the client aborts before
+its terminal usage frame is recorded from an estimate (request bytes / 4 and
+streamed characters / 4 tokens).
+
+### Operator surfaces: wallets, prices, provider keys
+
+| Variable | Purpose |
+| --- | --- |
+| `RELAY_TOPUP_PROVIDERS` | Comma-separated Mint checkout providers (`creem`, `stripe`, `polar`, `paypal`, ...) offered for self-serve wallet top-ups on the Billing page (`POST /relay/billing/wallet/top_up`). Prepaid mode only; each provider must also be active in Mint. |
+| `RELAY_WALLET_TREASURY_ACCOUNT` | Funded Mint account operator credits are drawn from (`POST /relay/billing/wallet/credit`, operator keys only, idempotent per submission). |
+| `RELAY_CREDENTIALS_KEY` | 32 random bytes (base64 or 64 hex chars) sealing provider API keys stored from the Providers page with AES-256-GCM. Invalid values abort startup; unset leaves key management read-only (environment keys only). Generate with `openssl rand -base64 32`. |
+| `OPENROUTER_API_KEY` | Optional environment key for the OpenRouter failover leg every model routes to after its primary provider. |
+
+Retail prices are edited on the Models page (`PUT /v1/relay/catalog/prices`,
+`POST /v1/relay/catalog/prices/reset`, operator keys only). Edits persist in
+`relay_catalog_price_overrides`, overlay the deployed catalog, and reprice
+billing and metering immediately on the replica that saved them and within 30
+seconds on every other replica. Provider keys stored on the Providers page
+(`/v1/relay/provider_keys`) are supplied to TensorZero as `dynamic::relay_*`
+credentials and take precedence over the environment variables named in
+`config/tensorzero.toml`; the API only ever returns a four-character hint.
+
 The current dependency and completion graph is maintained in
 [`docs/RELAY-ENGINEERING-GRAPH.md`](docs/RELAY-ENGINEERING-GRAPH.md).
 The exact code-complete versus live-infrastructure boundary is recorded in

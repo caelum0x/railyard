@@ -143,6 +143,13 @@ pub(crate) struct RequestPricing {
     completion_token_ceiling: Option<u32>,
 }
 
+impl RequestPricing {
+    /// Size of the buffered request body in bytes (the prompt-token ceiling).
+    pub(crate) fn request_bytes(&self) -> u32 {
+        self.prompt_token_ceiling
+    }
+}
+
 /// Injected axum state for [`billing_middleware`]. Cheap to clone (a couple of
 /// `Arc`s and a `Copy` policy), as required by `from_fn_with_state`.
 #[derive(Clone)]
@@ -150,8 +157,9 @@ pub struct BillingState {
     coordinator: Arc<DurableBillingCoordinator>,
     evidence: Arc<dyn SettlementEvidenceStore>,
     policy: EstimatePolicy,
-    /// Per-model microdollar price table (model-aware pricing seam).
-    prices: Arc<PriceTable>,
+    /// Per-model microdollar price table (model-aware pricing seam). Hot
+    /// swappable so operator price edits take effect without a redeploy.
+    prices: crate::live_prices::LivePrices,
     /// Provider receive address advertised in AITP-402 challenges.
     payee: Arc<str>,
     challenges: Arc<ChallengeIssuer>,
@@ -184,7 +192,7 @@ impl BillingState {
             coordinator: Arc::new(DurableBillingCoordinator::in_memory(ledger.clone())),
             evidence: Arc::new(InMemorySettlementEvidenceStore::default()),
             policy,
-            prices,
+            prices: prices.into(),
             payee,
             challenges,
             deferred_tasks: TaskTracker::new(),
@@ -205,6 +213,12 @@ impl BillingState {
 
     pub fn with_challenge_issuer(mut self, challenges: Arc<ChallengeIssuer>) -> Self {
         self.challenges = challenges;
+        self
+    }
+
+    /// Share the live price table the catalog price editor updates.
+    pub fn with_live_prices(mut self, prices: crate::live_prices::LivePrices) -> Self {
+        self.prices = prices;
         self
     }
 
@@ -298,7 +312,7 @@ pub async fn billing_middleware(
     // may under-hold an expensive variant or overcharge a cheap one. Require
     // the operator to publish an explicit function price before provider I/O.
     if request_pricing.model.requires_explicit_price()
-        && !state.prices.is_known(&request_pricing.model)
+        && !state.prices.current().is_known(&request_pricing.model)
     {
         return billing_price_unavailable(&request_pricing.model);
     }
@@ -341,7 +355,9 @@ pub async fn billing_middleware(
 
     // Model-aware hold: price an assumed token budget at the requested model's
     // rate (safe default for unknown models) instead of a flat amount.
-    let estimate = state.policy.hold_estimate(&state.prices, &request_pricing);
+    let estimate = state
+        .policy
+        .hold_estimate(&state.prices.current(), &request_pricing);
     // Bind correlation into the payer-signed resource. A copied authorization
     // cannot be replayed under a different request id even before Mint's durable
     // nonce replay guard runs.
@@ -450,7 +466,7 @@ pub async fn billing_middleware(
                 response,
                 state.coordinator.clone(),
                 state.evidence.clone(),
-                state.prices.clone(),
+                state.prices.current(),
                 state.deferred_tasks.clone(),
                 reservation,
                 request_pricing.model,
@@ -540,7 +556,7 @@ async fn capture_non_streaming(
         }
     };
 
-    match parse_usage_and_model(&bytes, &state.prices) {
+    match parse_usage_and_model(&bytes, &state.prices.current()) {
         Some((usage, model)) => {
             let (usage, capped) = cap_usage_to_reservation(usage, &reservation);
             let settlement = match state
@@ -705,7 +721,8 @@ async fn capture_batch_poll(
             return capture_read_error();
         }
     };
-    let capture = parse_batch_poll_capture(&bytes, &state.prices, &model, expected_batch_id);
+    let capture =
+        parse_batch_poll_capture(&bytes, &state.prices.current(), &model, expected_batch_id);
     match capture {
         Some(BatchPollCapture::Pending) => {
             release_batch_poll_lease(&state.coordinator, &reservation).await;
@@ -1329,7 +1346,7 @@ pub(crate) fn is_batch_start(method: &Method, path: &str) -> bool {
 }
 
 /// Match the aggregate polling endpoint while allowing a configured base path.
-fn whole_batch_poll(method: &Method, path: &str) -> Option<Result<uuid::Uuid, ()>> {
+pub(crate) fn whole_batch_poll(method: &Method, path: &str) -> Option<Result<uuid::Uuid, ()>> {
     if method != Method::GET {
         return None;
     }
@@ -1340,7 +1357,7 @@ fn whole_batch_poll(method: &Method, path: &str) -> Option<Result<uuid::Uuid, ()
     Some(uuid::Uuid::parse_str(suffix).map_err(|_| ()))
 }
 
-fn is_individual_batch_poll(method: &Method, path: &str) -> bool {
+pub(crate) fn is_individual_batch_poll(method: &Method, path: &str) -> bool {
     method == Method::GET
         && path
             .rsplit_once("/batch_inference/")
@@ -1452,7 +1469,7 @@ fn is_embedding_response(value: &serde_json::Value) -> bool {
         })
 }
 
-fn read_u32(obj: &serde_json::Value, key: &str) -> Option<u32> {
+pub(crate) fn read_u32(obj: &serde_json::Value, key: &str) -> Option<u32> {
     obj.get(key)
         .and_then(|v| v.as_u64())
         .map(|n| n.min(u32::MAX as u64) as u32)

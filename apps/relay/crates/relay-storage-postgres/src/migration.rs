@@ -44,6 +44,9 @@ pub const RELAY_MIGRATIONS: &[RelayMigration] = &[
     migration!("20260828200000_relay_cost_events"),
     migration!("20260828201000_relay_aitp_challenges"),
     migration!("20260923120000_relay_key_budgets"),
+    migration!("20260924120000_relay_metered_batches"),
+    migration!("20260924121000_relay_catalog_price_overrides"),
+    migration!("20260924122000_relay_provider_credentials"),
 ];
 
 /// Apply the Relay schema subset in chronological order.
@@ -99,7 +102,7 @@ mod tests {
             expect_that!(seen.insert(migration.name), eq(true));
             previous = migration.name;
         }
-        expect_that!(RELAY_MIGRATIONS.len(), eq(7));
+        expect_that!(RELAY_MIGRATIONS.len(), eq(10));
     }
 
     #[gtest]
@@ -118,6 +121,9 @@ mod tests {
             "relay_cost_events",
             "relay_aitp_challenges",
             "relay_key_budgets",
+            "relay_metered_batches",
+            "relay_catalog_price_overrides",
+            "relay_provider_credentials",
         ] {
             expect_that!(joined.as_str(), contains_substring(table));
         }

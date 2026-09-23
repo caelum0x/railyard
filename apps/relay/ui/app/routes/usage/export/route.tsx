@@ -39,7 +39,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   // client-side CSV export; the summary carries the model/wallet rollup while
   // the series is what the selected date range filters.
   const [summary, keySpend, status] = await Promise.all([
-    client.getBillingSummary({ settlements: 500, scope }),
+    client.getBillingSummary({ settlements: 1, scope }),
     client.getBillingKeySpend({ scope }),
     client.getBillingStatus().catch((): BillingStatus | null => null),
   ]);
@@ -168,10 +168,21 @@ export default function UsageExportPage({ loaderData }: Route.ComponentProps) {
     if (scope === "all") params.set("scope", "all");
     return `/usage/export/events.csv?${params.toString()}`;
   })();
+  const settlementsExportHref = eventsExportHref.replace(
+    "/usage/export/events.csv",
+    "/usage/export/settlements.csv",
+  );
 
   const handleDailyExport = () => {
     const csv = toCsv(
-      ["date", "day_start_ms", "api_key", "cost_events", "total_tokens", "charged_usd"],
+      [
+        "date",
+        "day_start_ms",
+        "api_key",
+        "cost_events",
+        "total_tokens",
+        "charged_usd",
+      ],
       rangePoints.map((point) => [
         formatDay(point.bucket_start_ms),
         point.bucket_start_ms,
@@ -195,28 +206,6 @@ export default function UsageExportPage({ loaderData }: Route.ComponentProps) {
       ]),
     );
     downloadCsv(`relay_model_spend_${rangeLabel}.csv`, csv);
-  };
-
-  const handleSettlementsExport = () => {
-    const rows = summary.recent_settlements
-      .filter((settlement) => {
-        if (fromMs != null && settlement.settled_at_ms < fromMs) return false;
-        if (toMs != null && settlement.settled_at_ms >= toMs) return false;
-        return true;
-      })
-      .map((settlement) => [
-        settlement.request_id,
-        new Date(settlement.settled_at_ms).toISOString(),
-        toUsd(settlement.amount_micros).toFixed(6),
-        settlement.verified_at_ms != null
-          ? new Date(settlement.verified_at_ms).toISOString()
-          : "",
-      ]);
-    const csv = toCsv(
-      ["request_id", "settled_at", "amount_usd", "verified_at"],
-      rows,
-    );
-    downloadCsv(`relay_settlements_${rangeLabel}.csv`, csv);
   };
 
   return (
@@ -260,8 +249,8 @@ export default function UsageExportPage({ loaderData }: Route.ComponentProps) {
           <p className="text-fg-tertiary text-sm">
             The per-request CSV is generated on the server from every durable
             cost event in the range (UTC days), including postpaid metered
-            usage. Daily and model CSVs use the aggregated spend rollups;
-            settlements cover the most recent 500 Mint receipts.
+            usage. Daily and model CSVs use the aggregated spend rollups; the
+            settlements CSV pages through every Mint receipt in the range.
           </p>
           <div className="flex flex-wrap gap-2">
             {rangeValid ? (
@@ -287,13 +276,17 @@ export default function UsageExportPage({ loaderData }: Route.ComponentProps) {
             >
               Download model spend CSV
             </Button>
-            <Button
-              variant="outline"
-              onClick={handleSettlementsExport}
-              disabled={!rangeValid}
-            >
-              Download settlements CSV
-            </Button>
+            {rangeValid ? (
+              <Button variant="outline" asChild>
+                <a href={settlementsExportHref} download>
+                  Download settlements CSV
+                </a>
+              </Button>
+            ) : (
+              <Button variant="outline" disabled>
+                Download settlements CSV
+              </Button>
+            )}
           </div>
         </SectionLayout>
 
@@ -338,10 +331,7 @@ export default function UsageExportPage({ loaderData }: Route.ComponentProps) {
             <TableBody>
               {rangePoints.length === 0 ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={5}
-                    className="text-fg-muted text-center"
-                  >
+                  <TableCell colSpan={5} className="text-fg-muted text-center">
                     No spend in the selected range.
                   </TableCell>
                 </TableRow>

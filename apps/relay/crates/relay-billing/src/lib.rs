@@ -36,7 +36,9 @@ pub mod usage;
 
 // Flat re-exports for ergonomic downstream `use relay_billing::...`.
 pub use aitp_client;
-pub use backend::{BillingLedger, TerminalSettlement};
+pub use backend::{
+    AccountCredit, BillingLedger, TerminalSettlement, TopUpCheckout, TopUpCheckoutRequest,
+};
 pub use catalog::{price_table as catalog_price_table, BUILTIN_PRICES};
 pub use catalog_config::{
     load_from_path as load_price_catalog, CatalogConfigError, ModelEntry, PriceCatalogConfig,

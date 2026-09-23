@@ -194,6 +194,28 @@ fn build_meta_observability_routes(
         .route("/v1/relay/catalog", get(crate::catalog::catalog_handler))
         .route("/v1/relay/quotes", post(crate::catalog::quote_handler))
         .route(
+            "/v1/relay/catalog/prices",
+            get(crate::catalog_admin::list_price_edits_handler)
+                .put(crate::catalog_admin::upsert_price_handler),
+        )
+        .route(
+            "/v1/relay/catalog/prices/reset",
+            post(crate::catalog_admin::reset_price_handler),
+        )
+        .route(
+            "/v1/relay/provider_keys",
+            get(crate::provider_keys::list_provider_keys_handler),
+        )
+        .route(
+            "/v1/relay/provider_keys/{name}",
+            put(crate::provider_keys::set_provider_key_handler)
+                .delete(crate::provider_keys::delete_provider_key_handler),
+        )
+        .route(
+            "/v1/relay/provider_keys/{name}/test",
+            post(crate::provider_keys::test_provider_key_handler),
+        )
+        .route(
             "/relay/billing/summary",
             get(crate::billing_summary::billing_summary_handler),
         )
@@ -212,6 +234,14 @@ fn build_meta_observability_routes(
         .route(
             "/relay/billing/wallet",
             get(crate::relay_access::wallet_balance_handler),
+        )
+        .route(
+            "/relay/billing/wallet/top_up",
+            post(crate::relay_access::wallet_top_up_handler),
+        )
+        .route(
+            "/relay/billing/wallet/credit",
+            post(crate::relay_access::wallet_credit_handler),
         )
         .route(
             "/relay/billing/budgets",

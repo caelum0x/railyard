@@ -6,10 +6,13 @@
 
 mod billing_summary;
 mod budget;
+mod catalog_price;
 mod challenge;
 mod cost_event;
 mod evidence;
+mod metered_batch;
 mod migration;
+mod provider_credential;
 mod provider_health;
 mod settlement_outbox;
 
@@ -21,10 +24,18 @@ pub use budget::{
     BudgetDecision, KeyBudgetError, KeyBudgetInput, KeyBudgetStatus, MAX_BUDGET_NOTE_CHARS,
     PostgresKeyBudgetStore,
 };
+pub use catalog_price::{
+    CatalogPriceError, CatalogPriceInput, CatalogPriceOverride, MAX_PRICE_MICRO_USD_PER_MILLION,
+    MAX_PRICE_NOTE_CHARS, PostgresCatalogPriceStore,
+};
 pub use challenge::PostgresChallengeStore;
 pub use cost_event::PostgresCostEventStore;
 pub use evidence::PostgresSettlementEvidenceStore;
+pub use metered_batch::{MeteredBatch, PostgresMeteredBatchStore};
 pub use migration::{RELAY_MIGRATIONS, RelayMigration, migrate};
+pub use provider_credential::{
+    PostgresProviderCredentialStore, ProviderCredentialTest, SealedProviderCredential,
+};
 pub use provider_health::PostgresProviderHealthStore;
 pub use settlement_outbox::{
     BatchClaim, DurableBillingCoordinator, ReservePayload, TerminalPayload,

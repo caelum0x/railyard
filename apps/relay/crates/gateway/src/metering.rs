@@ -15,7 +15,17 @@
 //! Metering is best-effort accounting, not a money path: an event append
 //! failure is logged and never fails an already-served response. Streams are
 //! metered from their terminal `usage` frame (the request is rewritten to ask
-//! for one); a stream aborted before that frame is not metered.
+//! for one). A stream the client aborts before that frame is still metered from
+//! an estimate (request bytes / 4 prompt tokens, streamed text chars / 4
+//! completion tokens) because the provider already charged for the tokens it
+//! produced.
+//!
+//! Provider batches (`POST /batch_inference`) are metered on completion: the
+//! start records the owning key and retail selector in
+//! `relay_metered_batches`, and the first poll that observes a `completed`
+//! batch records one cost event per inference, keyed by the inference id so a
+//! repeated poll can never double-bill. Recorded batch spend therefore counts
+//! toward the owner's `relay_key_budgets` cap like synchronous spend.
 
 use std::sync::Arc;
 
@@ -30,18 +40,24 @@ use axum::{
 use futures::StreamExt;
 use relay_billing::{ModelId, PriceTable, Usage};
 use relay_contract::Microdollars;
+use relay_cost_feed::CostFeedError;
 use relay_cost_feed::{CostEvent, CostEventStore, InferenceRoute};
-use relay_storage_postgres::{BudgetDecision, PostgresKeyBudgetStore};
+use relay_storage_postgres::{BudgetDecision, PostgresKeyBudgetStore, PostgresMeteredBatchStore};
 use serde_json::json;
 use tensorzero_auth::middleware::RequestApiKeyExtension;
 use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
 use crate::billing::{
-    EstimatePolicy, MAX_RESPONSE_CAPTURE_BYTES, buffer_request_pricing_with_policy,
-    event_has_error, extract_usage_from_event, is_batch_start, is_billable_path, is_event_stream,
-    parse_usage_and_model_with_fallback,
+    EstimatePolicy, MAX_REQUEST_BODY_BYTES, MAX_RESPONSE_CAPTURE_BYTES,
+    buffer_request_pricing_with_policy, event_has_error, extract_usage_from_event, is_batch_start,
+    is_billable_path, is_event_stream, is_individual_batch_poll,
+    parse_usage_and_model_with_fallback, read_u32, whole_batch_poll,
 };
+use crate::live_prices::LivePrices;
+
+/// Rough characters-per-token ratio used only to estimate aborted streams.
+const ESTIMATED_CHARS_PER_TOKEN: u32 = 4;
 
 /// Whether postpaid meter-only recording is requested.
 pub fn metering_enabled() -> bool {
@@ -58,21 +74,25 @@ pub fn metering_enabled() -> bool {
 #[derive(Clone)]
 pub struct MeteringState {
     store: Arc<dyn CostEventStore>,
-    prices: Arc<PriceTable>,
+    prices: LivePrices,
     tasks: TaskTracker,
+    batches: Option<PostgresMeteredBatchStore>,
 }
 
 impl MeteringState {
-    pub fn new(
-        store: Arc<dyn CostEventStore>,
-        prices: Arc<PriceTable>,
-        tasks: TaskTracker,
-    ) -> Self {
+    pub fn new(store: Arc<dyn CostEventStore>, prices: LivePrices, tasks: TaskTracker) -> Self {
         Self {
             store,
             prices,
             tasks,
+            batches: None,
         }
+    }
+
+    /// Enable batch metering with durable batch ownership.
+    pub fn with_batches(mut self, batches: PostgresMeteredBatchStore) -> Self {
+        self.batches = Some(batches);
+        self
     }
 }
 
@@ -117,8 +137,18 @@ pub async fn metering_middleware(
     next: Next,
 ) -> Response {
     let path = request.uri().path().to_string();
-    // Batch jobs complete asynchronously; only synchronous inference is metered.
-    if is_batch_start(request.method(), &path) || !is_billable_path(&path) {
+    let method = request.method().clone();
+    let batch_start = is_batch_start(&method, &path);
+    let batch_poll = whole_batch_poll(&method, &path)
+        .and_then(Result::ok)
+        .map(|batch_id| (batch_id, true))
+        .or_else(|| {
+            is_individual_batch_poll(&method, &path)
+                .then(|| individual_poll_batch_id(&path))
+                .flatten()
+                .map(|batch_id| (batch_id, false))
+        });
+    if !batch_start && batch_poll.is_none() && !is_billable_path(&path) {
         return next.run(request).await;
     }
     let Some(principal) = request
@@ -128,6 +158,9 @@ pub async fn metering_middleware(
     else {
         return next.run(request).await;
     };
+    if let Some((batch_id, whole)) = batch_poll {
+        return meter_batch_poll(&state, request, next, principal, batch_id, whole).await;
+    }
     let (request, pricing) =
         match buffer_request_pricing_with_policy(request, EstimatePolicy::default()).await {
             Ok(priced) => priced,
@@ -136,6 +169,9 @@ pub async fn metering_middleware(
     let response = next.run(request).await;
     if !response.status().is_success() {
         return response;
+    }
+    if batch_start {
+        return record_batch_start(&state, response, &principal, &pricing.model).await;
     }
     let sink = MeterSink {
         store: state.store.clone(),
@@ -146,13 +182,16 @@ pub async fn metering_middleware(
     };
     if is_event_stream(&response) {
         let (parts, body) = response.into_parts();
+        let request_bytes = pricing.request_bytes();
         let metered = MeteredStream {
             inner: http_body_util::BodyStream::new(body),
             pending: String::new(),
             usage: None,
             failed: false,
-            prices: state.prices.clone(),
+            prices: state.prices.current(),
             requested_model: pricing.model,
+            request_bytes,
+            streamed_chars: 0,
             sink: Some(sink),
         };
         return Response::from_parts(parts, Body::from_stream(metered));
@@ -178,9 +217,11 @@ pub async fn metering_middleware(
             .as_ref()
             .and_then(response_request_id)
             .unwrap_or(sink.request_id);
-        if let Some((usage, model)) =
-            parse_usage_and_model_with_fallback(&bytes, &state.prices, Some(&pricing.model))
-        {
+        if let Some((usage, model)) = parse_usage_and_model_with_fallback(
+            &bytes,
+            &state.prices.current(),
+            Some(&pricing.model),
+        ) {
             MeterSink { request_id, ..sink }.record(usage, model);
         } else {
             tracing::warn!(path = %path, "Relay metering found no usage in a successful response");
@@ -206,6 +247,10 @@ struct MeteredStream {
     failed: bool,
     prices: Arc<PriceTable>,
     requested_model: ModelId,
+    /// Request body size, the basis of the aborted-stream prompt estimate.
+    request_bytes: u32,
+    /// Generated text characters observed so far (aborted-stream estimate).
+    streamed_chars: u64,
     sink: Option<MeterSink>,
 }
 
@@ -217,6 +262,33 @@ impl MeteredStream {
         if let Some(found) = extract_usage_from_event(event, &self.prices, &self.requested_model) {
             self.usage = Some(found);
         }
+        for line in event.lines() {
+            let Some(payload) = line.strip_prefix("data:").map(str::trim) else {
+                continue;
+            };
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) {
+                self.streamed_chars = self
+                    .streamed_chars
+                    .saturating_add(generated_text_chars(&value, None));
+            }
+        }
+    }
+
+    /// Usage estimate for a stream that ended before its terminal usage frame.
+    fn estimated_usage(&self) -> Option<(Usage, ModelId)> {
+        if self.streamed_chars == 0 {
+            return None;
+        }
+        let prompt = self.request_bytes.div_ceil(ESTIMATED_CHARS_PER_TOKEN);
+        let completion = u32::try_from(
+            self.streamed_chars
+                .div_ceil(u64::from(ESTIMATED_CHARS_PER_TOKEN)),
+        )
+        .unwrap_or(u32::MAX);
+        let total = prompt.saturating_add(completion);
+        let model = self.requested_model.clone();
+        let cost = self.prices.cost(&model, prompt, completion);
+        Some((Usage::new(prompt, completion, total, cost), model))
     }
 
     fn observe(&mut self, data: &[u8]) {
@@ -277,8 +349,234 @@ impl Drop for MeteredStream {
         }
         if let Some((usage, model)) = self.usage.take() {
             sink.record(usage, model);
+        } else if let Some((usage, model)) = self.estimated_usage() {
+            // The client disconnected before the terminal usage frame. The
+            // provider still produced (and billed) the streamed tokens, so an
+            // estimate is recorded instead of letting the stream go free.
+            tracing::info!(
+                model = model.as_str(),
+                prompt_tokens = usage.prompt_tokens,
+                completion_tokens = usage.completion_tokens,
+                "Relay metered an aborted stream from an estimate"
+            );
+            sink.record(usage, model);
         }
     }
+}
+
+/// Sum the generated text carried by one streamed chunk (OpenAI-compatible
+/// `choices[].delta.content` / tool-call `arguments`, or native TensorZero
+/// `content[].text` / `arguments`). Request echoes and metadata are ignored.
+fn generated_text_chars(value: &serde_json::Value, key: Option<&str>) -> u64 {
+    match value {
+        serde_json::Value::String(text) => match key {
+            Some("content" | "text" | "arguments" | "raw_arguments" | "raw_text") => {
+                text.chars().count() as u64
+            }
+            _ => 0,
+        },
+        serde_json::Value::Array(items) => items
+            .iter()
+            .map(|item| generated_text_chars(item, key))
+            .sum(),
+        serde_json::Value::Object(map) => map
+            .iter()
+            .filter(|(name, _)| name.as_str() != "usage")
+            .map(|(name, item)| generated_text_chars(item, Some(name.as_str())))
+            .sum(),
+        _ => 0,
+    }
+}
+
+/// `.../batch_inference/{batch_id}/inference/{inference_id}` -> `batch_id`.
+fn individual_poll_batch_id(path: &str) -> Option<Uuid> {
+    let (_, suffix) = path.rsplit_once("/batch_inference/")?;
+    let (batch, _) = suffix.split_once('/')?;
+    Uuid::parse_str(batch).ok()
+}
+
+/// Persist ownership of a started meter-only batch so its completion is billed
+/// to the key that started it.
+async fn record_batch_start(
+    state: &MeteringState,
+    response: Response,
+    principal: &str,
+    model: &ModelId,
+) -> Response {
+    let Some(batches) = state.batches.as_ref() else {
+        return response;
+    };
+    let (parts, body) = response.into_parts();
+    let bytes = match axum::body::to_bytes(body, MAX_RESPONSE_CAPTURE_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::error!(error = %error, "Relay metering could not read a batch start response");
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": {"message": "failed to read batch start response"}})),
+            )
+                .into_response();
+        }
+    };
+    let batch_id = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|value| value.get("batch_id")?.as_str().map(str::to_owned))
+        .and_then(|raw| Uuid::parse_str(&raw).ok());
+    match batch_id {
+        Some(batch_id) => {
+            if let Err(error) = batches
+                .record_start(batch_id, principal, model.as_str())
+                .await
+            {
+                // The batch is already running at the provider; failing the
+                // response would only hide the batch id from its owner. The
+                // completion poll falls back to billing the polling key.
+                tracing::error!(error = %error, %batch_id, "Relay could not persist meter-only batch ownership");
+            }
+        }
+        None => {
+            tracing::warn!("Relay metering found no batch_id in a successful batch start response");
+        }
+    }
+    Response::from_parts(parts, Body::from(bytes))
+}
+
+/// Meter a completed batch the first time a poll observes it.
+async fn meter_batch_poll(
+    state: &MeteringState,
+    request: Request,
+    next: Next,
+    poller: String,
+    batch_id: Uuid,
+    whole_batch: bool,
+) -> Response {
+    let response = next.run(request).await;
+    if !response.status().is_success() {
+        return response;
+    }
+    let owner = match state.batches.as_ref() {
+        Some(batches) => match batches.get(batch_id).await {
+            Ok(record) => record,
+            Err(error) => {
+                tracing::error!(error = %error, %batch_id, "Relay meter-only batch lookup failed");
+                None
+            }
+        },
+        None => None,
+    };
+    if owner.as_ref().is_some_and(|record| record.metered) {
+        return response;
+    }
+    let (parts, body) = response.into_parts();
+    let bytes = match axum::body::to_bytes(body, MAX_REQUEST_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::error!(error = %error, %batch_id, "Relay metering could not read a batch poll response");
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": {"message": "failed to read batch poll response"}})),
+            )
+                .into_response();
+        }
+    };
+    let (principal, model) = match &owner {
+        Some(record) => (
+            record.owner_principal.clone(),
+            ModelId::new(record.model.clone()),
+        ),
+        None => {
+            tracing::warn!(%batch_id, "Relay metering has no ownership record for this batch; billing the polling key at the catalog default rate");
+            (poller, ModelId::namespace("unknown"))
+        }
+    };
+    let prices = state.prices.current();
+    if let Some(completed) = parse_completed_batch(&bytes, &prices, &model, batch_id) {
+        let store = state.store.clone();
+        let batches = whole_batch.then(|| state.batches.clone()).flatten();
+        state.tasks.spawn(async move {
+            let mut all_recorded = true;
+            for (inference_id, usage) in completed {
+                let event = CostEvent::metered(
+                    inference_id,
+                    principal.clone(),
+                    model.as_str(),
+                    InferenceRoute::BatchInference,
+                    relay_contract::Usage {
+                        input_tokens: u64::from(usage.prompt_tokens),
+                        output_tokens: u64::from(usage.completion_tokens),
+                        total_tokens: u64::from(usage.total_tokens),
+                        provider_cost_micros: None,
+                    },
+                    Microdollars::new(usage.cost_micros.get().max(0)),
+                    relay_billing::now_ms(),
+                );
+                match store.append(event).await {
+                    Ok(()) => {}
+                    // The inference was already metered by an earlier poll.
+                    Err(CostFeedError::Conflict) => {}
+                    Err(error) => {
+                        all_recorded = false;
+                        tracing::error!(error = %error, %inference_id, %batch_id, "Relay meter-only batch cost event append failed");
+                    }
+                }
+            }
+            if all_recorded
+                && let Some(batches) = batches
+                && let Err(error) = batches.mark_metered(batch_id).await
+            {
+                tracing::warn!(error = %error, %batch_id, "Relay could not mark a batch as metered; later polls re-check idempotently");
+            }
+        });
+    }
+    Response::from_parts(parts, Body::from(bytes))
+}
+
+/// Per-inference usage of a completed batch poll, or `None` while pending,
+/// failed, or unparseable.
+fn parse_completed_batch(
+    bytes: &[u8],
+    prices: &PriceTable,
+    model: &ModelId,
+    expected_batch_id: Uuid,
+) -> Option<Vec<(Uuid, Usage)>> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    if value.get("status")?.as_str()? != "completed" {
+        return None;
+    }
+    let batch_id = value
+        .get("batch_id")?
+        .as_str()
+        .and_then(|raw| Uuid::parse_str(raw).ok())?;
+    if batch_id != expected_batch_id {
+        return None;
+    }
+    let inferences = value.get("inferences")?.as_array()?;
+    let mut completed = Vec::with_capacity(inferences.len());
+    for inference in inferences {
+        let Some(inference_id) = inference
+            .get("inference_id")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|raw| Uuid::parse_str(raw).ok())
+        else {
+            continue;
+        };
+        let Some(usage) = inference.get("usage") else {
+            continue;
+        };
+        let prompt = read_u32(usage, "input_tokens").unwrap_or(0);
+        let completion = read_u32(usage, "output_tokens").unwrap_or(0);
+        let total = prompt.saturating_add(completion);
+        completed.push((
+            inference_id,
+            Usage::new(
+                prompt,
+                completion,
+                total,
+                prices.cost(model, prompt, completion),
+            ),
+        ));
+    }
+    Some(completed)
 }
 
 /// Injected state for [`spend_cap_middleware`].
@@ -354,6 +652,56 @@ mod tests {
         let value = json!({"inference_id": id.to_string(), "id": "chatcmpl-1"});
         assert_eq!(response_request_id(&value), Some(id));
         assert_eq!(response_request_id(&json!({"id": "chatcmpl-1"})), None);
+    }
+
+    #[test]
+    fn completed_batch_meters_each_inference() {
+        let batch = Uuid::now_v7();
+        let first = Uuid::now_v7();
+        let second = Uuid::now_v7();
+        let body = json!({
+            "batch_id": batch.to_string(),
+            "status": "completed",
+            "inferences": [
+                {"inference_id": first.to_string(), "usage": {"input_tokens": 10, "output_tokens": 5}},
+                {"inference_id": second.to_string(), "usage": {"input_tokens": 1, "output_tokens": 2}},
+            ],
+        });
+        let prices = PriceTable::new(relay_billing::ModelPrice::new(1_000_000, 1_000_000));
+        let model = ModelId::namespace("unknown");
+        let parsed =
+            parse_completed_batch(body.to_string().as_bytes(), &prices, &model, batch).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].0, first);
+        assert_eq!(parsed[0].1.total_tokens, 15);
+        assert!(
+            parse_completed_batch(body.to_string().as_bytes(), &prices, &model, Uuid::now_v7())
+                .is_none()
+        );
+        let pending = json!({"batch_id": batch.to_string(), "status": "pending"});
+        assert!(
+            parse_completed_batch(pending.to_string().as_bytes(), &prices, &model, batch).is_none()
+        );
+    }
+
+    #[test]
+    fn individual_poll_path_yields_batch_id() {
+        let batch = Uuid::now_v7();
+        let path = format!("/batch_inference/{batch}/inference/{}", Uuid::now_v7());
+        assert_eq!(individual_poll_batch_id(&path), Some(batch));
+    }
+
+    #[test]
+    fn generated_text_counts_only_output_fields() {
+        let chunk = json!({
+            "choices": [{"delta": {"role": "assistant", "content": "hello"}}],
+            "model": "gpt-4o-mini",
+            "usage": null,
+        });
+        assert_eq!(generated_text_chars(&chunk, None), 5);
+        let native =
+            json!({"inference_id": "x", "content": [{"type": "text", "id": "0", "text": "abc"}]});
+        assert_eq!(generated_text_chars(&native, None), 3);
     }
 
     #[test]

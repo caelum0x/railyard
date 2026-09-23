@@ -29,6 +29,38 @@ pub struct TerminalSettlement {
     pub attestation: Option<HoldSettlementAttestation>,
 }
 
+/// Request for a provider-hosted checkout that funds a payer wallet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TopUpCheckoutRequest {
+    /// Mint checkout provider tag (`stripe`, `creem`, `polar`, `paypal`, ...).
+    pub provider: String,
+    /// Whole USD cents expressed in micro-USD.
+    pub amount_micros: i64,
+    pub success_url: Option<String>,
+    pub cancel_url: Option<String>,
+}
+
+/// A created checkout: send the buyer to `checkout_url`; the provider webhook
+/// credits `account_id` once the payment clears.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TopUpCheckout {
+    pub provider: String,
+    pub checkout_id: String,
+    pub checkout_url: String,
+    pub account_id: String,
+    pub amount_micros: i64,
+}
+
+/// Result of an operator credit transfer into a payer wallet.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct AccountCredit {
+    pub from_account: String,
+    pub to_account: String,
+    pub amount_micros: i64,
+    /// True when the idempotency key had already been applied.
+    pub idempotent_replay: bool,
+}
+
 /// The success-only billing lifecycle: hold an estimate, then settle the exact
 /// actual (success) or release the whole hold (failure). Object-safe so the
 /// gateway can hold an `Arc<dyn BillingLedger>` and swap backends at wiring time.
@@ -143,6 +175,34 @@ pub trait BillingLedger: Send + Sync {
 
     /// The account's available microdollars.
     async fn available_micros(&self, account_id: &AccountId) -> Result<Micros, BillingError>;
+
+    /// Create a hosted checkout that funds `account_id`'s payer wallet.
+    /// Backends without a funding rail report the gap instead of pretending.
+    async fn create_top_up_checkout(
+        &self,
+        _account_id: &AccountId,
+        _request: &TopUpCheckoutRequest,
+    ) -> Result<TopUpCheckout, BillingError> {
+        Err(BillingError::Store(
+            "this billing backend has no hosted top-up checkout".into(),
+        ))
+    }
+
+    /// Move funds from an operator treasury account into `account_id`'s payer
+    /// wallet (manual credit, goodwill, invoiced prepayment). Idempotent on
+    /// `idem_key`.
+    async fn credit_account(
+        &self,
+        _from_account: &str,
+        _account_id: &AccountId,
+        _amount: Micros,
+        _idem_key: &str,
+        _reference: &str,
+    ) -> Result<AccountCredit, BillingError> {
+        Err(BillingError::Store(
+            "this billing backend cannot credit accounts".into(),
+        ))
+    }
 }
 
 /// The in-memory / `Store`-backed engine satisfies the seam by delegating to its

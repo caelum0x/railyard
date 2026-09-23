@@ -2,6 +2,7 @@ import type { Route } from "./+types/route";
 import { Suspense, useState } from "react";
 import {
   Await,
+  Link,
   useAsyncError,
   useLocation,
   type RouteHandle,
@@ -30,7 +31,9 @@ import type { SettlementDetail, SettlementHistory } from "~/types/billing";
 import { scopeFromUrl } from "~/components/billing/BillingShared";
 
 const MICROS_PER_USD = 1_000_000;
-const SETTLEMENT_HISTORY_LIMIT = 200;
+const SETTLEMENT_PAGE_SIZE = 100;
+/** `<settled_at_ms>:<request_id>` as issued by the gateway's `next_before`. */
+const CURSOR_PATTERN = /^\d{1,16}:[0-9a-fA-F-]{36}$/;
 
 export const handle: RouteHandle = {
   crumb: () => ["Billing", "Settlements"],
@@ -38,16 +41,38 @@ export const handle: RouteHandle = {
 
 export async function loader({ request }: Route.LoaderArgs) {
   await requireValidApiKeyIfEnabled();
-  const scope = scopeFromUrl(request.url);
+  const url = new URL(request.url);
+  const scope = scopeFromUrl(url);
+  const rawBefore = url.searchParams.get("before");
+  const before = rawBefore && CURSOR_PATTERN.test(rawBefore) ? rawBefore : null;
 
   // Deferred: the settlement-evidence detail rows are aggregated by the gateway
   // from the durable `relay_settlement_evidence` table and streamed via `Await`.
+  // Pages are keyset-paginated with the gateway's `next_before` cursor.
   const history = getTensorZeroClient().getBillingSettlements({
-    settlements: SETTLEMENT_HISTORY_LIMIT,
+    settlements: SETTLEMENT_PAGE_SIZE,
     scope,
+    before: before ?? undefined,
   });
 
-  return { history };
+  return { history, before };
+}
+
+function hrefWith(
+  pathname: string,
+  search: string,
+  changes: Record<string, string | null>,
+): string {
+  const params = new URLSearchParams(search);
+  for (const [key, value] of Object.entries(changes)) {
+    if (value == null) {
+      params.delete(key);
+    } else {
+      params.set(key, value);
+    }
+  }
+  const query = params.toString();
+  return `${pathname}${query ? `?${query}` : ""}`;
 }
 
 function formatUsd(micros: number): string {
@@ -148,8 +173,15 @@ function SettlementRow({ settlement }: { settlement: SettlementDetail }) {
   );
 }
 
-function SettlementsContent({ history }: { history: SettlementHistory }) {
+function SettlementsContent({
+  history,
+  before,
+}: {
+  history: SettlementHistory;
+  before: string | null;
+}) {
   const { settlements } = history;
+  const location = useLocation();
 
   return (
     <>
@@ -170,11 +202,10 @@ function SettlementsContent({ history }: { history: SettlementHistory }) {
           <TableBody>
             {settlements.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="text-fg-muted text-center"
-                >
-                  No settlements recorded yet.
+                <TableCell colSpan={6} className="text-fg-muted text-center">
+                  {before
+                    ? "No older settlements."
+                    : "No settlements recorded yet."}
                 </TableCell>
               </TableRow>
             ) : (
@@ -187,6 +218,28 @@ function SettlementsContent({ history }: { history: SettlementHistory }) {
             )}
           </TableBody>
         </Table>
+        <div className="flex items-center justify-center gap-3">
+          {before && (
+            <Link
+              to={hrefWith(location.pathname, location.search, {
+                before: null,
+              })}
+              className="text-fg-secondary hover:text-fg-primary text-sm underline-offset-4 hover:underline"
+            >
+              Newest settlements
+            </Link>
+          )}
+          {history.next_before && (
+            <Link
+              to={hrefWith(location.pathname, location.search, {
+                before: history.next_before,
+              })}
+              className="text-fg-secondary hover:text-fg-primary text-sm underline-offset-4 hover:underline"
+            >
+              Older settlements
+            </Link>
+          )}
+        </div>
       </SectionLayout>
     </>
   );
@@ -195,14 +248,16 @@ function SettlementsContent({ history }: { history: SettlementHistory }) {
 export default function BillingSettlementsPage({
   loaderData,
 }: Route.ComponentProps) {
-  const { history } = loaderData;
+  const { history, before } = loaderData;
   const location = useLocation();
 
   return (
     <PageLayout>
       <Suspense key={location.key} fallback={<SettlementsSkeleton />}>
         <Await resolve={history} errorElement={<SettlementsErrorState />}>
-          {(resolved) => <SettlementsContent history={resolved} />}
+          {(resolved) => (
+            <SettlementsContent history={resolved} before={before} />
+          )}
         </Await>
       </Suspense>
     </PageLayout>

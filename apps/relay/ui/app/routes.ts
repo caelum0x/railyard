@@ -194,6 +194,10 @@ export default [
   // Usage / cost export
   route("usage/export", "routes/usage/export/route.tsx"),
   route("usage/export/events.csv", "routes/usage/export/events/route.ts"),
+  route(
+    "usage/export/settlements.csv",
+    "routes/usage/export/settlements/route.ts",
+  ),
 
   // Optimization
   route(

@@ -1,6 +1,7 @@
 # Relay's active Neon + Cloudflare R2 runtime config. Direct provider model
 # names remain available; add operator-owned model/function tables below as the
-# product catalog is promoted. Secrets are resolved only from the environment.
+# product catalog is promoted. Provider secrets come from the Providers page
+# (encrypted in Postgres) or the environment; never from this file.
 [gateway]
 bind_address = "0.0.0.0:3000"
 # Relay is independent of TensorZero's hosted services (see OWNERSHIP.md): never
@@ -30,48 +31,80 @@ endpoint = "env::R2_S3_ENDPOINT"
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                   MODELS                                    │
 # │                                                                             │
-# │ Operator-owned catalog. Every provider credential is resolved ONLY from the │
-# │ environment via `env::` — the placeholders below name the variables the     │
-# │ owner must export at deploy time; no secret is ever written into config.    │
-# │ Adding a model here also lets `relay-billing` price it (see the             │
-# │ `[functions.*]` prices) so a request cannot select an unpriced model.       │
+# │ Operator-owned catalog. No secret is ever written into config. Every        │
+# │ provider resolves its key as a `dynamic::relay_*_api_key` credential that   │
+# │ the gateway supplies per request (crates/gateway/src/provider_keys.rs):     │
+# │ the key stored on the Providers page (AES-256-GCM under                     │
+# │ RELAY_CREDENTIALS_KEY) or, when none is stored, the named env variable.     │
+# │                                                                             │
+# │ FAILOVER. Each model routes to its primary provider first and to OpenRouter │
+# │ second: when the primary errors (outage, 5xx, exhausted retries, open       │
+# │ circuit) TensorZero retries the same request on the next provider. Billing  │
+# │ prices the Relay model name (`tensorzero::model_name::<name>`), so the      │
+# │ retail price is identical whichever provider served the request.           │
+# │                                                                             │
+# │ Primary providers keep an `env::` fallback: batch polling (which carries no │
+# │ request credentials) and deployments that never store keys in Relay still  │
+# │ work, so OPENAI_API_KEY / ANTHROPIC_API_KEY remain required at startup.     │
+# │ The OpenRouter failover leg falls back to `none`: without an OpenRouter key │
+# │ (stored or OPENROUTER_API_KEY) it simply fails over to nothing.             │
 # └────────────────────────────────────────────────────────────────────────────┘
 
 [models."gpt-4o-mini"]
-routing = ["openai"]
+routing = ["openai", "openrouter"]
 
 [models."gpt-4o-mini".providers.openai]
 type = "openai"
 model_name = "gpt-4o-mini"
-api_key_location = "env::OPENAI_API_KEY"
+api_key_location = { default = "dynamic::relay_openai_api_key", fallback = "env::OPENAI_API_KEY" }
+
+[models."gpt-4o-mini".providers.openrouter]
+type = "openrouter"
+model_name = "openai/gpt-4o-mini"
+api_key_location = { default = "dynamic::relay_openrouter_api_key", fallback = "none" }
 
 [models."gpt-4o"]
-routing = ["openai"]
+routing = ["openai", "openrouter"]
 
 [models."gpt-4o".providers.openai]
 type = "openai"
 model_name = "gpt-4o"
-api_key_location = "env::OPENAI_API_KEY"
+api_key_location = { default = "dynamic::relay_openai_api_key", fallback = "env::OPENAI_API_KEY" }
+
+[models."gpt-4o".providers.openrouter]
+type = "openrouter"
+model_name = "openai/gpt-4o"
+api_key_location = { default = "dynamic::relay_openrouter_api_key", fallback = "none" }
 
 [models."claude-sonnet"]
-routing = ["anthropic"]
+routing = ["anthropic", "openrouter"]
 
 [models."claude-sonnet".providers.anthropic]
 type = "anthropic"
 model_name = "claude-sonnet-4-5"
-api_key_location = "env::ANTHROPIC_API_KEY"
+api_key_location = { default = "dynamic::relay_anthropic_api_key", fallback = "env::ANTHROPIC_API_KEY" }
+
+[models."claude-sonnet".providers.openrouter]
+type = "openrouter"
+model_name = "anthropic/claude-sonnet-4.5"
+api_key_location = { default = "dynamic::relay_openrouter_api_key", fallback = "none" }
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                              EMBEDDING MODELS                               │
 # └────────────────────────────────────────────────────────────────────────────┘
 
 [embedding_models."text-embedding-3-small"]
-routing = ["openai"]
+routing = ["openai", "openrouter"]
 
 [embedding_models."text-embedding-3-small".providers.openai]
 type = "openai"
 model_name = "text-embedding-3-small"
-api_key_location = "env::OPENAI_API_KEY"
+api_key_location = { default = "dynamic::relay_openai_api_key", fallback = "env::OPENAI_API_KEY" }
+
+[embedding_models."text-embedding-3-small".providers.openrouter]
+type = "openrouter"
+model_name = "openai/text-embedding-3-small"
+api_key_location = { default = "dynamic::relay_openrouter_api_key", fallback = "none" }
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                 FUNCTIONS                                   │

@@ -3329,6 +3329,7 @@ dependencies = [
  "relay-storage-postgres",
  "reqwest 0.13.3",
  "reqwest-sse-stream",
+ "ring",
  "rmcp",
  "secrecy",
  "serde",

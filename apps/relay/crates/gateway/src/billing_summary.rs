@@ -18,8 +18,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use relay_storage_postgres::{
-    DEFAULT_SETTLEMENT_HISTORY_LIMIT, KeyBudgetError, KeyBudgetInput, OPERATOR_SCOPE_PRINCIPAL,
-    PostgresBillingSummaryStore, PostgresKeyBudgetStore,
+    DEFAULT_SETTLEMENT_HISTORY_LIMIT, KeyBudgetError, KeyBudgetInput, MAX_SETTLEMENT_HISTORY_LIMIT,
+    OPERATOR_SCOPE_PRINCIPAL, PostgresBillingSummaryStore, PostgresKeyBudgetStore,
 };
 use serde::Deserialize;
 
@@ -36,6 +36,16 @@ pub struct BillingSummaryQuery {
     /// `own` (default) or `all` (operator keys only).
     #[serde(default)]
     pub scope: BillingScope,
+    /// Settlement-history cursor (`<settled_at_ms>:<request_id>`) returned as
+    /// `next_before` by the previous page.
+    #[serde(default)]
+    pub before: Option<String>,
+}
+
+/// Parse a `<settled_at_ms>:<request_id>` settlement cursor.
+fn parse_settlement_cursor(raw: &str) -> Option<(i64, uuid::Uuid)> {
+    let (ms, id) = raw.trim().split_once(':')?;
+    Some((ms.parse().ok()?, uuid::Uuid::parse_str(id).ok()?))
 }
 
 /// Scope-only query for endpoints without a settlement window.
@@ -100,15 +110,35 @@ pub async fn billing_settlements_handler(
     let store = PostgresBillingSummaryStore::new(pool.clone());
     let limit = params
         .settlements
-        .unwrap_or(DEFAULT_SETTLEMENT_HISTORY_LIMIT);
-    match store.settlements(owner.as_deref(), limit).await {
-        Ok(settlements) => Json(relay_contract::DataEnvelope {
-            data: relay_contract::SettlementHistory {
-                principal: owner.unwrap_or_else(|| OPERATOR_SCOPE_PRINCIPAL.to_string()),
-                settlements,
-            },
-        })
-        .into_response(),
+        .unwrap_or(DEFAULT_SETTLEMENT_HISTORY_LIMIT)
+        .clamp(1, MAX_SETTLEMENT_HISTORY_LIMIT);
+    let before = match params.before.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(raw) => match parse_settlement_cursor(raw) {
+            Some(cursor) => Some(cursor),
+            None => {
+                return billing_summary_error(StatusCode::BAD_REQUEST, "invalid settlement cursor");
+            }
+        },
+    };
+    match store
+        .settlements_before(owner.as_deref(), limit, before)
+        .await
+    {
+        Ok(settlements) => {
+            let next_before = (settlements.len() as i64 == limit)
+                .then(|| settlements.last())
+                .flatten()
+                .map(|last| format!("{}:{}", last.settled_at_ms, last.request_id));
+            Json(relay_contract::DataEnvelope {
+                data: relay_contract::SettlementHistory {
+                    principal: owner.unwrap_or_else(|| OPERATOR_SCOPE_PRINCIPAL.to_string()),
+                    settlements,
+                    next_before,
+                },
+            })
+            .into_response()
+        }
         Err(error) => {
             tracing::error!(error = %error, "Relay settlement history aggregation failed");
             billing_summary_error(

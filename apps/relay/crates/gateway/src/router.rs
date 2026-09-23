@@ -139,6 +139,65 @@ pub async fn build_axum_router(
     let billing_on = crate::billing::billing_enabled();
     let metering_on = !billing_on && crate::metering::metering_enabled();
     let postgres_pool = app_state.postgres_connection_info().get_pool().cloned();
+
+    // Operator admin surfaces (catalog price editor, provider keys) persist in
+    // the Relay schema. Apply it whenever Postgres is configured; a failure
+    // only disables those editors and never blocks inference.
+    let relay_schema_ready = match &postgres_pool {
+        Some(pool) => match relay_storage_postgres::migrate(pool).await {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::error!(
+                    error = %error,
+                    "Relay schema migration failed; price editing and provider key management are disabled"
+                );
+                false
+            }
+        },
+        None => false,
+    };
+    let admin_pool = postgres_pool.clone().filter(|_| relay_schema_ready);
+    let default_price = catalog_runtime
+        .default_price
+        .unwrap_or_else(crate::billing::default_model_price);
+    let live_prices = crate::live_prices::LivePrices::new(Arc::new(
+        catalog_runtime
+            .service
+            .billing_price_table(default_price)
+            .await,
+    ));
+    let catalog_admin = crate::catalog_admin::CatalogAdmin::new(
+        catalog_runtime.service.clone(),
+        catalog_runtime.service.snapshot().await,
+        admin_pool
+            .clone()
+            .map(relay_storage_postgres::PostgresCatalogPriceStore::new),
+        live_prices.clone(),
+        default_price,
+    );
+    if let Err(error) = catalog_admin.reload().await {
+        tracing::error!(error = %error, "Relay operator price edits could not be applied at startup; serving deployed catalog prices");
+    }
+    catalog_admin.spawn_refresh(&app_state.deferred_tasks, shutdown_token.clone());
+    router = router.layer(Extension(catalog_admin));
+
+    let provider_keys = crate::provider_keys::ProviderKeys::new(
+        admin_pool
+            .clone()
+            .map(relay_storage_postgres::PostgresProviderCredentialStore::new),
+        crate::provider_keys::master_key_from_env().map_err(billing_config_error)?,
+    );
+    if let Err(error) = provider_keys.reload().await {
+        tracing::error!(error = %error, "Relay stored provider keys could not be loaded; using environment keys");
+    }
+    provider_keys.spawn_refresh(&app_state.deferred_tasks, shutdown_token.clone());
+    // Innermost Relay layer: fills TensorZero `dynamic::` provider credentials
+    // right before the inference handler parses the request.
+    router = router.layer(middleware::from_fn_with_state(
+        provider_keys.clone(),
+        crate::provider_keys::provider_credentials_middleware,
+    ));
+    router = router.layer(Extension(provider_keys));
     let runtime_status = crate::relay_access::RelayRuntimeStatus {
         billing_enabled: billing_on,
         metering_enabled: metering_on,
@@ -177,12 +236,7 @@ pub async fn build_axum_router(
         // Provider hedging and adaptive SLO routing are configured per model and
         // execute inside TensorZero's provider dispatch before this middleware
         // observes the single winning response.
-        let default_price = crate::billing::default_model_price();
-        let price_table = catalog_runtime
-            .service
-            .billing_price_table(catalog_runtime.default_price.unwrap_or(default_price))
-            .await;
-        let prices = Arc::new(price_table);
+        let prices = live_prices.current();
         let payee = std::env::var("RELAY_AITP_PAYEE")
             .ok()
             .map(|value| value.trim().to_string())
@@ -305,6 +359,7 @@ pub async fn build_axum_router(
         .with_evidence_store(evidence_store)
         .with_challenge_issuer(challenge_issuer)
         .with_coordinator(coordinator)
+        .with_live_prices(live_prices.clone())
         .with_deferred_tasks(app_state.deferred_tasks.clone());
         router = router.layer(middleware::from_fn_with_state(
             billing_state,
@@ -315,6 +370,7 @@ pub async fn build_axum_router(
         router = build_metering_layer(
             router,
             &catalog_runtime,
+            live_prices.clone(),
             &config,
             postgres_pool.clone(),
             &app_state,
@@ -392,6 +448,7 @@ pub async fn build_axum_router(
 async fn build_metering_layer(
     router: Router<SwappableAppStateData>,
     catalog_runtime: &CatalogRuntime,
+    prices: crate::live_prices::LivePrices,
     config: &tensorzero_core::config::Config,
     pool: Option<sqlx::PgPool>,
     app_state: &SwappableAppStateData,
@@ -423,18 +480,12 @@ async fn build_metering_layer(
     .map_err(|error| {
         billing_config_error(format!("failed to initialize Relay cost feed: {error}"))
     })?;
-    let default_price = crate::billing::default_model_price();
-    let prices = Arc::new(
-        catalog_runtime
-            .service
-            .billing_price_table(catalog_runtime.default_price.unwrap_or(default_price))
-            .await,
-    );
     let store: Arc<dyn relay_cost_feed::CostEventStore> =
-        Arc::new(crate::cost_feed::PostgresCostEventStore::new(pool));
+        Arc::new(crate::cost_feed::PostgresCostEventStore::new(pool.clone()));
     tracing::info!("Relay postpaid metering enabled; usage is recorded without Mint holds");
     Ok(router.layer(middleware::from_fn_with_state(
-        crate::metering::MeteringState::new(store, prices, app_state.deferred_tasks.clone()),
+        crate::metering::MeteringState::new(store, prices, app_state.deferred_tasks.clone())
+            .with_batches(relay_storage_postgres::PostgresMeteredBatchStore::new(pool)),
         crate::metering::metering_middleware,
     )))
 }
