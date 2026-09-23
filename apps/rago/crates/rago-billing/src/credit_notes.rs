@@ -99,7 +99,9 @@ fn apply_taxes(
 
     let mut precise_taxes = Decimal::ZERO;
     let mut taxes_amount: i64 = 0;
-    let mut taxes_rate = 0.0f64;
+    // Accumulated as Decimal to avoid f64 drift; converted to f64 only at the
+    // final serialization boundary below.
+    let mut taxes_rate_dec = Decimal::ZERO;
     let mut applied: Vec<CreditNoteAppliedTax> = Vec::new();
     let total_items_amount = items_amount - coupons_adjustment;
 
@@ -136,14 +138,16 @@ fn apply_taxes(
         } else {
             base / total_items_amount
         };
-        taxes_rate += (items_rate * rate_dec).to_f64().unwrap_or(0.0);
+        taxes_rate_dec += items_rate * rate_dec;
     }
 
     CreditNoteTaxes {
         coupons_adjustment_amount_cents: coupons_adjustment,
         precise_taxes_amount_cents: precise_taxes,
         taxes_amount_cents: taxes_amount,
-        taxes_rate: (taxes_rate * 100000.0).round() / 100000.0,
+        // Convert to f64 only at the serialization boundary; round_dp(5)
+        // matches Lago's `round(5)` display precision.
+        taxes_rate: taxes_rate_dec.round_dp(5).to_f64().unwrap_or(0.0),
         applied_taxes: applied,
     }
 }

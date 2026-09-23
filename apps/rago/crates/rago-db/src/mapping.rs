@@ -219,6 +219,14 @@ pub fn wallet(row: &PgRow) -> Result<Wallet> {
         terminated_at: opt_utc(row.try_get("terminated_at")?),
         lock_version: row.try_get("lock_version")?,
         priority: row.try_get("priority")?,
+        allowed_fee_types: {
+            // Stored as integer[]; an empty array (the column default) means
+            // the wallet is unrestricted. Unknown values are silently dropped.
+            let raw: Vec<i32> = row.try_get("allowed_fee_types").unwrap_or_default();
+            raw.into_iter()
+                .filter_map(|v| FeeType::try_from(v).ok())
+                .collect()
+        },
         created_at: utc(row.try_get("created_at")?),
         updated_at: utc(row.try_get("updated_at")?),
     })

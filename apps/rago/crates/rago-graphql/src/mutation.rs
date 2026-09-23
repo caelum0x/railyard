@@ -406,6 +406,7 @@ impl Mutation {
             terminated_at: None,
             lock_version: 0,
             priority: 50,
+            allowed_fee_types: Vec::new(),
             created_at: now(),
             updated_at: now(),
         };

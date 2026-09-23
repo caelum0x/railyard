@@ -1,4 +1,4 @@
-use crate::enums::{WalletStatus, WalletTransactionStatus, WalletTransactionType};
+use crate::enums::{FeeType, WalletStatus, WalletTransactionStatus, WalletTransactionType};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,11 @@ pub struct Wallet {
     pub terminated_at: Option<DateTime<Utc>>,
     pub lock_version: i32,
     pub priority: i32,
+    /// Fee types this wallet is allowed to pay (mirrors Lago's
+    /// `allowed_fee_types` integer array column). An **empty** vec means the
+    /// wallet is unrestricted and may pay any fee type.
+    #[serde(default)]
+    pub allowed_fee_types: Vec<FeeType>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

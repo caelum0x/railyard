@@ -755,12 +755,14 @@ impl Db {
     }
 
     pub async fn insert_wallet(&self, w: &Wallet) -> Result<()> {
+        let allowed_fee_types: Vec<i32> = w.allowed_fee_types.iter().map(|t| t.as_i32()).collect();
         sqlx::query(
             "INSERT INTO wallets (id, organization_id, customer_id, status, name, rate_amount, \
              credits_balance, consumed_credits, balance_cents, balance_currency, consumed_amount_cents, \
              ongoing_balance_cents, ongoing_usage_balance_cents, credits_ongoing_balance, \
              credits_ongoing_usage_balance, expiration_at, terminated_at, lock_version, priority, \
-             created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)",
+             created_at, updated_at, allowed_fee_types) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)",
         )
         .bind(w.id).bind(w.organization_id).bind(w.customer_id).bind(w.status.as_i32()).bind(w.name.as_deref())
         .bind(w.rate_amount).bind(w.credits_balance).bind(w.consumed_credits).bind(w.balance_cents)
@@ -768,6 +770,7 @@ impl Db {
         .bind(w.ongoing_usage_balance_cents).bind(w.credits_ongoing_balance).bind(w.credits_ongoing_usage_balance)
         .bind(w.expiration_at.map(|t| t.naive_utc())).bind(w.terminated_at.map(|t| t.naive_utc()))
         .bind(w.lock_version).bind(w.priority).bind(w.created_at.naive_utc()).bind(w.updated_at.naive_utc())
+        .bind(allowed_fee_types)
         .execute(&self.pool).await?;
         Ok(())
     }

@@ -202,7 +202,9 @@ fn apply_invoice_taxes(invoice: &mut Invoice, fees: &[Fee]) {
 
     let hundred = dec!(100);
     let mut applied_taxes_amount_cents = Decimal::ZERO;
-    let mut taxes_rate = 0.0f64;
+    // Accumulated as Decimal to avoid f64 drift; converted to f64 only at the
+    // final serialization boundary below.
+    let mut taxes_rate_dec = Decimal::ZERO;
     let sub_total = Decimal::from(invoice.sub_total_excluding_taxes_amount_cents);
     let fees_len = fees.len() as i64;
 
@@ -243,13 +245,15 @@ fn apply_invoice_taxes(invoice: &mut Invoice, fees: &[Fee]) {
                 Decimal::from(count) / Decimal::from(fees_len)
             }
         };
-        taxes_rate += (fees_rate * rate_dec).to_f64().unwrap_or(0.0);
+        taxes_rate_dec += fees_rate * rate_dec;
     }
 
     invoice.taxes_amount_cents = round_to_integer(applied_taxes_amount_cents)
         .to_i64()
         .unwrap_or(0);
-    invoice.taxes_rate = (taxes_rate * 100000.0).round() / 100000.0; // round(5)
+    // Convert to f64 only at the serialization boundary; round_dp(5) matches
+    // Lago's `round(5)` display precision.
+    invoice.taxes_rate = taxes_rate_dec.round_dp(5).to_f64().unwrap_or(0.0);
     invoice.applied_taxes = applied;
 }
 

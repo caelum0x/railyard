@@ -30,29 +30,25 @@ fn fee_cap_cents(fee: &Fee) -> Decimal {
         - fee.precise_credit_notes_amount_cents
 }
 
-/// `Credits::AllocatePrepaidCreditsByWalletsService` (unrestricted-wallet path):
+/// `Credits::AllocatePrepaidCreditsByWalletsService`:
 /// per wallet, draw `min(remaining_fee_cap, remaining_wallet_balance,
-/// remaining_invoice_amount)` across the fee buckets.
-///
-/// Wallet targeting/allowed-fee-type restrictions are catalogued in the port
-/// map; this implements the common unrestricted case.
+/// remaining_invoice_amount)` across the fee buckets the wallet is allowed to
+/// pay. When `wallet.allowed_fee_types` is non-empty only fees whose `fee_type`
+/// appears in that list are eligible; an empty list means the wallet is
+/// unrestricted (the common case, mirroring Lago's unrestricted path).
 fn allocate(invoice: &Invoice, fees: &[Fee], wallets: &[Wallet]) -> Vec<(usize, i64)> {
-    // Fee buckets: one cap per fee (grouping by type/BM collapses to per-fee
-    // here since we do not model wallet targets yet).
-    let mut caps: Vec<Decimal> = fees
-        .iter()
-        .map(fee_cap_cents)
-        .map(|c| {
-            if c.is_sign_positive() {
-                c
-            } else {
-                Decimal::ZERO
-            }
-        })
-        .collect();
-
     let mut remaining_invoice = Decimal::from(invoice.total_amount_cents);
     let mut out: Vec<(usize, i64)> = Vec::new();
+
+    // Per-fee remaining cap shared across wallets so that two wallets cannot
+    // together exceed a fee's cap (zero out negative caps).
+    let mut caps: Vec<Decimal> = fees
+        .iter()
+        .map(|f| {
+            let c = fee_cap_cents(f);
+            if c.is_sign_positive() { c } else { Decimal::ZERO }
+        })
+        .collect();
 
     for (w_idx, wallet) in wallets.iter().enumerate() {
         if wallet.balance_cents <= 0 {
@@ -61,10 +57,22 @@ fn allocate(invoice: &Invoice, fees: &[Fee], wallets: &[Wallet]) -> Vec<(usize, 
         let mut used = Decimal::ZERO;
         let wallet_balance = Decimal::from(wallet.balance_cents);
 
-        for cap in caps.iter_mut() {
+        for (fee_idx, cap) in caps.iter_mut().enumerate() {
             if *cap <= Decimal::ZERO {
                 continue;
             }
+            // Allowed-fee-type restriction: skip fees whose type is not in the
+            // wallet's allow-list (an empty list = unrestricted).
+            if !wallet.allowed_fee_types.is_empty() {
+                let fee_type_ok = fees[fee_idx]
+                    .fee_type
+                    .map(|t| wallet.allowed_fee_types.contains(&t))
+                    .unwrap_or(false);
+                if !fee_type_ok {
+                    continue;
+                }
+            }
+
             let remaining_wallet = wallet_balance - used;
             if remaining_wallet <= Decimal::ZERO {
                 break;
