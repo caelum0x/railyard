@@ -139,8 +139,9 @@ fn adhoc_invoice(org: Uuid, customer_id: Uuid, currency: &Currency, itype: Invoi
         organization_id: org,
         billing_entity_id: org,
         customer_id: Some(customer_id),
-        number: format!("INV-{}", &Uuid::new_v4().to_string()[..8]),
-        sequential_id: Some(1),
+        // Assigned from the per-organization sequence at insert time.
+        number: String::new(),
+        sequential_id: None,
         invoice_type: itype,
         status: InvoiceStatus::Finalized,
         payment_status: PaymentStatus::Pending,
@@ -191,10 +192,7 @@ pub async fn create_one_off_invoice(
     let taxes = st.db.organization_taxes(org).await?;
     assemble_invoice(&mut invoice, &mut fees, &taxes, &[]);
 
-    st.db.insert_invoice(&invoice).await?;
-    for fee in &fees {
-        st.db.insert_fee(fee).await?;
-    }
+    st.db.insert_numbered_invoice_with_fees(&mut invoice, &fees).await?;
     let _ = st.db.insert_activity_log(
         org, "invoice.one_off_created", "Invoice", invoice.id,
         Some(&external_customer_id), None,
@@ -345,10 +343,7 @@ pub async fn accept_quote(
     let taxes = st.db.organization_taxes(org).await?;
     assemble_invoice(&mut invoice, &mut fees, &taxes, &[]);
 
-    st.db.insert_invoice(&invoice).await?;
-    for fee in &fees {
-        st.db.insert_fee(fee).await?;
-    }
+    st.db.insert_numbered_invoice_with_fees(&mut invoice, &fees).await?;
     st.db.accept_quote(quote_id, invoice.id).await?;
 
     let email = st.db.customer_external_id(customer_id).await?;

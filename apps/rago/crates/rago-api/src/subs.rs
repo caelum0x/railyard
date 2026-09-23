@@ -390,8 +390,9 @@ pub async fn void_invoice(
         body["invoice"].clone(),
     )
     .await;
-    // Void the transaction at the tax provider when one is connected.
-    if st.db.find_connection_by_provider(inv.organization_id, "anrok").await?.is_some() {
+    // Void the transaction at the tax provider (Anrok or Avalara) when one is
+    // connected.
+    if st.db.active_integration_of_type(inv.organization_id, "tax").await?.is_some() {
         st.db
             .enqueue_job(
                 rago_jobs::integrations_sync::JOB_TAX_VOIDING,

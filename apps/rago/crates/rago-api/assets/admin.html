@@ -121,6 +121,8 @@
   .gate p { color: var(--muted); margin: 0 0 16px; }
   .gate input { width: 100%; margin-bottom: 10px; }
   .gate button { width: 100%; justify-content: center; }
+  .gate-divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; margin: 16px 0; }
+  .gate-divider::before, .gate-divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
   .muted { color: var(--muted); }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   code { background: var(--row); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
@@ -141,6 +143,13 @@
     <input id="key" type="password" placeholder="Organization API key" autocomplete="off" required />
     <button class="primary" type="submit">Connect</button>
     <div id="gate-error" class="form-error" role="alert"></div>
+  </form>
+  <div class="gate-divider"><span>or</span></div>
+  <form id="sso-form">
+    <label for="sso-email" class="sr">Work email</label>
+    <input id="sso-email" type="email" placeholder="Work email for single sign-on" autocomplete="email" />
+    <button type="submit">Sign in with SSO</button>
+    <div id="sso-error" class="form-error" role="alert"></div>
   </form>
 </div>
 
@@ -163,7 +172,9 @@
 <div class="toast-wrap" id="toasts" aria-live="polite"></div>
 
 <script src="/admin/core.js"></script>
+<script src="/admin/billing.js"></script>
 <script src="/admin/views.js"></script>
+<script src="/admin/integrations.js"></script>
 <script src="/admin/views2.js"></script>
 </body>
 </html>

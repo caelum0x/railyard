@@ -4,7 +4,7 @@
 //! `/webhook_endpoints/:id`, `invoice_id` in a credit-note body, ...). This
 //! layer runs before every handler: it collects every UUID the request
 //! references — path segments, query string and JSON body — resolves the
-//! caller's organization from the bearer API key, and answers `404` when any of
+//! caller's organization from the bearer API key (or session JWT), and answers `404` when any of
 //! those UUIDs belongs to a different organization. A caller can therefore never
 //! read, mutate, or even confirm the existence of another tenant's records.
 //!
@@ -15,7 +15,6 @@ use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
 use rago_db::tenancy::{uuids_in_text, MAX_CHECKED_IDS};
 use uuid::Uuid;
 
@@ -92,10 +91,11 @@ pub async fn guard(State(st): State<AppState>, req: Request, next: Next) -> Resp
     let Some(token) = bearer(&req) else {
         return next.run(req).await;
     };
-    let org = match st.db.authenticate(&token).await {
-        Ok(Some((key, org))) if !key.is_expired(Utc::now()) => org.id,
-        Ok(_) => return next.run(req).await,
-        Err(e) => return ApiError::from(e).into_response(),
+    // API key or dashboard session JWT (same resolution as the handlers).
+    let org = match crate::auth::resolve_bearer(&st, &token).await {
+        Ok(Some((_, org))) => org.id,
+        Ok(None) => return next.run(req).await,
+        Err(e) => return e.into_response(),
     };
 
     for chunk in ids.chunks(MAX_CHECKED_IDS) {

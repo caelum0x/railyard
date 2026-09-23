@@ -8,10 +8,14 @@
 use rago_core::models::{BillableMetric, Charge, Event, Fee, Invoice, Plan, Subscription, Tax};
 use rago_core::money::Currency;
 
-use crate::charge_to_fee;
+use crate::aggregation::AggregationPeriod;
+use crate::charge_to_fee_in_period;
 use crate::dates::MonthlyDates;
 use crate::error::Result;
 use crate::invoices::{assemble_invoice, CouponApplication};
+use crate::progressive_billing::{
+    apply_progressive_billing_credit, ProgressiveBillingInvoice, ProgressiveCreditResult,
+};
 use crate::subscription_fee::{build_subscription_fee, Proration};
 
 /// One usage charge to bill: its metric, charge config, and period events.
@@ -19,6 +23,8 @@ pub struct ChargeInput<'a> {
     pub metric: &'a BillableMetric,
     pub charge: &'a Charge,
     pub events: &'a [Event],
+    /// Billing period the events belong to (needed by `weighted_sum_agg`).
+    pub period: Option<AggregationPeriod>,
 }
 
 /// Generate a subscription invoice end-to-end and mutate `invoice` with the
@@ -39,6 +45,38 @@ pub fn generate_subscription_invoice(
     taxes: &[Tax],
     coupons: &[CouponApplication],
 ) -> Result<Vec<Fee>> {
+    generate_subscription_invoice_with_progressive(
+        invoice,
+        plan,
+        subscription,
+        dates,
+        proration,
+        charges,
+        taxes,
+        coupons,
+        &[],
+    )
+    .map(|(fees, _)| fees)
+}
+
+/// [`generate_subscription_invoice`] for a period that was partly billed
+/// mid-period by progressive-billing invoices: their usage is credited back on
+/// the matching charge fees before taxes (`Credits::ProgressiveBillingService`),
+/// so the customer is never billed twice for the same usage. Returns the fees
+/// and one credit result per progressive invoice (true-up credit notes to issue
+/// when a progressive invoice billed more than the period's final usage).
+#[allow(clippy::too_many_arguments)]
+pub fn generate_subscription_invoice_with_progressive(
+    invoice: &mut Invoice,
+    plan: &Plan,
+    subscription: &Subscription,
+    dates: &MonthlyDates,
+    proration: Proration,
+    charges: &[ChargeInput],
+    taxes: &[Tax],
+    coupons: &[CouponApplication],
+    progressive: &[ProgressiveBillingInvoice],
+) -> Result<(Vec<Fee>, Vec<ProgressiveCreditResult>)> {
     let currency = plan.currency();
     let billing_entity_id = subscription
         .billing_entity_id
@@ -61,16 +99,23 @@ pub fn generate_subscription_invoice(
         if !input.charge.invoiceable {
             continue;
         }
-        let fee = charge_to_fee(
+        let fee = charge_to_fee_in_period(
             input.metric,
             input.charge,
             subscription,
             input.events,
             currency,
             Some(invoice.id),
+            input.period.as_ref(),
         )?;
         fees.push(fee);
     }
+
+    // Credit back usage already billed progressively this period (before taxes).
+    let progressive_results: Vec<ProgressiveCreditResult> = progressive
+        .iter()
+        .map(|pbi| apply_progressive_billing_credit(invoice, &mut fees, pbi))
+        .collect();
 
     assemble_invoice(invoice, &mut fees, taxes, coupons);
 
@@ -81,7 +126,7 @@ pub fn generate_subscription_invoice(
         rago_core::enums::PaymentStatus::Succeeded
     };
 
-    Ok(fees)
+    Ok((fees, progressive_results))
 }
 
 /// Convenience: build a [`Currency`] for a plan.

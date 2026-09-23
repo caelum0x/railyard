@@ -350,7 +350,26 @@ pub async fn update_billable_metric(
         .await?
         .ok_or_else(|| ApiError::NotFound("billable_metric".into()))?;
     let p = wrapped(&body, "billable_metric");
-    let agg = s(p, "aggregation_type").and_then(|a| aggregation_i32(&a));
+    let agg = match s(p, "aggregation_type") {
+        Some(a) => Some(
+            aggregation_i32(&a)
+                .ok_or_else(|| ApiError::validation("aggregation_type", "value_is_invalid"))?,
+        ),
+        None => None,
+    };
+    let custom_aggregator = s(p, "custom_aggregator");
+    if let Some(src) = custom_aggregator.as_deref() {
+        rago_billing::aggregation::validate_custom_aggregator(src)
+            .map_err(|_| ApiError::validation("custom_aggregator", "invalid_expression"))?;
+    }
+    let becomes_custom = agg == Some(AggregationType::CustomAgg.as_i32())
+        || (agg.is_none() && matches!(existing.aggregation_type, AggregationType::CustomAgg));
+    if becomes_custom
+        && custom_aggregator.is_none()
+        && existing.custom_aggregator.as_deref().map_or(true, |c| c.trim().is_empty())
+    {
+        return Err(ApiError::validation("custom_aggregator", "value_is_mandatory"));
+    }
     let m = st
         .db
         .update_billable_metric(
@@ -361,6 +380,7 @@ pub async fn update_billable_metric(
             s(p, "field_name").as_deref(),
             bool_of(p, "recurring"),
             s(p, "expression").as_deref(),
+            custom_aggregator.as_deref(),
         )
         .await?
         .ok_or_else(|| ApiError::NotFound("billable_metric".into()))?;
@@ -654,10 +674,9 @@ fn aggregation_i32(s: &str) -> Option<i32> {
         "sum_agg" => AggregationType::SumAgg,
         "max_agg" => AggregationType::MaxAgg,
         "unique_count_agg" => AggregationType::UniqueCountAgg,
-        // weighted_sum_agg / custom_agg are not accepted: the billing engine
-        // cannot compute fees for them, so a metric using one would fail every
-        // invoice it appears on.
         "latest_agg" => AggregationType::LatestAgg,
+        "weighted_sum_agg" => AggregationType::WeightedSumAgg,
+        "custom_agg" => AggregationType::CustomAgg,
         _ => return None,
     }
     .as_i32())

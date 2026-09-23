@@ -30,6 +30,13 @@ pub struct OAuthTokens {
     /// Lifetime in seconds (`expires_in`), if provided.
     pub expires_in: Option<i64>,
     pub token_type: String,
+    /// OIDC `id_token`, when the provider issues one.
+    pub id_token: Option<String>,
+    /// Salesforce `instance_url`: the org-specific API host every later call
+    /// must address.
+    pub instance_url: Option<String>,
+    /// Granted scopes (space-separated), when echoed back.
+    pub scope: Option<String>,
 }
 
 /// An OAuth client over an injectable transport `T`.
@@ -115,6 +122,9 @@ impl<T: HttpTransport> OAuthClient<T> {
                 .and_then(Value::as_str)
                 .unwrap_or("Bearer")
                 .to_string(),
+            id_token: json.get("id_token").and_then(Value::as_str).map(str::to_string),
+            instance_url: json.get("instance_url").and_then(Value::as_str).map(str::to_string),
+            scope: json.get("scope").and_then(Value::as_str).map(str::to_string),
         })
     }
 }

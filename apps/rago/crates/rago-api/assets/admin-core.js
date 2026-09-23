@@ -345,7 +345,7 @@
   }
 
   // ---- auth gate ----------------------------------------------------------------------
-  function onUnauthorized() { setKey(""); showGate("The API key was rejected. Enter a valid key."); }
+  function onUnauthorized() { setKey(""); showGate("Your session or API key was rejected. Sign in again."); }
   function showGate(msg) {
     $("#app").style.display = "none";
     $("#gate").style.display = "";
@@ -384,6 +384,6 @@
   window.Rago = {
     $, $$, icon, esc, money, date, datetime, badge, centsFromInput, api, enc, toast,
     openForm, confirmAction, showJson, closeOverlay, table, bindRowLinks, pager, bindPager,
-    kv, btn, bindActions, bars, route, navItem, render, query, setQuery, boot,
+    kv, btn, bindActions, bars, route, navItem, render, query, setQuery, boot, getKey, setKey,
   };
 })();

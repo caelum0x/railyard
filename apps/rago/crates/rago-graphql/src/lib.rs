@@ -29,6 +29,7 @@ pub mod admin_mutations2;
 pub mod admin_mutations3;
 pub mod admin_mutations4;
 pub mod admin_mutations5;
+pub mod admin_mutations6;
 pub mod admin_queries;
 pub mod admin_queries2;
 pub mod admin_queries3;
@@ -66,6 +67,7 @@ pub struct Mutation(
     admin_mutations3::AdminMutation3,
     admin_mutations4::AdminMutation4,
     admin_mutations5::AdminMutation5,
+    admin_mutations6::AdminMutation6,
 );
 
 /// The Rago GraphQL query root: core reads ([`query::Query`]) merged with the

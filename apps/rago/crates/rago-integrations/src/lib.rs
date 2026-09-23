@@ -15,11 +15,12 @@ pub mod webhooks;
 pub use integrations::anrok::AnrokTaxProvider;
 pub use integrations::avalara::AvalaraTaxProvider;
 pub use integrations::hubspot::HubspotProvider;
-pub use integrations::netsuite::NetsuiteProvider;
+pub use integrations::netsuite::{NetsuiteCredentials, NetsuiteProvider};
 pub use integrations::salesforce::SalesforceProvider;
 pub use integrations::xero::XeroProvider;
 pub use integrations::{
-    AccountingInvoice, AccountingProvider, CrmCustomer, CrmProvider, FeeTaxResult,
+    AccountingContact, AccountingInvoice, AccountingLine, AccountingProvider, CatalogEntry,
+    CrmCustomer, CrmProvider, FeeTaxResult,
     IntegrationError, SyncResult, TaxBreakdownItem, TaxFeeItem, TaxProvider, TaxRequest,
 };
 pub use oauth::{with_retry, OAuthClient, OAuthConfig, OAuthTokens};
@@ -31,7 +32,8 @@ pub use payments::provider_webhook::{
 };
 pub use payments::stripe::StripeProvider;
 pub use payments::stripe_webhook::{
-    parse_event, signature_header, verify_signature, IncomingStatus, StripeEvent, WebhookError,
+    parse_event, signature_header, verify_signature, IncomingStatus, StripeEvent, StripeIntentProgress,
+    WebhookError,
     DEFAULT_TOLERANCE_SECS,
 };
 pub use payments::{

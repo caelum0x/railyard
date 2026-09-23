@@ -256,7 +256,65 @@ pub async fn collect_invoice<T: HttpTransport>(
     };
 
     emit_payment_outcome(db, invoice, &customer, status, None).await;
+    if status == PayableStatus::Pending {
+        notify_requires_action(db, transport, invoice, &customer).await?;
+    }
     Ok(CollectOutcome::Charged(status))
+}
+
+/// When the charge is waiting on the customer (Stripe SCA / 3-D Secure), make
+/// sure the payment carries a confirm link — Stripe's hosted redirect when it
+/// gave one, else a one-time Checkout link for the invoice — and queue
+/// `payment.requires_action` so the integrator can notify the customer.
+/// Returns the confirm URL, if one could be produced.
+pub async fn notify_requires_action<T: HttpTransport>(
+    db: &Db,
+    transport: &T,
+    invoice: &Invoice,
+    customer: &Customer,
+) -> Result<Option<String>, JobError> {
+    let Some(action) = db.invoice_payment_action(invoice.id).await? else {
+        return Ok(None);
+    };
+    let url = match action.next_action_url.clone() {
+        Some(u) => Some(u),
+        None => match invoice_payment_url(db, transport, invoice).await? {
+            Ok(u) => {
+                db.set_payment_next_action_url(action.payment_id, &u).await?;
+                Some(u)
+            }
+            Err(reason) => {
+                tracing::warn!(
+                    invoice_id = %invoice.id,
+                    reason,
+                    "payment requires customer action but no confirm link could be generated"
+                );
+                None
+            }
+        },
+    };
+    let _ = record_webhook(
+        db,
+        invoice.organization_id,
+        WebhookKind::PaymentRequiresAction,
+        json!({
+            "lago_id": action.payment_id,
+            "lago_payable_id": invoice.id,
+            "payable_type": "Invoice",
+            "invoice_number": invoice.number,
+            "lago_customer_id": customer.id,
+            "external_customer_id": customer.external_id,
+            "provider": action.provider,
+            "provider_payment_id": action.provider_payment_id,
+            "status": "requires_action",
+            "amount_cents": invoice.total_amount_cents,
+            "amount_currency": invoice.currency().code(),
+            "next_action": action.next_action,
+            "payment_url": url,
+        }),
+    )
+    .await;
+    Ok(url)
 }
 
 /// Queue `invoice.payment_status_updated` plus the success/failure webhook.
@@ -404,10 +462,29 @@ async fn ensure_stripe_customer_no_pm<T: HttpTransport>(
             return Ok((id, pm));
         }
     }
-    let id = StripeProvider::new(secret, transport)
+    let id = match StripeProvider::new(secret, transport)
         .create_customer(&customer.id, customer.name.as_deref(), customer.email.as_deref())
         .await
-        .map_err(|e| JobError::Payment(format!("stripe customer creation failed: {e}")))?;
+    {
+        Ok(id) => id,
+        Err(e) => {
+            // `customer.payment_provider_error` — the operator must fix the
+            // customer (or provider credentials) before it can be charged.
+            let _ = record_webhook(
+                db,
+                customer.organization_id,
+                WebhookKind::CustomerPaymentProviderError,
+                json!({
+                    "lago_customer_id": customer.id,
+                    "external_customer_id": customer.external_id,
+                    "payment_provider": "stripe",
+                    "provider_error": { "message": e.to_string(), "error_code": "customer_creation_failed" },
+                }),
+            )
+            .await;
+            return Err(JobError::Payment(format!("stripe customer creation failed: {e}")));
+        }
+    };
     db.upsert_provider_customer(customer.organization_id, customer.id, "stripe", &id)
         .await?;
     let _ = record_webhook(

@@ -55,12 +55,66 @@ pub struct AggregationResult {
     pub max_aggregation: Option<Decimal>,
 }
 
+/// The billing-period context an aggregation runs in. Required for
+/// time-weighted aggregations (`weighted_sum_agg`), which weight each value by
+/// how long it was active inside `[from, to]`.
+#[derive(Debug, Clone, Copy)]
+pub struct AggregationPeriod {
+    pub from: NaiveDateTime,
+    pub to: NaiveDateTime,
+    /// Charges-duration of the period in days (`charges_duration.days`).
+    pub duration_days: i64,
+    /// Running total carried in from before `from` (recurring metrics: the
+    /// sum of every earlier event value; `0` otherwise).
+    pub initial_value: Decimal,
+}
+
+impl AggregationPeriod {
+    /// A period spanning `[from, to]` with no carried-in value; the duration
+    /// is the whole number of days covered (at least one).
+    pub fn new(from: NaiveDateTime, to: NaiveDateTime) -> Self {
+        let days = (to.date() - from.date()).num_days() + 1;
+        Self {
+            from,
+            to,
+            duration_days: days.max(1),
+            initial_value: Decimal::ZERO,
+        }
+    }
+
+    /// Set the carried-in running total (recurring weighted-sum metrics).
+    pub fn with_initial_value(self, initial_value: Decimal) -> Self {
+        Self { initial_value, ..self }
+    }
+}
+
 /// Compute an [`AggregationResult`] for a metric over a set of events.
+///
+/// Time-weighted aggregations without an explicit period fall back to the span
+/// of the events themselves; billing paths pass the real period through
+/// [`aggregate_in_period`].
 pub fn aggregate(
     metric: &BillableMetric,
     events: &[Event],
     free_units_per_events: i64,
     free_units_per_total_aggregation: Decimal,
+) -> Result<AggregationResult> {
+    aggregate_in_period(
+        metric,
+        events,
+        free_units_per_events,
+        free_units_per_total_aggregation,
+        None,
+    )
+}
+
+/// [`aggregate`] with the billing period the events belong to.
+pub fn aggregate_in_period(
+    metric: &BillableMetric,
+    events: &[Event],
+    free_units_per_events: i64,
+    free_units_per_total_aggregation: Decimal,
+    period: Option<&AggregationPeriod>,
 ) -> Result<AggregationResult> {
     let mut result = match metric.aggregation_type {
         AggregationType::SumAgg => sum_aggregation(
@@ -82,15 +136,143 @@ pub fn aggregate(
             free_units_per_events,
             free_units_per_total_aggregation,
         ),
-        AggregationType::WeightedSumAgg | AggregationType::CustomAgg => {
-            return Err(BillingError::AggregationNotImplemented(
-                metric.aggregation_type.as_str().to_string(),
-            ))
-        }
+        AggregationType::WeightedSumAgg => weighted_sum_aggregation(metric, events, period),
+        AggregationType::CustomAgg => custom_aggregation(metric, events)?,
     };
+
+    // Dynamic pricing: the price is carried on each event. Summed for every
+    // aggregation so a `dynamic` charge on any metric prices its events.
+    result.precise_total_amount_cents = precise_total_amount_cents(events);
 
     apply_rounding(metric, &mut result);
     Ok(result)
+}
+
+/// `Events::Stores::*#sum_precise_total_amount_cents` — the sum of the
+/// per-event `precise_total_amount_cents` (events without one contribute 0).
+/// `None` when no event carries an amount.
+fn precise_total_amount_cents(events: &[Event]) -> Option<Decimal> {
+    let mut any = false;
+    let mut total = Decimal::ZERO;
+    for e in events {
+        if let Some(v) = e.precise_total_amount_cents {
+            any = true;
+            total += v;
+        }
+    }
+    any.then_some(total)
+}
+
+fn event_time(e: &Event) -> NaiveDateTime {
+    e.timestamp.unwrap_or_else(|| e.created_at.naive_utc())
+}
+
+/// `WeightedSumService#aggregate` — map events to `(timestamp, value)` and
+/// weight them over the billing period.
+fn weighted_sum_aggregation(
+    metric: &BillableMetric,
+    events: &[Event],
+    period: Option<&AggregationPeriod>,
+) -> AggregationResult {
+    let field = metric.field_name.clone().unwrap_or_default();
+    let points: Vec<(NaiveDateTime, Decimal)> = events
+        .iter()
+        .map(|e| (event_time(e), e.field_value(&field)))
+        .collect();
+    let period = match period {
+        Some(p) => *p,
+        None => {
+            // No billing period (e.g. an estimate): weight over the events' own span.
+            let Some(from) = points.iter().map(|(t, _)| *t).min() else {
+                return AggregationResult {
+                    current_usage_units: Some(Decimal::ZERO),
+                    variation: Some(Decimal::ZERO),
+                    total_aggregated_units: Some(Decimal::ZERO),
+                    ..Default::default()
+                };
+            };
+            let to = points.iter().map(|(t, _)| *t).max().unwrap_or(from);
+            AggregationPeriod::new(from, to)
+        }
+    };
+    let mut result = weighted_sum(
+        &points,
+        period.from,
+        period.to,
+        period.duration_days,
+        period.initial_value,
+    );
+    result.current_usage_units = Some(result.aggregation);
+    result.per_event_values = points.iter().map(|(_, v)| *v).collect();
+    result
+}
+
+/// `CustomService` — evaluate the metric's `custom_aggregator` expression on
+/// every event. The per-event results are summed into `custom_amount` (in the
+/// main currency unit, like Lago's `custom_aggregation[:amount]`); the billed
+/// units are the sum of `field_name` when set, the event count otherwise.
+fn custom_aggregation(metric: &BillableMetric, events: &[Event]) -> Result<AggregationResult> {
+    let source = metric
+        .custom_aggregator
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            BillingError::AggregationFailure(format!(
+                "billable metric `{}` uses custom_agg but has no custom_aggregator",
+                metric.code
+            ))
+        })?;
+    let expr = crate::expression::Expression::parse(source).map_err(|e| {
+        BillingError::AggregationFailure(format!("custom_aggregator of `{}`: {e}", metric.code))
+    })?;
+
+    let mut amount = Decimal::ZERO;
+    let mut per_event = Vec::with_capacity(events.len());
+    for e in events {
+        let input = serde_json::json!({
+            "code": e.code,
+            "timestamp": event_time(e).and_utc().timestamp(),
+            "properties": e.properties,
+        });
+        let value = match expr.evaluate(&input) {
+            Ok(crate::expression::ExprValue::Number(d)) => d,
+            Ok(crate::expression::ExprValue::String(s)) => {
+                return Err(BillingError::AggregationFailure(format!(
+                    "custom_aggregator of `{}` returned a non-numeric value `{s}` for event {}",
+                    metric.code, e.transaction_id
+                )))
+            }
+            Err(err) => {
+                return Err(BillingError::AggregationFailure(format!(
+                    "custom_aggregator of `{}` failed on event {}: {err}",
+                    metric.code, e.transaction_id
+                )))
+            }
+        };
+        amount += value;
+        per_event.push(value);
+    }
+
+    let units = match metric.field_name.as_deref().filter(|f| !f.is_empty()) {
+        Some(field) => events.iter().map(|e| e.field_value(field)).sum(),
+        None => Decimal::from(events.len() as i64),
+    };
+    Ok(AggregationResult {
+        aggregation: units,
+        current_usage_units: Some(units),
+        count: events.len() as i64,
+        per_event_values: per_event,
+        custom_amount: Some(amount),
+        ..Default::default()
+    })
+}
+
+/// Validate a `custom_aggregator` expression at metric create/update time.
+pub fn validate_custom_aggregator(source: &str) -> std::result::Result<(), String> {
+    crate::expression::Expression::parse(source.trim())
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// A charge filter / billing-period filter predicate: a property key that must
@@ -153,6 +335,25 @@ pub fn aggregate_grouped(
     free_units_per_events: i64,
     free_units_per_total_aggregation: Decimal,
 ) -> Result<AggregationResult> {
+    aggregate_grouped_in_period(
+        metric,
+        events,
+        group_keys,
+        free_units_per_events,
+        free_units_per_total_aggregation,
+        None,
+    )
+}
+
+/// [`aggregate_grouped`] with the billing period the events belong to.
+pub fn aggregate_grouped_in_period(
+    metric: &BillableMetric,
+    events: &[Event],
+    group_keys: &[String],
+    free_units_per_events: i64,
+    free_units_per_total_aggregation: Decimal,
+    period: Option<&AggregationPeriod>,
+) -> Result<AggregationResult> {
     // Preserve first-seen order of groups.
     let mut order: Vec<Vec<Option<String>>> = Vec::new();
     let mut buckets: std::collections::HashMap<Vec<Option<String>>, Vec<Event>> =
@@ -179,11 +380,12 @@ pub fn aggregate_grouped(
     let mut total_count: i64 = 0;
     for key in &order {
         let group_events = &buckets[key];
-        let mut sub = aggregate(
+        let mut sub = aggregate_in_period(
             metric,
             group_events,
             free_units_per_events,
             free_units_per_total_aggregation,
+            period,
         )?;
         sub.grouped_by = group_keys
             .iter()
@@ -200,6 +402,7 @@ pub fn aggregate_grouped(
         current_usage_units: Some(total),
         count: total_count,
         aggregations: sub_results,
+        precise_total_amount_cents: precise_total_amount_cents(events),
         ..Default::default()
     })
 }
@@ -826,6 +1029,7 @@ mod tests {
             expression: None,
             rounding_function: None,
             rounding_precision: None,
+            custom_aggregator: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
             deleted_at: None,

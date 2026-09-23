@@ -151,6 +151,7 @@ fn in_arrears_usage_charge_bills_period_events() {
         expression: None,
         rounding_function: None,
         rounding_precision: None,
+        custom_aggregator: None,
         created_at: now,
         updated_at: now,
         deleted_at: None,

@@ -52,10 +52,9 @@ fn aggregation_i32(s: &str) -> Option<i32> {
         "sum_agg" => SumAgg,
         "max_agg" => MaxAgg,
         "unique_count_agg" => UniqueCountAgg,
-        // weighted_sum_agg / custom_agg are not accepted: the billing engine
-        // cannot compute fees for them, so a metric using one would fail every
-        // invoice it appears on.
         "latest_agg" => LatestAgg,
+        "weighted_sum_agg" => WeightedSumAgg,
+        "custom_agg" => CustomAgg,
         _ => return None,
     }
     .as_i32())
@@ -357,6 +356,10 @@ impl AdminMutation {
             Some(s) => Some(aggregation_i32(s).ok_or_else(|| async_graphql::Error::new("invalid aggregation_type"))?),
             None => None,
         };
+        if let Some(src) = input.custom_aggregator.as_deref() {
+            rago_billing::aggregation::validate_custom_aggregator(src)
+                .map_err(|e| async_graphql::Error::new(format!("invalid custom_aggregator: {e}")))?;
+        }
         let metric = db(ctx)
             .update_billable_metric(
                 uuid(&input.id)?,
@@ -366,6 +369,7 @@ impl AdminMutation {
                 input.field_name.as_deref(),
                 input.recurring,
                 input.expression.as_deref(),
+                input.custom_aggregator.as_deref(),
             )
             .await?
             .ok_or_else(|| async_graphql::Error::new("billable_metric_not_found"))?;
@@ -575,6 +579,11 @@ impl AdminMutation {
             .update_invoice(uuid(&input.id)?, payment_status)
             .await?
             .ok_or_else(|| async_graphql::Error::new("invoice_not_found"))?;
+        if payment_status.is_some() {
+            rago_jobs::wallet_credits::on_invoice_payment_status(db(ctx), &invoice, invoice.payment_status)
+                .await
+                .map_err(|e| async_graphql::Error::new(format!("paid_credit_settlement_failed: {e}")))?;
+        }
         load_invoice(ctx, invoice).await
     }
 

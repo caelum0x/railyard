@@ -5,6 +5,7 @@
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use chrono::Utc;
+use rago_billing::aggregation::AggregationPeriod;
 use rago_billing::dates::MonthlyDates;
 use rago_billing::generate::{generate_subscription_invoice, ChargeInput};
 use rago_billing::subscription_fee::Proration;
@@ -156,6 +157,20 @@ pub async fn create_billable_metric(
     let agg_str = req_s(p, "aggregation_type")?;
     let aggregation_type = aggregation_from_str(&agg_str)
         .ok_or_else(|| ApiError::validation("aggregation_type", "value_is_invalid"))?;
+    let custom_aggregator = s(p, "custom_aggregator").filter(|c| !c.trim().is_empty());
+    match (&aggregation_type, custom_aggregator.as_deref()) {
+        (AggregationType::CustomAgg, None) => {
+            return Err(ApiError::validation("custom_aggregator", "value_is_mandatory"))
+        }
+        (_, Some(src)) => rago_billing::aggregation::validate_custom_aggregator(src)
+            .map_err(|_| ApiError::validation("custom_aggregator", "invalid_expression"))?,
+        _ => {}
+    }
+    if matches!(aggregation_type, AggregationType::WeightedSumAgg)
+        && s(p, "field_name").map_or(true, |f| f.trim().is_empty())
+    {
+        return Err(ApiError::validation("field_name", "value_is_mandatory"));
+    }
     let m = BillableMetric {
         id: Uuid::new_v4(),
         organization_id: auth.organization.id,
@@ -168,6 +183,7 @@ pub async fn create_billable_metric(
         expression: s(p, "expression"),
         rounding_function: s(p, "rounding_function"),
         rounding_precision: i64_of(p, "rounding_precision").map(|v| v as i32),
+        custom_aggregator,
         created_at: now(),
         updated_at: now(),
         deleted_at: None,
@@ -404,12 +420,9 @@ pub async fn bill_subscription(
         .find_subscription_by_external_id(auth.organization.id, &external_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("subscription".into()))?;
-    let (invoice, fees) = compute_subscription_invoice(&st, &sub).await?;
+    let (mut invoice, fees) = compute_subscription_invoice(&st, &sub).await?;
 
-    st.db.insert_invoice(&invoice).await?;
-    for fee in &fees {
-        st.db.insert_fee(fee).await?;
-    }
+    st.db.insert_numbered_invoice_with_fees(&mut invoice, &fees).await?;
 
     // Activity + audit log: the invoice was created/finalized during billing.
     let _ = st.db.insert_activity_log(
@@ -450,8 +463,9 @@ fn blank_invoice(sub: &Subscription, currency: &Currency) -> Invoice {
         organization_id: sub.organization_id,
         billing_entity_id: sub.billing_entity_id.unwrap_or(sub.organization_id),
         customer_id: Some(sub.customer_id),
-        number: format!("INV-{}", &Uuid::new_v4().to_string()[..8]),
-        sequential_id: Some(1),
+        // Assigned from the per-organization sequence at insert time.
+        number: String::new(),
+        sequential_id: None,
         invoice_type: InvoiceType::Subscription,
         status: InvoiceStatus::Finalized,
         payment_status: PaymentStatus::Pending,
@@ -524,21 +538,20 @@ pub async fn create_wallet(
     )
     .await;
 
-    // Optional initial grant/purchase via `paid_credits` / `granted_credits`.
-    let cur = Currency::new(&currency);
-    let mut total_credits = Decimal::ZERO;
-    if let Some(paid) = dec_of(p, "paid_credits") {
-        total_credits += paid;
+    // Optional initial grant (free, settled now) and purchase (`paid_credits`:
+    // a pending transaction + credit invoice, settled once the invoice is paid).
+    let granted = dec_of(p, "granted_credits").unwrap_or(Decimal::ZERO);
+    let paid = dec_of(p, "paid_credits").unwrap_or(Decimal::ZERO);
+    if granted < Decimal::ZERO || paid < Decimal::ZERO {
+        return Err(ApiError::validation("credits", "value_must_be_positive"));
     }
-    if let Some(granted) = dec_of(p, "granted_credits") {
-        total_credits += granted;
+    if granted > Decimal::ZERO {
+        wallet = grant_credits(&st, &wallet, granted).await?;
     }
-    if total_credits > Decimal::ZERO {
-        let credit = WalletCredit::from_credit_amount(cur, rate_amount, total_credits, true);
-        let tx = build_transaction(&wallet, &credit, WalletTransactionType::Inbound, WalletTransactionStatus::Settled, None);
-        st.db.insert_wallet_transaction(&tx).await?;
-        wallet = increase_balance(&wallet, &tx, false);
-        st.db.update_wallet_balance(&wallet).await?;
+    if paid > Decimal::ZERO {
+        rago_jobs::wallet_credits::purchase_paid_credits(&st.db, &wallet, paid)
+            .await
+            .map_err(job_error)?;
     }
 
     Ok(Json(json!({ "wallet": ser::wallet(&wallet, &external_customer_id) })))
@@ -563,26 +576,73 @@ pub async fn create_wallet_transaction(
     let p = wrapped(&body, "wallet_transaction");
     let wallet_id = Uuid::parse_str(&req_s(p, "wallet_id")?)
         .map_err(|_| ApiError::validation("wallet_id", "value_is_invalid"))?;
-    let mut wallet = st.db.find_wallet(wallet_id).await?.ok_or_else(|| ApiError::NotFound("wallet".into()))?;
-    let _ = auth;
+    let mut wallet = st
+        .db
+        .find_wallet(wallet_id)
+        .await?
+        .filter(|w| w.organization_id == auth.organization.id)
+        .ok_or_else(|| ApiError::NotFound("wallet".into()))?;
 
     let paid = dec_of(p, "paid_credits").unwrap_or(Decimal::ZERO);
     let granted = dec_of(p, "granted_credits").unwrap_or(Decimal::ZERO);
-    let credits = paid + granted;
-    if credits <= Decimal::ZERO {
+    if paid < Decimal::ZERO || granted < Decimal::ZERO {
+        return Err(ApiError::validation("credits", "value_must_be_positive"));
+    }
+    if paid + granted <= Decimal::ZERO {
         return Err(ApiError::validation("paid_credits", "value_is_mandatory"));
     }
 
+    let mut transactions = Vec::new();
+    if granted > Decimal::ZERO {
+        let (updated, tx) = grant_credits_tx(&st, &wallet, granted).await?;
+        wallet = updated;
+        transactions.push(ser::wallet_transaction(&tx));
+    }
+    if paid > Decimal::ZERO {
+        let (tx, _invoice) = rago_jobs::wallet_credits::purchase_paid_credits(&st.db, &wallet, paid)
+            .await
+            .map_err(job_error)?;
+        transactions.push(ser::wallet_transaction(&tx));
+    }
+
+    Ok(Json(json!({ "wallet_transactions": transactions })))
+}
+
+/// Grant free credits: a settled inbound transaction applied to the balance.
+async fn grant_credits(st: &AppState, wallet: &Wallet, credits: Decimal) -> ApiResult<Wallet> {
+    grant_credits_tx(st, wallet, credits).await.map(|(w, _)| w)
+}
+
+async fn grant_credits_tx(
+    st: &AppState,
+    wallet: &Wallet,
+    credits: Decimal,
+) -> ApiResult<(Wallet, WalletTransaction)> {
     let cur = Currency::new(&wallet.balance_currency);
     let credit = WalletCredit::from_credit_amount(cur, wallet.rate_amount, credits, true);
-    let tx = build_transaction(&wallet, &credit, WalletTransactionType::Inbound, WalletTransactionStatus::Settled, None);
+    let tx = build_transaction(wallet, &credit, WalletTransactionType::Inbound, WalletTransactionStatus::Settled, None);
     st.db.insert_wallet_transaction(&tx).await?;
-    wallet = increase_balance(&wallet, &tx, false);
-    st.db.update_wallet_balance(&wallet).await?;
+    let updated = increase_balance(wallet, &tx, false);
+    st.db.update_wallet_balance(&updated).await?;
+    crate::emit::webhook(
+        &st.db,
+        wallet.organization_id,
+        rago_integrations::webhooks::WebhookKind::WalletTransactionCreated,
+        rago_jobs::wallet_credits::wallet_transaction_object(&tx),
+    )
+    .await;
+    Ok((updated, tx))
+}
 
-    Ok(Json(json!({
-        "wallet_transactions": [ser::wallet_transaction(&tx)]
-    })))
+fn job_error(e: rago_jobs::JobError) -> ApiError {
+    match e {
+        rago_jobs::JobError::Db(e) => ApiError::from(e),
+        rago_jobs::JobError::Billing(e) => ApiError::from(e),
+        other => {
+            tracing::error!(error = %other, "wallet credit purchase failed");
+            ApiError::Internal("wallet_credit_purchase_failed".into())
+        }
+    }
 }
 
 // ---- coupons ---------------------------------------------------------------
@@ -835,10 +895,9 @@ fn aggregation_from_str(s: &str) -> Option<AggregationType> {
         "sum_agg" => AggregationType::SumAgg,
         "max_agg" => AggregationType::MaxAgg,
         "unique_count_agg" => AggregationType::UniqueCountAgg,
-        // weighted_sum_agg / custom_agg are not accepted: the billing engine
-        // cannot compute fees for them, so a metric using one would fail every
-        // invoice it appears on.
         "latest_agg" => AggregationType::LatestAgg,
+        "weighted_sum_agg" => AggregationType::WeightedSumAgg,
+        "custom_agg" => AggregationType::CustomAgg,
         _ => return None,
     })
 }
@@ -1196,19 +1255,28 @@ pub(crate) async fn compute_subscription_invoice(
     let to = b.to_date.and_hms_opt(23, 59, 59).unwrap();
 
     // Load metrics + events per charge.
-    let mut loaded: Vec<(BillableMetric, Charge, Vec<Event>)> = Vec::new();
+    let mut loaded: Vec<(BillableMetric, Charge, Vec<Event>, AggregationPeriod)> = Vec::new();
     for charge in &charges {
+        // Pay-in-advance charges were billed when their events were ingested.
+        if charge.pay_in_advance {
+            continue;
+        }
         let Some(mid) = charge.billable_metric_id else { continue };
         let metric = st.db.find_billable_metric(mid).await?;
         let events = st
             .db
             .events_for_external_subscription(sub.organization_id, &sub.external_id, &metric.code, from, to)
             .await?;
-        loaded.push((metric, charge.clone(), events));
+        let carry_in = st
+            .db
+            .weighted_sum_carry_in(sub.organization_id, &sub.external_id, &metric, from)
+            .await?;
+        let period = AggregationPeriod::new(from, to).with_initial_value(carry_in);
+        loaded.push((metric, charge.clone(), events, period));
     }
     let charge_inputs: Vec<ChargeInput> = loaded
         .iter()
-        .map(|(m, c, e)| ChargeInput { metric: m, charge: c, events: e })
+        .map(|(m, c, e, p)| ChargeInput { metric: m, charge: c, events: e, period: Some(*p) })
         .collect();
 
     // Organization taxes apply to the subscription + charge fees.

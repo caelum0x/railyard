@@ -84,12 +84,22 @@ impl AdminQuery3 {
         Ok(db(ctx).list_integration_items(uuid(&integration_id)?).await?.into_iter().map(Into::into).collect())
     }
 
-    /// `integrationSubsidiaries(integrationId:)` — Netsuite subsidiaries live at
-    /// the provider; returns empty until a live fetch populates the cache
-    /// (owner-credentialed, via rago-integrations).
+    /// `integrationSubsidiaries(integrationId:)` — the NetSuite subsidiaries
+    /// cached by the last catalog fetch (`fetchIntegrationItems` or the
+    /// console's "Refresh catalog"), read through SuiteQL with the
+    /// integration's own TBA credentials.
     async fn integration_subsidiaries(&self, ctx: &Context<'_>, integration_id: ID) -> Result<Vec<IntegrationItem>> {
         require_org(ctx)?;
-        let _ = uuid(&integration_id)?;
-        Ok(Vec::new())
+        let rows = db(ctx).integration_items_of_type(uuid(&integration_id)?, Some("subsidiary")).await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, i)| IntegrationItem {
+                id: id.into(),
+                external_id: i.external_id,
+                item_type: Some(i.item_type),
+                external_name: i.external_name,
+                external_account_code: i.external_account_code,
+            })
+            .collect())
     }
 }

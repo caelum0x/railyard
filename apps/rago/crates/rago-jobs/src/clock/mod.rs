@@ -224,7 +224,13 @@ impl ClockJobId {
             ClockJobId::RefreshWalletsOngoingBalance => {
                 wallets::refresh_wallets_ongoing_balance(db).await
             }
-            ClockJobId::RefreshLifetimeUsages => usage::refresh_lifetime_usages(db).await,
+            ClockJobId::RefreshLifetimeUsages => {
+                // `LifetimeUsages::RecalculateAndCheckJob`: refresh, then check
+                // usage thresholds (progressive billing).
+                let refreshed = usage::refresh_lifetime_usages(db).await?;
+                let issued = crate::progressive_billing::run_usage_threshold_checks(db).await?;
+                Ok(refreshed + issued)
+            }
             ClockJobId::ComputeAllDailyUsages => usage::compute_all_daily_usages(db).await,
             ClockJobId::WebhooksCleanup => webhooks::webhooks_cleanup(db).await,
             ClockJobId::InboundWebhooksCleanup => webhooks::inbound_webhooks_cleanup(db).await,

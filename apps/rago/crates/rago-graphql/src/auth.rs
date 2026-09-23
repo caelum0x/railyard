@@ -80,13 +80,25 @@ fn b64url(data: &[u8]) -> String {
 /// Issue a signed HS256 JWT for a user session (24h expiry), matching Lago's
 /// token shape (`sub`, `exp`, `login_method`).
 pub fn issue_jwt(user_id: Uuid) -> String {
+    sign_jwt(serde_json::json!({ "sub": user_id.to_string(), "login_method": "email_password" }))
+}
+
+/// Issue a session JWT for an SSO login, pinned to the organization whose
+/// SSO integration authenticated the user (`org` claim) so a member of
+/// several organizations lands in the right one.
+pub fn issue_sso_jwt(user_id: Uuid, organization_id: Uuid, provider: &str) -> String {
+    sign_jwt(serde_json::json!({
+        "sub": user_id.to_string(),
+        "org": organization_id.to_string(),
+        "login_method": provider,
+    }))
+}
+
+fn sign_jwt(mut claims: serde_json::Value) -> String {
     let header = b64url(br#"{"alg":"HS256","typ":"JWT"}"#);
     let exp = (Utc::now() + Duration::days(1)).timestamp();
-    let payload = b64url(
-        serde_json::json!({ "sub": user_id.to_string(), "exp": exp, "login_method": "email_password" })
-            .to_string()
-            .as_bytes(),
-    );
+    claims["exp"] = serde_json::json!(exp);
+    let payload = b64url(claims.to_string().as_bytes());
     let signing_input = format!("{header}.{payload}");
     let mut mac = Hmac::<Sha256>::new_from_slice(jwt_secret().as_bytes()).expect("HMAC accepts any key length");
     mac.update(signing_input.as_bytes());
@@ -96,6 +108,11 @@ pub fn issue_jwt(user_id: Uuid) -> String {
 
 /// Verify a JWT's signature and expiry, returning the `sub` (user id) on success.
 pub fn verify_jwt(token: &str) -> Option<Uuid> {
+    verify_jwt_claims(token).map(|(user, _)| user)
+}
+
+/// Verify a JWT and return `(user_id, pinned organization_id)`.
+pub fn verify_jwt_claims(token: &str) -> Option<(Uuid, Option<Uuid>)> {
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
         return None;
@@ -113,7 +130,9 @@ pub fn verify_jwt(token: &str) -> Option<Uuid> {
     if Utc::now().timestamp() > exp {
         return None;
     }
-    json.get("sub").and_then(|v| v.as_str()).and_then(|s| Uuid::parse_str(s).ok())
+    let user = json.get("sub").and_then(|v| v.as_str()).and_then(|s| Uuid::parse_str(s).ok())?;
+    let org = json.get("org").and_then(|v| v.as_str()).and_then(|s| Uuid::parse_str(s).ok());
+    Some((user, org))
 }
 
 /// Generate an opaque, URL-safe token (invites, password resets).

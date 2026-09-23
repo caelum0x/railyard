@@ -124,6 +124,7 @@ impl<T: HttpTransport> PaymentProvider for AdyenProvider<T> {
             payable_status: Self::determine_payment_status(&result_code),
             provider_payment_id: psp_reference,
             provider_status: result_code,
+            next_action: None,
         })
     }
 

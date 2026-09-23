@@ -196,6 +196,7 @@ int_enum! {
     WalletTransactionStatus {
         Pending = 0 => "pending",
         Settled = 1 => "settled",
+        Failed = 2 => "failed",
     }
 }
 

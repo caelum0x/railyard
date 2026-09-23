@@ -34,10 +34,15 @@ pub async fn graphql_handler(
                 principal_org = Some(org.id);
                 req = req.data(Principal { organization: org });
             }
-        } else if let Some(user_id) = rago_graphql::auth::verify_jwt(token) {
-            // Dashboard session JWT: resolve the user + their organization and
+        } else if let Some((user_id, pinned_org)) = rago_graphql::auth::verify_jwt_claims(token) {
+            // Dashboard session JWT: resolve the user + their organization (an
+            // SSO session is pinned to the org whose IdP authenticated it) and
             // inject both an org principal and the user session (for currentUser).
-            if let Ok(Some((org, email))) = state.db.resolve_user_session(user_id).await {
+            let session = match pinned_org {
+                Some(org) => state.db.resolve_member_session(user_id, org).await,
+                None => state.db.resolve_user_session(user_id).await,
+            };
+            if let Ok(Some((org, email))) = session {
                 principal_org = Some(org.id);
                 req = req
                     .data(Principal { organization: org })

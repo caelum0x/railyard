@@ -135,7 +135,7 @@
     const cu = c.customer;
     const view = $("#view");
     view.innerHTML = head(cu.name || cu.external_id, '<span class="mono">' + esc(cu.external_id) + "</span>",
-      btn("checkout", "Payment method link", "link") + btn("portal", "Billing portal", "link") + btn("crm", "Sync to CRM", "refresh") +
+      btn("checkout", "Payment method link", "link") + btn("portal", "Billing portal", "link") +
       btn("edit", "Edit", "edit") + btn("delete", "Delete", "trash", "danger"), '<a href="#/customers">Customers</a>') +
       '<div class="grid2">' +
       card("Details", '<div class="body">' + kv([
@@ -143,7 +143,7 @@
         ["Country", esc(cu.country)], ["Timezone", esc(cu.timezone)], ["Tax ID", esc(cu.tax_identification_number)], ["Created", datetime(cu.created_at)],
       ]) + "</div>") +
       card("Current usage", '<div class="body" id="usage-box">' + usagePicker(subs.subscriptions || []) + "</div>") +
-      "</div>" +
+      "</div>" + '<div id="integration-box"></div>' +
       card("Subscriptions", table([
         { h: "External ID", f: (r) => esc(r.external_id), cls: "mono" },
         { h: "Plan", f: (r) => esc(r.plan_code) },
@@ -192,15 +192,12 @@
         const r = await api.get(base + "/portal_url");
         window.open(r.customer.portal_url, "_blank", "noopener");
       },
-      crm: async () => {
-        const r = await api.post(base + "/sync_crm");
-        R.toast("Synced to CRM as " + r.integration_customer.external_id, "ok");
-      },
       new_sub: () => R.subscriptionForm({ external_customer_id: ext }),
       one_off: () => R.oneOffInvoiceForm(ext),
       new_wallet: () => R.walletForm({ external_customer_id: ext, currency: cu.currency }),
       apply_coupon: () => R.applyCouponForm(ext),
     });
+    if (R.integrationPanel) R.integrationPanel("customer", cu, $("#integration-box", view));
   });
   function usagePicker(subs) {
     const active = subs.filter((s) => s.status === "active");
@@ -281,7 +278,8 @@
         ["Started", datetime(s.started_at)], ["Ending", datetime(s.ending_at)], ["Terminated", datetime(s.terminated_at)],
       ]) + "</div>") +
       card("Lifetime usage", '<div class="body">' + (lifetime ? kv(Object.entries(lifetime).filter(([, v]) => typeof v !== "object").map(([k, v]) => [k.replace(/_/g, " "), /cents$/.test(k) ? money(v, s.plan_amount_currency) : esc(v)])) : '<div class="empty">No usage recorded.</div>') + "</div>") +
-      "</div>";
+      "</div>" + '<div id="thresholds-box"></div>';
+    R.thresholdsPanel($("#thresholds-box", view), base + "/usage_thresholds", s.plan_amount_currency, { subscription: true });
     finish(view, {
       bill: () => R.confirmAction("Bill current period", "Generate and finalize the invoice for the current period now.", "Bill now", async () => {
         const r = await api.post(base + "/invoices");
@@ -309,7 +307,7 @@
   });
 
   // ---- plans ------------------------------------------------------------------------------
-  const CHARGE_MODELS = [["standard", "Standard (per unit)"], ["package", "Package"], ["graduated", "Graduated"], ["volume", "Volume"], ["percentage", "Percentage"], ["graduated_percentage", "Graduated percentage"]];
+  const CHARGE_MODELS = [["standard", "Standard (per unit)"], ["package", "Package"], ["graduated", "Graduated"], ["volume", "Volume"], ["percentage", "Percentage"], ["graduated_percentage", "Graduated percentage"], ["dynamic", "Dynamic (price sent on each event)"], ["custom", "Custom (metric's custom aggregator)"]];
   R.route("/plans", async (_p, q) => {
     const pg = page(q);
     const data = await api.get("/api/v1/plans?per_page=" + PER_PAGE + "&page=" + pg);
@@ -352,6 +350,7 @@
     if (model === "standard") return { amount: String(v.amount || "0") };
     if (model === "package") return { amount: String(v.amount || "0"), package_size: Number(v.package_size || 1), free_units: Number(v.free_units || 0) };
     if (model === "percentage") return { rate: String(v.rate || "0") };
+    if (model === "dynamic" || model === "custom") return {};
     return v.properties || {};
   }
   R.route("/plans/:code", async (p) => {
@@ -372,7 +371,9 @@
         { h: "Properties", f: (r) => '<span class="mono">' + esc(JSON.stringify(r.properties)) + "</span>" },
         { h: "In advance", f: (r) => (r.pay_in_advance ? "yes" : "no") },
         { h: "", f: (r) => '<button type="button" data-del-charge="' + esc(r.lago_id) + '">' + icon("trash") + "Remove</button>" },
-      ], pl.charges, { empty: "No usage charges. Add one to bill metered usage." }), btn("add_charge", "Add charge", "plus"));
+      ], pl.charges, { empty: "No usage charges. Add one to bill metered usage." }), btn("add_charge", "Add charge", "plus")) +
+      '<div id="thresholds-box"></div>';
+    R.thresholdsPanel($("#thresholds-box", view), base + "/usage_thresholds", pl.amount_currency, { subscription: false });
     R.$$("[data-del-charge]", view).forEach((b) => (b.onclick = () => R.confirmAction("Remove charge", "Existing invoices keep their fees.", "Remove", async () => {
       await api.del(base + "/charges/" + enc(b.dataset.delCharge));
       return "Charge removed";
@@ -396,7 +397,7 @@
       }),
       add_charge: () => R.openForm({
         title: "Add usage charge",
-        intro: "Standard: price per unit. Package: price per package of N units. Percentage: rate on the event amount. Other models take a properties JSON (Lago format).",
+        intro: "Standard: price per unit. Package: price per package of N units. Percentage: rate on the event amount. Dynamic: each event carries its own precise_total_amount_cents. Custom: the metric's custom aggregator prices each event. Other models take a properties JSON (Lago format).",
         fields: [
           { name: "billable_metric_code", label: "Billable metric", type: "select", required: true, options: (metrics.billable_metrics || []).map((m) => [m.code, m.name + " (" + m.code + ")"]) },
           { name: "charge_model", label: "Charge model", type: "select", options: CHARGE_MODELS },
@@ -441,13 +442,20 @@
         fields: [
           { name: "name", label: "Name", required: true },
           { name: "code", label: "Code (event code)", required: true, placeholder: "api_calls" },
-          { name: "aggregation_type", label: "Aggregation", type: "select", options: [["count_agg", "Count events"], ["sum_agg", "Sum of a property"], ["max_agg", "Max of a property"], ["unique_count_agg", "Unique count of a property"], ["latest_agg", "Latest value"]] },
+          { name: "aggregation_type", label: "Aggregation", type: "select", options: [["count_agg", "Count events"], ["sum_agg", "Sum of a property"], ["max_agg", "Max of a property"], ["unique_count_agg", "Unique count of a property"], ["latest_agg", "Latest value"], ["weighted_sum_agg", "Weighted sum over time (e.g. seats, storage)"], ["custom_agg", "Custom expression per event"]] },
           { name: "field_name", label: "Property to aggregate", placeholder: "required unless counting events" },
+          { name: "custom_aggregator", label: "Custom aggregator (custom expression only)", type: "textarea", placeholder: "round(event.properties.tokens * 0.002, 2)" },
           { name: "recurring", label: "Recurring (value carries over between periods)", type: "checkbox" },
           { name: "description", label: "Description" },
         ],
         submitLabel: "Create metric",
-        onSubmit: async (v) => { await api.post("/api/v1/billable_metrics", { billable_metric: v }); return "Metric created"; },
+        onSubmit: async (v) => {
+          if (v.aggregation_type === "custom_agg" && !v.custom_aggregator) throw new Error("A custom expression metric needs a custom aggregator.");
+          if (["sum_agg", "max_agg", "unique_count_agg", "latest_agg", "weighted_sum_agg"].includes(v.aggregation_type) && !v.field_name) throw new Error("Enter the property to aggregate.");
+          if (v.aggregation_type !== "custom_agg") delete v.custom_aggregator;
+          await api.post("/api/v1/billable_metrics", { billable_metric: v });
+          return "Metric created";
+        },
         after: R.render,
       }),
     });
@@ -515,7 +523,7 @@
     view.innerHTML = head("Invoice " + inv.number, badge(inv.status) + " " + badge(inv.payment_status) +
       (inv.lago_customer_id ? ' <span class="mono">' + esc(inv.lago_customer_id) + "</span>" : ""),
       btn("pdf", "PDF", "download") + btn("xml", "XML", "download") +
-      (inv.status === "draft" ? btn("finalize", "Finalize", "check", "primary") + btn("refresh", "Refresh totals", "refresh") : "") +
+      (inv.status === "draft" ? btn("finalize", "Finalize", "check", "primary") + btn("refresh", "Refresh totals", "refresh") + btn("delete_draft", "Delete draft", "trash", "danger") : "") +
       (inv.status === "failed" ? btn("retry", "Retry finalization", "retry") : "") +
       (unpaid ? btn("charge", "Collect payment now", "pay", "primary") + btn("paylink", "Payment link", "link") + btn("mark_paid", "Mark as paid", "check") : "") +
       (fin ? btn("credit", "Issue credit note", "credit_notes") + btn("email", "Resend email", "refresh") : "") +
@@ -526,6 +534,7 @@
         ["Fees", money(inv.fees_amount_cents, inv.currency)], ["Coupons", money(inv.coupons_amount_cents, inv.currency)],
         ["Subtotal excl. tax", money(inv.sub_total_excluding_taxes_amount_cents, inv.currency)], ["Taxes", money(inv.taxes_amount_cents, inv.currency)],
         ["Credit notes", money(inv.credit_notes_amount_cents, inv.currency)], ["Prepaid credits", money(inv.prepaid_credit_amount_cents, inv.currency)],
+        ["Billed progressively", money(inv.progressive_billing_credit_amount_cents || 0, inv.currency)],
         ["Total due", "<strong>" + money(inv.total_amount_cents, inv.currency) + "</strong>"],
       ]) + "</div>") +
       card("Details", '<div class="body">' + kv([
@@ -552,12 +561,20 @@
         { h: "Provider ref", f: (r) => esc(r.provider_refund_id || "-"), cls: "mono" },
         { h: "Credit note", f: (r) => r.lago_credit_note_id ? '<a href="#/credit_notes/' + esc(r.lago_credit_note_id) + '">View</a>' : "-" },
         { h: "Error", f: (r) => esc(r.error || "") },
-      ], refunds, { empty: "No refunds issued." }));
+      ], refunds, { empty: "No refunds issued." })) + '<div id="payment-action-box"></div><div id="receipts-box"></div><div id="integration-box"></div>';
+    R.paymentActionPanel($("#payment-action-box", view), inv);
+    R.receiptsPanel($("#receipts-box", view), inv);
+    if (R.integrationPanel) R.integrationPanel("invoice", inv, $("#integration-box", view));
     finish(view, {
       pdf: () => api.download(base + "/download", inv.number + ".pdf"),
       xml: () => api.download(base + "/download.xml", inv.number + ".xml"),
       finalize: async () => { await api.put(base + "/finalize"); R.toast("Invoice finalized", "ok"); R.render(); },
       refresh: async () => { await api.put(base + "/refresh"); R.toast("Totals recomputed", "ok"); R.render(); },
+      delete_draft: () => R.confirmAction("Delete draft", "Delete draft invoice " + inv.number + " and its fees? This cannot be undone.", "Delete", async () => {
+        await api.del(base);
+        location.hash = "#/invoices";
+        return "Draft invoice deleted";
+      }),
       retry: async () => { await api.post(base + "/retry"); R.toast("Finalization retried", "ok"); R.render(); },
       charge: async () => {
         const r = await api.post(base + "/retry_payment");
@@ -634,7 +651,8 @@
         ["Invoice", '<a href="#/invoices/' + esc(cn.lago_invoice_id) + '">' + esc(cn.lago_invoice_id) + "</a>"], ["Issued", date(cn.issuing_date)],
         ["Reason", esc(cn.reason)], ["Total", money(cn.total_amount_cents, cn.currency)], ["Taxes", money(cn.taxes_amount_cents, cn.currency)],
         ["Credit", money(cn.credit_amount_cents, cn.currency)], ["Refund", money(cn.refund_amount_cents, cn.currency)], ["Refund status", cn.refund_status ? badge(cn.refund_status) : "No refund"], ["Remaining credit", money(cn.balance_amount_cents, cn.currency)],
-      ]) + "</div>");
+      ]) + "</div>") + '<div id="integration-box"></div>';
+    if (R.integrationPanel) R.integrationPanel("credit_note", cn, $("#integration-box", view));
     finish(view, {
       pdf: () => api.download(base + "/download", cn.number + ".pdf"),
       xml: () => api.postDownload(base + "/download_xml", cn.number + ".xml"),

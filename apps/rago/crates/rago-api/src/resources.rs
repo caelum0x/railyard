@@ -288,8 +288,27 @@ fn organization_json(o: &rago_core::models::Organization) -> Value {
 }
 
 /// `GET /organizations` — the authenticated organization.
-pub async fn show_organization(_st: State<AppState>, auth: Authed) -> ApiResult<Json<Value>> {
-    Ok(Json(json!({ "organization": organization_json(&auth.organization) })))
+pub async fn show_organization(State(st): State<AppState>, auth: Authed) -> ApiResult<Json<Value>> {
+    let o = &auth.organization;
+    let mut json = organization_json(o);
+    add_numbering(&st, o, &mut json).await?;
+    Ok(Json(json!({ "organization": json })))
+}
+
+/// Add the invoice-numbering settings to an organization payload: the custom
+/// prefix (if any) and the prefix new invoices will actually carry.
+async fn add_numbering(
+    st: &AppState,
+    o: &rago_core::models::Organization,
+    json: &mut Value,
+) -> ApiResult<()> {
+    let custom = st.db.document_number_prefix(o.id).await?;
+    let effective = st.db.effective_document_number_prefix(o.id, &o.name).await?;
+    if let Value::Object(map) = json {
+        map.insert("document_number_prefix".into(), json!(custom));
+        map.insert("effective_document_number_prefix".into(), json!(effective));
+    }
+    Ok(())
 }
 
 /// `PUT /organizations` — update the authenticated organization.
@@ -299,6 +318,15 @@ pub async fn update_organization(
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
     let p = wrapped(&body, "organization");
+    // `document_number_prefix`: a string sets it, `null` / "" resets to the default.
+    if let Some(v) = p.get("document_number_prefix") {
+        let prefix = v.as_str().map(str::trim).filter(|x| !x.is_empty());
+        if let Some(px) = prefix {
+            rago_db::numbering::validate_prefix(px)
+                .map_err(|code| ApiError::validation("document_number_prefix", code))?;
+        }
+        st.db.set_document_number_prefix(auth.organization.id, prefix).await?;
+    }
     let org = st
         .db
         .update_organization(
@@ -310,7 +338,9 @@ pub async fn update_organization(
             s(p, "timezone").as_deref(),
         )
         .await?;
-    Ok(Json(json!({ "organization": organization_json(&org) })))
+    let mut json = organization_json(&org);
+    add_numbering(&st, &org, &mut json).await?;
+    Ok(Json(json!({ "organization": json })))
 }
 
 // ---- entitlement features --------------------------------------------------

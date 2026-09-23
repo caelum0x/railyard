@@ -7,9 +7,11 @@
 //! emit the `invoice.created` webhook, charge the customer through the payment
 //! provider, and emit the payment-status webhook.
 
-use chrono::{Datelike, NaiveDate, Utc};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, Utc};
+use rago_billing::aggregation::AggregationPeriod;
 use rago_billing::dates::{due_for_billing, Interval, MonthlyDates, PeriodDates};
-use rago_billing::generate::{generate_subscription_invoice, ChargeInput};
+use rago_billing::generate::{generate_subscription_invoice_with_progressive, ChargeInput};
+use rago_billing::progressive_billing::{ProgressiveBillingInvoice, ProgressiveFee};
 use rago_billing::subscription_fee::Proration;
 use rago_core::enums::{InvoiceStatus, InvoiceType, PaymentStatus, PlanInterval};
 use rago_core::models::{Fee, Invoice, Subscription};
@@ -235,6 +237,132 @@ pub async fn bill_and_collect_external<T: HttpTransport>(
     bill_and_collect(db, transport, &sub, &plan, interval, anniversary, billing_date, true).await
 }
 
+/// Charges-period boundaries `(from_date, to_date)` of the period that rolls
+/// over on `billing_date`. Monthly uses the full `MonthlyDates` logic, the
+/// other intervals `PeriodDates` (calendar).
+pub(crate) fn period_bounds(
+    plan: &rago_core::models::Plan,
+    interval: Interval,
+    anniversary: bool,
+    sub_at: NaiveDate,
+    billing_date: NaiveDate,
+) -> (NaiveDate, NaiveDate) {
+    if interval == Interval::Monthly {
+        let b = MonthlyDates {
+            subscription_at: sub_at,
+            billing_at: billing_date,
+            anniversary,
+            pay_in_advance: plan.pay_in_advance,
+            current_usage: false,
+        }
+        .boundaries();
+        (b.from_date, b.to_date)
+    } else {
+        let b = PeriodDates {
+            interval,
+            subscription_at: sub_at,
+            billing_at: billing_date,
+            anniversary,
+            pay_in_advance: plan.pay_in_advance,
+        }
+        .boundaries();
+        (b.from_date, b.to_date)
+    }
+}
+
+/// A usage charge loaded for billing: metric, charge, the period's events and
+/// the aggregation period (with the weighted-sum carry-in for recurring metrics).
+pub(crate) type LoadedCharge = (
+    rago_core::models::BillableMetric,
+    rago_core::models::Charge,
+    Vec<rago_core::models::Event>,
+    AggregationPeriod,
+);
+
+/// Load every usage charge of `plan` with the subscription's events in
+/// `[from, events_to]`, aggregated over the full period `[from, to]`.
+pub(crate) async fn load_charges(
+    db: &Db,
+    subscription: &Subscription,
+    plan: &rago_core::models::Plan,
+    from: NaiveDateTime,
+    to: NaiveDateTime,
+    events_to: NaiveDateTime,
+) -> Result<Vec<LoadedCharge>, JobError> {
+    let charges = db.charges_for_plan(plan.id).await?;
+    let mut loaded: Vec<LoadedCharge> = Vec::with_capacity(charges.len());
+    for charge in charges {
+        // Pay-in-advance charges are billed when their events are ingested
+        // (`pay_in_advance::bill_event_in_advance`), never at period end.
+        if charge.pay_in_advance {
+            continue;
+        }
+        let Some(mid) = charge.billable_metric_id else { continue };
+        let metric = db.find_billable_metric(mid).await?;
+        let events = db
+            .events_for_external_subscription(
+                subscription.organization_id,
+                &subscription.external_id,
+                &metric.code,
+                from,
+                events_to,
+            )
+            .await?;
+        let carry_in = db
+            .weighted_sum_carry_in(
+                subscription.organization_id,
+                &subscription.external_id,
+                &metric,
+                from,
+            )
+            .await?;
+        let period = AggregationPeriod::new(from, to).with_initial_value(carry_in);
+        loaded.push((metric, charge, events, period));
+    }
+    Ok(loaded)
+}
+
+/// Progressive invoices of `(subscription, [from, to])` not yet credited back,
+/// shaped for the credit-back service.
+async fn uncredited_progressive_invoices(
+    db: &Db,
+    subscription_id: Uuid,
+    from: NaiveDateTime,
+    to: NaiveDateTime,
+) -> Result<(Vec<Uuid>, Vec<ProgressiveBillingInvoice>), JobError> {
+    let mut row_ids = Vec::new();
+    let mut invoices = Vec::new();
+    for row in db.progressive_invoices_for_period(subscription_id, from, to).await? {
+        if row.credited_invoice_id.is_some() {
+            continue;
+        }
+        let Some(inv) = db.find_invoice(row.invoice_id).await? else { continue };
+        let fees = db.fees_for_invoice(inv.id).await?;
+        invoices.push(ProgressiveBillingInvoice {
+            id: inv.id,
+            fees_amount_cents: inv.fees_amount_cents,
+            coupons_amount_cents: inv.coupons_amount_cents,
+            progressive_billing_credits_amount_cents: 0,
+            credit_notes_amount_cents: inv.credit_notes_amount_cents,
+            fees: fees
+                .iter()
+                .filter(|f| f.is_charge())
+                .filter_map(|f| {
+                    Some(ProgressiveFee {
+                        charge_id: f.charge_id?,
+                        charge_filter_id: f.charge_filter_id,
+                        grouped_by: f.grouped_by.clone(),
+                        amount_cents: f.amount_cents,
+                        creditable_amount_cents: f.amount_cents,
+                    })
+                })
+                .collect(),
+        });
+        row_ids.push(row.id);
+    }
+    Ok((row_ids, invoices))
+}
+
 /// Bill a single subscription for the period ending at `billing_date`.
 async fn bill_one(
     db: &Db,
@@ -250,57 +378,23 @@ async fn bill_one(
         .map(|t| t.date_naive())
         .unwrap_or(billing_date);
 
-    // Period boundaries: monthly uses the full MonthlyDates logic, the other
-    // intervals use PeriodDates (calendar).
-    let (from_date, to_date) = if interval == Interval::Monthly {
-        let dates = MonthlyDates {
-            subscription_at: sub_at,
-            billing_at: billing_date,
-            anniversary,
-            pay_in_advance: plan.pay_in_advance,
-            current_usage: false,
-        };
-        let b = dates.boundaries();
-        (b.from_date, b.to_date)
-    } else {
-        let dates = PeriodDates {
-            interval,
-            subscription_at: sub_at,
-            billing_at: billing_date,
-            anniversary,
-            pay_in_advance: plan.pay_in_advance,
-        };
-        let b = dates.boundaries();
-        (b.from_date, b.to_date)
-    };
-    let from = from_date.and_hms_opt(0, 0, 0).unwrap();
-    let to = to_date.and_hms_opt(23, 59, 59).unwrap();
+    let (from_date, to_date) = period_bounds(plan, interval, anniversary, sub_at, billing_date);
+    let from = from_date.and_hms_opt(0, 0, 0).unwrap_or_default();
+    let to = to_date.and_hms_opt(23, 59, 59).unwrap_or_default();
 
-    let charges = db.charges_for_plan(plan.id).await?;
-    let mut loaded: Vec<(rago_core::models::BillableMetric, rago_core::models::Charge, Vec<rago_core::models::Event>)> =
-        Vec::new();
-    for charge in &charges {
-        let Some(mid) = charge.billable_metric_id else { continue };
-        let metric = db.find_billable_metric(mid).await?;
-        let events = db
-            .events_for_external_subscription(
-                subscription.organization_id,
-                &subscription.external_id,
-                &metric.code,
-                from,
-                to,
-            )
-            .await?;
-        loaded.push((metric, charge.clone(), events));
-    }
+    let loaded = load_charges(db, subscription, plan, from, to, to).await?;
     let charge_inputs: Vec<ChargeInput> = loaded
         .iter()
-        .map(|(m, c, e)| ChargeInput { metric: m, charge: c, events: e })
+        .map(|(m, c, e, p)| ChargeInput { metric: m, charge: c, events: e, period: Some(*p) })
         .collect();
+
+    // Usage already billed mid-period by progressive invoices is credited back.
+    let (progressive_row_ids, progressive) =
+        uncredited_progressive_invoices(db, subscription.id, from, to).await?;
 
     let taxes = db.organization_taxes(subscription.organization_id).await?;
     let mut invoice = blank_invoice(subscription, &currency, to_date);
-    let fees = generate_subscription_invoice(
+    let (fees, progressive_results) = generate_subscription_invoice_with_progressive(
         &mut invoice,
         plan,
         subscription,
@@ -309,6 +403,7 @@ async fn bill_one(
         &charge_inputs,
         &taxes,
         &[],
+        &progressive,
     )?;
 
     // Apply prepaid wallet credit (after tax) before persisting, so the invoice
@@ -327,11 +422,19 @@ async fn bill_one(
     // instead of creating a duplicate (which the payment path would double-charge).
     match db
         .insert_subscription_invoice_with_prepaid_guarded(
-            &invoice, &fees, &prepaid, subscription.id, from, to,
+            &mut invoice, &fees, &prepaid, subscription.id, from, to,
         )
         .await?
     {
-        rago_db::BilledInvoice::Created => Ok((invoice, fees, true)),
+        rago_db::BilledInvoice::Created => {
+            db.mark_progressive_invoices_credited(&progressive_row_ids, invoice.id).await?;
+            for result in &progressive_results {
+                if let Some(note) = &result.credit_note {
+                    crate::progressive_billing::issue_true_up_credit_note(db, note).await?;
+                }
+            }
+            Ok((invoice, fees, true))
+        }
         rago_db::BilledInvoice::AlreadyBilled(existing) => {
             let existing_fees = db.fees_for_invoice(existing.id).await?;
             Ok((existing, existing_fees, false))
@@ -372,7 +475,7 @@ fn monthly_for_single_day(
     }
 }
 
-fn fee_webhook_object(fee: &Fee, invoice: &Invoice) -> serde_json::Value {
+pub(crate) fn fee_webhook_object(fee: &Fee, invoice: &Invoice) -> serde_json::Value {
     json!({
         "lago_id": fee.id,
         "lago_invoice_id": invoice.id,
@@ -387,7 +490,7 @@ fn fee_webhook_object(fee: &Fee, invoice: &Invoice) -> serde_json::Value {
     })
 }
 
-fn invoice_webhook_object(invoice: &Invoice) -> serde_json::Value {
+pub(crate) fn invoice_webhook_object(invoice: &Invoice) -> serde_json::Value {
     json!({
         "lago_id": invoice.id,
         "number": invoice.number,
@@ -407,8 +510,9 @@ fn blank_invoice(sub: &Subscription, currency: &Currency, issuing_date: NaiveDat
         organization_id: sub.organization_id,
         billing_entity_id: sub.billing_entity_id.unwrap_or(sub.organization_id),
         customer_id: Some(sub.customer_id),
-        number: format!("INV-{}", &Uuid::new_v4().to_string()[..8]),
-        sequential_id: Some(1),
+        // Assigned from the per-organization sequence at insert time.
+        number: String::new(),
+        sequential_id: None,
         invoice_type: InvoiceType::Subscription,
         status: InvoiceStatus::Finalized,
         payment_status: PaymentStatus::Pending,

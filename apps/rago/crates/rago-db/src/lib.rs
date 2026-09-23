@@ -21,13 +21,21 @@ pub mod graphql_admin2;
 pub mod graphql_admin3;
 pub mod graphql_admin4;
 pub mod graphql_admin5;
+pub mod integration_hub;
 pub mod mapping;
+pub mod numbering;
+pub mod orders;
+pub mod pay_in_advance;
+pub mod payment_actions;
+pub mod progressive;
 pub mod repo;
+pub mod receipts;
 pub mod refunds;
 pub mod rest_extras;
 pub mod secrets;
 pub mod sso_state;
 pub mod tenancy;
+pub mod wallet_credits;
 pub mod webhook_deliveries;
 
 pub use dunning::{

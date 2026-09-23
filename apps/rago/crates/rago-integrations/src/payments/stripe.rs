@@ -299,6 +299,26 @@ impl<T: HttpTransport> PaymentProvider for StripeProvider<T> {
                 .and_then(|e| e.get("type"))
                 .and_then(Value::as_str)
                 == Some("card_error");
+            // Off-session SCA: the bank wants the cardholder to authenticate.
+            // Not a decline — the customer completes it through a confirm link.
+            if decline_code == "authentication_required" {
+                let pi_id = err
+                    .and_then(|e| e.pointer("/payment_intent/id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("auth-required-{}-{}", req.payment_id, self.attempt));
+                let next_action = err
+                    .and_then(|e| e.pointer("/payment_intent/next_action"))
+                    .filter(|v| !v.is_null())
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({ "type": "authentication_required" }));
+                return Ok(PaymentOutcome {
+                    payable_status: PayableStatus::Pending,
+                    provider_payment_id: pi_id,
+                    provider_status: "requires_action".into(),
+                    next_action: Some(next_action),
+                });
+            }
             if is_card_error || resp.status == 402 {
                 let pi_id = err
                     .and_then(|e| e.pointer("/payment_intent/id"))
@@ -309,6 +329,7 @@ impl<T: HttpTransport> PaymentProvider for StripeProvider<T> {
                     payable_status: PayableStatus::Failed,
                     provider_payment_id: pi_id,
                     provider_status: decline_code,
+                    next_action: None,
                 });
             }
             return Err(PaymentError::Provider {
@@ -335,10 +356,21 @@ impl<T: HttpTransport> PaymentProvider for StripeProvider<T> {
             .ok_or_else(|| PaymentError::InvalidResponse("missing status".into()))?
             .to_string();
 
+        // `requires_action` (SCA / 3-D Secure): keep what Stripe asks the
+        // customer to do so a confirm link can be sent.
+        let next_action = (provider_status == "requires_action")
+            .then(|| json.get("next_action").cloned().filter(|v| !v.is_null()))
+            .flatten()
+            .or_else(|| {
+                (provider_status == "requires_action")
+                    .then(|| serde_json::json!({ "type": "use_stripe_sdk" }))
+            });
+
         Ok(PaymentOutcome {
             payable_status: Self::determine_payment_status(&provider_status),
             provider_payment_id,
             provider_status,
+            next_action,
         })
     }
 
@@ -437,4 +469,15 @@ fn percent_encode(s: &str) -> String {
         }
     }
     out
+}
+
+/// The customer-facing URL of a Stripe `next_action`, when Stripe hosts one
+/// (`redirect_to_url`). `use_stripe_sdk` actions have none: the customer is
+/// sent a hosted Checkout link instead.
+pub fn next_action_redirect_url(next_action: &Value) -> Option<String> {
+    next_action
+        .pointer("/redirect_to_url/url")
+        .and_then(Value::as_str)
+        .filter(|u| u.starts_with("https://"))
+        .map(str::to_string)
 }

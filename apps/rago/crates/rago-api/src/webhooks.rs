@@ -23,7 +23,8 @@ use axum::http::{HeaderMap, StatusCode};
 use chrono::Utc;
 use rago_core::enums::PaymentStatus;
 use rago_integrations::payments::stripe_webhook::{
-    parse_event, verify_signature, IncomingStatus, DEFAULT_TOLERANCE_SECS,
+    parse_event, verify_signature, IncomingStatus, StripeEvent, StripeIntentProgress,
+    DEFAULT_TOLERANCE_SECS,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -128,7 +129,150 @@ pub async fn stripe_webhook(
         };
     }
 
-    sync_payment_status(&state, organization_id, &event.object_id, event.incoming_status()).await
+    // SCA / 3DS progress: record the customer action (or `processing`).
+    if let Some(progress) = event.intent_progress() {
+        return apply_intent_progress(&state, organization_id, &event, progress).await;
+    }
+
+    let incoming = event.incoming_status();
+    if incoming == IncomingStatus::Succeeded {
+        // A Checkout payment (the 3DS / "pay now" fallback) settles through a
+        // new PaymentIntent: bind it to the invoice's payment first.
+        if let Err(resp) = bind_checkout_payment(&state, organization_id, &event).await {
+            return resp;
+        }
+    }
+    let result = sync_payment_status(&state, organization_id, &event.object_id, incoming).await;
+    if incoming == IncomingStatus::Succeeded && result.0 == StatusCode::OK {
+        if let Err(e) = state.db.clear_payment_next_action_by_provider_id(&event.object_id).await {
+            tracing::warn!(error = %e, "webhook: could not clear payment next_action");
+        }
+    }
+    result
+}
+
+/// `payment_intent.requires_action` → store the action + confirm link and
+/// queue `payment.requires_action`; `payment_intent.processing` → record it.
+async fn apply_intent_progress(
+    state: &AppState,
+    organization_id: Uuid,
+    event: &StripeEvent,
+    progress: StripeIntentProgress,
+) -> (StatusCode, String) {
+    match progress {
+        StripeIntentProgress::Processing => {
+            match state.db.set_payment_provider_status(&event.object_id, "processing").await {
+                Ok(true) => (StatusCode::OK, "processing recorded".into()),
+                Ok(false) => (StatusCode::OK, "payment not found".into()),
+                Err(e) => {
+                    tracing::error!(error = %e, "webhook: processing update failed");
+                    (StatusCode::INTERNAL_SERVER_ERROR, "db error".into())
+                }
+            }
+        }
+        StripeIntentProgress::RequiresAction { next_action } => {
+            let url = rago_integrations::payments::stripe::next_action_redirect_url(&next_action);
+            let row = match state
+                .db
+                .mark_payment_requires_action(&event.object_id, &next_action, url.as_deref())
+                .await
+            {
+                Ok(Some(r)) => r,
+                Ok(None) => return (StatusCode::OK, "payment not found".into()),
+                Err(e) => {
+                    tracing::error!(error = %e, "webhook: requires_action update failed");
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "db error".into());
+                }
+            };
+            if row.organization_id != organization_id {
+                return (StatusCode::NOT_FOUND, "organization mismatch".into());
+            }
+            let invoice = match state.db.find_invoice(row.invoice_id).await {
+                Ok(Some(i)) => i,
+                Ok(None) => return (StatusCode::OK, "invoice not found".into()),
+                Err(e) => {
+                    tracing::error!(error = %e, "webhook: invoice reload failed");
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "db error".into());
+                }
+            };
+            let customer = match invoice.customer_id {
+                Some(cid) => state.db.find_customer(cid).await.ok().flatten(),
+                None => None,
+            };
+            let transport = rago_integrations::default_transport();
+            match customer {
+                Some(c) => {
+                    if let Err(e) = rago_jobs::collection::notify_requires_action(
+                        &state.db, &transport, &invoice, &c,
+                    )
+                    .await
+                    {
+                        tracing::error!(error = %e, "webhook: requires_action notification failed");
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "notify error".into());
+                    }
+                }
+                None => tracing::warn!(invoice_id = %invoice.id, "requires_action on invoice without customer"),
+            }
+            (StatusCode::OK, "requires_action recorded".into())
+        }
+    }
+}
+
+/// Bind a succeeded PaymentIntent that Rago did not create (a Checkout
+/// session for the invoice) to the invoice's payment row, so the settlement
+/// below finds it. No-op for PaymentIntents Rago already knows.
+async fn bind_checkout_payment(
+    state: &AppState,
+    organization_id: Uuid,
+    event: &StripeEvent,
+) -> Result<(), (StatusCode, String)> {
+    let db_err = |e: rago_db::DbError| {
+        tracing::error!(error = %e, "webhook: checkout bind failed");
+        (StatusCode::INTERNAL_SERVER_ERROR, "db error".to_string())
+    };
+    if state.db.find_payment_by_provider_id(&event.object_id).await.map_err(db_err)?.is_some() {
+        return Ok(());
+    }
+    let Some(invoice_id) = event.lago_invoice_id().and_then(|s| Uuid::parse_str(s).ok()) else {
+        return Ok(());
+    };
+    let Some(invoice) = state.db.find_invoice(invoice_id).await.map_err(db_err)? else {
+        return Ok(());
+    };
+    if invoice.organization_id != organization_id {
+        return Err((StatusCode::NOT_FOUND, "organization mismatch".into()));
+    }
+    let payment_id = rago_jobs::payments::deterministic_payment_id(invoice.id);
+    let existing = state.db.payment_attempt_state(payment_id).await.map_err(db_err)?;
+    match existing {
+        Some(_) => {
+            state
+                .db
+                .rebind_invoice_payment(payment_id, invoice.id, &event.object_id)
+                .await
+                .map_err(db_err)?;
+        }
+        None => {
+            state
+                .db
+                .record_payment_attempt(
+                    payment_id,
+                    invoice.organization_id,
+                    invoice.id,
+                    "stripe",
+                    Some(&event.object_id),
+                    Some("processing"),
+                    "pending",
+                    invoice.total_amount_cents,
+                    &invoice.currency().code(),
+                    0,
+                    None,
+                )
+                .await
+                .map_err(db_err)?;
+        }
+    }
+    Ok(())
 }
 
 /// `POST /webhooks/gocardless/:organization_id` — verify the `Webhook-Signature`
@@ -280,6 +424,19 @@ async fn sync_payment_status(
             None
         }
     };
+    if let Some(invoice) = invoice.as_ref() {
+        if let Err(e) =
+            rago_jobs::wallet_credits::on_invoice_payment_status(&state.db, invoice, payable_status).await
+        {
+            tracing::error!(error = %e, invoice_id = %invoice.id, "webhook: paid-credit settlement failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "settlement error".into());
+        }
+    }
+    if payable_status == PaymentStatus::Succeeded {
+        if let Err(e) = rago_jobs::receipts::issue_for_payment(&state.db, payment_id).await {
+            tracing::error!(error = %e, %payment_id, "webhook: payment receipt failed");
+        }
+    }
     if let Some(invoice) = invoice {
         // Queue the outbound `invoice.payment_status_updated` for every
         // configured endpoint; the delivery worker signs it with the org's own

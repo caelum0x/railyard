@@ -179,7 +179,24 @@ pub(crate) async fn ingest_event(
     // Validate everything except the "already exists" case (passed as `false`)
     // so we can distinguish a real conflict — which is an idempotent no-op — from
     // the hard validation errors that must surface.
-    validate_creation(&params, &sub_ext_ids, metric.as_ref(), false).map_err(map_event_error)?;
+    if let Err(e) = validate_creation(&params, &sub_ext_ids, metric.as_ref(), false) {
+        // `event.error` — the integrator learns which event was rejected and why.
+        webhook(
+            &st.db,
+            org,
+            WebhookKind::EventError,
+            json!({
+                "transaction_id": params.transaction_id,
+                "lago_customer_id": sub.as_ref().map(|s| s.customer_id),
+                "external_subscription_id": params.external_subscription_id,
+                "code": params.code,
+                "error": format!("{e:?}"),
+                "status": 422,
+            }),
+        )
+        .await;
+        return Err(map_event_error(e));
+    }
     if exists {
         return Ok(Ingest::Duplicate);
     }
@@ -192,6 +209,16 @@ pub(crate) async fn ingest_event(
     // the same idempotent no-op.
     if !st.db.insert_event(&event).await? {
         return Ok(Ingest::Duplicate);
+    }
+    // Pay-in-advance charges on this metric bill the event right away.
+    if let Some(sub) = sub.as_ref() {
+        if let Err(e) = rago_jobs::pay_in_advance::enqueue_for_event(&st.db, sub, &event).await {
+            tracing::error!(
+                event_id = %event.id,
+                error = %e,
+                "could not enqueue pay-in-advance billing for event"
+            );
+        }
     }
     Ok(Ingest::Created(Box::new(event)))
 }

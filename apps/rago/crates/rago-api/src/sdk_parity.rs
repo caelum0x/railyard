@@ -125,6 +125,14 @@ pub async fn update_invoice(
         return Err(ApiError::NotFound("invoice".into()));
     }
     let inv = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
+    // A manually paid / failed credit invoice settles or fails its purchased credits.
+    if payment_status.is_some() {
+        if let Err(e) =
+            rago_jobs::wallet_credits::on_invoice_payment_status(&st.db, &inv, inv.payment_status).await
+        {
+            tracing::error!(invoice_id = %inv.id, error = %e, "paid-credit settlement failed");
+        }
+    }
     let fees = st.db.fees_for_invoice(inv.id).await?;
     let meta = st.db.invoice_metadata(org, id).await?;
     let mut out = ser::invoice(&inv, &fees);

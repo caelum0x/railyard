@@ -126,6 +126,7 @@ impl<T: HttpTransport> PaymentProvider for GocardlessProvider<T> {
             payable_status: Self::determine_payment_status(&provider_status),
             provider_payment_id,
             provider_status,
+            next_action: None,
         })
     }
 

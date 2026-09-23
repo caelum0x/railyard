@@ -144,6 +144,9 @@ impl BillableMetric {
     async fn expression(&self) -> Option<&str> {
         self.0.expression.as_deref()
     }
+    async fn custom_aggregator(&self) -> Option<&str> {
+        self.0.custom_aggregator.as_deref()
+    }
     async fn created_at(&self) -> String {
         ts(self.0.created_at)
     }

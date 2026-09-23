@@ -77,6 +77,8 @@ pub struct UpdateBillableMetricInput {
     pub field_name: Option<String>,
     pub recurring: Option<bool>,
     pub expression: Option<String>,
+    /// `custom_agg` per-event amount expression.
+    pub custom_aggregator: Option<String>,
 }
 
 #[derive(InputObject)]

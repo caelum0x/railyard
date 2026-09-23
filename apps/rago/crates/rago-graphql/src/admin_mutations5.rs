@@ -32,10 +32,29 @@ fn parse_ts(s: &str) -> Result<chrono::NaiveDateTime> {
 fn number(prefix: &str) -> String {
     format!("{prefix}-{}", &Uuid::new_v4().to_string()[..8].to_uppercase())
 }
-/// True when no IdP is configured for `provider` in the environment.
-fn idp_unconfigured(provider: &str) -> bool {
-    let key = format!("RAGO_{}_CLIENT_ID", provider.to_uppercase());
-    std::env::var(key).map(|v| v.is_empty()).unwrap_or(true)
+/// Seal an SSO client secret for storage (`encryption_key_missing` when the
+/// server has no `RAGO_ENCRYPTION_KEY`).
+fn seal_secret(secret: Option<&str>) -> Result<Option<String>> {
+    let Some(v) = secret.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    rago_db::secrets::seal(v).map(Some).map_err(|e| {
+        async_graphql::Error::new(match e {
+            rago_db::secrets::SecretError::KeyMissing => {
+                "encryption_key_missing: set RAGO_ENCRYPTION_KEY to store integration credentials".to_string()
+            }
+            other => other.to_string(),
+        })
+    })
+}
+
+/// Normalize an SSO email domain (`@acme.com`, `ACME.com` → `acme.com`).
+fn sso_domain(domain: &str) -> Result<String> {
+    let d = rago_jobs::sso::email_domain(domain.trim_start_matches('@'));
+    if d.is_empty() || !d.contains('.') {
+        return Err(async_graphql::Error::new("invalid_domain"));
+    }
+    Ok(d)
 }
 
 /// Canonical IdP name.
@@ -132,9 +151,20 @@ impl AdminMutation5 {
             None => None,
         };
         let ofid = uuid(&id)?;
+        let current = db(ctx).find_order_form(ofid).await?.ok_or_else(|| async_graphql::Error::new("order_form_not_found"))?;
+        if db(ctx).order_form_origin(ofid).await?.map(|(o, _)| o) != Some(org.id) {
+            return Err(async_graphql::Error::new("order_form_not_found"));
+        }
+        if current.3 == "voided" {
+            return Err(async_graphql::Error::new("order_form_voided"));
+        }
         let row = db(ctx).mark_order_form_signed(ofid, signed_document.as_deref(), execution_mode.as_deref(), at).await?.ok_or_else(|| async_graphql::Error::new("order_form_not_found"))?;
-        // `OrderForms::MarkAsSignedService` emits `order_form.signed`.
+        // `OrderForms::MarkAsSignedService` emits `order_form.signed` and
+        // creates the order (`order.created`).
         emit(db(ctx), org.id, WebhookKind::OrderFormSigned, json!({ "lago_id": ofid })).await;
+        rago_jobs::orders::create_order_for_signed_form(db(ctx), org.id, ofid)
+            .await
+            .map_err(crate::admin_mutations6::order_flow_error)?;
         Ok(row.into())
     }
 
@@ -152,9 +182,11 @@ impl AdminMutation5 {
     async fn execute_order(&self, ctx: &Context<'_>, id: ID) -> Result<Order> {
         let org = require_org(ctx)?;
         let oid = uuid(&id)?;
-        let row = db(ctx).execute_order(oid).await?.ok_or_else(|| async_graphql::Error::new("order_not_found"))?;
-        // `Orders::ExecuteService` emits `order.executed`.
-        emit(db(ctx), org.id, WebhookKind::OrderExecuted, json!({ "lago_id": oid })).await;
+        // `Orders::ExecuteService`: invoice the quote's line items, accept the
+        // quote, queue collection, and emit `order.executed`.
+        let (row, _invoice) = rago_jobs::orders::execute_order(db(ctx), org.id, oid)
+            .await
+            .map_err(crate::admin_mutations6::order_flow_error)?;
         Ok(row.into())
     }
 
@@ -246,43 +278,76 @@ impl AdminMutation5 {
 
     // ---- SSO login --------------------------------------------------------
 
-    /// `SsoAuthorize` — start an SSO login for `provider` (`google`, `okta`,
-    /// `entra_id`): mints a single-use `state` bound to a PKCE verifier and
-    /// returns the IdP authorize URL. Returns `idp_not_configured` when the
-    /// provider's client credentials are not set on the server.
-    async fn sso_authorize(&self, ctx: &Context<'_>, provider: String) -> Result<crate::types_admin4::SsoAuthorization> {
-        let provider = normalize_idp(&provider)?;
-        if idp_unconfigured(provider) {
-            return Err(async_graphql::Error::new("idp_not_configured"));
-        }
-        let started = rago_jobs::sso::start(db(ctx), provider)
+    /// `SsoAuthorize` — start an SSO login. The organization is resolved from
+    /// the sign-in `email` (its domain must be served by an org's `auth`
+    /// integration); `provider` (`google`, `okta`, `entra_id`) narrows the IdP.
+    /// Mints a single-use `state` bound to that org + a PKCE verifier and
+    /// returns the IdP authorize URL. `sso_not_enabled_for_domain` when no
+    /// organization enabled SSO for the domain; `idp_not_configured: ...` when
+    /// the IdP app credentials are missing.
+    async fn sso_authorize(&self, ctx: &Context<'_>, provider: Option<String>, email: Option<String>) -> Result<crate::types_admin4::SsoAuthorization> {
+        let provider = provider.as_deref().map(normalize_idp).transpose()?;
+        let started = rago_jobs::sso::start(db(ctx), provider, email.as_deref())
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        Ok(crate::types_admin4::SsoAuthorization { url: started.authorize_url, state: started.state, provider: provider.to_string() })
+        Ok(crate::types_admin4::SsoAuthorization { url: started.authorize_url, state: started.state, provider: started.provider })
     }
 
     /// `OktaLogin` — verifies the server-issued `state`, then exchanges the
-    /// auth code (with its PKCE verifier) with the configured Okta tenant.
+    /// auth code (with its PKCE verifier) with the organization's Okta tenant.
     async fn okta_login(&self, ctx: &Context<'_>, code: String, state: String) -> Result<crate::types_admin4::LoginPayload> {
-        Self::sso(ctx, "okta", &code, &state).await
+        Self::sso(ctx, Some("okta"), &code, &state).await
     }
 
     /// `GoogleLoginUser` — `state` is required (issued by `ssoAuthorize`).
     async fn google_login(&self, ctx: &Context<'_>, code: String, state: Option<String>) -> Result<crate::types_admin4::LoginPayload> {
         let state = state.ok_or_else(|| async_graphql::Error::new("sso_state_missing"))?;
-        Self::sso(ctx, "google", &code, &state).await
+        Self::sso(ctx, Some("google"), &code, &state).await
     }
 
     /// `EntraIdLogin`.
     async fn entra_id_login(&self, ctx: &Context<'_>, code: String, state: String) -> Result<crate::types_admin4::LoginPayload> {
-        Self::sso(ctx, "entra_id", &code, &state).await
+        Self::sso(ctx, Some("entra_id"), &code, &state).await
     }
 
-    /// `CreateEntraIdIntegration` — persist the EntraId (Azure AD) config row.
-    async fn create_entra_id_integration(&self, ctx: &Context<'_>, code: String, name: String, tenant_id: Option<String>, client_id: Option<String>, client_secret: Option<String>) -> Result<Integration> {
+    /// `SsoLogin` — provider-agnostic callback: the provider is the one the
+    /// `state` was minted for.
+    async fn sso_login(&self, ctx: &Context<'_>, code: String, state: String) -> Result<crate::types_admin4::LoginPayload> {
+        Self::sso(ctx, None, &code, &state).await
+    }
+
+    /// `CreateGoogleIntegration` — enable "Sign in with Google" for the
+    /// organization's email `domain`. Client credentials are optional: without
+    /// them the deployment's Google app (`RAGO_GOOGLE_CLIENT_ID`) is used.
+    async fn create_google_integration(&self, ctx: &Context<'_>, name: String, domain: String, code: Option<String>, client_id: Option<String>, client_secret: Option<String>, enforce_sso: Option<bool>) -> Result<Integration> {
         let org = require_org(ctx)?;
-        let secret_ref = client_secret.as_deref().map(|s| if s.len() <= 4 { "****".to_string() } else { format!("****{}", &s[s.len() - 4..]) });
-        let settings = json!({ "tenant_id": tenant_id, "client_id": client_id, "client_secret_ref": secret_ref });
+        let domain = sso_domain(&domain)?;
+        let settings = json!({
+            "domain": domain,
+            "client_id": client_id,
+            "client_secret_ref": client_secret.as_deref().map(rago_db::secrets::mask),
+            "client_secret_sealed": seal_secret(client_secret.as_deref())?,
+            "enforce_sso": enforce_sso.unwrap_or(false),
+        });
+        let code = code.unwrap_or_else(|| format!("google_{domain}"));
+        let row = db(ctx).insert_integration(Uuid::new_v4(), org.id, "auth", "google", Some(&code), Some(&name), &settings).await?;
+        Ok(row.into())
+    }
+
+    /// `CreateEntraIdIntegration` — enable Microsoft Entra ID (Azure AD) SSO
+    /// for the organization's email `domain`. The client secret is sealed at
+    /// rest (only its last four characters are shown afterwards).
+    async fn create_entra_id_integration(&self, ctx: &Context<'_>, code: String, name: String, tenant_id: Option<String>, client_id: Option<String>, client_secret: Option<String>, domain: Option<String>, enforce_sso: Option<bool>) -> Result<Integration> {
+        let org = require_org(ctx)?;
+        let domain = domain.as_deref().map(sso_domain).transpose()?;
+        let settings = json!({
+            "domain": domain,
+            "tenant_id": tenant_id,
+            "client_id": client_id,
+            "client_secret_ref": client_secret.as_deref().map(rago_db::secrets::mask),
+            "client_secret_sealed": seal_secret(client_secret.as_deref())?,
+            "enforce_sso": enforce_sso.unwrap_or(false),
+        });
         let row = db(ctx).insert_integration(Uuid::new_v4(), org.id, "auth", "entra_id", Some(&code), Some(&name), &settings).await?;
         Ok(row.into())
     }
@@ -321,23 +386,20 @@ impl AdminMutation5 {
 }
 
 impl AdminMutation5 {
-    /// OAuth code exchange with the IdP → verified email → existing user →
-    /// session JWT (same token `loginUser` issues). SSO never creates users.
-    async fn sso(ctx: &Context<'_>, provider: &str, code: &str, state: &str) -> Result<crate::types_admin4::LoginPayload> {
-        if idp_unconfigured(provider) {
-            return Err(async_graphql::Error::new("idp_not_configured"));
-        }
+    /// OAuth code exchange with the IdP → verified email → existing member of
+    /// the organization that enabled this IdP for the email's domain → session
+    /// JWT pinned to that organization. SSO never creates users.
+    async fn sso(ctx: &Context<'_>, provider: Option<&str>, code: &str, state: &str) -> Result<crate::types_admin4::LoginPayload> {
         let transport = rago_integrations::default_transport();
-        let email = rago_jobs::sso::complete(db(ctx), &transport, provider, code, state)
+        let identity = rago_jobs::sso::complete(db(ctx), &transport, provider, code, state)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        let (user_id, user_email, _) = db(ctx)
-            .find_user_by_email(&email)
-            .await?
-            .ok_or_else(|| async_graphql::Error::new("user_not_found"))?;
+        let login = rago_jobs::sso::resolve_login(db(ctx), &identity)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
         Ok(crate::types_admin4::LoginPayload {
-            token: crate::auth::issue_jwt(user_id),
-            user: crate::types_admin4::User { id: user_id.into(), email: user_email },
+            token: crate::auth::issue_sso_jwt(login.user_id, login.organization_id, &identity.provider),
+            user: crate::types_admin4::User { id: login.user_id.into(), email: login.email },
         })
     }
 

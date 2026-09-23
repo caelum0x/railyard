@@ -63,16 +63,31 @@ pub fn charge_to_fee(
     currency: Currency,
     invoice_id: Option<Uuid>,
 ) -> Result<Fee> {
+    charge_to_fee_in_period(metric, charge, subscription, events, currency, invoice_id, None)
+}
+
+/// [`charge_to_fee`] with the billing period the events belong to, so
+/// time-weighted aggregations (`weighted_sum_agg`) weight over the real period.
+pub fn charge_to_fee_in_period(
+    metric: &BillableMetric,
+    charge: &Charge,
+    subscription: &Subscription,
+    events: &[Event],
+    currency: Currency,
+    invoice_id: Option<Uuid>,
+    period: Option<&aggregation::AggregationPeriod>,
+) -> Result<Fee> {
     // Free-unit options come from the charge properties (percentage model).
     let free_units_per_events = crate::json::prop_i64(&charge.properties, "free_units_per_events");
     let free_units_per_total_aggregation =
         crate::json::prop_decimal(&charge.properties, "free_units_per_total_aggregation");
 
-    let agg = aggregation::aggregate(
+    let agg = aggregation::aggregate_in_period(
         metric,
         events,
         free_units_per_events,
         free_units_per_total_aggregation,
+        period,
     )?;
 
     let ps = PricingStructure::from_charge(charge, currency);
@@ -88,7 +103,7 @@ pub fn charge_to_fee(
 }
 
 /// Convenience re-export for callers that only want the aggregated units.
-pub use aggregation::{aggregate, AggregationResult};
+pub use aggregation::{aggregate, aggregate_in_period, AggregationPeriod, AggregationResult};
 
 /// A raw fractional unit value, for tests/examples.
 pub type Units = Decimal;

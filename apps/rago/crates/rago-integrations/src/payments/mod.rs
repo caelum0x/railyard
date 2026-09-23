@@ -91,6 +91,9 @@ pub struct PaymentOutcome {
     pub provider_status: String,
     /// The mapped payable payment status.
     pub payable_status: PayableStatus,
+    /// What the customer must do to complete the payment (Stripe SCA / 3DS
+    /// `next_action`, e.g. `redirect_to_url`), when the provider needs it.
+    pub next_action: Option<serde_json::Value>,
 }
 
 /// `Payment#payable_payment_status` — the invoice-facing status a provider

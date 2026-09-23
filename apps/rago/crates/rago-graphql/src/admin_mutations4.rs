@@ -87,6 +87,14 @@ impl AdminMutation4 {
         if !auth::verify_password(&password, &digest) {
             return Err(async_graphql::Error::new("incorrect_login_or_password"));
         }
+        // Organizations that enforce SSO disable password sign-in for their
+        // members (checked after the password so it never leaks membership).
+        let allowed = rago_jobs::sso::password_login_allowed(db(ctx), user_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        if !allowed {
+            return Err(async_graphql::Error::new("sso_required"));
+        }
         Ok(LoginPayload { token: auth::issue_jwt(user_id), user: User { id: user_id.into(), email: user_email } })
     }
 

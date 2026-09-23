@@ -212,17 +212,23 @@ async fn data_exports_and_data_api(pool: PgPool) {
     assert_eq!(d["dataApiUsages"].as_array().unwrap().len(), 0); // honest-empty (needs daily snapshots)
 }
 
-// ---- SSO login: honest idp_not_configured ---------------------------------
+// ---- SSO login: honest errors ----------------------------------------------
 
 #[sqlx::test(migrator = "rago_db::MIGRATOR")]
 async fn sso_login_is_honest_error(pool: PgPool) {
     let (schema, _db, org) = setup(pool).await;
+    // A state that was never minted by ssoAuthorize is rejected before any
+    // IdP call.
     let resp = run(&schema, &org, r#"mutation { oktaLogin(code: "abc", state: "xyz") { token } }"#, json!({})).await;
     assert!(!resp.errors.is_empty());
-    assert!(resp.errors[0].message.contains("idp_not_configured"));
+    assert!(resp.errors[0].message.contains("sso_state_invalid"));
 
-    // EntraId integration config persists (secret masked)
-    let resp = run(&schema, &org, r#"mutation { createEntraIdIntegration(code: "aad", name: "Azure AD", clientSecret: "topsecret4321") { providerCode code } }"#, json!({})).await;
+    // No organization enabled SSO for the domain.
+    let resp = run(&schema, &org, r#"mutation { ssoAuthorize(email: "someone@unknown.example") { url } }"#, json!({})).await;
+    assert!(resp.errors[0].message.contains("sso_not_enabled_for_domain"));
+
+    // EntraId integration config persists for its email domain.
+    let resp = run(&schema, &org, r#"mutation { createEntraIdIntegration(code: "aad", name: "Azure AD", tenantId: "t1", clientId: "c1", domain: "acme.example") { providerCode code } }"#, json!({})).await;
     assert_eq!(data(&resp)["createEntraIdIntegration"]["providerCode"], "entra_id");
 }
 

@@ -337,8 +337,9 @@ impl Db {
         charges_from: NaiveDateTime,
         charges_to: NaiveDateTime,
     ) -> Result<BilledInvoice> {
+        let mut invoice = invoice.clone();
         self.insert_subscription_invoice_guarded_inner(
-            invoice,
+            &mut invoice,
             fees,
             &PrepaidSettlement::NONE,
             subscription_id,
@@ -360,9 +361,13 @@ impl Db {
     /// * on a lost race / re-run the guard fires *before* any wallet mutation,
     ///   so the wallet is **never** double-charged — exactly-once settlement,
     ///   mirroring the re-bill invoice guarantee.
+    ///
+    /// When `invoice.number` is empty it is assigned the organization's next
+    /// sequential number inside the same transaction (only on the winning
+    /// reservation, so re-runs never consume a number).
     pub async fn insert_subscription_invoice_with_prepaid_guarded(
         &self,
-        invoice: &Invoice,
+        invoice: &mut Invoice,
         fees: &[Fee],
         settlement: &PrepaidSettlement<'_>,
         subscription_id: Uuid,
@@ -382,7 +387,7 @@ impl Db {
 
     async fn insert_subscription_invoice_guarded_inner(
         &self,
-        invoice: &Invoice,
+        invoice: &mut Invoice,
         fees: &[Fee],
         settlement: &PrepaidSettlement<'_>,
         subscription_id: Uuid,
@@ -428,6 +433,7 @@ impl Db {
             return Ok(BilledInvoice::AlreadyBilled(existing));
         }
 
+        crate::numbering::number_if_needed(&mut *tx, invoice).await?;
         insert_invoice_exec(&mut *tx, invoice).await?;
         for fee in fees {
             insert_fee_exec(&mut *tx, fee).await?;
@@ -681,12 +687,14 @@ impl Db {
         sqlx::query(
             "INSERT INTO billable_metrics (id, organization_id, name, code, description, \
              aggregation_type, field_name, recurring, expression, rounding_function, \
-             rounding_precision, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+             rounding_precision, created_at, updated_at, custom_aggregator) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
         )
         .bind(m.id).bind(m.organization_id).bind(&m.name).bind(&m.code).bind(m.description.as_deref())
         .bind(m.aggregation_type.as_i32()).bind(m.field_name.as_deref()).bind(m.recurring)
         .bind(m.expression.as_deref()).bind(m.rounding_function.as_deref()).bind(m.rounding_precision)
         .bind(m.created_at.naive_utc()).bind(m.updated_at.naive_utc())
+        .bind(m.custom_aggregator.as_deref())
         .execute(&self.pool).await?;
         Ok(())
     }
@@ -1974,7 +1982,7 @@ impl Db {
             Option<NaiveDateTime>,
         )>,
     > {
-        let row = sqlx::query("SELECT id, integration_type, provider_code, access_token, refresh_token, token_expires_at FROM integration_connections WHERE id = $1")
+        let row = sqlx::query("SELECT id, integration_type, provider_code, access_token, refresh_token, token_expires_at FROM integration_connections WHERE id = $1 AND deleted_at IS NULL")
             .bind(id).fetch_optional(&self.pool).await?;
         Ok(row.map(|r| {
             (
@@ -1994,7 +2002,7 @@ impl Db {
         org: Uuid,
         provider_code: &str,
     ) -> Result<Option<(Uuid, Option<String>)>> {
-        let row = sqlx::query("SELECT id, access_token FROM integration_connections WHERE organization_id = $1 AND provider_code = $2 ORDER BY created_at DESC LIMIT 1")
+        let row = sqlx::query("SELECT id, access_token FROM integration_connections WHERE organization_id = $1 AND provider_code = $2 AND deleted_at IS NULL ORDER BY (access_token IS NOT NULL) DESC, created_at DESC LIMIT 1")
             .bind(org).bind(provider_code).fetch_optional(&self.pool).await?;
         Ok(row.map(|r| {
             (
@@ -2226,7 +2234,7 @@ impl Db {
         &self,
         org: Uuid,
     ) -> Result<Vec<(Uuid, String, String, Option<String>)>> {
-        let rows = sqlx::query("SELECT id, integration_type, provider_code, name FROM integration_connections WHERE organization_id = $1 ORDER BY created_at DESC")
+        let rows = sqlx::query("SELECT id, integration_type, provider_code, name FROM integration_connections WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC")
             .bind(org).fetch_all(&self.pool).await?;
         Ok(rows
             .iter()
@@ -2800,7 +2808,7 @@ pub enum BilledInvoice {
 /// Insert an invoice against any executor (pool or transaction) — the single
 /// source of the `invoices` column list, shared by [`Db::insert_invoice`] and
 /// the guarded transactional path.
-async fn insert_invoice_exec<'e, E>(exec: E, inv: &Invoice) -> Result<()>
+pub(crate) async fn insert_invoice_exec<'e, E>(exec: E, inv: &Invoice) -> Result<()>
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
@@ -2846,7 +2854,7 @@ where
 
 /// Insert a fee against any executor (pool or transaction) — shared by
 /// [`Db::insert_fee`] and the guarded transactional path.
-async fn insert_fee_exec<'e, E>(exec: E, fee: &Fee) -> Result<()>
+pub(crate) async fn insert_fee_exec<'e, E>(exec: E, fee: &Fee) -> Result<()>
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {

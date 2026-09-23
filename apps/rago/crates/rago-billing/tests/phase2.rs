@@ -44,6 +44,7 @@ fn metric(agg: AggregationType, field: &str) -> BillableMetric {
         expression: None,
         rounding_function: None,
         rounding_precision: None,
+        custom_aggregator: None,
         created_at: now(),
         updated_at: now(),
         deleted_at: None,
@@ -526,6 +527,7 @@ fn full_subscription_invoice_generation() {
         metric: &metric,
         charge: &ch,
         events: &evs,
+        period: None,
     }];
     let fees = generate_subscription_invoice(
         &mut invoice,

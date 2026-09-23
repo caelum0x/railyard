@@ -55,6 +55,7 @@ pub fn billable_metric(row: &PgRow) -> Result<BillableMetric> {
         expression: row.try_get("expression")?,
         rounding_function: row.try_get("rounding_function")?,
         rounding_precision: row.try_get("rounding_precision")?,
+        custom_aggregator: row.try_get("custom_aggregator").ok().flatten(),
         created_at: utc(row.try_get("created_at")?),
         updated_at: utc(row.try_get("updated_at")?),
         deleted_at: opt_utc(row.try_get("deleted_at")?),

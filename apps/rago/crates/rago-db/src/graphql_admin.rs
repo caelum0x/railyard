@@ -332,6 +332,7 @@ impl Db {
         field_name: Option<&str>,
         recurring: Option<bool>,
         expression: Option<&str>,
+        custom_aggregator: Option<&str>,
     ) -> Result<Option<BillableMetric>> {
         sqlx::query(
             "UPDATE billable_metrics SET \
@@ -341,6 +342,7 @@ impl Db {
              field_name = COALESCE($5, field_name), \
              recurring = COALESCE($6, recurring), \
              expression = COALESCE($7, expression), \
+             custom_aggregator = COALESCE($8, custom_aggregator), \
              updated_at = now() WHERE id = $1",
         )
         .bind(id)
@@ -350,6 +352,7 @@ impl Db {
         .bind(field_name)
         .bind(recurring)
         .bind(expression)
+        .bind(custom_aggregator)
         .execute(&self.pool)
         .await?;
         self.find_billable_metric_opt(id).await

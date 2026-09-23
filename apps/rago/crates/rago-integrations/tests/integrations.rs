@@ -384,6 +384,7 @@ async fn netsuite_and_hubspot_sync() {
     let sync = ns.sync_invoice(&AccountingInvoice {
         invoice_id: "inv-1".into(), number: "INV-1".into(), currency: "USD".into(),
         total_amount_cents: 36000, customer_external_id: "cust-1".into(),
+        ..Default::default()
     }).await.unwrap();
     assert_eq!(sync.external_id, "NS-100");
     assert_eq!(ns.provider_type(), "netsuite");

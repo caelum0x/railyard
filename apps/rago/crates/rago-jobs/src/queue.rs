@@ -172,6 +172,11 @@ async fn dispatch(db: &Db, job_type: &str, payload: &Value, attempts: i32) -> Re
             crate::integrations_sync::report_credit_note_taxes(db, &transport, org, cn_id).await?;
             Ok(())
         }
+        crate::pay_in_advance::JOB_PAY_IN_ADVANCE => {
+            let event_id = uuid_field(payload, "event_id")?;
+            crate::pay_in_advance::bill_event_in_advance(db, event_id).await?;
+            Ok(())
+        }
         JOB_COLLECT_INVOICE => {
             let invoice_id = uuid_field(payload, "invoice_id")?;
             let invoice = db

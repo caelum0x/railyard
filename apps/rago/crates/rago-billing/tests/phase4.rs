@@ -47,6 +47,7 @@ fn metric() -> BillableMetric {
         expression: None,
         rounding_function: None,
         rounding_precision: None,
+        custom_aggregator: None,
         created_at: now(),
         updated_at: now(),
         deleted_at: None,
@@ -346,6 +347,7 @@ fn terminate_mid_period_prorated_invoice() {
         metric: &m,
         charge: &ch,
         events: &evs,
+        period: None,
     }];
     let res = terminate_subscription(
         invoice,

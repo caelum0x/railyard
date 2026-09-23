@@ -68,6 +68,7 @@ pub fn billable_metric(m: &BillableMetric) -> Value {
         "rounding_precision": m.rounding_precision,
         "field_name": m.field_name,
         "expression": m.expression,
+        "custom_aggregator": m.custom_aggregator,
         "created_at": ts(m.created_at),
     })
 }

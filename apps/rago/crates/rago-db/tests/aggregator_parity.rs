@@ -81,6 +81,7 @@ fn metric(agg: AggregationType, field: Option<&str>) -> BillableMetric {
         expression: None,
         rounding_function: None,
         rounding_precision: None,
+        custom_aggregator: None,
         created_at: now,
         updated_at: now,
         deleted_at: None,

@@ -144,6 +144,7 @@ where
                 provider_payment_id: String::new(),
                 provider_status: code.clone().unwrap_or_else(|| "provider_error".into()),
                 payable_status: PayableStatus::Failed,
+                next_action: None,
             },
             Some(message),
         ),
@@ -175,8 +176,21 @@ where
     )
     .await?;
 
+    // SCA / 3DS: keep what the customer must do (cleared on any other outcome).
+    let action_url = outcome
+        .next_action
+        .as_ref()
+        .and_then(rago_integrations::payments::stripe::next_action_redirect_url);
+    db.set_payment_next_action(payment_id, outcome.next_action.as_ref(), action_url.as_deref())
+        .await?;
+
     if let Some(ps) = outcome.payable_status.invoice_payment_status() {
         db.update_invoice_payment_status(invoice.id, ps.as_i32()).await?;
+        // Purchased wallet credits settle (or fail) with their credit invoice.
+        crate::wallet_credits::on_invoice_payment_status(db, invoice, ps).await?;
+    }
+    if outcome.payable_status == PayableStatus::Succeeded {
+        crate::receipts::issue_for_payment(db, payment_id).await?;
     }
 
     Ok(outcome.payable_status)

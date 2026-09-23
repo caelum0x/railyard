@@ -111,6 +111,10 @@ async fn tick<T: rago_integrations::HttpTransport>(
             billing_enqueued = rago_jobs::enqueue_billing_cycle(db, today, false).await?.len();
         }
     }
+    // Integrations: refresh expiring OAuth tokens and enqueue the accounting
+    // auto-syncs (`sync_invoices` / `sync_credit_notes`) before draining.
+    let (tokens_refreshed, syncs_enqueued) =
+        rago_jobs::integrations_sync::run_integration_maintenance(db, transport).await;
     let jobs = rago_jobs::drain(db, "rago-server").await?;
     let hooks = rago_jobs::redeliver_due_webhooks(db, transport).await?;
 
@@ -121,6 +125,8 @@ async fn tick<T: rago_integrations::HttpTransport>(
         dunned = dunning.invoices_marked_overdue,
         payment_requests = dunning.payment_requests_created,
         billing_enqueued,
+        tokens_refreshed,
+        syncs_enqueued,
         jobs,
         hooks,
         "daemon tick"

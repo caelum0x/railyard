@@ -108,6 +108,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 let crons = rago_jobs::run_subscription_crons(&db).await?;
                 let dunned = rago_jobs::run_dunning(&db, &transport, &dunning_cfg).await?;
+                let (tokens_refreshed, syncs_enqueued) =
+                    rago_jobs::integrations_sync::run_integration_maintenance(&db, &transport).await;
                 let jobs = rago_jobs::drain(&db, "daemon").await?;
                 let hooks = rago_jobs::redeliver_due_webhooks(&db, &transport).await?;
                 tracing::info!(
@@ -115,6 +117,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     terminated = crons.terminated,
                     dunned = dunned.invoices_marked_overdue,
                     requests = dunned.payment_requests_created,
+                    tokens_refreshed,
+                    syncs_enqueued,
                     jobs,
                     hooks,
                     "daemon tick"

@@ -35,6 +35,16 @@ pub struct StripeEvent {
     pub object_status: Option<String>,
     /// `metadata.lago_payment_id` etc.
     pub metadata: Value,
+    /// PaymentIntent `next_action` (SCA / 3DS), when present.
+    pub next_action: Option<Value>,
+}
+
+/// A PaymentIntent lifecycle event that is not a final outcome: the customer
+/// must authenticate (`requires_action`) or the payment is `processing`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StripeIntentProgress {
+    RequiresAction { next_action: Value },
+    Processing,
 }
 
 /// The payable-facing status an incoming event maps to.
@@ -72,6 +82,36 @@ impl StripeEvent {
             state: super::stripe::stripe_refund_state(&status),
             provider_status: status,
         })
+    }
+
+    /// `payment_intent.requires_action` / `payment_intent.processing`.
+    pub fn intent_progress(&self) -> Option<StripeIntentProgress> {
+        match self.event_type.as_str() {
+            "payment_intent.requires_action" => Some(StripeIntentProgress::RequiresAction {
+                next_action: self
+                    .next_action
+                    .clone()
+                    .unwrap_or_else(|| serde_json::json!({ "type": "use_stripe_sdk" })),
+            }),
+            "payment_intent.processing" => Some(StripeIntentProgress::Processing),
+            _ => None,
+        }
+    }
+
+    /// The invoice a PaymentIntent pays (`lago_invoice_id`, else the payable
+    /// id when the payable is an invoice).
+    pub fn lago_invoice_id(&self) -> Option<&str> {
+        self.metadata
+            .get("lago_invoice_id")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                let is_invoice = self
+                    .metadata
+                    .get("lago_payable_type")
+                    .and_then(Value::as_str)
+                    .map_or(true, |t| t == "Invoice");
+                is_invoice.then(|| self.lago_payable_id()).flatten()
+            })
     }
 
     pub fn lago_payment_id(&self) -> Option<&str> {
@@ -148,11 +188,13 @@ pub fn parse_event(payload: &str) -> Result<StripeEvent, WebhookError> {
         .to_string();
     let object_status = object.get("status").and_then(Value::as_str).map(str::to_string);
     let metadata = object.get("metadata").cloned().unwrap_or(Value::Null);
+    let next_action = object.get("next_action").cloned().filter(|v| !v.is_null());
     Ok(StripeEvent {
         event_type,
         object_id,
         object_status,
         metadata,
+        next_action,
     })
 }
 

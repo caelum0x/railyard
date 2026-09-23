@@ -530,19 +530,17 @@ impl AdminMutation3 {
 
     // ---- integration fetch + sync ---------------------------------------
 
-    /// `FetchIntegrationItems` — returns the locally cached items. A live fetch
-    /// populates this cache via rago-integrations with owner credentials; until
-    /// then the list is empty (honest, no fabricated remote data).
+    /// `FetchIntegrationItems` — fetch the provider catalog (NetSuite items /
+    /// accounts / subsidiaries via SuiteQL, Xero items / accounts) with the
+    /// integration's own credentials, refresh the local cache, and return the
+    /// items.
     async fn fetch_integration_items(&self, ctx: &Context<'_>, integration_id: ID) -> Result<Vec<IntegrationItem>> {
-        require_org(ctx)?;
-        Ok(db(ctx).list_integration_items(uuid(&integration_id)?).await?.into_iter().map(Into::into).collect())
+        Self::fetch_catalog(ctx, &integration_id, "item").await
     }
 
-    /// `FetchIntegrationAccounts` — same honest-cache semantics as items
-    /// (accounts share the item cache; empty until a live sync runs).
+    /// `FetchIntegrationAccounts` — same fetch; returns the ledger accounts.
     async fn fetch_integration_accounts(&self, ctx: &Context<'_>, integration_id: ID) -> Result<Vec<IntegrationItem>> {
-        require_org(ctx)?;
-        Ok(db(ctx).list_integration_items(uuid(&integration_id)?).await?.into_iter().map(Into::into).collect())
+        Self::fetch_catalog(ctx, &integration_id, "account").await
     }
 
     /// `SyncIntegrationInvoice` — enqueue the invoice-sync job (the same durable
@@ -574,5 +572,30 @@ impl AdminMutation3 {
             .enqueue_job("integrations.sync_credit_note", &json!({ "credit_note_id": cn }), Utc::now().naive_utc(), 5)
             .await?;
         Ok(cn.into())
+    }
+}
+
+impl AdminMutation3 {
+    /// Live catalog fetch for one integration, then the cached entries of
+    /// `kind`. Provider failures surface as the resolver error (never an empty
+    /// list that hides a broken connection).
+    async fn fetch_catalog(ctx: &Context<'_>, integration_id: &ID, kind: &str) -> Result<Vec<IntegrationItem>> {
+        let org = require_org(ctx)?;
+        let id = uuid(integration_id)?;
+        let transport = rago_integrations::default_transport();
+        rago_jobs::integrations_sync::refresh_integration_catalog(db(ctx), &transport, org.id, id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rows = db(ctx).integration_items_of_type(id, Some(kind)).await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, i)| IntegrationItem {
+                id: id.into(),
+                external_id: i.external_id,
+                item_type: Some(i.item_type),
+                external_name: i.external_name,
+                external_account_code: i.external_account_code,
+            })
+            .collect())
     }
 }

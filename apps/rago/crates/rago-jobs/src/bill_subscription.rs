@@ -39,9 +39,17 @@ pub async fn perform(
 
     // Load each charge's metric + events so the generation service can price
     // the flat subscription fee and one fee per usage charge together.
-    let mut loaded: Vec<(rago_core::models::BillableMetric, rago_core::models::Charge, Vec<rago_core::models::Event>)> =
-        Vec::new();
+    let mut loaded: Vec<(
+        rago_core::models::BillableMetric,
+        rago_core::models::Charge,
+        Vec<rago_core::models::Event>,
+        rago_billing::aggregation::AggregationPeriod,
+    )> = Vec::new();
     for charge in &charges {
+        // Billed at event ingest (`pay_in_advance`), not at period end.
+        if charge.pay_in_advance {
+            continue;
+        }
         let Some(metric_id) = charge.billable_metric_id else {
             continue;
         };
@@ -49,12 +57,27 @@ pub async fn perform(
         let events = db
             .events_in_period(subscription.id, &metric.code, from, to)
             .await?;
-        loaded.push((metric, charge.clone(), events));
+        let carry_in = db
+            .weighted_sum_carry_in(
+                subscription.organization_id,
+                &subscription.external_id,
+                &metric,
+                from,
+            )
+            .await?;
+        let period =
+            rago_billing::aggregation::AggregationPeriod::new(from, to).with_initial_value(carry_in);
+        loaded.push((metric, charge.clone(), events, period));
     }
 
     let charge_inputs: Vec<ChargeInput> = loaded
         .iter()
-        .map(|(metric, charge, events)| ChargeInput { metric, charge, events })
+        .map(|(metric, charge, events, period)| ChargeInput {
+            metric,
+            charge,
+            events,
+            period: Some(*period),
+        })
         .collect();
 
     // Billing-period dates (used for subscription-fee proration).
@@ -101,7 +124,7 @@ pub async fn perform(
     // twice yields exactly one invoice. A re-run returns the existing invoice.
     match db
         .insert_subscription_invoice_with_prepaid_guarded(
-            &invoice,
+            &mut invoice,
             &fees,
             &prepaid,
             subscription.id,

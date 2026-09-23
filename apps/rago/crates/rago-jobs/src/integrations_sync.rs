@@ -1,36 +1,46 @@
 //! Integration round-trips shared by the REST handlers and the durable job
-//! queue: provider taxes (Anrok / Avalara), accounting sync (Xero invoices +
-//! credit notes), CRM sync (Salesforce), tax voiding and credit-note tax
-//! reporting.
+//! queue: provider taxes (Anrok / Avalara), accounting sync (Xero / NetSuite
+//! contacts, invoices and credit notes), CRM sync (Salesforce / HubSpot), tax
+//! voiding, credit-note tax reporting, the provider catalog cache that feeds
+//! the mapping pickers, and the auto-sync sweep behind the integrations'
+//! `sync_invoices` / `sync_credit_notes` settings.
 //!
-//! Every call goes to the configured aggregator over the build's transport
-//! (`rago_integrations::default_transport()` — real HTTP under `live`). Missing
-//! configuration is an explicit [`JobError::NotConfigured`], never a fabricated
-//! provider response.
+//! Dispatch is by the organization's *active* integration of each type (the
+//! newest live connection holding credentials), so an org connected to
+//! NetSuite syncs to NetSuite and an org on HubSpot syncs to HubSpot. Removed
+//! (soft-deleted) integrations are never used.
 //!
-//! Tax credentials are per organization: the Anrok API key / Avalara license
-//! key (and Avalara company code) saved from the dashboard are sealed into the
-//! org's tax integration settings and resolved here; `RAGO_TAX_API_KEY` /
-//! `RAGO_AVALARA_COMPANY_CODE` remain a single-tenant fallback.
+//! Transports: accounting/CRM calls go **direct** to the provider API with the
+//! connection's OAuth token (refreshed automatically before it expires) or
+//! NetSuite TBA credentials; when `RAGO_ACCOUNTING_BASE_URL` / `RAGO_CRM_BASE_URL`
+//! is set they go through that aggregator instead. Tax calls go through
+//! `RAGO_TAX_BASE_URL`. Missing configuration is an explicit error, never a
+//! fabricated provider response.
 //!
-//! Env: `RAGO_TAX_BASE_URL` + `RAGO_TAX_API_KEY` (tax), `RAGO_ACCOUNTING_BASE_URL`
-//! (accounting; the connection's OAuth access token authenticates), and
-//! `RAGO_CRM_BASE_URL` (CRM).
+//! Failures emit the Lago-parity error webhooks (`integration.provider_error`,
+//! `customer.accounting_provider_error`, `customer.crm_provider_error`,
+//! `customer.tax_provider_error`); successes emit `invoice.resynced`,
+//! `customer.accounting_provider_created` and `customer.crm_provider_created`.
 
 use std::collections::HashMap;
 
+use chrono::Utc;
 use rago_billing::fees::{apply_provider_taxes, ProviderTaxLine};
-use rago_core::models::{Fee, Invoice};
+use rago_core::enums::FeeType;
+use rago_core::models::{Customer, Fee, Invoice};
+use rago_db::integration_hub::{IntegrationConnection, IntegrationItem};
 use rago_db::Db;
 use rago_integrations::webhooks::WebhookKind;
 use rago_integrations::{
-    AccountingInvoice, AccountingProvider, AnrokTaxProvider, AvalaraTaxProvider, CrmCustomer,
-    CrmProvider, HttpTransport, SalesforceProvider, TaxFeeItem, TaxProvider, TaxRequest,
-    XeroProvider,
+    AccountingContact, AccountingInvoice, AccountingLine, AccountingProvider, AnrokTaxProvider,
+    AvalaraTaxProvider, CatalogEntry, CrmCustomer, CrmProvider, HttpTransport, HubspotProvider,
+    IntegrationError, NetsuiteCredentials, NetsuiteProvider, SalesforceProvider, SyncResult,
+    TaxFeeItem, TaxProvider, TaxRequest, XeroProvider,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::integration_auth::fresh_access_token;
 use crate::webhook_emit::record_webhook;
 use crate::JobError;
 
@@ -44,11 +54,52 @@ pub const JOB_TAX_VOIDING: &str = "invoices.tax_provider_voiding";
 pub const JOB_CREDIT_NOTE_TAX_REPORTING: &str = "credit_notes.tax_reporting";
 
 fn env_required(name: &'static str) -> Result<String, JobError> {
-    std::env::var(name)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .ok_or(JobError::NotConfigured(name))
+    env_opt(name).ok_or(JobError::NotConfigured(name))
 }
+
+fn env_opt(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.trim().is_empty())
+}
+
+fn integration_err(e: impl std::fmt::Display) -> JobError {
+    JobError::Integration(e.to_string())
+}
+
+/// `{ message, error_code }` of a provider failure (webhook payload shape).
+fn provider_error_object(e: &IntegrationError) -> Value {
+    match e {
+        IntegrationError::Provider { code, message } => json!({ "message": message, "error_code": code }),
+        other => json!({ "message": other.to_string(), "error_code": Value::Null }),
+    }
+}
+
+/// Record an outbound webhook; a persistence failure is logged, never masks
+/// the sync outcome.
+async fn emit(db: &Db, org: Uuid, kind: WebhookKind, object: Value) {
+    if let Err(e) = record_webhook(db, org, kind, object).await {
+        tracing::warn!(organization_id = %org, error = %e, "integration webhook could not be recorded");
+    }
+}
+
+/// `integration.provider_error` for a failed sync through `conn`.
+async fn emit_provider_error(db: &Db, conn: &IntegrationConnection, action: &str, lago_id: Uuid, e: &IntegrationError) {
+    emit(
+        db,
+        conn.organization_id,
+        WebhookKind::IntegrationProviderError,
+        json!({
+            "lago_integration_id": conn.id,
+            "provider": conn.provider_code,
+            "provider_code": conn.code,
+            "action": action,
+            "lago_id": lago_id,
+            "provider_error": provider_error_object(e),
+        }),
+    )
+    .await;
+}
+
+// ---- tax -----------------------------------------------------------------------
 
 /// Per-org tax credentials: `(api_key, avalara_company_code)`.
 ///
@@ -56,27 +107,22 @@ fn env_required(name: &'static str) -> Result<String, JobError> {
 /// `license_key_sealed` in its settings), else the env fallback.
 pub async fn tax_credentials(db: &Db, org: Uuid, provider_code: &str) -> Result<(String, Option<String>), JobError> {
     let provider = if provider_code == "avalara" { "avalara" } else { "anrok" };
-    let integration = db
-        .list_integrations(org)
-        .await?
-        .into_iter()
-        .find(|i| i.integration_type == "tax" && i.provider_code == provider);
-    if let Some(i) = integration {
-        let sealed_key = if provider == "avalara" { "license_key_sealed" } else { "api_key_sealed" };
-        let company = i.settings.get("company_code").and_then(|v| v.as_str()).map(str::to_string);
-        if let Some(sealed) = i.settings.get(sealed_key).and_then(|v| v.as_str()) {
-            let key = rago_db::secrets::open(sealed)
-                .map_err(|e| JobError::Integration(format!("{provider}_credentials_unavailable: {e}")))?;
+    if let Some(i) = db.active_integration_by_provider(org, provider).await? {
+        let sealed_key = if provider == "avalara" { "license_key" } else { "api_key" };
+        let company = i.setting("company_code");
+        if let Some(opened) = i.sealed_setting(sealed_key) {
+            let key = opened.map_err(|e| JobError::Integration(format!("{provider}_credentials_unavailable: {e}")))?;
             return Ok((key, company));
         }
     }
     let key = env_required("RAGO_TAX_API_KEY")?;
-    let company = std::env::var("RAGO_AVALARA_COMPANY_CODE").ok().filter(|v| !v.is_empty());
+    let company = env_opt("RAGO_AVALARA_COMPANY_CODE");
     Ok((key, company))
 }
 
-fn integration_err(e: impl std::fmt::Display) -> JobError {
-    JobError::Integration(e.to_string())
+/// The org's connected tax provider code (`anrok` / `avalara`), if any.
+pub async fn active_tax_provider(db: &Db, org: Uuid) -> Result<Option<String>, JobError> {
+    Ok(db.active_integration_of_type(org, "tax").await?.map(|c| c.provider_code))
 }
 
 async fn customer_external_id(db: &Db, customer_id: Option<Uuid>) -> Result<String, JobError> {
@@ -112,7 +158,21 @@ fn tax_request(invoice_id: String, currency: String, customer: String, fees: &[F
     }
 }
 
-// ---- provider taxes ----------------------------------------------------------
+async fn emit_tax_error(db: &Db, org: Uuid, provider: &str, customer_id: Option<Uuid>, lago_id: Uuid, e: &IntegrationError) {
+    emit(
+        db,
+        org,
+        WebhookKind::CustomerTaxProviderError,
+        json!({
+            "lago_customer_id": customer_id,
+            "external_customer_id": customer_external_id(db, customer_id).await.unwrap_or_default(),
+            "tax_provider_code": provider,
+            "lago_id": lago_id,
+            "provider_error": provider_error_object(e),
+        }),
+    )
+    .await;
+}
 
 /// Fetch the invoice's taxes from the tax provider (`anrok` default or
 /// `avalara`), apply them to its fees, roll up and persist the invoice totals.
@@ -134,7 +194,7 @@ pub async fn apply_provider_taxes_to_invoice<T: HttpTransport>(
         &fees,
     );
 
-    let results = match provider_code {
+    let fetched = match provider_code {
         "avalara" => {
             let company = company_code.clone().unwrap_or_else(|| "DEFAULT".into());
             AvalaraTaxProvider::new(base_url, api_key, company, transport)
@@ -142,8 +202,14 @@ pub async fn apply_provider_taxes_to_invoice<T: HttpTransport>(
                 .await
         }
         _ => AnrokTaxProvider::new(base_url, api_key, transport).fetch_invoice_taxes(&req).await,
-    }
-    .map_err(integration_err)?;
+    };
+    let results = match fetched {
+        Ok(r) => r,
+        Err(e) => {
+            emit_tax_error(db, org, provider_code, invoice.customer_id, invoice.id, &e).await;
+            return Err(integration_err(e));
+        }
+    };
     let by_id: HashMap<String, _> = results.into_iter().map(|r| (r.item_id.clone(), r)).collect();
 
     for fee in fees.iter_mut() {
@@ -185,7 +251,8 @@ pub async fn apply_provider_taxes_to_invoice<T: HttpTransport>(
     Ok((invoice, fees))
 }
 
-/// Void a voided invoice's transaction at the tax provider (Anrok).
+/// Void a voided invoice's transaction at the org's tax provider (Anrok or
+/// Avalara).
 pub async fn void_invoice_taxes<T: HttpTransport>(
     db: &Db,
     transport: &T,
@@ -193,15 +260,24 @@ pub async fn void_invoice_taxes<T: HttpTransport>(
     invoice_id: Uuid,
 ) -> Result<(), JobError> {
     let base_url = env_required("RAGO_TAX_BASE_URL")?;
-    let (api_key, _) = tax_credentials(db, org, "anrok").await?;
+    let provider = active_tax_provider(db, org).await?.unwrap_or_else(|| "anrok".into());
+    let (api_key, company_code) = tax_credentials(db, org, &provider).await?;
     let invoice = load_invoice(db, org, invoice_id).await?;
-    AnrokTaxProvider::new(base_url, api_key, transport)
-        .void_invoice(&invoice.id.to_string())
-        .await
-        .map_err(integration_err)
+    let result = match provider.as_str() {
+        "avalara" => {
+            AvalaraTaxProvider::new(base_url, api_key, company_code.unwrap_or_else(|| "DEFAULT".into()), transport)
+                .void_invoice(&invoice.id.to_string())
+                .await
+        }
+        _ => AnrokTaxProvider::new(base_url, api_key, transport).void_invoice(&invoice.id.to_string()).await,
+    };
+    if let Err(e) = &result {
+        emit_tax_error(db, org, &provider, invoice.customer_id, invoice.id, e).await;
+    }
+    result.map_err(integration_err)
 }
 
-/// Report a credit note to the tax provider (Anrok) as a negative transaction.
+/// Report a credit note to the org's tax provider as a negative transaction.
 pub async fn report_credit_note_taxes<T: HttpTransport>(
     db: &Db,
     transport: &T,
@@ -209,7 +285,8 @@ pub async fn report_credit_note_taxes<T: HttpTransport>(
     credit_note_id: Uuid,
 ) -> Result<(), JobError> {
     let base_url = env_required("RAGO_TAX_BASE_URL")?;
-    let (api_key, _) = tax_credentials(db, org, "anrok").await?;
+    let provider = active_tax_provider(db, org).await?.unwrap_or_else(|| "anrok".into());
+    let (api_key, company_code) = tax_credentials(db, org, &provider).await?;
     let cn = db
         .find_credit_note(credit_note_id)
         .await?
@@ -229,116 +306,681 @@ pub async fn report_credit_note_taxes<T: HttpTransport>(
             })
             .collect(),
     };
-    AnrokTaxProvider::new(base_url, api_key, transport)
-        .report_credit_note(&req)
-        .await
-        .map_err(integration_err)
+    let result = match provider.as_str() {
+        "avalara" => {
+            AvalaraTaxProvider::new(base_url, api_key, company_code.unwrap_or_else(|| "DEFAULT".into()), transport)
+                .report_credit_note(&req)
+                .await
+        }
+        _ => AnrokTaxProvider::new(base_url, api_key, transport).report_credit_note(&req).await,
+    };
+    if let Err(e) = &result {
+        emit_tax_error(db, org, &provider, Some(cn.customer_id), cn.id, e).await;
+    }
+    result.map_err(integration_err)
 }
 
-// ---- accounting (Xero) ---------------------------------------------------------
+// ---- accounting client -----------------------------------------------------------
 
-async fn accounting_connection(db: &Db, org: Uuid) -> Result<(Uuid, String), JobError> {
-    let (id, token) = db
-        .find_connection_by_provider(org, "xero")
+/// An accounting provider client bound to one connection.
+pub enum AccountingClient<'a, T: HttpTransport> {
+    Xero(XeroProvider<&'a T>),
+    Netsuite(NetsuiteProvider<&'a T>),
+}
+
+impl<'a, T: HttpTransport> AccountingClient<'a, T> {
+    async fn sync_invoice(&self, doc: &AccountingInvoice) -> Result<SyncResult, IntegrationError> {
+        match self {
+            Self::Xero(p) => p.sync_invoice(doc).await,
+            Self::Netsuite(p) => p.sync_invoice(doc).await,
+        }
+    }
+    async fn sync_credit_note(&self, doc: &AccountingInvoice) -> Result<SyncResult, IntegrationError> {
+        match self {
+            Self::Xero(p) => p.sync_credit_note(doc).await,
+            Self::Netsuite(p) => p.sync_credit_note(doc).await,
+        }
+    }
+    async fn create_contact(&self, c: &AccountingContact) -> Result<SyncResult, IntegrationError> {
+        match self {
+            Self::Xero(p) => p.create_contact(c).await,
+            Self::Netsuite(p) => p.create_contact(c).await,
+        }
+    }
+    async fn fetch_catalog(&self, kind: &str) -> Result<Vec<CatalogEntry>, IntegrationError> {
+        match self {
+            Self::Xero(p) => p.fetch_catalog(kind).await,
+            Self::Netsuite(p) => p.fetch_catalog(kind).await,
+        }
+    }
+    /// The catalog kinds this provider exposes to the mapping pickers.
+    fn catalog_kinds(&self) -> &'static [&'static str] {
+        match self {
+            Self::Xero(_) => &["item", "account"],
+            Self::Netsuite(_) => &["item", "account", "subsidiary"],
+        }
+    }
+    fn requires_item_mapping(&self) -> bool {
+        matches!(self, Self::Netsuite(_))
+    }
+}
+
+fn opened(conn: &IntegrationConnection, key: &str) -> Result<Option<String>, JobError> {
+    conn.sealed_setting(key)
+        .transpose()
+        .map_err(|e| JobError::Integration(format!("{}_{key}_unavailable: {e}", conn.provider_code)))
+}
+
+/// NetSuite TBA credentials from the integration's (sealed) settings, when
+/// complete.
+fn netsuite_credentials(conn: &IntegrationConnection) -> Result<Option<NetsuiteCredentials>, JobError> {
+    let (Some(account_id), Some(client_id), Some(token_id), Some(script_endpoint_url)) = (
+        conn.setting("account_id"),
+        conn.setting("client_id"),
+        conn.setting("token_id"),
+        conn.setting("script_endpoint_url"),
+    ) else {
+        return Ok(None);
+    };
+    let (Some(client_secret), Some(token_secret)) = (opened(conn, "client_secret")?, opened(conn, "token_secret")?) else {
+        return Ok(None);
+    };
+    Ok(Some(NetsuiteCredentials { account_id, client_id, client_secret, token_id, token_secret, script_endpoint_url }))
+}
+
+/// Build the accounting client for `conn`.
+pub async fn accounting_client<'a, T: HttpTransport>(
+    db: &Db,
+    transport: &'a T,
+    conn: &IntegrationConnection,
+) -> Result<AccountingClient<'a, T>, JobError> {
+    let aggregator = env_opt("RAGO_ACCOUNTING_BASE_URL");
+    match conn.provider_code.as_str() {
+        "xero" => {
+            let token = fresh_access_token(db, transport, conn).await?;
+            match (aggregator, conn.setting("tenant_id")) {
+                (Some(base), _) => Ok(AccountingClient::Xero(XeroProvider::new(base, token, transport))),
+                (None, Some(tenant)) => Ok(AccountingClient::Xero(XeroProvider::direct(token, tenant, transport))),
+                (None, None) => Err(JobError::Integration("xero_tenant_missing: reconnect Xero from the console".into())),
+            }
+        }
+        "netsuite" => {
+            if let Some(creds) = netsuite_credentials(conn)? {
+                return Ok(AccountingClient::Netsuite(NetsuiteProvider::restlet(creds, transport)));
+            }
+            match (aggregator, conn.access_token.clone().filter(|t| !t.is_empty())) {
+                (Some(base), Some(token)) => Ok(AccountingClient::Netsuite(NetsuiteProvider::new(base, token, transport))),
+                _ => Err(JobError::Integration(
+                    "netsuite_credentials_missing: save the account ID, consumer key/secret, token ID/secret and RESTlet URL on the NetSuite integration".into(),
+                )),
+            }
+        }
+        other => Err(JobError::Integration(format!("unsupported_accounting_provider: {other}"))),
+    }
+}
+
+async fn active_accounting(db: &Db, org: Uuid) -> Result<IntegrationConnection, JobError> {
+    db.active_integration_of_type(org, "accounting")
         .await?
-        .ok_or(JobError::NotConfigured("xero integration connection"))?;
-    let token = token
-        .filter(|t| !t.is_empty())
-        .ok_or(JobError::NotConfigured("xero access token"))?;
-    Ok((id, token))
+        .ok_or(JobError::NotConfigured("accounting integration (connect Xero or NetSuite)"))
 }
 
-/// Sync a finalized invoice to Xero and store the mapping. Returns the Xero id.
+// ---- accounting payloads ----------------------------------------------------------
+
+/// Resolves fee lines against one integration's mappings (memoized).
+struct MappingResolver<'a> {
+    db: &'a Db,
+    integration_id: Uuid,
+    objects: HashMap<(String, Uuid), Option<(String, Option<String>)>>,
+    collections: HashMap<String, Option<(Option<String>, Option<String>)>>,
+    charges: HashMap<Uuid, (Option<Uuid>, String)>,
+}
+
+impl<'a> MappingResolver<'a> {
+    fn new(db: &'a Db, integration_id: Uuid) -> Self {
+        Self { db, integration_id, objects: HashMap::new(), collections: HashMap::new(), charges: HashMap::new() }
+    }
+
+    async fn object(&mut self, kind: &str, id: Uuid) -> Result<Option<(String, Option<String>)>, JobError> {
+        let key = (kind.to_string(), id);
+        if !self.objects.contains_key(&key) {
+            let m = self.db.object_mapping(self.integration_id, kind, id).await?.map(|(ext, acct, _)| (ext, acct));
+            self.objects.insert(key.clone(), m);
+        }
+        Ok(self.objects.get(&key).cloned().flatten())
+    }
+
+    async fn collection(&mut self, mapping_type: &str) -> Result<Option<(Option<String>, Option<String>)>, JobError> {
+        if !self.collections.contains_key(mapping_type) {
+            let m = self.db.collection_mapping(self.integration_id, mapping_type).await?.map(|(ext, acct, _)| (ext, acct));
+            self.collections.insert(mapping_type.to_string(), m);
+        }
+        Ok(self.collections.get(mapping_type).cloned().flatten())
+    }
+
+    /// `(billable_metric_id, charge_code)` of a charge.
+    async fn charge(&mut self, charge_id: Uuid) -> (Option<Uuid>, String) {
+        if let Some(c) = self.charges.get(&charge_id) {
+            return c.clone();
+        }
+        let c = match self.db.find_charge(charge_id).await {
+            Ok(ch) => (ch.billable_metric_id, ch.code),
+            Err(_) => (None, "usage".to_string()),
+        };
+        self.charges.insert(charge_id, c.clone());
+        c
+    }
+
+    /// `(description, item_external_id, account_code)` for a fee.
+    async fn fee(&mut self, fee: &Fee) -> Result<(String, Option<String>, Option<String>), JobError> {
+        let (description, mapped, collection) = match fee.fee_type {
+            Some(FeeType::Charge) => match fee.charge_id {
+                Some(cid) => {
+                    let (metric, code) = self.charge(cid).await;
+                    let mapped = match metric {
+                        Some(m) => self.object("BillableMetric", m).await?,
+                        None => None,
+                    };
+                    (code, mapped, None)
+                }
+                None => ("Usage".to_string(), None, None),
+            },
+            Some(FeeType::AddOn) => {
+                let mapped = match fee.invoiceable_id {
+                    Some(id) => self.object("AddOn", id).await?,
+                    None => None,
+                };
+                ("Add-on".to_string(), mapped, None)
+            }
+            Some(FeeType::Subscription) => ("Subscription".to_string(), None, Some("subscription_fee")),
+            Some(FeeType::Commitment) => ("Minimum commitment".to_string(), None, Some("minimum_commitment")),
+            Some(FeeType::Credit) => ("Prepaid credits".to_string(), None, Some("prepaid_credit")),
+            Some(other) => (other.as_str().replace('_', " "), None, None),
+            None => ("Fee".to_string(), None, None),
+        };
+        if let Some((item, account)) = mapped {
+            return Ok((description, Some(item), account));
+        }
+        if let Some(kind) = collection {
+            if let Some((item, account)) = self.collection(kind).await? {
+                return Ok((description, item, account));
+            }
+        }
+        let fallback = self.collection("fallback_item").await?.unwrap_or((None, None));
+        Ok((description, fallback.0, fallback.1))
+    }
+}
+
+fn line_from_fee(fee: &Fee, description: String, item: Option<String>, account: Option<String>) -> AccountingLine {
+    AccountingLine {
+        lago_id: fee.id.to_string(),
+        description,
+        item_external_id: item,
+        account_code: account,
+        units: fee.units.normalize().to_string(),
+        unit_amount_cents: fee.unit_amount_cents,
+        amount_cents: fee.amount_cents,
+        taxes_amount_cents: fee.taxes_amount_cents,
+        taxes_rate: fee.taxes_rate,
+    }
+}
+
+/// A negative adjustment line (coupons, applied credit notes, prepaid credits).
+async fn adjustment_line(
+    resolver: &mut MappingResolver<'_>,
+    mapping_type: &str,
+    description: &str,
+    amount_cents: i64,
+) -> Result<Option<AccountingLine>, JobError> {
+    if amount_cents == 0 {
+        return Ok(None);
+    }
+    let (item, account) = match resolver.collection(mapping_type).await? {
+        Some(m) => m,
+        None => resolver.collection("fallback_item").await?.unwrap_or((None, None)),
+    };
+    Ok(Some(AccountingLine {
+        lago_id: mapping_type.to_string(),
+        description: description.to_string(),
+        item_external_id: item,
+        account_code: account,
+        units: "1".into(),
+        unit_amount_cents: -amount_cents.abs(),
+        amount_cents: -amount_cents.abs(),
+        taxes_amount_cents: 0,
+        taxes_rate: 0.0,
+    }))
+}
+
+fn ensure_mapped(client_requires: bool, lines: &[AccountingLine]) -> Result<(), JobError> {
+    if client_requires {
+        if let Some(l) = lines.iter().find(|l| l.item_external_id.is_none()) {
+            return Err(JobError::Integration(format!(
+                "item_mapping_missing: map \"{}\" (or set a fallback item) on the integration before syncing",
+                l.description
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The provider contact id for `customer` on `conn`, creating the contact at
+/// the provider (and linking it) on first sync.
+async fn ensure_contact<T: HttpTransport>(
+    db: &Db,
+    client: &AccountingClient<'_, T>,
+    conn: &IntegrationConnection,
+    customer: &Customer,
+) -> Result<String, JobError> {
+    if let Some(existing) = db.integration_customer_external_id(conn.id, customer.id).await? {
+        return Ok(existing);
+    }
+    let contact = AccountingContact {
+        customer_id: customer.id.to_string(),
+        external_id: customer.external_id.clone(),
+        name: customer.name.clone(),
+        email: customer.email.clone(),
+        currency: customer.currency.clone(),
+        country: customer.country.clone(),
+        tax_identification_number: customer.tax_identification_number.clone(),
+        subsidiary_id: conn.setting("subsidiary_id"),
+    };
+    match client.create_contact(&contact).await {
+        Ok(created) => {
+            db.insert_integration_customer(Uuid::new_v4(), conn.organization_id, conn.id, customer.id, Some(&created.external_id), None)
+                .await?;
+            emit(
+                db,
+                conn.organization_id,
+                WebhookKind::CustomerAccountingProviderCreated,
+                json!({
+                    "lago_id": customer.id,
+                    "external_id": customer.external_id,
+                    "name": customer.name,
+                    "email": customer.email,
+                    "integration_customers": [{
+                        "lago_integration_id": conn.id,
+                        "type": conn.provider_code,
+                        "external_customer_id": created.external_id,
+                    }],
+                }),
+            )
+            .await;
+            Ok(created.external_id)
+        }
+        Err(e) => {
+            emit(
+                db,
+                conn.organization_id,
+                WebhookKind::CustomerAccountingProviderError,
+                json!({
+                    "lago_customer_id": customer.id,
+                    "external_customer_id": customer.external_id,
+                    "accounting_provider": conn.provider_code,
+                    "accounting_provider_code": conn.code,
+                    "provider_error": provider_error_object(&e),
+                }),
+            )
+            .await;
+            Err(integration_err(e))
+        }
+    }
+}
+
+// ---- accounting sync -----------------------------------------------------------
+
+/// Sync a finalized invoice to the org's accounting integration (Xero or
+/// NetSuite) and store the mapping. Returns the provider id.
 pub async fn sync_invoice_accounting<T: HttpTransport>(
     db: &Db,
     transport: &T,
     org: Uuid,
     invoice_id: Uuid,
 ) -> Result<String, JobError> {
-    let base_url = env_required("RAGO_ACCOUNTING_BASE_URL")?;
-    let (connection_id, token) = accounting_connection(db, org).await?;
+    let conn = active_accounting(db, org).await?;
+    let client = accounting_client(db, transport, &conn).await?;
     let invoice = load_invoice(db, org, invoice_id).await?;
-    let acc = AccountingInvoice {
+    let customer = match invoice.customer_id {
+        Some(cid) => db.find_customer(cid).await?,
+        None => None,
+    }
+    .ok_or_else(|| JobError::Integration("customer_not_found".into()))?;
+    let contact = ensure_contact(db, &client, &conn, &customer).await?;
+
+    let mut resolver = MappingResolver::new(db, conn.id);
+    let mut lines = Vec::new();
+    for fee in db.fees_for_invoice(invoice.id).await? {
+        if fee.amount_cents == 0 && fee.units.is_zero() {
+            continue;
+        }
+        let (description, item, account) = resolver.fee(&fee).await?;
+        lines.push(line_from_fee(&fee, description, item, account));
+    }
+    for (kind, label, amount) in [
+        ("coupon", "Coupons", invoice.coupons_amount_cents),
+        ("credit_note", "Credit notes applied", invoice.credit_notes_amount_cents),
+        ("prepaid_credit", "Prepaid credits applied", invoice.prepaid_credit_amount_cents),
+    ] {
+        if let Some(line) = adjustment_line(&mut resolver, kind, label, amount).await? {
+            lines.push(line);
+        }
+    }
+    ensure_mapped(client.requires_item_mapping(), &lines)?;
+
+    let doc = AccountingInvoice {
         invoice_id: invoice.id.to_string(),
         number: invoice.number.clone(),
         currency: invoice.currency().code(),
         total_amount_cents: invoice.total_amount_cents,
-        customer_external_id: customer_external_id(db, invoice.customer_id).await?,
+        customer_external_id: customer.external_id.clone(),
+        contact_external_id: Some(contact),
+        issuing_date: invoice.issuing_date.map(|d| d.to_string()),
+        due_date: None,
+        taxes_amount_cents: invoice.taxes_amount_cents,
+        lines,
     };
-    let result = XeroProvider::new(base_url, token, transport)
-        .sync_invoice(&acc)
-        .await
-        .map_err(integration_err)?;
-    db.insert_integration_mapping(Uuid::new_v4(), org, connection_id, "invoice", invoice.id, &result.external_id)
-        .await?;
-    let _ = record_webhook(
+    let result = match client.sync_invoice(&doc).await {
+        Ok(r) => r,
+        Err(e) => {
+            emit_provider_error(db, &conn, "sync_invoice", invoice.id, &e).await;
+            return Err(integration_err(e));
+        }
+    };
+    db.record_resource_sync(org, conn.id, "invoice", invoice.id, &result.external_id).await?;
+    emit(
         db,
         org,
         WebhookKind::InvoiceResynced,
-        json!({ "lago_id": invoice.id, "number": invoice.number, "external_id": result.external_id }),
+        json!({
+            "lago_id": invoice.id,
+            "number": invoice.number,
+            "external_id": result.external_id,
+            "integration": conn.provider_code,
+        }),
     )
     .await;
     Ok(result.external_id)
 }
 
-/// Sync a credit note to Xero and store the mapping. Returns the Xero id.
+/// Sync a credit note to the org's accounting integration and store the
+/// mapping. Returns the provider id.
 pub async fn sync_credit_note_accounting<T: HttpTransport>(
     db: &Db,
     transport: &T,
     org: Uuid,
     credit_note_id: Uuid,
 ) -> Result<String, JobError> {
-    let base_url = env_required("RAGO_ACCOUNTING_BASE_URL")?;
-    let (connection_id, token) = accounting_connection(db, org).await?;
+    let conn = active_accounting(db, org).await?;
+    let client = accounting_client(db, transport, &conn).await?;
     let cn = db
         .find_credit_note(credit_note_id)
         .await?
         .filter(|c| c.organization_id == org)
         .ok_or_else(|| JobError::Integration("credit_note_not_found".into()))?;
-    let note = AccountingInvoice {
+    let customer = db
+        .find_customer(cn.customer_id)
+        .await?
+        .ok_or_else(|| JobError::Integration("customer_not_found".into()))?;
+    let contact = ensure_contact(db, &client, &conn, &customer).await?;
+
+    let fees: HashMap<Uuid, Fee> = db.fees_for_invoice(cn.invoice_id).await?.into_iter().map(|f| (f.id, f)).collect();
+    let mut resolver = MappingResolver::new(db, conn.id);
+    let mut lines = Vec::new();
+    for (fee_id, amount) in db.credit_note_items(cn.id).await? {
+        let (description, item, account) = match fees.get(&fee_id) {
+            Some(fee) => resolver.fee(fee).await?,
+            None => {
+                let fb = resolver.collection("credit_note").await?.unwrap_or((None, None));
+                ("Credit".to_string(), fb.0, fb.1)
+            }
+        };
+        lines.push(AccountingLine {
+            lago_id: fee_id.to_string(),
+            description,
+            item_external_id: item,
+            account_code: account,
+            units: "1".into(),
+            unit_amount_cents: amount,
+            amount_cents: amount,
+            taxes_amount_cents: 0,
+            taxes_rate: cn.taxes_rate,
+        });
+    }
+    if let Some(line) = adjustment_line(&mut resolver, "coupon", "Coupon adjustment", cn.coupons_adjustment_amount_cents).await? {
+        lines.push(line);
+    }
+    ensure_mapped(client.requires_item_mapping(), &lines)?;
+
+    let doc = AccountingInvoice {
         invoice_id: cn.id.to_string(),
         number: cn.number.clone(),
         currency: cn.total_amount_currency.clone(),
         total_amount_cents: cn.total_amount_cents,
-        customer_external_id: customer_external_id(db, Some(cn.customer_id)).await?,
+        customer_external_id: customer.external_id.clone(),
+        contact_external_id: Some(contact),
+        issuing_date: Some(cn.issuing_date.to_string()),
+        due_date: None,
+        taxes_amount_cents: cn.taxes_amount_cents,
+        lines,
     };
-    let result = XeroProvider::new(base_url, token, transport)
-        .sync_credit_note(&note)
-        .await
-        .map_err(integration_err)?;
-    db.insert_integration_mapping(Uuid::new_v4(), org, connection_id, "credit_note", cn.id, &result.external_id)
-        .await?;
+    let result = match client.sync_credit_note(&doc).await {
+        Ok(r) => r,
+        Err(e) => {
+            emit_provider_error(db, &conn, "sync_credit_note", cn.id, &e).await;
+            return Err(integration_err(e));
+        }
+    };
+    db.record_resource_sync(org, conn.id, "credit_note", cn.id, &result.external_id).await?;
     Ok(result.external_id)
 }
 
-// ---- CRM (Salesforce) ------------------------------------------------------------
-
-/// Sync a customer to Salesforce and store the mapping. Returns the CRM id.
-pub async fn sync_customer_crm<T: HttpTransport>(
+/// Fetch the provider catalog (items, accounts, subsidiaries) for one
+/// integration and refresh the local cache the mapping pickers read.
+/// Returns `(kind, count)` per catalog.
+pub async fn refresh_integration_catalog<T: HttpTransport>(
     db: &Db,
     transport: &T,
     org: Uuid,
-    customer: &rago_core::models::Customer,
-) -> Result<String, JobError> {
-    let base_url = env_required("RAGO_CRM_BASE_URL")?;
-    let (connection_id, token) = db
-        .find_connection_by_provider(org, "salesforce")
+    integration_id: Uuid,
+) -> Result<Vec<(String, usize)>, JobError> {
+    let conn = db
+        .find_org_integration(org, integration_id)
         .await?
-        .ok_or(JobError::NotConfigured("salesforce integration connection"))?;
-    let token = token
-        .filter(|t| !t.is_empty())
-        .ok_or(JobError::NotConfigured("salesforce access token"))?;
+        .ok_or_else(|| JobError::Integration("integration_not_found".into()))?;
+    if conn.integration_type != "accounting" {
+        return Err(JobError::Integration(format!(
+            "catalog_unsupported: {} integrations have no item catalog",
+            conn.provider_code
+        )));
+    }
+    let client = accounting_client(db, transport, &conn).await?;
+    let mut out = Vec::new();
+    for kind in client.catalog_kinds() {
+        let entries = match client.fetch_catalog(kind).await {
+            Ok(e) => e,
+            Err(e) => {
+                emit_provider_error(db, &conn, "fetch_catalog", conn.id, &e).await;
+                return Err(integration_err(e));
+            }
+        };
+        let ids: Vec<String> = entries.iter().map(|e| e.external_id.clone()).collect();
+        for e in &entries {
+            db.upsert_integration_item(
+                org,
+                conn.id,
+                &IntegrationItem {
+                    external_id: e.external_id.clone(),
+                    item_type: kind.to_string(),
+                    external_name: e.name.clone(),
+                    external_account_code: e.account_code.clone(),
+                },
+            )
+            .await?;
+        }
+        db.prune_integration_items(conn.id, kind, &ids).await?;
+        out.push((kind.to_string(), entries.len()));
+    }
+    Ok(out)
+}
+
+// ---- CRM -----------------------------------------------------------------------
+
+/// Sync a customer to the org's CRM (Salesforce or HubSpot), link and store
+/// the mapping. Returns `(provider_code, crm_id)`.
+pub async fn sync_customer_crm_with_provider<T: HttpTransport>(
+    db: &Db,
+    transport: &T,
+    org: Uuid,
+    customer: &Customer,
+) -> Result<(String, String), JobError> {
+    let conn = db
+        .active_integration_of_type(org, "crm")
+        .await?
+        .ok_or(JobError::NotConfigured("CRM integration (connect Salesforce or HubSpot)"))?;
+    let token = fresh_access_token(db, transport, &conn).await?;
+    let aggregator = env_opt("RAGO_CRM_BASE_URL");
     let crm = CrmCustomer {
         customer_id: customer.id.to_string(),
         external_id: customer.external_id.clone(),
         name: customer.name.clone(),
         email: customer.email.clone(),
     };
-    let result = SalesforceProvider::new(base_url, token, transport)
-        .sync_customer(&crm)
-        .await
-        .map_err(integration_err)?;
-    db.insert_integration_mapping(Uuid::new_v4(), org, connection_id, "customer", customer.id, &result.external_id)
-        .await?;
-    Ok(result.external_id)
+    let result = match conn.provider_code.as_str() {
+        "salesforce" => match (aggregator, conn.setting("instance_url")) {
+            (Some(base), _) => SalesforceProvider::new(base, token, transport).sync_customer(&crm).await,
+            (None, Some(instance)) => SalesforceProvider::direct(token, instance, transport).sync_customer(&crm).await,
+            (None, None) => {
+                return Err(JobError::Integration("salesforce_instance_url_missing: reconnect Salesforce from the console".into()))
+            }
+        },
+        "hubspot" => match aggregator {
+            Some(base) => HubspotProvider::new(base, token, transport).sync_customer(&crm).await,
+            None => {
+                let target = conn.setting("default_targeted_object");
+                HubspotProvider::direct(token, target.as_deref(), transport).sync_customer(&crm).await
+            }
+        },
+        other => return Err(JobError::Integration(format!("unsupported_crm_provider: {other}"))),
+    };
+    let result = match result {
+        Ok(r) => r,
+        Err(e) => {
+            emit(
+                db,
+                org,
+                WebhookKind::CustomerCrmProviderError,
+                json!({
+                    "lago_customer_id": customer.id,
+                    "external_customer_id": customer.external_id,
+                    "crm_provider": conn.provider_code,
+                    "crm_provider_code": conn.code,
+                    "provider_error": provider_error_object(&e),
+                }),
+            )
+            .await;
+            return Err(integration_err(e));
+        }
+    };
+    db.record_resource_sync(org, conn.id, "customer", customer.id, &result.external_id).await?;
+    if db.integration_customer_external_id(conn.id, customer.id).await?.as_deref() != Some(result.external_id.as_str()) {
+        db.insert_integration_customer(Uuid::new_v4(), org, conn.id, customer.id, Some(&result.external_id), None)
+            .await?;
+    }
+    emit(
+        db,
+        org,
+        WebhookKind::CustomerCrmProviderCreated,
+        json!({
+            "lago_id": customer.id,
+            "external_id": customer.external_id,
+            "name": customer.name,
+            "email": customer.email,
+            "integration_customers": [{
+                "lago_integration_id": conn.id,
+                "type": conn.provider_code,
+                "external_customer_id": result.external_id,
+            }],
+        }),
+    )
+    .await;
+    Ok((conn.provider_code, result.external_id))
+}
+
+/// Sync a customer to the org's CRM and store the mapping. Returns the CRM id.
+pub async fn sync_customer_crm<T: HttpTransport>(
+    db: &Db,
+    transport: &T,
+    org: Uuid,
+    customer: &Customer,
+) -> Result<String, JobError> {
+    Ok(sync_customer_crm_with_provider(db, transport, org, customer).await?.1)
+}
+
+// ---- auto-sync sweep -------------------------------------------------------------
+
+/// Enqueue accounting sync jobs for finalized invoices / credit notes of every
+/// org whose active accounting integration has `sync_invoices` /
+/// `sync_credit_notes` enabled, and credit-note tax reporting for orgs with a
+/// tax integration. Each resource is enqueued once per integration (a queued
+/// or finished job, or a stored mapping, suppresses re-enqueueing). Returns
+/// the number of jobs enqueued.
+pub async fn enqueue_auto_syncs(db: &Db) -> Result<u32, JobError> {
+    let mut enqueued = 0u32;
+    for (flag, resource, job_type, id_key) in [
+        ("sync_invoices", "invoice", JOB_SYNC_INVOICE, "invoice_id"),
+        ("sync_credit_notes", "credit_note", JOB_SYNC_CREDIT_NOTE, "credit_note_id"),
+    ] {
+        for conn in db.integrations_with_flag("accounting", flag).await? {
+            let active = db.active_integration_of_type(conn.organization_id, "accounting").await?;
+            if active.map(|a| a.id) != Some(conn.id) {
+                continue;
+            }
+            // Only once the connection can authenticate.
+            let ready = match conn.provider_code.as_str() {
+                "netsuite" => netsuite_credentials(&conn).ok().flatten().is_some() || conn.access_token.is_some(),
+                _ => conn.access_token.is_some(),
+            };
+            if !ready {
+                continue;
+            }
+            for id in db.unsynced_resources(&conn, resource, job_type, 50).await? {
+                db.enqueue_job(job_type, &json!({ id_key: id, "integration_id": conn.id }), Utc::now().naive_utc(), 5)
+                    .await?;
+                enqueued += 1;
+            }
+        }
+    }
+    // Credit notes are reported to the org's tax provider as negative
+    // transactions (the tax counterpart of an issued credit note).
+    for conn in db.integrations_of_type("tax").await? {
+        let active = db.active_integration_of_type(conn.organization_id, "tax").await?;
+        if active.map(|a| a.id) != Some(conn.id) {
+            continue;
+        }
+        for id in db.unreported_tax_credit_notes(&conn, JOB_CREDIT_NOTE_TAX_REPORTING, 50).await? {
+            db.enqueue_job(
+                JOB_CREDIT_NOTE_TAX_REPORTING,
+                &json!({ "credit_note_id": id, "integration_id": conn.id }),
+                Utc::now().naive_utc(),
+                5,
+            )
+            .await?;
+            enqueued += 1;
+        }
+    }
+    Ok(enqueued)
+}
+
+/// One maintenance tick for integrations: refresh expiring OAuth tokens and
+/// enqueue the auto-syncs. Errors are logged, never abort the caller's loop.
+pub async fn run_integration_maintenance<T: HttpTransport>(db: &Db, transport: &T) -> (u32, u32) {
+    let refreshed = crate::integration_auth::refresh_expiring_tokens(db, transport).await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "integration token refresh sweep failed");
+        0
+    });
+    let enqueued = enqueue_auto_syncs(db).await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "integration auto-sync sweep failed");
+        0
+    });
+    (refreshed, enqueued)
 }

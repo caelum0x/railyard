@@ -39,6 +39,52 @@ impl<T: HttpTransport> AvalaraTaxProvider<T> {
     fn action_url(&self) -> String {
         format!("{}/v1/avalara/finalized_invoices", self.base_url.trim_end_matches('/'))
     }
+
+    fn headers(&self) -> Vec<(String, String)> {
+        vec![
+            ("Authorization".to_string(), format!("Bearer {}", self.api_key)),
+            ("Content-Type".to_string(), "application/json".to_string()),
+        ]
+    }
+
+    /// `Integrations::Aggregator::Taxes::Invoices::CreateVoidService` (Avalara
+    /// path) — void the invoice's committed transaction
+    /// (`.../v1/avalara/void_invoices`).
+    pub async fn void_invoice(&self, invoice_id: &str) -> Result<(), IntegrationError> {
+        let url = format!("{}/v1/avalara/void_invoices", self.base_url.trim_end_matches('/'));
+        let body = json!([{ "companyCode": self.company_code, "code": invoice_id, "voidReason": "DocVoided" }]).to_string();
+        let resp = self.transport.post(&url, &self.headers(), body).await?;
+        if !resp.is_success() {
+            return Err(super::provider_error(&resp.body, "avalara void error"));
+        }
+        Ok(())
+    }
+
+    /// `Integrations::Aggregator::Taxes::CreditNotes::CreateService` (Avalara
+    /// path) — report a credit note as a committed `ReturnInvoice` with
+    /// negated line amounts.
+    pub async fn report_credit_note(&self, req: &TaxRequest) -> Result<(), IntegrationError> {
+        let body = json!([{
+            "type": "ReturnInvoice",
+            "companyCode": self.company_code,
+            "code": format!("cn_{}", req.invoice_id),
+            "currencyCode": req.currency,
+            "customerCode": req.customer_external_id,
+            "commit": true,
+            "lines": req.fees.iter().enumerate().map(|(i, f)| json!({
+                "number": (i + 1).to_string(),
+                "itemCode": f.item_code,
+                "lago_item_id": f.item_id,
+                "amount": -f.amount_cents.abs(),
+            })).collect::<Vec<_>>(),
+        }])
+        .to_string();
+        let resp = self.transport.post(&self.action_url(), &self.headers(), body).await?;
+        if !resp.is_success() {
+            return Err(super::provider_error(&resp.body, "avalara credit note error"));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]

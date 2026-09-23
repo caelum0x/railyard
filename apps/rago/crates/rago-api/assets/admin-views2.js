@@ -101,7 +101,7 @@
         onSubmit: async (v) => {
           if (!v.paid_credits && !v.granted_credits) throw new Error("Enter paid or granted credits.");
           await api.post("/api/v1/wallet_transactions", { wallet_transaction: { wallet_id: wa.lago_id, paid_credits: v.paid_credits !== undefined ? String(v.paid_credits) : undefined, granted_credits: v.granted_credits !== undefined ? String(v.granted_credits) : undefined } });
-          return "Wallet topped up";
+          return v.paid_credits ? "Invoice issued for the paid credits; they are added once it is paid" : "Credits granted";
         },
         after: R.render,
       }),
@@ -481,6 +481,7 @@
       card("Organization", '<div class="body">' + kv([
         ["Name", esc(o.name)], ["Default currency", esc(o.default_currency)], ["Billing email", esc(o.email)], ["Country", esc(o.country)],
         ["Timezone", esc(o.timezone)], ["Tax ID", esc(o.tax_identification_number)], ["Document locale", esc(o.document_locale)],
+        ["Invoice numbers", '<span class="mono">' + esc((o.effective_document_number_prefix || "") + "-YYYYMM-001") + "</span>" + (o.document_number_prefix ? "" : " (default prefix)")],
         ["Organization ID", '<span class="mono">' + esc(o.lago_id) + "</span>"],
         ["Stripe webhook URL", '<span class="mono">' + esc(webhookUrl("stripe")) + "</span>"],
         ["GoCardless webhook URL", '<span class="mono">' + esc(webhookUrl("gocardless")) + "</span>"],
@@ -499,14 +500,11 @@
       btn("stripe", "Connect Stripe", "pay", "primary") + btn("gocardless", "Connect GoCardless", "pay") + btn("adyen", "Connect Adyen", "pay")) +
       card("Integrations", table([
         { h: "Type", f: (r) => badge(r.integration_type) },
-        { h: "Provider", f: (r) => esc(r.provider_code) },
+        { h: "Provider", f: (r) => esc(r.provider_name || r.provider_code) },
         { h: "Name", f: (r) => esc(r.name) },
-        { h: "Credentials", f: (r) => (r.integration_type === "tax" ? "API key (encrypted)" : r.has_access_token ? "OAuth token present" : "OAuth token missing") },
-        { h: "Expires", f: (r) => datetime(r.expires_at) },
-        { h: "", f: (r) => (r.has_refresh_token ? '<button type="button" data-refresh-int="' + esc(r.lago_id) + '">' + icon("refresh") + "Refresh token</button>" : "") },
-        { h: "", f: (r) => '<button type="button" data-del-int="' + esc(r.lago_id) + '">' + icon("trash") + "Remove</button>" },
-      ], integ.integrations, { empty: "No tax, accounting or CRM integration connected." }),
-      btn("anrok", "Connect Anrok", "link") + btn("avalara", "Connect Avalara", "link"));
+        { h: "Status", f: (r) => badge(r.status === "connected" ? "active" : r.status === "needs_authorization" ? "pending" : "failed") + " " + esc((r.status || "").replace(/_/g, " ")) },
+      ], integ.integrations, { href: (r) => "/integrations/" + r.lago_id, empty: "No accounting, CRM, tax or single sign-on integration connected." }),
+      btn("manage_integrations", "Manage integrations", "link"));
     R.$$("[data-del-provider]", view).forEach((b) => (b.onclick = () => R.confirmAction("Remove provider", "Stop charging through this provider?", "Remove", async () => {
       await api.graphql("mutation($id: ID!) { destroyPaymentProvider(id: $id) }", { id: b.dataset.delProvider });
       return "Provider removed";
@@ -514,13 +512,6 @@
     R.$$("[data-edit-provider]", view).forEach((b) => (b.onclick = () => {
       const existing = providers.find((pr) => pr.id === b.dataset.editProvider);
       if (existing) providerForm(existing.providerType, existing);
-    }));
-    R.$$("[data-del-int]", view).forEach((b) => (b.onclick = () => R.confirmAction("Remove integration", "Disconnect this integration? Syncs and tax calculation through it stop.", "Remove", async () => {
-      await api.graphql("mutation($id: ID!) { destroyIntegration(id: $id) }", { id: b.dataset.delInt });
-      return "Integration removed";
-    })));
-        R.$$("[data-refresh-int]", view).forEach((b) => (b.onclick = async () => {
-      try { await api.post("/api/v1/integrations/" + enc(b.dataset.refreshInt) + "/refresh"); R.toast("Token refreshed", "ok"); R.render(); } catch (e) { R.toast(e.message, "err"); }
     }));
     finish(view, {
       edit_org: () => R.openForm({
@@ -531,48 +522,16 @@
           { name: "email", label: "Billing email", type: "email", value: o.email },
           { name: "country", label: "Country (ISO)", value: o.country },
           { name: "timezone", label: "Timezone", value: o.timezone },
+          { name: "document_number_prefix", label: "Invoice number prefix (letters, digits, - or _; empty for default)", value: o.document_number_prefix || "", placeholder: o.effective_document_number_prefix || "" },
         ],
-        onSubmit: async (v) => { await api.put("/api/v1/organizations", { organization: v }); return "Organization updated"; },
-        after: R.render,
-      }),
-      anrok: () => R.openForm({
-        title: "Connect Anrok",
-        intro: "Invoice taxes are calculated by Anrok with this organization's API key (encrypted at rest; requires RAGO_ENCRYPTION_KEY and RAGO_TAX_BASE_URL on the server).",
-        fields: [
-          { name: "code", label: "Code", required: true, value: "anrok" },
-          { name: "name", label: "Name", required: true, value: "Anrok" },
-          { name: "apiKey", label: "API key", type: "password", required: true },
-          { name: "connectionId", label: "Connection ID" },
-        ],
-        submitLabel: "Connect",
         onSubmit: async (v) => {
-          const input = {};
-          Object.keys(v).forEach((k) => { if (v[k]) input[k] = v[k]; });
-          await api.graphql("mutation($input: CreateAnrokIntegrationInput!) { createAnrokIntegration(input: $input) { id } }", { input });
-          return "Anrok connected";
+          const organization = Object.assign({}, v, { document_number_prefix: v.document_number_prefix === undefined ? null : v.document_number_prefix });
+          await api.put("/api/v1/organizations", { organization });
+          return "Organization updated";
         },
         after: R.render,
       }),
-      avalara: () => R.openForm({
-        title: "Connect Avalara",
-        intro: "Invoice taxes are calculated by Avalara with this organization's license key (encrypted at rest; requires RAGO_ENCRYPTION_KEY and RAGO_TAX_BASE_URL on the server).",
-        fields: [
-          { name: "code", label: "Code", required: true, value: "avalara" },
-          { name: "name", label: "Name", required: true, value: "Avalara" },
-          { name: "accountId", label: "Account ID", required: true },
-          { name: "licenseKey", label: "License key", type: "password", required: true },
-          { name: "companyCode", label: "Company code", required: true },
-          { name: "connectionId", label: "Connection ID" },
-        ],
-        submitLabel: "Connect",
-        onSubmit: async (v) => {
-          const input = {};
-          Object.keys(v).forEach((k) => { if (v[k]) input[k] = v[k]; });
-          await api.graphql("mutation($input: CreateAvalaraIntegrationInput!) { createAvalaraIntegration(input: $input) { id } }", { input });
-          return "Avalara connected";
-        },
-        after: R.render,
-      }),
+      manage_integrations: () => { location.hash = "#/integrations"; },
       stripe: () => providerForm("stripe"),
       gocardless: () => providerForm("gocardless"),
       adyen: () => providerForm("adyen"),

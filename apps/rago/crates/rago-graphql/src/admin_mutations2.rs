@@ -87,8 +87,9 @@ impl AdminMutation2 {
             organization_id: org.id,
             billing_entity_id: org.id,
             customer_id: Some(customer.id),
-            number: format!("INV-{}", &Uuid::new_v4().to_string()[..8]),
-            sequential_id: Some(1),
+            // Assigned from the per-organization sequence at insert time.
+            number: String::new(),
+            sequential_id: None,
             invoice_type: InvoiceType::OneOff,
             status: InvoiceStatus::Finalized,
             payment_status: PaymentStatus::Pending,
@@ -109,7 +110,7 @@ impl AdminMutation2 {
             updated_at: now,
             applied_taxes: Vec::new(),
         };
-        db(ctx).insert_invoice(&invoice).await?;
+        db(ctx).insert_numbered_invoice(&mut invoice).await?;
         for fee in &input.fees {
             let units = match fee.units.as_deref() {
                 Some(s) => dec(s)?,
@@ -194,19 +195,24 @@ impl AdminMutation2 {
         let now = Utc::now();
         let mut clone = src.clone();
         clone.id = Uuid::new_v4();
-        clone.number = format!("INV-{}", &Uuid::new_v4().to_string()[..8]);
+        // A re-issued invoice takes the next number in the organization sequence.
+        clone.number = String::new();
+        clone.sequential_id = None;
         clone.status = InvoiceStatus::Finalized;
         clone.payment_status = PaymentStatus::Pending;
         clone.issuing_date = Some(now.date_naive());
         clone.created_at = now;
         clone.updated_at = now;
-        db(ctx).insert_invoice(&clone).await?;
-        for fee in &src_fees {
-            let mut copy = fee.clone();
-            copy.id = Uuid::new_v4();
-            copy.invoice_id = Some(clone.id);
-            db(ctx).insert_fee(&copy).await?;
-        }
+        let copies: Vec<m::Fee> = src_fees
+            .iter()
+            .map(|fee| {
+                let mut copy = fee.clone();
+                copy.id = Uuid::new_v4();
+                copy.invoice_id = Some(clone.id);
+                copy
+            })
+            .collect();
+        db(ctx).insert_numbered_invoice_with_fees(&mut clone, &copies).await?;
         let object = serde_json::json!({
             "lago_id": clone.id,
             "number": clone.number,

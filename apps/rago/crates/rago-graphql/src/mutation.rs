@@ -5,6 +5,7 @@
 
 use async_graphql::{Context, InputObject, Json, Object, Result};
 use chrono::{Datelike, Utc};
+use rago_billing::aggregation::AggregationPeriod;
 use rago_billing::dates::MonthlyDates;
 use rago_billing::generate::{generate_subscription_invoice, ChargeInput};
 use rago_billing::subscription_fee::Proration;
@@ -47,6 +48,8 @@ pub struct CreateBillableMetricInput {
     pub aggregation_type: String,
     pub field_name: Option<String>,
     pub recurring: Option<bool>,
+    /// Required for `custom_agg`: per-event amount expression.
+    pub custom_aggregator: Option<String>,
 }
 
 #[derive(InputObject)]
@@ -212,6 +215,15 @@ impl Mutation {
         let org = require_org(ctx)?;
         let aggregation_type = aggregation_from_str(&input.aggregation_type)
             .ok_or_else(|| async_graphql::Error::new("invalid aggregation_type"))?;
+        let custom_aggregator = input.custom_aggregator.filter(|c| !c.trim().is_empty());
+        match (&aggregation_type, custom_aggregator.as_deref()) {
+            (AggregationType::CustomAgg, None) => {
+                return Err(async_graphql::Error::new("custom_aggregator is required for custom_agg"))
+            }
+            (_, Some(src)) => rago_billing::aggregation::validate_custom_aggregator(src)
+                .map_err(|e| async_graphql::Error::new(format!("invalid custom_aggregator: {e}")))?,
+            _ => {}
+        }
         let metric = m::BillableMetric {
             id: Uuid::new_v4(),
             organization_id: org.id,
@@ -224,6 +236,7 @@ impl Mutation {
             expression: None,
             rounding_function: None,
             rounding_precision: None,
+            custom_aggregator,
             created_at: now(),
             updated_at: now(),
             deleted_at: None,
@@ -427,13 +440,19 @@ impl Mutation {
         };
         db(ctx).insert_wallet(&wallet).await?;
 
-        let credits = parse_dec(&input.paid_credits) + parse_dec(&input.granted_credits);
-        if credits > Decimal::ZERO {
-            let credit = WalletCredit::from_credit_amount(Currency::new(&currency), rate_amount, credits, true);
-            let tx = build_transaction(&wallet, &credit, WalletTransactionType::Inbound, WalletTransactionStatus::Settled, None);
-            db(ctx).insert_wallet_transaction(&tx).await?;
-            wallet = increase_balance(&wallet, &tx, false);
-            db(ctx).update_wallet_balance(&wallet).await?;
+        let granted = parse_dec(&input.granted_credits);
+        let paid = parse_dec(&input.paid_credits);
+        if granted < Decimal::ZERO || paid < Decimal::ZERO {
+            return Err(async_graphql::Error::new("credits must be positive"));
+        }
+        if granted > Decimal::ZERO {
+            wallet = grant_wallet_credits(db(ctx), &wallet, granted).await?.0;
+        }
+        if paid > Decimal::ZERO {
+            // A purchase: pending until its credit invoice is paid.
+            rago_jobs::wallet_credits::purchase_paid_credits(db(ctx), &wallet, paid)
+                .await
+                .map_err(|e| async_graphql::Error::new(format!("paid_credit_purchase_failed: {e}")))?;
         }
         Ok(Wallet {
             wallet,
@@ -446,19 +465,35 @@ impl Mutation {
         ctx: &Context<'_>,
         input: CreateWalletTransactionInput,
     ) -> Result<Vec<WalletTransaction>> {
-        let _org = require_org(ctx)?;
+        let org = require_org(ctx)?;
         let wallet_id = Uuid::parse_str(&input.wallet_id).map_err(|_| async_graphql::Error::new("invalid wallet_id"))?;
-        let mut wallet = db(ctx).find_wallet(wallet_id).await?.ok_or_else(|| async_graphql::Error::new("wallet_not_found"))?;
-        let credits = parse_dec(&input.paid_credits) + parse_dec(&input.granted_credits);
-        if credits <= Decimal::ZERO {
+        let wallet = db(ctx)
+            .find_wallet(wallet_id)
+            .await?
+            .filter(|w| w.organization_id == org.id)
+            .ok_or_else(|| async_graphql::Error::new("wallet_not_found"))?;
+        let granted = parse_dec(&input.granted_credits);
+        let paid = parse_dec(&input.paid_credits);
+        if granted < Decimal::ZERO || paid < Decimal::ZERO {
+            return Err(async_graphql::Error::new("credits must be positive"));
+        }
+        if granted + paid <= Decimal::ZERO {
             return Err(async_graphql::Error::new("paid_credits or granted_credits required"));
         }
-        let credit = WalletCredit::from_credit_amount(Currency::new(&wallet.balance_currency), wallet.rate_amount, credits, true);
-        let tx = build_transaction(&wallet, &credit, WalletTransactionType::Inbound, WalletTransactionStatus::Settled, None);
-        db(ctx).insert_wallet_transaction(&tx).await?;
-        wallet = increase_balance(&wallet, &tx, false);
-        db(ctx).update_wallet_balance(&wallet).await?;
-        Ok(vec![WalletTransaction(tx)])
+        let mut out = Vec::new();
+        let mut wallet = wallet;
+        if granted > Decimal::ZERO {
+            let (updated, tx) = grant_wallet_credits(db(ctx), &wallet, granted).await?;
+            wallet = updated;
+            out.push(WalletTransaction(tx));
+        }
+        if paid > Decimal::ZERO {
+            let (tx, _invoice) = rago_jobs::wallet_credits::purchase_paid_credits(db(ctx), &wallet, paid)
+                .await
+                .map_err(|e| async_graphql::Error::new(format!("paid_credit_purchase_failed: {e}")))?;
+            out.push(WalletTransaction(tx));
+        }
+        Ok(out)
     }
 
     async fn create_coupon(&self, ctx: &Context<'_>, input: CreateCouponInput) -> Result<Coupon> {
@@ -565,18 +600,27 @@ impl Mutation {
         let from = b.from_date.and_hms_opt(0, 0, 0).unwrap();
         let to = b.to_date.and_hms_opt(23, 59, 59).unwrap();
 
-        let mut loaded: Vec<(m::BillableMetric, m::Charge, Vec<m::Event>)> = Vec::new();
+        let mut loaded: Vec<(m::BillableMetric, m::Charge, Vec<m::Event>, AggregationPeriod)> =
+            Vec::new();
         for charge in &charges {
+            // Pay-in-advance charges were billed when their events were ingested.
+            if charge.pay_in_advance {
+                continue;
+            }
             let Some(mid) = charge.billable_metric_id else { continue };
             let metric = db(ctx).find_billable_metric(mid).await?;
             let events = db(ctx)
                 .events_for_external_subscription(org.id, &sub.external_id, &metric.code, from, to)
                 .await?;
-            loaded.push((metric, charge.clone(), events));
+            let carry_in = db(ctx)
+                .weighted_sum_carry_in(org.id, &sub.external_id, &metric, from)
+                .await?;
+            let period = AggregationPeriod::new(from, to).with_initial_value(carry_in);
+            loaded.push((metric, charge.clone(), events, period));
         }
         let charge_inputs: Vec<ChargeInput> = loaded
             .iter()
-            .map(|(m, c, e)| ChargeInput { metric: m, charge: c, events: e })
+            .map(|(m, c, e, p)| ChargeInput { metric: m, charge: c, events: e, period: Some(*p) })
             .collect();
 
         let taxes = db(ctx).organization_taxes(org.id).await?;
@@ -592,10 +636,7 @@ impl Mutation {
             &[],
         )
         .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        db(ctx).insert_invoice(&invoice).await?;
-        for fee in &fees {
-            db(ctx).insert_fee(fee).await?;
-        }
+        db(ctx).insert_numbered_invoice_with_fees(&mut invoice, &fees).await?;
         Ok(Invoice { invoice, fees })
     }
 
@@ -762,8 +803,9 @@ fn blank_invoice(sub: &m::Subscription, currency: &Currency) -> m::Invoice {
         organization_id: sub.organization_id,
         billing_entity_id: sub.billing_entity_id.unwrap_or(sub.organization_id),
         customer_id: Some(sub.customer_id),
-        number: format!("INV-{}", &Uuid::new_v4().to_string()[..8]),
-        sequential_id: Some(1),
+        // Assigned from the per-organization sequence at insert time.
+        number: String::new(),
+        sequential_id: None,
         invoice_type: InvoiceType::Subscription,
         status: InvoiceStatus::Finalized,
         payment_status: PaymentStatus::Pending,
@@ -796,10 +838,9 @@ fn aggregation_from_str(s: &str) -> Option<AggregationType> {
         "sum_agg" => AggregationType::SumAgg,
         "max_agg" => AggregationType::MaxAgg,
         "unique_count_agg" => AggregationType::UniqueCountAgg,
-        // weighted_sum_agg / custom_agg are not accepted: the billing engine
-        // cannot compute fees for them, so a metric using one would fail every
-        // invoice it appears on.
         "latest_agg" => AggregationType::LatestAgg,
+        "weighted_sum_agg" => AggregationType::WeightedSumAgg,
+        "custom_agg" => AggregationType::CustomAgg,
         _ => return None,
     })
 }
@@ -847,4 +888,32 @@ fn coupon_frequency_from_str(s: &str) -> Option<CouponFrequency> {
         "forever" => CouponFrequency::Forever,
         _ => return None,
     })
+}
+
+
+/// Grant free wallet credits: a settled inbound transaction applied to the
+/// balance at once, announced with `wallet_transaction.created`.
+async fn grant_wallet_credits(
+    db: &rago_db::Db,
+    wallet: &m::Wallet,
+    credits: Decimal,
+) -> Result<(m::Wallet, m::WalletTransaction)> {
+    let credit = WalletCredit::from_credit_amount(
+        Currency::new(&wallet.balance_currency),
+        wallet.rate_amount,
+        credits,
+        true,
+    );
+    let tx = build_transaction(wallet, &credit, WalletTransactionType::Inbound, WalletTransactionStatus::Settled, None);
+    db.insert_wallet_transaction(&tx).await?;
+    let updated = increase_balance(wallet, &tx, false);
+    db.update_wallet_balance(&updated).await?;
+    emit(
+        db,
+        wallet.organization_id,
+        WebhookKind::WalletTransactionCreated,
+        rago_jobs::wallet_credits::wallet_transaction_object(&tx),
+    )
+    .await;
+    Ok((updated, tx))
 }

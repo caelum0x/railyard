@@ -74,6 +74,13 @@ pub async fn v2_events_batch(
                 // DB unique index is the authoritative guard; a lost race yields a
                 // no-op insert, reported as a duplicate rather than double-metered.
                 if st.db.insert_event(&event).await? {
+                    if let Some(sub) = sub.as_ref() {
+                        if let Err(e) =
+                            rago_jobs::pay_in_advance::enqueue_for_event(&st.db, sub, &event).await
+                        {
+                            tracing::error!(event_id = %event.id, error = %e, "could not enqueue pay-in-advance billing");
+                        }
+                    }
                     created.push(ser::event(&event));
                 } else {
                     errors.push(json!({
@@ -89,6 +96,16 @@ pub async fn v2_events_batch(
         }
     }
 
+    if !errors.is_empty() {
+        // `events.errors` — one webhook summarizing the rejected events.
+        crate::emit::webhook(
+            &st.db,
+            org,
+            rago_integrations::webhooks::WebhookKind::EventsErrors,
+            json!({ "invalid_events": errors, "error_count": errors.len() }),
+        )
+        .await;
+    }
     Ok(Json(json!({
         "events": created,
         "errors": errors,

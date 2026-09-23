@@ -54,12 +54,12 @@
 //! | credit_note.generated | `CreditNotes::GeneratePdfService` | rago-jobs pdf generation |
 //! | credit_note.refund_failure | `CreditNotes::Refunds::*` failure | rago-integrations refund failure |
 //! | integration.provider_error | `Integrations::Aggregator::*` provider error | rago-integrations provider error |
-//! | order.created / order.executed | `Orders::*` | **DEFERRED — no orders table in Rago** |
-//! | order_form.created/signed/expired/voided | `OrderForms::*` | **DEFERRED — no order_forms table in Rago** |
+//! | order.created / order.executed | `Orders::*` | rago-jobs::orders (signing / execution) |
+//! | order_form.created/signed/voided | `OrderForms::*` | rago-jobs::orders + rago-graphql slice 5/6 |
 //! | payment.requires_action | `Payments::CreateService` (3DS) | rago-integrations payment create |
 //! | payment.succeeded | provider `*Service` payment success | rago-integrations payment success |
 //! | payment_provider.error | `PaymentProviders::*` generic error | rago-integrations provider error |
-//! | payment_receipt.created / generated | `PaymentReceipts::*` | **DEFERRED — no payment_receipts table in Rago** |
+//! | payment_receipt.created / generated | `PaymentReceipts::*` | rago-jobs::receipts (on payment success) |
 //! | payment_request.created | `PaymentRequests::CreateService` | rago-billing payment request |
 //! | payment_request.payment_failure | `PaymentProviders::DeliverErrorWebhookService` | rago-integrations payment failure |
 //! | payment_request.payment_status_updated | `PaymentRequests::UpdateService` | rago-billing payment request update |

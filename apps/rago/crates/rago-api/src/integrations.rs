@@ -24,7 +24,7 @@ pub struct TaxProviderQuery {
 }
 
 /// `POST /invoices/:id/apply_provider_taxes?provider=` — fetch + apply external
-/// taxes through the selected tax provider (Anrok or Avalara) via the
+/// taxes through the selected (default: the connected) tax provider (Anrok or Avalara) via the
 /// configured aggregator (`RAGO_TAX_BASE_URL` / `RAGO_TAX_API_KEY`), then
 /// persist the fee taxes and invoice totals.
 pub async fn apply_provider_taxes_to_invoice(
@@ -33,14 +33,21 @@ pub async fn apply_provider_taxes_to_invoice(
     Path(id): Path<Uuid>,
     Query(pq): Query<TaxProviderQuery>,
 ) -> ApiResult<Json<Value>> {
-    let provider_code = pq.provider.as_deref().unwrap_or("anrok");
+    // Default to the organization's connected tax integration.
+    let provider_code = match pq.provider.filter(|p| !p.trim().is_empty()) {
+        Some(p) => p,
+        None => rago_jobs::integrations_sync::active_tax_provider(&st.db, auth.organization.id)
+            .await
+            .map_err(|e| integration_error("tax_integration", e))?
+            .unwrap_or_else(|| "anrok".to_string()),
+    };
     let transport = rago_integrations::default_transport();
     let (invoice, fees) = rago_jobs::integrations_sync::apply_provider_taxes_to_invoice(
         &st.db,
         &transport,
         auth.organization.id,
         id,
-        provider_code,
+        &provider_code,
     )
     .await
     .map_err(|e| integration_error("tax_integration", e))?;

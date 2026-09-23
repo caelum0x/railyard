@@ -115,6 +115,7 @@ fn metric(org_id: Uuid, code: &str) -> m::BillableMetric {
         expression: None,
         rounding_function: None,
         rounding_precision: None,
+        custom_aggregator: None,
         created_at: now,
         updated_at: now,
         deleted_at: None,

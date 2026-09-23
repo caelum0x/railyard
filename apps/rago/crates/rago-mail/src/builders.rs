@@ -109,3 +109,31 @@ pub fn dunning_email(invoice: &Invoice, to: &str) -> Email {
         text_body: format!("Payment reminder: invoice {} of {} is outstanding.\n", invoice.number, amount),
     }
 }
+
+/// Payment authentication request (Stripe SCA / 3-D Secure): the customer's
+/// bank needs them to confirm the charge through `confirm_url`.
+pub fn payment_action_email(invoice: &Invoice, confirm_url: &str, to: &str) -> Email {
+    let currency = invoice.currency();
+    let amount = money(invoice.total_amount_cents, &currency);
+    let url = html_escape(confirm_url);
+    Email {
+        to: to.to_string(),
+        from: FROM.to_string(),
+        subject: format!("Action required — confirm your payment for invoice {}", invoice.number),
+        html_body: format!(
+            "<html><body><h1>Confirm your payment</h1><p>Your bank needs you to confirm the payment of {} for invoice {}.</p><p><a href=\"{}\">Confirm payment</a></p><p>If the button does not work, open this link: {}</p></body></html>",
+            amount, html_escape(&invoice.number), url, url
+        ),
+        text_body: format!(
+            "Your bank needs you to confirm the payment of {} for invoice {}.\nConfirm it here: {}\n",
+            amount, invoice.number, confirm_url
+        ),
+    }
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}

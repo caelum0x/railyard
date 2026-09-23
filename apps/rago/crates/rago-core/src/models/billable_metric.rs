@@ -20,6 +20,10 @@ pub struct BillableMetric {
     /// One of `round` / `ceil` / `floor` (Lago `ROUNDING_FUNCTIONS`).
     pub rounding_function: Option<String>,
     pub rounding_precision: Option<i32>,
+    /// `custom_agg` metrics: expression evaluated per event (same grammar as
+    /// `expression`); the per-event results are summed into the charge amount.
+    #[serde(default)]
+    pub custom_aggregator: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,

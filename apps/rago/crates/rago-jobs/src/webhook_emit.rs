@@ -27,19 +27,19 @@
 //! | dunning_campaign.finished **[LIVE]** | rago-jobs dunning.rs (`process_dunning_campaigns`) |
 //! | invoice.created **[LIVE]** | rago-jobs clock/invoices.rs (`finalize_invoices`) + scheduler.rs |
 //! | invoice.one_off_created **[LIVE]** | rago-api breadth.rs (`create_one_off_invoice`) |
-//! | invoice.paid_credit_added | no-op until `Credits::AppliedPrepaidCreditService` |
+//! | invoice.paid_credit_added **[LIVE]** | rago-jobs wallet_credits.rs (credit invoice paid) |
 //! | invoice.generated **[LIVE]** | rago-jobs clock/invoices.rs + scheduler.rs, rago-api subs.rs (`finalize_invoice`) + breadth.rs (one-off) — `file_url` → `/invoices/:id/download` |
 //! | invoice.drafted **[LIVE]** | rago-jobs clock/invoices.rs (`refresh_draft_invoices`) |
 //! | invoice.ready_to_finalize | no-op until tax pull / finalize path |
 //! | invoice.voided **[LIVE]** | rago-api subs.rs (`void_invoice`) |
-//! | invoice.deleted | no-op until invoice delete service |
+//! | invoice.deleted **[LIVE]** | rago-api payment_actions.rs (`DELETE /invoices/:id`, drafts) |
 //! | invoice.payment_dispute_lost **[LIVE]** | rago-api subs.rs (`lose_dispute`) |
 //! | invoice.payment_status_updated **[LIVE]** | rago-jobs collection.rs (every charge) + rago-api webhooks.rs (provider webhooks) |
 //! | invoice.payment_overdue **[LIVE]** | rago-jobs clock/invoices.rs (`mark_invoices_as_payment_overdue`) |
 //! | invoice.payment_failure **[LIVE]** | rago-jobs collection.rs (decline / no payment method) + rago-api webhooks.rs |
 //! | invoice.resynced **[LIVE]** | rago-jobs integrations_sync.rs (`sync_invoice_accounting`) |
-//! | event.error | no-op until event post-process path |
-//! | events.errors | no-op until event validation path |
+//! | event.error **[LIVE]** | rago-api emit.rs (rejected event) |
+//! | events.errors **[LIVE]** | rago-api phase15.rs (batch ingest with rejected events) |
 //! | fee.created **[LIVE]** | rago-jobs scheduler.rs (billing cycle per-fee) |
 //! | fee.tax_provider_error | no-op until tax provider fee error path |
 //! | customer.created **[LIVE]** | rago-api handlers.rs (`upsert_customer`) |
@@ -49,7 +49,7 @@
 //! | customer.crm_provider_created | no-op until CRM sync |
 //! | customer.crm_provider_error | no-op until CRM sync error |
 //! | customer.payment_provider_created **[LIVE]** | rago-jobs collection.rs (Stripe customer created) |
-//! | customer.payment_provider_error | no-op until provider-customer error |
+//! | customer.payment_provider_error **[LIVE]** | rago-jobs collection.rs (Stripe customer creation failed) |
 //! | customer.checkout_url_generated **[LIVE]** | rago-jobs collection.rs (`checkout_url`) |
 //! | customer.tax_provider_error | no-op until tax provider customer error |
 //! | customer.vies_check | no-op until EU auto-taxes VIES path |
@@ -57,17 +57,17 @@
 //! | credit_note.generated **[LIVE]** | rago-api handlers.rs + rago-graphql admin_mutations.rs (after creation) — `file_url` → `/credit_notes/:id/download` |
 //! | credit_note.refund_failure **[LIVE]** | rago-jobs refunds.rs (provider refund declined) |
 //! | integration.provider_error | no-op until integration provider error path |
-//! | order.created | no-op until orders schema (schema-deferred) |
-//! | order.executed **[LIVE]** | rago-graphql admin_mutations5.rs (`execute_order`) |
-//! | order_form.created | no-op until order_forms schema (schema-deferred) |
+//! | order.created **[LIVE]** | rago-jobs orders.rs (order form signed) |
+//! | order.executed **[LIVE]** | rago-jobs orders.rs (`execute_order` invoices the quote) |
+//! | order_form.created **[LIVE]** | rago-jobs orders.rs (`createOrderForm` from an approved quote) |
 //! | order_form.signed **[LIVE]** | rago-graphql admin_mutations5.rs (`sign_order_form`) |
-//! | order_form.expired | no-op until order_forms schema (schema-deferred) |
+//! | order_form.expired | no trigger: order forms carry no expiry (quote versions do) |
 //! | order_form.voided **[LIVE]** | rago-graphql admin_mutations5.rs (`void_order_form`) |
-//! | payment.requires_action | no-op until 3DS / SCA payment flow |
+//! | payment.requires_action **[LIVE]** | rago-jobs collection.rs + rago-api webhooks.rs (Stripe SCA / 3DS) |
 //! | payment.succeeded **[LIVE]** | rago-jobs collection.rs + rago-api webhooks.rs |
 //! | payment_provider.error **[LIVE]** | rago-api webhooks.rs (provider decline event) |
-//! | payment_receipt.created | no-op until payment_receipts schema (schema-deferred) |
-//! | payment_receipt.generated | no-op until payment_receipts schema (schema-deferred) |
+//! | payment_receipt.created **[LIVE]** | rago-jobs receipts.rs (payment succeeded) |
+//! | payment_receipt.generated **[LIVE]** | rago-jobs receipts.rs (`file_url` → `/invoices/:id/receipt`) |
 //! | payment_request.created **[LIVE]** | rago-jobs dunning.rs (`create_and_charge_payment_request`) |
 //! | payment_request.payment_failure **[LIVE]** | rago-jobs dunning.rs (an invoice of the request could not be paid) |
 //! | payment_request.payment_status_updated **[LIVE]** | rago-jobs dunning.rs (aggregate status after charging) |
@@ -87,14 +87,14 @@
 //! | subscription.termination_alert **[LIVE]** | rago-jobs clock/subscriptions.rs (`subscriptions_to_be_terminated`) |
 //! | subscription.trial_ended **[LIVE]** | rago-jobs clock/subscriptions.rs (`free_trial_biller`) |
 //! | subscription.updated **[LIVE]** | rago-graphql admin_mutations.rs |
-//! | subscription.usage_threshold_reached | no-op until `UsageMonitoring::CheckThresholdsService` |
+//! | subscription.usage_threshold_reached **[LIVE]** | rago-jobs progressive_billing.rs |
 //! | wallet.created **[LIVE]** | rago-api handlers.rs (`create_wallet`) |
 //! | wallet.updated **[LIVE]** | rago-api crud.rs (`update_wallet`) |
 //! | wallet.terminated **[LIVE]** | rago-jobs clock/wallets.rs (`terminate_wallets`) |
 //! | wallet.depleted_ongoing_balance **[LIVE]** | rago-jobs clock/wallets.rs (`refresh_wallets_ongoing_balance`) |
 //! | wallet_transaction.created **[LIVE]** | rago-jobs clock/wallets.rs (`create_interval_wallet_transactions`) |
-//! | wallet_transaction.updated | no-op until settle / mark-as-failed service |
-//! | wallet_transaction.payment_failure | no-op until wallet payment failure delivery path |
+//! | wallet_transaction.updated **[LIVE]** | rago-jobs wallet_credits.rs (purchase settled) |
+//! | wallet_transaction.payment_failure **[LIVE]** | rago-jobs wallet_credits.rs (credit invoice payment failed) |
 
 use rago_db::Db;
 use rago_integrations::webhooks::WebhookKind;

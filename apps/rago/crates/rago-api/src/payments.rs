@@ -237,9 +237,37 @@ pub async fn create_payment_request(
     )
     .await;
 
-    Ok(Json(
-        json!({ "payment_request": payment_request_json(&row) }),
-    ))
+    // Collect the request's invoices now through the org's payment provider
+    // (the same path the dunning sweep uses); the request's payment_status
+    // reflects the provider's answer.
+    let transport = rago_integrations::default_transport();
+    let (_charged, status) = rago_jobs::dunning::charge_payment_request(
+        &st.db,
+        &transport,
+        &rago_jobs::dunning::PaymentRequestTarget {
+            organization_id: org,
+            request_id: id,
+            customer_id: customer.id,
+            external_customer_id: &external_customer_id,
+            amount_cents: plan.amount_cents,
+            currency: &plan.currency,
+            invoice_ids: &plan.invoice_ids,
+        },
+    )
+    .await
+    .map_err(|e| match e {
+        rago_jobs::JobError::Db(e) => ApiError::from(e),
+        other => {
+            tracing::error!(payment_request_id = %id, error = %other, "payment request collection failed");
+            ApiError::Internal("payment_request_collection_failed".into())
+        }
+    })?;
+    let mut out = payment_request_json(&row);
+    if let Value::Object(map) = &mut out {
+        map.insert("payment_status".into(), json!(status));
+    }
+
+    Ok(Json(json!({ "payment_request": out })))
 }
 
 /// Parse an optional `lago_invoice_ids` array from the request body.
@@ -300,12 +328,27 @@ pub async fn list_payment_receipts(
     Query(q): Query<PaymentIndexQuery>,
 ) -> ApiResult<Json<Value>> {
     find_org_invoice(&st, auth.organization.id, q.invoice_id).await?;
-    let payments = st.db.list_payments(q.invoice_id).await?;
-    let receipts: Vec<Value> = payments
+    let receipts: Vec<Value> = st
+        .db
+        .payment_receipts_for_invoice(q.invoice_id)
+        .await?
         .iter()
-        .map(|r| json!({ "lago_id": r.0, "lago_payment_id": r.0, "lago_invoice_id": q.invoice_id, "amount_cents": r.3, "amount_currency": r.4 }))
+        .map(receipt_json)
         .collect();
     Ok(Json(json!({ "payment_receipts": receipts })))
+}
+
+fn receipt_json(r: &rago_db::receipts::PaymentReceiptRow) -> Value {
+    json!({
+        "lago_id": r.id,
+        "number": r.number,
+        "lago_payment_id": r.payment_id,
+        "lago_invoice_id": r.invoice_id,
+        "amount_cents": r.amount_cents,
+        "amount_currency": r.amount_currency,
+        "file_url": rago_jobs::receipts::receipt_url(r.invoice_id),
+        "created_at": r.created_at.to_rfc3339(),
+    })
 }
 
 /// `POST /payment_receipts/:invoice_id/resend_email` — best-effort resend of the
