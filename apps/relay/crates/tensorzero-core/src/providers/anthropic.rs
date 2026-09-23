@@ -51,6 +51,7 @@ use crate::utils::deprecation_warning;
 use uuid::Uuid;
 
 use super::helpers::convert_stream_error;
+use super::helpers::parse_retry_after;
 use super::helpers::{peek_first_chunk, warn_cannot_forward_url_if_missing_mime_type};
 
 lazy_static! {
@@ -354,6 +355,7 @@ impl InferenceProvider for AnthropicProvider {
             Ok(response_with_latency.try_into()?)
         } else {
             let response_code = res.status();
+            let retry_after = parse_retry_after(res.headers());
             let response_text = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
                     message: format!("Error fetching response: {}", DisplayOrDebugGateway::new(e)),
@@ -368,6 +370,7 @@ impl InferenceProvider for AnthropicProvider {
                 raw_request,
                 response_text,
                 ApiType::ChatCompletions,
+                retry_after,
             )
         }
     }
@@ -1425,12 +1428,13 @@ pub(super) fn handle_anthropic_error(
     raw_request: String,
     raw_response: String,
     api_type: ApiType,
+    retry_after: Option<std::time::Duration>,
 ) -> Result<ProviderInferenceResponse, Error> {
-    match response_code {
+    let error: Error = match response_code {
         StatusCode::UNAUTHORIZED
         | StatusCode::BAD_REQUEST
         | StatusCode::PAYLOAD_TOO_LARGE
-        | StatusCode::TOO_MANY_REQUESTS => Err(ErrorDetails::InferenceClient {
+        | StatusCode::TOO_MANY_REQUESTS => ErrorDetails::InferenceClient {
             status_code: Some(response_code),
             provider_type: PROVIDER_TYPE.to_string(),
             api_type,
@@ -1438,18 +1442,21 @@ pub(super) fn handle_anthropic_error(
             raw_response: Some(raw_response.clone()),
             message: raw_response,
         }
-        .into()),
+        .into(),
         // StatusCode::NOT_FOUND | StatusCode::FORBIDDEN | StatusCode::INTERNAL_SERVER_ERROR | 529: Overloaded
         // These are all captured in _ since they have the same error behavior
-        _ => Err(ErrorDetails::InferenceServer {
+        _ => ErrorDetails::InferenceServer {
             raw_response: Some(raw_response.clone()),
             message: raw_response,
             provider_type: PROVIDER_TYPE.to_string(),
             api_type,
             raw_request: Some(raw_request),
         }
-        .into()),
-    }
+        .into(),
+    };
+    // Honor the upstream's `Retry-After` hint (429 / 529 Overloaded) so the
+    // routing retry loop backs off for the requested delay before failing over.
+    Err(error.with_retry_after(retry_after))
 }
 
 #[derive(Debug, Serialize, TensorZeroDeserialize)]

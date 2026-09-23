@@ -57,7 +57,7 @@ use crate::model::{ModelProviderRequestInfo, ProviderInferenceRequest};
 use crate::providers::helpers::{
     InjectedResponse, convert_stream_error, inject_extra_request_data_and_send,
     inject_extra_request_data_and_send_eventsource_with_headers,
-    inject_extra_request_data_and_send_with_headers,
+    inject_extra_request_data_and_send_with_headers, parse_retry_after,
 };
 use crate::providers::openai::responses::{
     OpenAIResponsesInput, OpenAIResponsesInputInner, OpenAIResponsesInputMessage,
@@ -571,6 +571,7 @@ impl InferenceProvider for OpenAIProvider {
                 PROVIDER_TYPE,
                 request_id.as_deref(),
                 api_type,
+                parse_retry_after(&headers),
             ))
         }
     }
@@ -1081,24 +1082,28 @@ impl EmbeddingProvider for OpenAIProvider {
             }
             .try_into()?)
         } else {
+            let status = res.status();
+            let retry_after = parse_retry_after(res.headers());
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    api_type: ApiType::Embeddings,
+                })
+            })?;
             Err(handle_openai_error(
                 &raw_request,
-                res.status(),
-                &res.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InferenceServer {
-                        message: format!(
-                            "Error parsing error response: {}",
-                            DisplayOrDebugGateway::new(e)
-                        ),
-                        raw_request: Some(raw_request.clone()),
-                        raw_response: None,
-                        provider_type: PROVIDER_TYPE.to_string(),
-                        api_type: ApiType::Embeddings,
-                    })
-                })?,
+                status,
+                &raw_response,
                 PROVIDER_TYPE,
                 None,
                 ApiType::Embeddings,
+                retry_after,
             ))
         }
     }
@@ -1224,24 +1229,28 @@ impl OpenAIProvider {
         })?;
 
         if res.status() != StatusCode::OK {
+            let status = res.status();
+            let retry_after = parse_retry_after(res.headers());
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response for file {file_id}: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: None,
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    api_type: self.api_type.into(),
+                })
+            })?;
             return Err(handle_openai_error(
                 &raw_request,
-                res.status(),
-                &res.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InferenceServer {
-                        message: format!(
-                            "Error parsing error response for file {file_id}: {}",
-                            DisplayOrDebugGateway::new(e)
-                        ),
-                        raw_request: None,
-                        raw_response: None,
-                        provider_type: PROVIDER_TYPE.to_string(),
-                        api_type: self.api_type.into(),
-                    })
-                })?,
+                status,
+                &raw_response,
                 PROVIDER_TYPE,
                 None,
                 self.api_type.into(),
+                retry_after,
             ));
         }
 
@@ -1394,12 +1403,13 @@ pub(super) fn handle_openai_error(
     provider_type: &str,
     request_id: Option<&str>,
     api_type: ApiType,
+    retry_after: Option<std::time::Duration>,
 ) -> Error {
     let message = match request_id {
         Some(id) => format!("{response_body} [request_id: {id}]"),
         None => response_body.to_string(),
     };
-    match response_code {
+    let error: Error = match response_code {
         StatusCode::BAD_REQUEST
         | StatusCode::UNAUTHORIZED
         | StatusCode::FORBIDDEN
@@ -1420,7 +1430,10 @@ pub(super) fn handle_openai_error(
             api_type,
         }
         .into(),
-    }
+    };
+    // Preserve the upstream's `Retry-After` hint (429 / 503) so the routing
+    // retry loop can back off for the requested delay before failing over.
+    error.with_retry_after(retry_after)
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

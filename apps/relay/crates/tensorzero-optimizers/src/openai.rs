@@ -388,6 +388,7 @@ pub fn convert_to_optimizer_status(job: OpenAIFineTuningJob) -> Result<Optimizat
                     skip_relay: None,
                     namespace: None,
                     hedge: None,
+                    retries: tensorzero_core::model::default_provider_retries(),
                 }),
             }
         }

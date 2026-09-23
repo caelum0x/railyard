@@ -10,7 +10,7 @@ use url::Url;
 
 use super::helpers::{
     convert_stream_error, inject_extra_request_data_and_send,
-    inject_extra_request_data_and_send_eventsource,
+    inject_extra_request_data_and_send_eventsource, parse_retry_after,
 };
 use crate::endpoints::inference::InferenceCredentials;
 use crate::error::{DelayedError, DisplayOrDebugGateway, Error, ErrorDetails};
@@ -234,6 +234,7 @@ impl InferenceProvider for DeepSeekProvider {
             .try_into()?)
         } else {
             let status = res.status();
+            let retry_after = parse_retry_after(res.headers());
 
             let response = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
@@ -254,6 +255,7 @@ impl InferenceProvider for DeepSeekProvider {
                 PROVIDER_TYPE,
                 None,
                 ApiType::ChatCompletions,
+                retry_after,
             ))
         }
     }

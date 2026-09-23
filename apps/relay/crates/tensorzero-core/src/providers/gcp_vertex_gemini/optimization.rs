@@ -230,6 +230,7 @@ pub fn convert_to_optimizer_status(
                     skip_relay: None,
                     namespace: None,
                     hedge: None,
+                    retries: crate::model::default_provider_retries(),
                 }),
             }
         }

@@ -47,7 +47,7 @@ use crate::tool::{AllowedTools, AllowedToolsChoice};
 use crate::tool::{ToolCall, ToolCallChunk, ToolChoice};
 
 use super::gcp_vertex_gemini::process_jsonschema_for_gcp_vertex_gemini;
-use super::helpers::{convert_stream_error, inject_extra_request_data_and_send};
+use super::helpers::{convert_stream_error, inject_extra_request_data_and_send, parse_retry_after};
 
 const PROVIDER_NAME: &str = "Google AI Studio Gemini";
 pub const PROVIDER_TYPE: &str = "google_ai_studio_gemini";
@@ -251,6 +251,7 @@ impl InferenceProvider for GoogleAIStudioGeminiProvider {
             Ok(response_with_latency.try_into()?)
         } else {
             let response_code = res.status();
+            let retry_after = parse_retry_after(res.headers());
             let error_body = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
                     message: format!(
@@ -263,7 +264,12 @@ impl InferenceProvider for GoogleAIStudioGeminiProvider {
                     raw_response: None,
                 })
             })?;
-            handle_google_ai_studio_error(response_code, error_body, ApiType::ChatCompletions)
+            handle_google_ai_studio_error(
+                response_code,
+                error_body,
+                ApiType::ChatCompletions,
+                retry_after,
+            )
         }
     }
 
@@ -1241,12 +1247,13 @@ fn handle_google_ai_studio_error(
     response_code: StatusCode,
     response_body: String,
     api_type: ApiType,
+    retry_after: Option<std::time::Duration>,
 ) -> Result<ProviderInferenceResponse, Error> {
-    match response_code {
+    let error: Error = match response_code {
         StatusCode::UNAUTHORIZED
         | StatusCode::BAD_REQUEST
         | StatusCode::PAYLOAD_TOO_LARGE
-        | StatusCode::TOO_MANY_REQUESTS => Err(ErrorDetails::InferenceClient {
+        | StatusCode::TOO_MANY_REQUESTS => ErrorDetails::InferenceClient {
             status_code: Some(response_code),
             message: response_body.clone(),
             raw_request: None,
@@ -1254,18 +1261,21 @@ fn handle_google_ai_studio_error(
             provider_type: PROVIDER_TYPE.to_string(),
             api_type,
         }
-        .into()),
+        .into(),
         // StatusCode::NOT_FOUND | StatusCode::FORBIDDEN | StatusCode::INTERNAL_SERVER_ERROR | 529: Overloaded
         // These are all captured in _ since they have the same error behavior
-        _ => Err(ErrorDetails::InferenceServer {
+        _ => ErrorDetails::InferenceServer {
             message: response_body.clone(),
             raw_request: None,
             raw_response: Some(response_body.clone()),
             provider_type: PROVIDER_TYPE.to_string(),
             api_type,
         }
-        .into()),
-    }
+        .into(),
+    };
+    // Honor the upstream's `Retry-After` hint so the routing retry loop backs
+    // off for the requested delay before failing over.
+    Err(error.with_retry_after(retry_after))
 }
 
 #[cfg(test)]

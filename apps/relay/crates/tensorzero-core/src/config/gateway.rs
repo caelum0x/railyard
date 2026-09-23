@@ -215,6 +215,14 @@ impl UninitializedGatewayConfig {
             false
         };
 
+        // Extract SLO tuning independently of `gateway_url`: it configures the
+        // shared provider-health scorer whether or not relay-forwarding is used.
+        let provider_health_slo = self
+            .relay
+            .as_ref()
+            .and_then(|r| r.slo)
+            .map(relay_hedge::SloConfig::from);
+
         let relay = if let Some(relay_config) = self.relay {
             if let Some(gateway_url) = &relay_config.gateway_url {
                 let location = relay_config.api_key_location.clone().unwrap_or(
@@ -258,6 +266,7 @@ impl UninitializedGatewayConfig {
                 .global_outbound_http_intra_stream_read_timeout_ms
                 .map(|ms| Duration::milliseconds(ms as i64)),
             relay,
+            provider_health_slo,
             metrics,
             cache: self.cache.unwrap_or_default(),
         })
@@ -412,6 +421,8 @@ impl TryFrom<StoredRelayConfig> for UninitializedRelayConfig {
             api_key_location: stored
                 .api_key_location
                 .map(CredentialLocationWithFallback::from),
+            // SLO tuning is TOML-only and not persisted in stored snapshots.
+            slo: None,
         })
     }
 }
@@ -576,6 +587,11 @@ pub struct GatewayConfig {
     pub global_outbound_http_intra_stream_read_timeout: Option<Duration>,
     #[serde(skip)]
     pub relay: Option<TensorzeroRelay>,
+    /// Parsed `[gateway.relay.slo]` tuning for the shared provider-health
+    /// scorer. Installed into the process-global scorer at startup. Not
+    /// serialized (runtime-only, TOML-sourced).
+    #[serde(skip)]
+    pub provider_health_slo: Option<relay_hedge::SloConfig>,
     pub metrics: MetricsConfig,
     pub cache: ModelInferenceCacheConfig,
 }
@@ -597,6 +613,7 @@ impl Default for GatewayConfig {
             global_outbound_http_timeout: DEFAULT_HTTP_CLIENT_TIMEOUT,
             global_outbound_http_intra_stream_read_timeout: None,
             relay: Default::default(),
+            provider_health_slo: None,
             metrics: Default::default(),
             cache: Default::default(),
         }

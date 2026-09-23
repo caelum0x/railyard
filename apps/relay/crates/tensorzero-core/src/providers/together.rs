@@ -28,6 +28,7 @@ use crate::model::Credential;
 use crate::model::{ModelProviderRequestInfo, ProviderInferenceRequest};
 use crate::providers::helpers::{
     inject_extra_request_data_and_send, inject_extra_request_data_and_send_eventsource,
+    parse_retry_after,
 };
 use crate::tool::ToolChoice;
 use crate::{
@@ -242,6 +243,7 @@ impl InferenceProvider for TogetherProvider {
             .try_into()?)
         } else {
             let status = res.status();
+            let retry_after = parse_retry_after(res.headers());
             let raw_response = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
                     message: format!(
@@ -261,6 +263,7 @@ impl InferenceProvider for TogetherProvider {
                 PROVIDER_TYPE,
                 None,
                 ApiType::ChatCompletions,
+                retry_after,
             ))
         }
     }

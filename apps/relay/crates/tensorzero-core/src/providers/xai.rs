@@ -34,6 +34,7 @@ use crate::model::Credential;
 use crate::model::{ModelProviderRequestInfo, ProviderInferenceRequest};
 use crate::providers::helpers::{
     inject_extra_request_data_and_send, inject_extra_request_data_and_send_eventsource,
+    parse_retry_after,
 };
 use crate::providers::openai::{
     OpenAIMessagesConfig, OpenAIResponseChoice, ReasoningFieldName, StreamOptions, get_chat_url,
@@ -229,6 +230,7 @@ impl InferenceProvider for XAIProvider {
             .try_into()?)
         } else {
             let status = res.status();
+            let retry_after = parse_retry_after(res.headers());
 
             let response = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
@@ -249,6 +251,7 @@ impl InferenceProvider for XAIProvider {
                 PROVIDER_TYPE,
                 None,
                 ApiType::ChatCompletions,
+                retry_after,
             ))
         }
     }

@@ -162,6 +162,13 @@ impl<T: Debug + Display> Display for DisplayOrDebugGateway<T> {
 // We arc `ErrorDetails` per the `clippy::result_large_err` lint, as well as to make it cloneable
 pub struct Error {
     details: Arc<ErrorDetails>,
+    /// Optional provider-supplied backoff hint (parsed from an HTTP `Retry-After`
+    /// header). Carried alongside the details so the routing retry loop can honor
+    /// it without threading a new field through every `ErrorDetails` variant.
+    /// Skipped from serialization so the wire/`transparent` representation is
+    /// unchanged.
+    #[serde(skip)]
+    retry_after: Option<Duration>,
     #[cfg(feature = "e2e_tests")]
     #[serde(skip)]
     backtrace: Option<Arc<Backtrace>>,
@@ -199,6 +206,7 @@ impl Error {
     pub fn new(details: ErrorDetails) -> Self {
         let err = Self {
             details: Arc::new(details),
+            retry_after: None,
             #[cfg(feature = "e2e_tests")]
             backtrace: opt_capture_backtrace(),
         };
@@ -211,9 +219,28 @@ impl Error {
     fn new_without_logging(details: ErrorDetails) -> Self {
         Self {
             details: Arc::new(details),
+            retry_after: None,
             #[cfg(feature = "e2e_tests")]
             backtrace: opt_capture_backtrace(),
         }
+    }
+
+    /// Attach a provider-supplied `Retry-After` backoff hint to this error.
+    ///
+    /// A `None` argument leaves the error unchanged. The value is a suggested
+    /// minimum delay before retrying the same provider; the retry loop bounds it
+    /// by its configured `max_delay`.
+    #[must_use]
+    pub fn with_retry_after(mut self, retry_after: Option<Duration>) -> Self {
+        if retry_after.is_some() {
+            self.retry_after = retry_after;
+        }
+        self
+    }
+
+    /// The provider-supplied `Retry-After` backoff hint, if any.
+    pub fn retry_after(&self) -> Option<Duration> {
+        self.retry_after
     }
 
     pub fn status_code(&self) -> StatusCode {

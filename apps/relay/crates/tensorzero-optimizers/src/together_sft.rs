@@ -361,6 +361,7 @@ impl JobHandle for TogetherSFTJobHandle {
                         skip_relay: None,
                         namespace: None,
                         hedge: None,
+                        retries: tensorzero_core::model::default_provider_retries(),
                     }),
                 })
             }

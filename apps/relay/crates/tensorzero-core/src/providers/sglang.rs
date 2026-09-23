@@ -31,6 +31,7 @@ use crate::model::Credential;
 use crate::model::{ModelProviderRequestInfo, ProviderInferenceRequest};
 use crate::providers::helpers::{
     inject_extra_request_data_and_send, inject_extra_request_data_and_send_eventsource,
+    parse_retry_after,
 };
 use crate::providers::openai::{OpenAIMessagesConfig, ReasoningFieldName, check_api_base_suffix};
 use crate::tool::ToolCallChunk;
@@ -221,24 +222,28 @@ impl InferenceProvider for SGLangProvider {
             }
             .try_into()?)
         } else {
+            let status = res.status();
+            let retry_after = parse_retry_after(res.headers());
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    api_type: ApiType::ChatCompletions,
+                })
+            })?;
             Err(handle_openai_error(
                 &raw_request,
-                res.status(),
-                &res.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InferenceServer {
-                        message: format!(
-                            "Error parsing error response: {}",
-                            DisplayOrDebugGateway::new(e)
-                        ),
-                        raw_request: Some(raw_request.clone()),
-                        raw_response: None,
-                        provider_type: PROVIDER_TYPE.to_string(),
-                        api_type: ApiType::ChatCompletions,
-                    })
-                })?,
+                status,
+                &raw_response,
                 PROVIDER_TYPE,
                 None,
                 ApiType::ChatCompletions,
+                retry_after,
             ))
         }
     }

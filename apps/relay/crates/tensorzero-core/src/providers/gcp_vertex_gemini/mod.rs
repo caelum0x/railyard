@@ -29,6 +29,7 @@ pub mod optimization;
 use super::helpers::check_new_tool_call_name;
 use super::helpers::{
     inject_extra_request_data_and_send, inject_extra_request_data_and_send_eventsource,
+    parse_retry_after,
 };
 use crate::endpoints::inference::InferenceCredentials;
 use crate::error::{
@@ -1163,6 +1164,7 @@ impl InferenceProvider for GCPVertexGeminiProvider {
                     raw_response: None,
                 }));
             };
+            let retry_after = parse_retry_after(res.headers());
             let error_body = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
                     message: format!(
@@ -1180,6 +1182,7 @@ impl InferenceProvider for GCPVertexGeminiProvider {
                 response_code,
                 error_body,
                 ApiType::ChatCompletions,
+                retry_after,
             ))
         }
     }
@@ -1368,6 +1371,7 @@ impl InferenceProvider for GCPVertexGeminiProvider {
 
         if !res.status().is_success() {
             let response_code = res.status();
+            let retry_after = parse_retry_after(res.headers());
             let error_body = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
                     message: format!(
@@ -1385,6 +1389,7 @@ impl InferenceProvider for GCPVertexGeminiProvider {
                 response_code,
                 error_body,
                 ApiType::ChatCompletions,
+                retry_after,
             ));
         }
 
@@ -1490,6 +1495,7 @@ impl InferenceProvider for GCPVertexGeminiProvider {
 
         if !res.status().is_success() {
             let response_code = res.status();
+            let retry_after = parse_retry_after(res.headers());
             let error_body = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
                     message: format!(
@@ -1507,6 +1513,7 @@ impl InferenceProvider for GCPVertexGeminiProvider {
                 response_code,
                 error_body,
                 ApiType::ChatCompletions,
+                retry_after,
             ));
         }
         let raw_response = res.text().await.map_err(|e| {
@@ -3199,8 +3206,9 @@ fn handle_gcp_vertex_gemini_error(
     response_code: StatusCode,
     response_body: String,
     api_type: ApiType,
+    retry_after: Option<std::time::Duration>,
 ) -> Error {
-    match response_code {
+    let error = match response_code {
         StatusCode::UNAUTHORIZED
         | StatusCode::BAD_REQUEST
         | StatusCode::PAYLOAD_TOO_LARGE
@@ -3221,7 +3229,10 @@ fn handle_gcp_vertex_gemini_error(
             provider_type: PROVIDER_TYPE.to_string(),
             api_type,
         }),
-    }
+    };
+    // Honor the upstream's `Retry-After` hint so the routing retry loop backs
+    // off for the requested delay before failing over.
+    error.with_retry_after(retry_after)
 }
 
 #[cfg(test)]

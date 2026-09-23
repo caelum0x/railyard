@@ -20,6 +20,36 @@ use crate::{
     model::ModelProviderRequestInfo,
 };
 
+/// Parse an HTTP `Retry-After` response header into a backoff [`Duration`].
+///
+/// Per RFC 9110 the header value is either a non-negative number of seconds
+/// (`delay-seconds`, e.g. `Retry-After: 120`) or an HTTP-date / IMF-fixdate
+/// (e.g. `Retry-After: Wed, 21 Oct 2015 07:28:00 GMT`). Returns `None` when the
+/// header is absent, unparseable, or when the date is already in the past.
+///
+/// Providers thread the result into their error via [`Error::with_retry_after`]
+/// so the per-provider retry loop can honor the upstream's requested delay.
+pub fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<std::time::Duration> {
+    let raw = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
+    let value = raw.trim();
+    if value.is_empty() {
+        return None;
+    }
+    // `delay-seconds` form.
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(std::time::Duration::from_secs(seconds));
+    }
+    // HTTP-date (IMF-fixdate) form, always in GMT.
+    let target = chrono::NaiveDateTime::parse_from_str(value, "%a, %d %b %Y %H:%M:%S GMT")
+        .ok()?
+        .and_utc();
+    // A past date yields a negative delta, which `to_std` rejects -> `None`.
+    target
+        .signed_duration_since(chrono::Utc::now())
+        .to_std()
+        .ok()
+}
+
 pub struct JsonlBatchFileInfo {
     pub provider_type: String,
     pub raw_request: String,

@@ -24,6 +24,7 @@ use url::Url;
 
 use super::helpers::{
     inject_extra_request_data_and_send_eventsource, inject_extra_request_data_and_send_with_headers,
+    parse_retry_after,
 };
 use crate::inference::types::Usage;
 use crate::inference::types::usage::raw_usage_entries_from_value;
@@ -252,24 +253,28 @@ impl InferenceProvider for FireworksProvider {
             }
             .try_into()?)
         } else {
+            let status = res.status();
+            let retry_after = parse_retry_after(res.headers());
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    api_type: ApiType::ChatCompletions,
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                })
+            })?;
             Err(handle_openai_error(
                 &raw_request,
-                res.status(),
-                &res.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InferenceServer {
-                        message: format!(
-                            "Error parsing error response: {}",
-                            DisplayOrDebugGateway::new(e)
-                        ),
-                        provider_type: PROVIDER_TYPE.to_string(),
-                        api_type: ApiType::ChatCompletions,
-                        raw_request: Some(raw_request.clone()),
-                        raw_response: None,
-                    })
-                })?,
+                status,
+                &raw_response,
                 PROVIDER_TYPE,
                 None,
                 ApiType::ChatCompletions,
+                retry_after,
             ))
         }
     }

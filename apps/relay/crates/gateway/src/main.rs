@@ -616,6 +616,12 @@ async fn run() -> Result<(), ExitCode> {
 
     let config = gateway_handle.app_state.config().load();
 
+    // Install provider-health SLO tuning before the shared scorer is first
+    // used (router build restores health snapshots, which forces it).
+    if let Some(slo) = config.gateway.provider_health_slo {
+        tensorzero_core::model::configure_provider_health_slo(slo);
+    }
+
     // Set debug mode
     error::set_debug(config.gateway.debug).log_err_pretty("Failed to set debug mode")?;
     error::set_unstable_error_json(config.gateway.unstable_error_json)

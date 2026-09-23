@@ -8,7 +8,7 @@ use crate::stored_credential_location::{
     StoredCredentialLocation, StoredCredentialLocationOrHardcoded,
     StoredCredentialLocationWithFallback, StoredEndpointLocation,
 };
-use crate::{StoredExtraBodyConfig, StoredExtraHeadersConfig, StoredTimeoutsConfig};
+use crate::{StoredExtraBodyConfig, StoredExtraHeadersConfig, StoredRetryConfig, StoredTimeoutsConfig};
 
 pub const STORED_MODEL_CONFIG_SCHEMA_REVISION: i32 = 1;
 
@@ -23,6 +23,9 @@ pub struct StoredModelConfig {
     pub skip_relay: Option<bool>,
     pub namespace: Option<String>,
     pub hedge: Option<StoredHedgeConfig>,
+    /// Per-provider retry policy. `None` predates this field and maps to the
+    /// runtime default on read.
+    pub retries: Option<StoredRetryConfig>,
 }
 
 /// Stored representation of Relay's opt-in provider hedging and adaptive

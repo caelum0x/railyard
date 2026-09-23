@@ -78,6 +78,7 @@ impl RetryConfig {
         Fut: Future<Output = Result<R, Error>>,
     {
         let mut backoff = self.get_backoff().build();
+        let max_delay = Duration::from_secs_f32(self.max_delay_s);
         let mut errors = Vec::new();
         loop {
             match func().await {
@@ -88,6 +89,13 @@ impl RetryConfig {
                     }
                     match backoff.next() {
                         Some(delay) => {
+                            // Honor a provider-supplied `Retry-After` hint when present,
+                            // bounded by `max_delay` so a hostile or misconfigured
+                            // upstream cannot pin an attempt open indefinitely.
+                            let delay = match err.retry_after() {
+                                Some(retry_after) => retry_after.min(max_delay),
+                                None => delay,
+                            };
                             errors.push(err);
                             tokio::time::sleep(delay).await;
                         }

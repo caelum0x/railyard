@@ -2280,6 +2280,109 @@ pub struct UninitializedRelayConfig {
     /// If set, provides a TensorZero API key when invoking `gateway_url`.
     /// If unset, no API key will be sent.
     pub api_key_location: Option<CredentialLocationWithFallback>,
+    /// Tuning for the adaptive provider-health scorer (`[gateway.relay.slo]`).
+    /// Applies to the shared circuit-breaker/EWMA ranking regardless of whether
+    /// `gateway_url` is set. `None` uses the documented defaults.
+    #[serde(default)]
+    pub slo: Option<UninitializedSloConfig>,
+}
+
+/// TOML representation of the provider-health SLO tunables
+/// (`[gateway.relay.slo]`), mapping to [`relay_hedge::SloConfig`]. Every field
+/// defaults to the current hardcoded value, so an operator overrides only what
+/// they need.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UninitializedSloConfig {
+    /// Weight on normalized tail latency in the composite score.
+    #[serde(default = "default_slo_weight_latency")]
+    pub weight_latency: f64,
+    /// Weight on the recent (EWMA) error rate.
+    #[serde(default = "default_slo_weight_error")]
+    pub weight_error: f64,
+    /// Weight on long-run unavailability (`1 - uptime`).
+    #[serde(default = "default_slo_weight_uptime")]
+    pub weight_uptime: f64,
+    /// EWMA smoothing factor in `(0, 1]`. Higher reacts faster.
+    #[serde(default = "default_slo_alpha")]
+    pub alpha: f64,
+    /// Latency scale (ms) used to normalize tail latency into `[0, 1)`.
+    #[serde(default = "default_slo_latency_scale_ms")]
+    pub latency_scale_ms: f64,
+    /// Error-rate threshold above which the circuit breaker trips open.
+    #[serde(default = "default_slo_trip_error_rate")]
+    pub trip_error_rate: f64,
+    /// Minimum samples before the breaker may trip.
+    #[serde(default = "default_slo_min_samples")]
+    pub min_samples: u64,
+    /// How long the breaker stays open before admitting a half-open probe (ms).
+    #[serde(default = "default_slo_open_cooldown_ms")]
+    pub open_cooldown_ms: u64,
+    /// Neutral score assigned to an endpoint with no recorded history.
+    #[serde(default = "default_slo_neutral_score")]
+    pub neutral_score: f64,
+}
+
+fn default_slo_weight_latency() -> f64 {
+    relay_hedge::ScoreWeights::default().latency
+}
+fn default_slo_weight_error() -> f64 {
+    relay_hedge::ScoreWeights::default().error
+}
+fn default_slo_weight_uptime() -> f64 {
+    relay_hedge::ScoreWeights::default().uptime
+}
+fn default_slo_alpha() -> f64 {
+    relay_hedge::SloConfig::default().alpha
+}
+fn default_slo_latency_scale_ms() -> f64 {
+    relay_hedge::SloConfig::default().latency_scale_ms
+}
+fn default_slo_trip_error_rate() -> f64 {
+    relay_hedge::SloConfig::default().trip_error_rate
+}
+fn default_slo_min_samples() -> u64 {
+    relay_hedge::SloConfig::default().min_samples
+}
+fn default_slo_open_cooldown_ms() -> u64 {
+    relay_hedge::SloConfig::default().open_cooldown.as_millis() as u64
+}
+fn default_slo_neutral_score() -> f64 {
+    relay_hedge::SloConfig::default().neutral_score
+}
+
+impl Default for UninitializedSloConfig {
+    fn default() -> Self {
+        Self {
+            weight_latency: default_slo_weight_latency(),
+            weight_error: default_slo_weight_error(),
+            weight_uptime: default_slo_weight_uptime(),
+            alpha: default_slo_alpha(),
+            latency_scale_ms: default_slo_latency_scale_ms(),
+            trip_error_rate: default_slo_trip_error_rate(),
+            min_samples: default_slo_min_samples(),
+            open_cooldown_ms: default_slo_open_cooldown_ms(),
+            neutral_score: default_slo_neutral_score(),
+        }
+    }
+}
+
+impl From<UninitializedSloConfig> for relay_hedge::SloConfig {
+    fn from(cfg: UninitializedSloConfig) -> Self {
+        relay_hedge::SloConfig {
+            weights: relay_hedge::ScoreWeights {
+                latency: cfg.weight_latency,
+                error: cfg.weight_error,
+                uptime: cfg.weight_uptime,
+            },
+            alpha: cfg.alpha,
+            latency_scale_ms: cfg.latency_scale_ms,
+            trip_error_rate: cfg.trip_error_rate,
+            min_samples: cfg.min_samples,
+            open_cooldown: std::time::Duration::from_millis(cfg.open_cooldown_ms),
+            neutral_score: cfg.neutral_score,
+        }
+    }
 }
 
 /// The result of parsing all of the globbed config files,

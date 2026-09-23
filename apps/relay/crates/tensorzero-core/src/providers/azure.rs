@@ -32,6 +32,7 @@ use crate::model::{ModelProviderRequestInfo, ProviderInferenceRequest};
 use crate::providers::chat_completions::prepare_chat_completion_tools;
 use crate::providers::helpers::{
     inject_extra_request_data_and_send, inject_extra_request_data_and_send_eventsource,
+    parse_retry_after,
 };
 use crate::providers::openai::{OpenAIMessagesConfig, ReasoningFieldName};
 use uuid::Uuid;
@@ -281,6 +282,7 @@ impl InferenceProvider for AzureProvider {
             .try_into()?)
         } else {
             let status = res.status();
+            let retry_after = parse_retry_after(res.headers());
             let response = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
                     message: format!(
@@ -300,6 +302,7 @@ impl InferenceProvider for AzureProvider {
                 PROVIDER_TYPE,
                 None,
                 ApiType::ChatCompletions,
+                retry_after,
             ))
         }
     }
@@ -461,6 +464,7 @@ impl EmbeddingProvider for AzureProvider {
             )?)
         } else {
             let status = response.status();
+            let retry_after = parse_retry_after(response.headers());
             let response_text = response.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
                     message: format!(
@@ -480,6 +484,7 @@ impl EmbeddingProvider for AzureProvider {
                 PROVIDER_TYPE,
                 None,
                 ApiType::Embeddings,
+                retry_after,
             ))
         }
     }

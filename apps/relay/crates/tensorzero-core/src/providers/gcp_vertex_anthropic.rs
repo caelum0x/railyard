@@ -11,6 +11,7 @@ use tokio::time::Instant;
 
 use super::helpers::{
     inject_extra_request_data_and_send, inject_extra_request_data_and_send_eventsource,
+    parse_retry_after,
 };
 use crate::endpoints::inference::InferenceCredentials;
 use crate::error::{DisplayOrDebugGateway, Error, ErrorDetails};
@@ -243,6 +244,7 @@ impl InferenceProvider for GCPVertexAnthropicProvider {
         };
 
         let response_status = res.status();
+        let retry_after = parse_retry_after(res.headers());
 
         let raw_response = res.text().await.map_err(|e| {
             Error::new(ErrorDetails::InferenceServer {
@@ -286,6 +288,7 @@ impl InferenceProvider for GCPVertexAnthropicProvider {
                 raw_request,
                 raw_response,
                 ApiType::ChatCompletions,
+                retry_after,
             )
         }
     }

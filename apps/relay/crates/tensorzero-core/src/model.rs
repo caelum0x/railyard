@@ -5,8 +5,8 @@ use indexmap::IndexMap;
 use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, LazyLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::Duration;
 use strum::VariantNames;
 use tensorzero_derive::TensorZeroDeserialize;
@@ -14,7 +14,9 @@ use tensorzero_stored_config::{
     StoredContentBlockType, StoredHedgeConfig, StoredHostedProviderKind, StoredModelConfig,
     StoredModelProvider, StoredOpenAIAPIType, StoredProviderConfig,
 };
-use tensorzero_stored_config::{StoredCostConfig, StoredTimeoutsConfig, StoredUnifiedCostConfig};
+use tensorzero_stored_config::{
+    StoredCostConfig, StoredRetryConfig, StoredTimeoutsConfig, StoredUnifiedCostConfig,
+};
 use tokio::time::error::Elapsed;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{Level, Span, span};
@@ -75,6 +77,7 @@ use crate::model_table::{
     VLLMKind, XAIKind,
 };
 use crate::providers::helpers::peek_first_chunk;
+use crate::utils::retries::RetryConfig;
 use crate::providers::hyperbolic::HyperbolicProvider;
 use crate::providers::openai::OpenAIAPIType;
 use crate::providers::sglang::SGLangProvider;
@@ -92,7 +95,7 @@ use crate::{
 use metrics::{counter, histogram};
 use relay_hedge::{
     Attempt as HedgeAttempt, HedgeConfig, HedgeError, InMemoryProviderHealth,
-    Outcome as ProviderOutcome, ProviderHealth, ProviderHealthSnapshot, ResultClass,
+    Outcome as ProviderOutcome, ProviderHealth, ProviderHealthSnapshot, ResultClass, SloConfig,
     race as race_providers,
 };
 use serde::{Deserialize, Serialize};
@@ -129,10 +132,49 @@ pub struct ModelConfig {
     #[ts(optional)]
     pub namespace: Option<Namespace>,
     pub hedge: HedgeConfig,
+    /// Per-provider retry policy applied to transient (429 / 5xx / network)
+    /// failures before failing over to the next provider in `routing`. The
+    /// default performs one retry with exponential backoff + jitter; set
+    /// `num_retries = 0` to preserve the legacy immediate-failover behavior.
+    pub retries: RetryConfig,
 }
 
-static PROVIDER_HEALTH: LazyLock<InMemoryProviderHealth> =
-    LazyLock::new(InMemoryProviderHealth::with_defaults);
+/// Optional SLO tuning for the shared provider-health scorer, sourced from the
+/// `[gateway.relay.slo]` TOML section. Must be set (via
+/// [`configure_provider_health_slo`]) before `PROVIDER_HEALTH` is first forced;
+/// otherwise the scorer uses [`SloConfig::default`].
+static PROVIDER_HEALTH_SLO: OnceLock<SloConfig> = OnceLock::new();
+
+static PROVIDER_HEALTH: LazyLock<InMemoryProviderHealth> = LazyLock::new(|| {
+    match PROVIDER_HEALTH_SLO.get() {
+        Some(slo) => InMemoryProviderHealth::new(*slo),
+        None => InMemoryProviderHealth::with_defaults(),
+    }
+});
+
+/// Process-global switch: `true` once any routing group opts into adaptive
+/// provider health (circuit-breaking / EWMA ranking). Health observations are
+/// recorded whenever this is set, decoupling "record health" from "hedge
+/// concurrently" so the shared store is populated on the sequential path too.
+static HEALTH_RECORDING_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Enable process-wide provider-health recording. Called at config load when a
+/// model turns on adaptive routing. Idempotent.
+pub(crate) fn enable_health_recording() {
+    HEALTH_RECORDING_ENABLED.store(true, Ordering::Relaxed);
+}
+
+fn health_recording_enabled() -> bool {
+    HEALTH_RECORDING_ENABLED.load(Ordering::Relaxed)
+}
+
+/// Install SLO tuning for the shared provider-health scorer. Must be called
+/// before any inference/health access forces `PROVIDER_HEALTH`; later calls are
+/// ignored (the scorer is built once). Returns `true` if this call installed the
+/// value.
+pub fn configure_provider_health_slo(slo: SloConfig) -> bool {
+    PROVIDER_HEALTH_SLO.set(slo).is_ok()
+}
 
 /// Export a consistent copy of the adaptive provider-routing state for a
 /// durable checkpoint. This is routing optimization state, never billing or
@@ -161,6 +203,19 @@ pub struct UninitializedModelConfig {
     pub namespace: Option<Namespace>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hedge: Option<HedgeConfig>,
+    #[serde(default = "default_provider_retries")]
+    pub retries: RetryConfig,
+}
+
+/// Default per-provider retry policy for a model: a single retry with
+/// exponential backoff + jitter on transient errors before failing over.
+/// This is deliberately more aggressive than [`RetryConfig::default`] (which
+/// disables retries) so that provider routing is resilient out of the box.
+pub fn default_provider_retries() -> RetryConfig {
+    RetryConfig {
+        num_retries: 1,
+        ..RetryConfig::default()
+    }
 }
 
 impl UninitializedModelConfig {
@@ -235,6 +290,12 @@ impl UninitializedModelConfig {
         .await?
         .into_iter()
         .collect::<HashMap<_, _>>();
+        // Record health observations process-wide once any model opts into
+        // adaptive provider routing, so the shared circuit-breaker/EWMA store is
+        // populated even for the sequential (non-hedged) dispatch path.
+        if self.hedge.as_ref().is_some_and(|h| h.enabled) {
+            enable_health_recording();
+        }
         Ok(ModelConfig {
             routing: self.routing,
             providers,
@@ -242,6 +303,7 @@ impl UninitializedModelConfig {
             skip_relay,
             namespace: self.namespace,
             hedge: self.hedge.unwrap_or_default(),
+            retries: self.retries,
         })
     }
 }
@@ -263,7 +325,11 @@ impl ModelConfig {
         error: Option<&Error>,
         ttft: bool,
     ) {
-        if !self.hedge.enabled {
+        // Record health observations whenever this model enables adaptive
+        // routing, OR when any routing group in the process has enabled it. This
+        // decouples "record health" from "hedge concurrently": the shared
+        // circuit-breaker/EWMA store stays populated on the sequential path.
+        if !self.hedge.enabled && !health_recording_enabled() {
             return;
         }
         let latency = started_at.elapsed();
@@ -345,6 +411,185 @@ impl ModelConfig {
         }
     }
 
+    /// Perform a single non-streaming attempt against one provider: build the
+    /// request (fresh inference id), apply the provider timeout, record a health
+    /// observation, and on success compute cost and write the cache. On failure
+    /// the (already health-recorded) provider error is returned so the caller's
+    /// retry loop can decide whether to retry the same provider or fail over.
+    ///
+    /// `filtered` is the content-filtered request for this provider, computed
+    /// once by the caller and reused across retries.
+    async fn non_streaming_attempt<'r>(
+        &'r self,
+        filtered: &'r ModelInferenceRequest<'r>,
+        clients: &'r InferenceClients,
+        model_name: &'r str,
+        provider_name: &'r Arc<str>,
+        provider: &'r ModelProvider,
+        function_name: Option<&'r str>,
+    ) -> Result<ModelInferenceResponse, Error> {
+        let model_provider_request = ModelProviderRequest {
+            request: filtered,
+            model_name,
+            provider_name,
+            otlp_config: &clients.otlp_config,
+            model_inference_id: Uuid::now_v7(),
+            function_name,
+        };
+        let cache_key = model_provider_request.get_cache_key()?;
+        let started_at = tokio::time::Instant::now();
+        let response_fut =
+            self.non_streaming_provider_request(model_provider_request, provider, clients);
+        let response = if let Some(timeout) = provider.non_streaming_total_timeout() {
+            tokio::time::timeout(timeout, response_fut)
+                .await
+                .unwrap_or_else(|_: Elapsed| {
+                    Err(Error::new(ErrorDetails::ModelProviderTimeout {
+                        provider_name: provider_name.to_string(),
+                        timeout,
+                        kind: TimeoutKind::NonStreamingTotal,
+                    }))
+                })
+        } else {
+            response_fut.await
+        };
+
+        let mut response = match response {
+            Ok(response) => {
+                if !response.cached {
+                    self.record_provider_result(model_name, provider_name, started_at, None, false);
+                }
+                response
+            }
+            Err(error) => {
+                self.record_provider_result(
+                    model_name,
+                    provider_name,
+                    started_at,
+                    Some(&error),
+                    false,
+                );
+                return Err(error);
+            }
+        };
+
+        if !response.cached
+            && let Some(cost_config) = &provider.cost
+        {
+            response.usage.cost =
+                compute_cost(&response.raw_response, cost_config, ResponseMode::NonStreaming).ok();
+        }
+        if !response.cached && clients.cache_options.enabled.write() {
+            let _ = start_cache_write(
+                &clients.cache_manager,
+                cache_key,
+                CacheData {
+                    output: NonStreamingCacheData {
+                        blocks: response.output.clone(),
+                    },
+                    raw_request: response.raw_request.clone(),
+                    raw_response: response.raw_response.clone(),
+                    input_tokens: response.usage.input_tokens,
+                    output_tokens: response.usage.output_tokens,
+                    finish_reason: response.finish_reason,
+                },
+                CacheValidationInfo {
+                    tool_config: filtered
+                        .tool_config
+                        .clone()
+                        .map(std::borrow::Cow::into_owned),
+                },
+            );
+        }
+        Ok(response)
+    }
+
+    /// Perform a single streaming attempt against one provider: build the
+    /// request (fresh inference id), apply the pre-TTFT timeout, record a health
+    /// observation, and on success wrap the post-TTFT stream with the remaining
+    /// total deadline. On failure the (already health-recorded) provider error
+    /// is returned so the caller's retry loop can retry or fail over.
+    async fn streaming_attempt<'r>(
+        &'r self,
+        filtered: &'r ModelInferenceRequest<'r>,
+        clients: &'r InferenceClients,
+        model_name: &'r str,
+        provider_name: &'r Arc<str>,
+        provider: &'r ModelProvider,
+        function_name: Option<&'r str>,
+    ) -> Result<StreamResponseAndMessages, Error> {
+        let model_provider_request = ModelProviderRequest {
+            request: filtered,
+            model_name,
+            provider_name,
+            otlp_config: &clients.otlp_config,
+            model_inference_id: Uuid::now_v7(),
+            function_name,
+        };
+        let started_at = tokio::time::Instant::now();
+        let response_fut =
+            self.streaming_provider_request(model_provider_request, provider, clients);
+        let total_timeout = provider.streaming_total_timeout();
+        let ttft_timeout = provider.streaming_ttft_timeout();
+        let pre_ttft_timeout = match (ttft_timeout, total_timeout) {
+            (Some(ttft), Some(total)) if ttft <= total => {
+                Some((started_at + ttft, ttft, TimeoutKind::StreamingTtft))
+            }
+            (Some(_), Some(total)) => Some((started_at + total, total, TimeoutKind::StreamingTotal)),
+            (Some(ttft), None) => Some((started_at + ttft, ttft, TimeoutKind::StreamingTtft)),
+            (None, Some(total)) => Some((started_at + total, total, TimeoutKind::StreamingTotal)),
+            (None, None) => None,
+        };
+        let response = if let Some((deadline, timeout, kind)) = pre_ttft_timeout {
+            tokio::time::timeout_at(deadline, response_fut)
+                .await
+                .unwrap_or_else(|_: Elapsed| {
+                    Err(Error::new(ErrorDetails::ModelProviderTimeout {
+                        provider_name: provider_name.to_string(),
+                        timeout,
+                        kind,
+                    }))
+                })
+        } else {
+            response_fut.await
+        };
+
+        let mut response = match response {
+            Ok(response) => {
+                if !response.response.cached {
+                    self.record_provider_result(model_name, provider_name, started_at, None, true);
+                }
+                response
+            }
+            Err(error) => {
+                self.record_provider_result(
+                    model_name,
+                    provider_name,
+                    started_at,
+                    Some(&error),
+                    true,
+                );
+                return Err(error);
+            }
+        };
+
+        if let Some(total_timeout) = total_timeout {
+            let deadline = started_at + total_timeout;
+            let span = response.response.stream.span().clone();
+            let inner = response.response.stream.into_inner();
+            let timeout_provider_name = provider_name.to_string();
+            let wrapped = stream_with_deadline(inner, deadline, move || {
+                Error::new(ErrorDetails::ModelProviderTimeout {
+                    provider_name: timeout_provider_name,
+                    timeout: total_timeout,
+                    kind: TimeoutKind::StreamingTotal,
+                })
+            });
+            response.response.stream = wrapped.peekable().instrument(span);
+        }
+        Ok(response)
+    }
+
     async fn infer_hedged<'request>(
         &'request self,
         request: &'request ModelInferenceRequest<'request>,
@@ -367,94 +612,23 @@ impl ModelConfig {
                 endpoint,
                 attempt_cost,
                 move || async move {
-                    let request = Self::filter_content_blocks(request, model_name, provider);
-                    let model_provider_request = ModelProviderRequest {
-                        request: &request,
-                        model_name,
-                        provider_name: &provider_name,
-                        otlp_config: &clients.otlp_config,
-                        model_inference_id: Uuid::now_v7(),
-                        function_name,
-                    };
-                    let cache_key = model_provider_request.get_cache_key()?;
-                    let started_at = tokio::time::Instant::now();
-                    let response_fut = self.non_streaming_provider_request(
-                        model_provider_request,
-                        provider,
-                        clients,
-                    );
-                    let response = if let Some(timeout) = provider.non_streaming_total_timeout() {
-                        tokio::time::timeout(timeout, response_fut)
-                            .await
-                            .unwrap_or_else(|_: Elapsed| {
-                                Err(Error::new(ErrorDetails::ModelProviderTimeout {
-                                    provider_name: provider_name.to_string(),
-                                    timeout,
-                                    kind: TimeoutKind::NonStreamingTotal,
-                                }))
-                            })
-                    } else {
-                        response_fut.await
-                    };
-
-                    let mut response = match response {
-                        Ok(response) => {
-                            if !response.cached {
-                                self.record_provider_result(
-                                    model_name,
-                                    &provider_name,
-                                    started_at,
-                                    None,
-                                    false,
-                                );
-                            }
-                            response
-                        }
-                        Err(error) => {
-                            self.record_provider_result(
+                    // Filter once per hedge attempt; each retry reuses it and
+                    // only re-issues the network request (fresh inference id).
+                    let filtered = Self::filter_content_blocks(request, model_name, provider);
+                    let (result, _intermediate) = self
+                        .retries
+                        .retry_collecting_errors(|| {
+                            self.non_streaming_attempt(
+                                &filtered,
+                                clients,
                                 model_name,
                                 &provider_name,
-                                started_at,
-                                Some(&error),
-                                false,
-                            );
-                            return Err(error);
-                        }
-                    };
-
-                    if !response.cached
-                        && let Some(cost_config) = &provider.cost
-                    {
-                        response.usage.cost = compute_cost(
-                            &response.raw_response,
-                            cost_config,
-                            ResponseMode::NonStreaming,
-                        )
-                        .ok();
-                    }
-                    if !response.cached && clients.cache_options.enabled.write() {
-                        let _ = start_cache_write(
-                            &clients.cache_manager,
-                            cache_key,
-                            CacheData {
-                                output: NonStreamingCacheData {
-                                    blocks: response.output.clone(),
-                                },
-                                raw_request: response.raw_request.clone(),
-                                raw_response: response.raw_response.clone(),
-                                input_tokens: response.usage.input_tokens,
-                                output_tokens: response.usage.output_tokens,
-                                finish_reason: response.finish_reason,
-                            },
-                            CacheValidationInfo {
-                                tool_config: request
-                                    .tool_config
-                                    .clone()
-                                    .map(std::borrow::Cow::into_owned),
-                            },
-                        );
-                    }
-                    Ok(response)
+                                provider,
+                                function_name,
+                            )
+                        })
+                        .await;
+                    result
                 },
             ));
         }
@@ -513,89 +687,23 @@ impl ModelConfig {
                 endpoint,
                 attempt_cost,
                 move || async move {
-                    let request = Self::filter_content_blocks(request, model_name, provider);
-                    let model_provider_request = ModelProviderRequest {
-                        request: &request,
-                        model_name,
-                        provider_name: &provider_name,
-                        otlp_config: &clients.otlp_config,
-                        model_inference_id: Uuid::now_v7(),
-                        function_name,
-                    };
-                    let started_at = tokio::time::Instant::now();
-                    let response_fut =
-                        self.streaming_provider_request(model_provider_request, provider, clients);
-                    let total_timeout = provider.streaming_total_timeout();
-                    let ttft_timeout = provider.streaming_ttft_timeout();
-                    let pre_ttft_timeout = match (ttft_timeout, total_timeout) {
-                        (Some(ttft), Some(total)) if ttft <= total => {
-                            Some((started_at + ttft, ttft, TimeoutKind::StreamingTtft))
-                        }
-                        (Some(_), Some(total)) => {
-                            Some((started_at + total, total, TimeoutKind::StreamingTotal))
-                        }
-                        (Some(ttft), None) => {
-                            Some((started_at + ttft, ttft, TimeoutKind::StreamingTtft))
-                        }
-                        (None, Some(total)) => {
-                            Some((started_at + total, total, TimeoutKind::StreamingTotal))
-                        }
-                        (None, None) => None,
-                    };
-                    let response = if let Some((deadline, timeout, kind)) = pre_ttft_timeout {
-                        tokio::time::timeout_at(deadline, response_fut)
-                            .await
-                            .unwrap_or_else(|_: Elapsed| {
-                                Err(Error::new(ErrorDetails::ModelProviderTimeout {
-                                    provider_name: provider_name.to_string(),
-                                    timeout,
-                                    kind,
-                                }))
-                            })
-                    } else {
-                        response_fut.await
-                    };
-
-                    let mut response = match response {
-                        Ok(response) => {
-                            if !response.response.cached {
-                                self.record_provider_result(
-                                    model_name,
-                                    &provider_name,
-                                    started_at,
-                                    None,
-                                    true,
-                                );
-                            }
-                            response
-                        }
-                        Err(error) => {
-                            self.record_provider_result(
+                    // Filter once per hedge attempt; each retry reuses it and
+                    // only re-issues the network request (fresh inference id).
+                    let filtered = Self::filter_content_blocks(request, model_name, provider);
+                    let (result, _intermediate) = self
+                        .retries
+                        .retry_collecting_errors(|| {
+                            self.streaming_attempt(
+                                &filtered,
+                                clients,
                                 model_name,
                                 &provider_name,
-                                started_at,
-                                Some(&error),
-                                true,
-                            );
-                            return Err(error);
-                        }
-                    };
-
-                    if let Some(total_timeout) = total_timeout {
-                        let deadline = started_at + total_timeout;
-                        let span = response.response.stream.span().clone();
-                        let inner = response.response.stream.into_inner();
-                        let timeout_provider_name = provider_name.to_string();
-                        let wrapped = stream_with_deadline(inner, deadline, move || {
-                            Error::new(ErrorDetails::ModelProviderTimeout {
-                                provider_name: timeout_provider_name,
-                                timeout: total_timeout,
-                                kind: TimeoutKind::StreamingTotal,
-                            })
-                        });
-                        response.response.stream = wrapped.peekable().instrument(span);
-                    }
-                    Ok(response)
+                                provider,
+                                function_name,
+                            )
+                        })
+                        .await;
+                    result
                 },
             ));
         }
@@ -655,6 +763,10 @@ impl TryFrom<StoredModelConfig> for UninitializedModelConfig {
             skip_relay: stored.skip_relay,
             namespace: stored.namespace.map(Namespace::new).transpose()?,
             hedge: stored.hedge.map(hedge_config_from_stored),
+            retries: stored
+                .retries
+                .map(RetryConfig::from)
+                .unwrap_or_else(default_provider_retries),
         })
     }
 }
@@ -703,6 +815,7 @@ impl TryFrom<&UninitializedModelConfig> for StoredModelConfig {
             skip_relay: config.skip_relay,
             namespace: config.namespace.as_ref().map(ToString::to_string),
             hedge: config.hedge.as_ref().map(stored_hedge_config),
+            retries: Some(StoredRetryConfig::from(config.retries)),
         })
     }
 }
@@ -1351,87 +1464,31 @@ impl ModelConfig {
                         provider_name: provider_name.to_string(),
                     })
                 })?;
-                let request = Self::filter_content_blocks(request, model_name, provider);
-                let model_provider_request = ModelProviderRequest {
-                    request: &request,
-                    model_name,
-                    provider_name,
-                    otlp_config: &clients.otlp_config,
-                    model_inference_id: Uuid::now_v7(),
-                    function_name,
-                };
-                let cache_key = model_provider_request.get_cache_key()?;
+                // Filter once; retry only re-issues the network request.
+                let filtered = Self::filter_content_blocks(request, model_name, provider);
+                // Retry transient failures (with exponential backoff + jitter,
+                // honoring any `Retry-After`) on this provider before failing
+                // over to the next one in `routing`.
+                let (result, retry_errors) = self
+                    .retries
+                    .retry_collecting_errors(|| {
+                        self.non_streaming_attempt(
+                            &filtered,
+                            clients,
+                            model_name,
+                            provider_name,
+                            provider,
+                            function_name,
+                        )
+                    })
+                    .await;
 
-                let started_at = tokio::time::Instant::now();
-                let response_fut =
-                    self.non_streaming_provider_request(model_provider_request, provider, clients);
-                let response = if let Some(timeout) = provider.non_streaming_total_timeout() {
-                    tokio::time::timeout(timeout, response_fut)
-                        .await
-                        // Convert the outer `Elapsed` error into a TensorZero error,
-                        // so that it can be handled by the `match response` block below
-                        .unwrap_or_else(|_: Elapsed| {
-                            Err(Error::new(ErrorDetails::ModelProviderTimeout {
-                                provider_name: provider_name.to_string(),
-                                timeout,
-                                kind: TimeoutKind::NonStreamingTotal,
-                            }))
-                        })
-                } else {
-                    response_fut.await
-                };
-
-                match response {
+                match result {
                     Ok(mut response) => {
-                        if !response.cached {
-                            self.record_provider_result(
-                                model_name,
-                                provider_name,
-                                started_at,
-                                None,
-                                false,
-                            );
-                        }
-                        // Compute cost from raw response using provider's cost config
-                        if !response.cached
-                            && let Some(cost_config) = &provider.cost
-                        {
-                            response.usage.cost = compute_cost(
-                                &response.raw_response,
-                                cost_config,
-                                ResponseMode::NonStreaming,
-                            )
-                            .ok();
-                        }
-
-                        // Perform the cache write outside of the `non_streaming_total_timeout` timeout future,
-                        // (in case we ever add a blocking cache write option)
-                        if !response.cached && clients.cache_options.enabled.write() {
-                            let _ = start_cache_write(
-                                &clients.cache_manager,
-                                cache_key,
-                                CacheData {
-                                    output: NonStreamingCacheData {
-                                        blocks: response.output.clone(),
-                                    },
-                                    raw_request: response.raw_request.clone(),
-                                    raw_response: response.raw_response.clone(),
-                                    input_tokens: response.usage.input_tokens,
-                                    output_tokens: response.usage.output_tokens,
-                                    finish_reason: response.finish_reason,
-                                },
-                                CacheValidationInfo {
-                                    tool_config: request
-                                        .tool_config
-                                        .clone()
-                                        .map(std::borrow::Cow::into_owned),
-                                },
-                            );
-                        }
-
-                        // Collect raw response entries from failed providers for fallback reporting
+                        // Collect raw response entries from failed providers (and
+                        // this provider's own retried attempts) for fallback reporting
                         if clients.include_raw_response {
-                            for error in provider_errors.values() {
+                            for error in provider_errors.values().chain(retry_errors.iter()) {
                                 if let Some(entries) = error.extract_raw_response() {
                                     response.failed_raw_response.extend(entries);
                                 }
@@ -1441,13 +1498,6 @@ impl ModelConfig {
                         return Ok(response);
                     }
                     Err(error) => {
-                        self.record_provider_result(
-                            model_name,
-                            provider_name,
-                            started_at,
-                            Some(&error),
-                            false,
-                        );
                         provider_errors.insert(provider_name.to_string(), error);
                     }
                 }
@@ -1529,100 +1579,40 @@ impl ModelConfig {
                         provider_name: provider_name.to_string(),
                     })
                 })?;
-                let request = Self::filter_content_blocks(request, model_name, provider);
-                let model_provider_request = ModelProviderRequest {
-                    request: &request,
-                    model_name,
-                    provider_name,
-                    otlp_config: &clients.otlp_config,
-                    model_inference_id: Uuid::now_v7(),
-                    function_name,
-                };
+                // Filter once; retry only re-issues the network request. The
+                // per-attempt stream deadline is applied inside `streaming_attempt`.
+                let filtered = Self::filter_content_blocks(request, model_name, provider);
+                // Retry transient failures (with exponential backoff + jitter,
+                // honoring any `Retry-After`) on this provider before failing
+                // over to the next one in `routing`.
+                let (result, retry_errors) = self
+                    .retries
+                    .retry_collecting_errors(|| {
+                        self.streaming_attempt(
+                            &filtered,
+                            clients,
+                            model_name,
+                            provider_name,
+                            provider,
+                            function_name,
+                        )
+                    })
+                    .await;
 
-                // This future includes a call to `peek_first_chunk`, so applying
-                // `streaming_ttft_timeout` is correct.
-                let start = tokio::time::Instant::now();
-                let response_fut =
-                    self.streaming_provider_request(model_provider_request, provider, clients);
-
-                // Compute the effective pre-TTFT deadline from both ttft_ms and total_ms.
-                // If both are set, use the earlier deadline. The error kind reflects which
-                // timeout was responsible.
-                let total_timeout = provider.streaming_total_timeout();
-                let ttft_timeout = provider.streaming_ttft_timeout();
-                let pre_ttft_timeout = match (ttft_timeout, total_timeout) {
-                    (Some(ttft), Some(total)) => {
-                        if ttft <= total {
-                            Some((start + ttft, ttft, TimeoutKind::StreamingTtft))
-                        } else {
-                            Some((start + total, total, TimeoutKind::StreamingTotal))
-                        }
-                    }
-                    (Some(ttft), None) => Some((start + ttft, ttft, TimeoutKind::StreamingTtft)),
-                    (None, Some(total)) => {
-                        Some((start + total, total, TimeoutKind::StreamingTotal))
-                    }
-                    (None, None) => None,
-                };
-
-                let response = if let Some((deadline, timeout, kind)) = pre_ttft_timeout {
-                    tokio::time::timeout_at(deadline, response_fut)
-                        .await
-                        .unwrap_or_else(|_: Elapsed| {
-                            Err(Error::new(ErrorDetails::ModelProviderTimeout {
-                                provider_name: provider_name.to_string(),
-                                timeout,
-                                kind,
-                            }))
-                        })
-                } else {
-                    response_fut.await
-                };
-
-                match response {
+                match result {
                     Ok(mut response) => {
-                        if !response.response.cached {
-                            self.record_provider_result(
-                                model_name,
-                                provider_name,
-                                start,
-                                None,
-                                true,
-                            );
-                        }
-                        // Collect raw response entries from failed providers for fallback reporting
+                        // Collect raw response entries from failed providers (and
+                        // this provider's own retried attempts) for fallback reporting
                         if clients.include_raw_response {
-                            for error in provider_errors.values() {
+                            for error in provider_errors.values().chain(retry_errors.iter()) {
                                 if let Some(entries) = error.extract_raw_response() {
                                     response.response.failed_raw_response.extend(entries);
                                 }
                             }
                         }
-                        // Wrap the post-TTFT stream with the remaining total deadline
-                        if let Some(total_timeout) = total_timeout {
-                            let deadline = start + total_timeout;
-                            let span = response.response.stream.span().clone();
-                            let inner = response.response.stream.into_inner();
-                            let provider_name = provider_name.to_string();
-                            let wrapped = stream_with_deadline(inner, deadline, move || {
-                                Error::new(ErrorDetails::ModelProviderTimeout {
-                                    provider_name,
-                                    timeout: total_timeout,
-                                    kind: TimeoutKind::StreamingTotal,
-                                })
-                            });
-                            response.response.stream = wrapped.peekable().instrument(span);
-                        }
                         return Ok(response);
                     }
                     Err(error) => {
-                        self.record_provider_result(
-                            model_name,
-                            provider_name,
-                            start,
-                            Some(&error),
-                            true,
-                        );
                         provider_errors.insert(provider_name.to_string(), error);
                     }
                 }
@@ -4141,6 +4131,7 @@ impl ShorthandModelConfig for ModelConfig {
             skip_relay: false,
             namespace: None,
             hedge: relay_hedge::HedgeConfig::default(),
+            retries: default_provider_retries(),
         })
     }
 

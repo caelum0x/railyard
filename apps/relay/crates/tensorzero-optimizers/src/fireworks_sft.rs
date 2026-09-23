@@ -319,6 +319,7 @@ impl JobHandle for FireworksSFTJobHandle {
                     skip_relay: None,
                     namespace: None,
                     hedge: None,
+                    retries: tensorzero_core::model::default_provider_retries(),
                 }),
             };
             if !self.deploy_after_training {
