@@ -23,6 +23,12 @@
 //! URL userinfo for a single command, or `RIT_USERNAME` + `RIT_TOKEN` (a rithub
 //! personal access token). Local paths (`/srv/repo.git`, `file:///srv/repo.git`)
 //! are served in-process with no network at all.
+//!
+//! SSH remotes (`ssh://[user@]host[:port]/org/repo.git` or scp-style
+//! `git@host:org/repo.git`) run the system `ssh` client with
+//! `git-upload-pack '<path>'` / `git-receive-pack '<path>'`, exactly what the
+//! rithub SSH transport serves; keys come from the user's ssh agent/config.
+//! Set `RIT_SSH` to use a different ssh program.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -156,6 +162,150 @@ pub fn remove_remote(repo: &Repository, name: &str) -> Result<()> {
 enum Endpoint {
     Local(PathBuf),
     Http { base: String, auth: Option<(String, String)> },
+    /// `dest` is `[user@]host`; `path` is the repository path on the server.
+    Ssh { dest: String, port: Option<u16>, path: String },
+}
+
+/// Parse an SSH remote: `ssh://[user@]host[:port]/path` or scp-style
+/// `[user@]host:path`. Returns `None` when `url` is not an SSH remote.
+fn parse_ssh(url: &str) -> Result<Option<Endpoint>> {
+    let url = url.trim();
+    if let Some(rest) = url.strip_prefix("ssh://").or_else(|| url.strip_prefix("git+ssh://")) {
+        let (authority, path) = rest
+            .split_once('/')
+            .ok_or_else(|| anyhow!("ssh remote URL has no repository path"))?;
+        let (dest, port) = match authority.rsplit_once(':') {
+            Some((d, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
+                (d.to_string(), Some(p.parse::<u16>().context("invalid ssh port")?))
+            }
+            _ => (authority.to_string(), None),
+        };
+        if dest.is_empty() || dest.starts_with('-') {
+            bail!("invalid ssh host in remote URL");
+        }
+        return Ok(Some(Endpoint::Ssh { dest, port, path: normalize_repo_path(path)? }));
+    }
+    if url.contains("://") {
+        return Ok(None);
+    }
+    // scp-style: `host:path` where the host part has no '/' and is not a
+    // local path that happens to contain a colon.
+    if let Some((host, path)) = url.split_once(':') {
+        if !host.is_empty() && !host.contains('/') && !path.is_empty() && !Path::new(url).exists() {
+            if host.starts_with('-') {
+                bail!("invalid ssh host in remote URL");
+            }
+            return Ok(Some(Endpoint::Ssh {
+                dest: host.to_string(),
+                port: None,
+                path: normalize_repo_path(path)?,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+/// Normalize a server-side repository path to `org/repo.git`, rejecting
+/// anything that could escape into shell syntax on the remote.
+fn normalize_repo_path(path: &str) -> Result<String> {
+    let path = path.trim_start_matches('/').trim_end_matches('/');
+    if path.is_empty()
+        || path.contains("..")
+        || !path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
+    {
+        bail!("invalid repository path in ssh remote URL");
+    }
+    Ok(if path.ends_with(".git") { path.to_string() } else { format!("{path}.git") })
+}
+
+/// Read one pkt-line (raw, including its length header) from `reader`.
+/// Returns `None` at EOF. A flush packet is returned as `b"0000"`.
+fn read_pkt_raw(reader: &mut impl std::io::Read) -> Result<Option<Vec<u8>>> {
+    let mut header = [0u8; 4];
+    match reader.read_exact(&mut header) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e.into()),
+    }
+    let len = std::str::from_utf8(&header)
+        .ok()
+        .and_then(|h| usize::from_str_radix(h, 16).ok())
+        .ok_or_else(|| anyhow!("malformed pkt-line from ssh remote"))?;
+    let mut out = header.to_vec();
+    if len >= 4 {
+        let mut payload = vec![0u8; len - 4];
+        reader.read_exact(&mut payload)?;
+        out.extend(payload);
+    }
+    Ok(Some(out))
+}
+
+/// Run one stateful git service session over ssh: read the ref advertisement
+/// (up to the first flush), then optionally send `request` and read the full
+/// response until the server closes the stream. Returns `(advertisement,
+/// response)`.
+fn ssh_session(
+    dest: &str,
+    port: Option<u16>,
+    path: &str,
+    service: &str,
+    request: Option<&[u8]>,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    use std::io::Read;
+
+    let program = std::env::var("RIT_SSH").unwrap_or_else(|_| "ssh".to_string());
+    let mut cmd = Command::new(&program);
+    cmd.arg("-T");
+    if let Some(port) = port {
+        cmd.arg("-p").arg(port.to_string());
+    }
+    cmd.arg("--")
+        .arg(dest)
+        .arg(format!("{service} '{path}'"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("running {program} (install OpenSSH to use ssh remotes)"))?;
+    let mut stdout = child.stdout.take().ok_or_else(|| anyhow!("ssh stdout unavailable"))?;
+    let mut stdin = child.stdin.take().ok_or_else(|| anyhow!("ssh stdin unavailable"))?;
+
+    let mut advertisement = Vec::new();
+    loop {
+        match read_pkt_raw(&mut stdout)? {
+            None => break,
+            Some(pkt) => {
+                let flush = pkt == b"0000";
+                advertisement.extend(pkt);
+                if flush {
+                    break;
+                }
+            }
+        }
+    }
+
+    let mut response = Vec::new();
+    match request {
+        Some(body) => {
+            stdin.write_all(body).context("sending request over ssh")?;
+            drop(stdin);
+            stdout.read_to_end(&mut response).context("reading ssh response")?;
+        }
+        None => {
+            // Nothing wanted: end the session politely with a flush.
+            let _ = stdin.write_all(b"0000");
+            drop(stdin);
+            let _ = stdout.read_to_end(&mut response);
+        }
+    }
+    let status = child.wait().context("waiting for ssh")?;
+    if advertisement.is_empty() && !status.success() {
+        bail!("ssh remote {dest}:{path} failed ({status}); check your ssh key and repository access");
+    }
+    Ok((advertisement, response))
 }
 
 fn strip_password(url: &str) -> String {
@@ -178,11 +328,14 @@ fn resolve_endpoint(url: &str) -> Result<Endpoint> {
     if let Some(rest) = url.strip_prefix("file://") {
         return Ok(Endpoint::Local(PathBuf::from(rest)));
     }
+    if let Some(ssh) = parse_ssh(url)? {
+        return Ok(ssh);
+    }
     let Some((scheme, rest)) = url.split_once("://") else {
         return Ok(Endpoint::Local(PathBuf::from(url)));
     };
     if scheme != "http" && scheme != "https" {
-        bail!("unsupported remote URL scheme '{scheme}' (use http, https, or a local path)");
+        bail!("unsupported remote URL scheme '{scheme}' (use http, https, ssh, or a local path)");
     }
     let (authority, path) = rest.split_once('/').map_or((rest, ""), |(a, p)| (a, p));
     let (userinfo, host) = match authority.rsplit_once('@') {
@@ -370,6 +523,10 @@ fn discover(endpoint: &Endpoint, service: &str) -> Result<Advertisement> {
             check_status(status, &body, "listing remote refs")?;
             parse_advertisement(&body)
         }
+        Endpoint::Ssh { dest, port, path } => {
+            let (adv, _) = ssh_session(dest, *port, path, service, None)?;
+            parse_advertisement(&adv)
+        }
     }
 }
 
@@ -450,6 +607,9 @@ fn fetch_into(
                 )?;
                 check_status(status, &resp, "fetching objects")?;
                 resp
+            }
+            Endpoint::Ssh { dest, port, path } => {
+                ssh_session(dest, *port, path, "git-upload-pack", Some(&body))?.1
             }
         };
         let pack = strip_nak(&response)?;
@@ -661,6 +821,9 @@ pub fn push(repo: &Repository, remote: &str, refspec: &str, force: bool) -> Resu
             check_status(status, &resp, "pushing")?;
             resp
         }
+        Endpoint::Ssh { dest, port, path } => {
+            ssh_session(dest, *port, path, "git-receive-pack", Some(&body))?.1
+        }
     };
     check_report_status(&response, &dst)?;
     // Keep the remote-tracking ref in sync with what we just pushed.
@@ -708,4 +871,164 @@ fn check_report_status(response: &[u8], dst: &str) -> Result<()> {
         bail!("push was not acknowledged for {dst}");
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Forge (rithub) JSON API client — used by `rit issue` / `rit pr`
+// ---------------------------------------------------------------------------
+
+/// A rithub repository addressed through its JSON API, derived from a remote.
+#[derive(Debug, Clone)]
+pub struct ForgeRepo {
+    /// API origin, e.g. `https://rithub.example.com` (no trailing slash).
+    pub api_base: String,
+    pub org: String,
+    pub repo: String,
+    auth: Option<(String, String)>,
+}
+
+/// Split `.../org/repo(.git)` into `(prefix, org, repo)`.
+fn split_org_repo(path: &str) -> Result<(String, String, String)> {
+    let path = path.trim_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let mut parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+    if parts.len() < 2 {
+        bail!("remote URL does not name an org/repo (expected .../<org>/<repo>.git)");
+    }
+    let repo = parts.pop().unwrap_or_default().to_string();
+    let org = parts.pop().unwrap_or_default().to_string();
+    Ok((parts.join("/"), org, repo))
+}
+
+/// Resolve the forge API target for a remote URL. HTTP(S) remotes use the same
+/// origin; SSH remotes default to `https://<host>`. `RIT_API_URL` overrides the
+/// API origin in both cases. Credentials: URL userinfo, else `RIT_USERNAME` +
+/// `RIT_TOKEN`.
+pub fn forge_repo(url: &str) -> Result<ForgeRepo> {
+    let override_base = std::env::var("RIT_API_URL")
+        .ok()
+        .map(|u| u.trim().trim_end_matches('/').to_string())
+        .filter(|u| !u.is_empty());
+    match resolve_endpoint(url)? {
+        Endpoint::Local(_) => bail!(
+            "remote '{url}' is a local path; issue and pr commands need a rithub http(s) or ssh remote"
+        ),
+        Endpoint::Http { base, auth } => {
+            let (scheme, rest) = base.split_once("://").unwrap_or(("https", base.as_str()));
+            let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+            let (prefix, org, repo) = split_org_repo(path)?;
+            let origin = if prefix.is_empty() {
+                format!("{scheme}://{host}")
+            } else {
+                format!("{scheme}://{host}/{prefix}")
+            };
+            Ok(ForgeRepo { api_base: override_base.unwrap_or(origin), org, repo, auth })
+        }
+        Endpoint::Ssh { dest, path, .. } => {
+            let host = dest.rsplit_once('@').map_or(dest.as_str(), |(_, h)| h).to_string();
+            let (_, org, repo) = split_org_repo(&path)?;
+            let auth = std::env::var("RIT_TOKEN").ok().map(|token| {
+                (std::env::var("RIT_USERNAME").unwrap_or_else(|_| "token".to_string()), token)
+            });
+            Ok(ForgeRepo {
+                api_base: override_base.unwrap_or_else(|| format!("https://{host}")),
+                org,
+                repo,
+                auth,
+            })
+        }
+    }
+}
+
+impl ForgeRepo {
+    /// `org/repo`.
+    pub fn slug(&self) -> String {
+        format!("{}/{}", self.org, self.repo)
+    }
+
+    /// Browser URL for a path under this repository (e.g. `issues/3`).
+    pub fn web_url(&self, sub: &str) -> String {
+        format!("{}/{}/{}/{sub}", self.api_base, self.org, self.repo)
+    }
+
+    /// Call `METHOD /api/orgs/{org}/repos/{repo}{sub}` with an optional JSON
+    /// body; returns the parsed JSON response (`null` for an empty body).
+    pub fn api(
+        &self,
+        method: &str,
+        sub: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let url = format!("{}/api/orgs/{}/repos/{}{sub}", self.api_base, self.org, self.repo);
+        let payload = body.map(serde_json::to_vec).transpose()?;
+        let (status, response) = api_request(method, &url, self.auth.as_ref(), payload.as_deref())?;
+        let parsed: serde_json::Value = if response.iter().all(|b| b.is_ascii_whitespace()) {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&response).unwrap_or_else(|_| {
+                serde_json::Value::String(String::from_utf8_lossy(&response).into_owned())
+            })
+        };
+        if (200..300).contains(&status) {
+            return Ok(parsed);
+        }
+        let message = parsed
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("HTTP {status}"));
+        match status {
+            401 => bail!("{message} (set RIT_USERNAME and RIT_TOKEN to a rithub access token)"),
+            _ => bail!("{} {}: {message}", method, self.slug()),
+        }
+    }
+}
+
+/// One JSON API request through the system `curl`; returns (status, body).
+fn api_request(
+    method: &str,
+    url: &str,
+    auth: Option<&(String, String)>,
+    body: Option<&[u8]>,
+) -> Result<(u16, Vec<u8>)> {
+    let out_path = temp_path("api-out");
+    let in_path = temp_path("api-in");
+    let mut config = format!("url = {}\n", curl_quote(url));
+    if let Some((user, pass)) = auth {
+        config.push_str(&format!("user = {}\n", curl_quote(&format!("{user}:{pass}"))));
+    }
+    let mut cmd = Command::new("curl");
+    cmd.args(["--silent", "--show-error", "--proto", "=http,https", "--max-redirs", "0"])
+        .args(["-X", method])
+        .args(["-H", "Accept: application/json"])
+        .args(["-A", "rit/0.1"])
+        .arg("-o")
+        .arg(&out_path)
+        .args(["-w", "%{http_code}", "-K", "-"]);
+    if let Some(data) = body {
+        std::fs::write(&in_path, data).context("staging request body")?;
+        cmd.args(["-H", "Content-Type: application/json"])
+            .arg("--data-binary")
+            .arg(format!("@{}", in_path.display()));
+    }
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("running curl (install curl to use rithub issue/pr commands)")?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("curl stdin unavailable"))?
+        .write_all(config.as_bytes())?;
+    let output = child.wait_with_output().context("waiting for curl")?;
+    let _ = std::fs::remove_file(&in_path);
+    let response = std::fs::read(&out_path).unwrap_or_default();
+    let _ = std::fs::remove_file(&out_path);
+    if !output.status.success() {
+        bail!("request to {url} failed: {}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    let status: u16 = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap_or(0);
+    Ok((status, response))
 }

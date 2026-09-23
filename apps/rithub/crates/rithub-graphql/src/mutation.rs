@@ -1,27 +1,40 @@
 //! The GraphQL `Mutation` root: the same creates/updates the REST API exposes —
-//! create/update repository, issue, pull request, comment, and milestone —
-//! reusing the domain store and the shared authorization rules.
+//! create/update repository, issue, pull request, comment, and milestone.
+//!
+//! Authorization reuses the shared rules in [`crate::authz`]. Every mutation
+//! with side effects (repositories, issues, pull requests, comments) is then
+//! delegated to the forge service layer through [`crate::ForgeServices`], so it
+//! enforces the same validation, plan quota, on-disk moves, webhooks,
+//! notifications, audit, CI dispatch, and search indexing as REST and the web.
 
 use async_graphql::{Context, Object};
 use time::OffsetDateTime;
 
 use rithub_core::{
-    IssueState, IssueStore, MilestoneStore, NewIssue, NewMilestone, NewPullRequest, NewRepository,
-    PullRequestStore, Store, UpdateIssue, UpdateMilestone, UpdatePr, UpdateRepository, Visibility,
+    MilestoneStore, NewMilestone, NewRepository, Store, UpdateMilestone, UpdateRepository, User,
+    Visibility,
 };
 
-use crate::authz::{authorize_org_manage, authorize_read, authorize_write};
-use crate::context::{git_host, store, viewer, Viewer};
-use crate::error::{bad_request, core_error, unauthenticated};
+use crate::authz::{authorize_admin, authorize_org_manage, authorize_read, authorize_write};
+use crate::context::{services, store, viewer, Viewer};
+use crate::error::{core_error, service_error, unauthenticated};
+use crate::services::{IssueEdit, PullRequestEdit, PullRequestInput};
 use crate::types::{
     IssueCommentObject, IssueObject, IssueStateEnum, MilestoneObject, PrCommentObject,
     PullRequestObject, RepositoryObject, VisibilityEnum,
 };
 
-/// Require an authenticated user and return their id (mutations always attribute
-/// authorship to the calling user; deploy keys/anonymous cannot author).
-fn author_id(viewer: &Viewer) -> async_graphql::Result<uuid::Uuid> {
-    viewer.user().map(|u| u.id).ok_or_else(unauthenticated)
+/// Require an authenticated user (mutations always attribute authorship to the
+/// calling user; deploy keys/anonymous cannot author).
+fn author(viewer: &Viewer) -> async_graphql::Result<&User> {
+    viewer.user().ok_or_else(unauthenticated)
+}
+
+fn to_visibility(v: VisibilityEnum) -> Visibility {
+    match v {
+        VisibilityEnum::Public => Visibility::Public,
+        VisibilityEnum::Private => Visibility::Private,
+    }
 }
 
 /// The write root.
@@ -29,8 +42,8 @@ pub struct Mutation;
 
 #[Object]
 impl Mutation {
-    /// Create a repository: initialize the bare repo on disk, then record the
-    /// metadata row. Requires org admin/owner (same authority REST expects).
+    /// Create a repository. Requires org admin/owner (same authority REST
+    /// expects); enforces name rules and the org's private-repo plan quota.
     async fn create_repository(
         &self,
         ctx: &Context<'_>,
@@ -43,30 +56,24 @@ impl Mutation {
         let st = store(ctx)?;
         let organization = st.get_org(&org).await.map_err(core_error)?;
         authorize_org_manage(st, organization.id, viewer(ctx)).await?;
-
-        let branch = default_branch.clone().unwrap_or_else(|| "main".to_string());
-        let disk_path = git_host(ctx)?
-            .init_bare(&organization.name, &name, &branch)
-            .map_err(bad_request)?;
+        let actor = author(viewer(ctx))?;
 
         let input = NewRepository {
             name,
             description,
             default_branch,
-            visibility: visibility.map(|v| match v {
-                VisibilityEnum::Public => Visibility::Public,
-                VisibilityEnum::Private => Visibility::Private,
-            }),
+            visibility: visibility.map(to_visibility),
         };
-        let repo = st
-            .create_repo(&organization, &input, &disk_path)
+        let repo = services(ctx)?
+            .create_repository(actor, &organization, &input)
             .await
-            .map_err(core_error)?;
+            .map_err(service_error)?;
         Ok(repo.into())
     }
 
-    /// Update mutable repository metadata (name, description, default branch,
-    /// visibility). Requires ≥Write on the repository.
+    /// Update repository settings (name, description, default branch,
+    /// visibility). Requires Admin on the repository, like REST. A rename moves
+    /// the repository on disk; making it private checks the plan quota.
     async fn update_repository(
         &self,
         ctx: &Context<'_>,
@@ -79,23 +86,23 @@ impl Mutation {
     ) -> async_graphql::Result<RepositoryObject> {
         let st = store(ctx)?;
         let repo = st.get_repo(&org, &name).await.map_err(core_error)?;
-        authorize_write(st, &repo, viewer(ctx)).await?;
+        authorize_admin(st, &repo, viewer(ctx)).await?;
+        let actor = author(viewer(ctx))?;
 
         let patch = UpdateRepository {
             name: new_name,
             description,
             default_branch,
-            visibility: visibility.map(|v| match v {
-                VisibilityEnum::Public => Visibility::Public,
-                VisibilityEnum::Private => Visibility::Private,
-            }),
+            visibility: visibility.map(to_visibility),
         };
-        let updated = st.update_repo(repo.id, &patch).await.map_err(core_error)?;
+        let updated = services(ctx)?
+            .update_repository(actor, &org, &repo, &patch)
+            .await
+            .map_err(service_error)?;
         Ok(updated.into())
     }
 
-    /// Open an issue. Requires an authenticated user with ≥Read on the repo
-    /// (anonymous/deploy-key callers cannot author).
+    /// Open an issue. Requires an authenticated user with ≥Read on the repo.
     async fn create_issue(
         &self,
         ctx: &Context<'_>,
@@ -107,12 +114,12 @@ impl Mutation {
         let st = store(ctx)?;
         let repository = st.get_repo(&org, &repo).await.map_err(core_error)?;
         authorize_read(st, &repository, viewer(ctx)).await?;
-        let author = author_id(viewer(ctx))?;
+        let actor = author(viewer(ctx))?;
 
-        let issue = st
-            .create_issue(repository.id, Some(author), &NewIssue { title, body })
+        let issue = services(ctx)?
+            .create_issue(actor, &org, &repository, &title, body)
             .await
-            .map_err(core_error)?;
+            .map_err(service_error)?;
         Ok(issue.into())
     }
 
@@ -133,53 +140,34 @@ impl Mutation {
         let st = store(ctx)?;
         let repository = st.get_repo(&org, &repo).await.map_err(core_error)?;
         authorize_write(st, &repository, viewer(ctx)).await?;
+        let actor = author(viewer(ctx))?;
 
-        // Resolve an optional milestone reference into the store's set/clear form.
-        let (set_milestone, milestone_id) = match (milestone_number, clear_milestone) {
-            (Some(num), _) => {
-                let id = st
-                    .get_milestone_id(repository.id, num)
-                    .await
-                    .map_err(core_error)?;
-                (true, Some(id))
-            }
-            (None, Some(true)) => (true, None),
-            _ => (false, None),
+        let milestone = match (milestone_number, clear_milestone) {
+            (Some(num), _) => Some(num),
+            (None, Some(true)) => Some(0),
+            _ => None,
         };
-
-        // Apply metadata changes when any were supplied.
-        if title.is_some() || body.is_some() || set_milestone {
-            st.update_issue(
-                repository.id,
+        let issue = services(ctx)?
+            .update_issue(
+                actor,
+                &org,
+                &repository,
                 number,
-                &UpdateIssue {
+                IssueEdit {
                     title,
                     body,
-                    set_milestone,
-                    milestone_id,
+                    milestone,
+                    state: state.map(Into::into),
                 },
             )
             .await
-            .map_err(core_error)?;
-        }
-
-        // Apply a state transition when requested.
-        if let Some(state) = state {
-            st.set_issue_state(repository.id, number, IssueState::from(state))
-                .await
-                .map_err(core_error)?;
-        }
-
-        let issue = st
-            .get_issue(repository.id, number)
-            .await
-            .map_err(core_error)?;
+            .map_err(service_error)?;
         Ok(issue.into())
     }
 
-    /// Open a pull request. Base/head shas are pinned best-effort from the live
-    /// branch tips; mergeability and the diff are computed lazily by the git
-    /// endpoints. Requires an authenticated user with ≥Read on the repo.
+    /// Open a pull request. Both branches must exist; `headRepo` (`org/repo`)
+    /// opens a cross-repository PR from a fork the caller can read. Requires an
+    /// authenticated user with ≥Read on the target repo.
     async fn create_pull_request(
         &self,
         ctx: &Context<'_>,
@@ -189,38 +177,34 @@ impl Mutation {
         body: Option<String>,
         head: String,
         base: String,
+        head_repo: Option<String>,
     ) -> async_graphql::Result<PullRequestObject> {
         let st = store(ctx)?;
         let repository = st.get_repo(&org, &repo).await.map_err(core_error)?;
         authorize_read(st, &repository, viewer(ctx)).await?;
-        let author = author_id(viewer(ctx))?;
+        let actor = author(viewer(ctx))?;
 
-        let host = git_host(ctx)?;
-        let base_sha = host.resolve_branch_sha(&org, &repo, &base);
-        let head_sha = host.resolve_branch_sha(&org, &repo, &head);
-
-        let pr = st
-            .create_pr(
-                repository.id,
-                Some(author),
-                &NewPullRequest {
+        let pr = services(ctx)?
+            .create_pull_request(
+                actor,
+                &org,
+                &repository,
+                PullRequestInput {
                     title,
                     body,
                     head,
                     base,
+                    head_repo,
                 },
-                base_sha.as_deref(),
-                head_sha.as_deref(),
-                None,
             )
             .await
-            .map_err(core_error)?;
+            .map_err(service_error)?;
         Ok(pr.into())
     }
 
-    /// Update a pull request's title/body/base branch, and/or transition its
-    /// open-closed state (`OPEN`/`CLOSED`). Merging goes through the git merge
-    /// endpoint, not here. Requires ≥Write on the repository.
+    /// Update a pull request's title/body/base branch/milestone, and/or
+    /// transition its open-closed state (`OPEN`/`CLOSED`). Merging goes through
+    /// the merge endpoint, not here. Requires ≥Write on the repository.
     async fn update_pull_request(
         &self,
         ctx: &Context<'_>,
@@ -230,44 +214,60 @@ impl Mutation {
         title: Option<String>,
         body: Option<String>,
         base: Option<String>,
+        milestone_number: Option<i32>,
+        clear_milestone: Option<bool>,
         state: Option<PrStateInput>,
     ) -> async_graphql::Result<PullRequestObject> {
         let st = store(ctx)?;
         let repository = st.get_repo(&org, &repo).await.map_err(core_error)?;
         authorize_write(st, &repository, viewer(ctx)).await?;
+        let actor = author(viewer(ctx))?;
+        let svc = services(ctx)?;
 
-        if title.is_some() || body.is_some() || base.is_some() {
-            st.update_pr(
-                repository.id,
-                number,
-                &UpdatePr {
-                    title,
-                    body,
-                    base,
-                    state: None,
-                    set_milestone: false,
-                    milestone_id: None,
-                },
-            )
-            .await
-            .map_err(core_error)?;
+        let milestone = match (milestone_number, clear_milestone) {
+            (Some(num), _) => Some(num),
+            (None, Some(true)) => Some(0),
+            _ => None,
+        };
+        let mut pr = None;
+        if title.is_some() || body.is_some() || base.is_some() || milestone.is_some() {
+            pr = Some(
+                svc.update_pull_request(
+                    actor,
+                    &org,
+                    &repository,
+                    number,
+                    PullRequestEdit {
+                        title,
+                        body,
+                        base,
+                        milestone,
+                    },
+                )
+                .await
+                .map_err(service_error)?,
+            );
         }
-
-        match state {
-            Some(PrStateInput::Closed) => {
-                st.close_pr(repository.id, number)
-                    .await
-                    .map_err(core_error)?;
-            }
-            Some(PrStateInput::Open) => {
-                st.reopen_pr(repository.id, number)
-                    .await
-                    .map_err(core_error)?;
-            }
-            None => {}
+        if let Some(target) = state {
+            pr = Some(
+                svc.set_pull_request_state(
+                    actor,
+                    &org,
+                    &repository,
+                    number,
+                    target == PrStateInput::Open,
+                )
+                .await
+                .map_err(service_error)?,
+            );
         }
-
-        let pr = st.get_pr(repository.id, number).await.map_err(core_error)?;
+        let pr = match pr {
+            Some(pr) => pr,
+            None => {
+                use rithub_core::PullRequestStore;
+                st.get_pr(repository.id, number).await.map_err(core_error)?
+            }
+        };
         Ok(pr.into())
     }
 
@@ -283,16 +283,12 @@ impl Mutation {
         let st = store(ctx)?;
         let repository = st.get_repo(&org, &repo).await.map_err(core_error)?;
         authorize_read(st, &repository, viewer(ctx)).await?;
-        let author = author_id(viewer(ctx))?;
+        let actor = author(viewer(ctx))?;
 
-        let issue = st
-            .get_issue(repository.id, number)
+        let comment = services(ctx)?
+            .comment_issue(actor, &org, &repository, number, &body)
             .await
-            .map_err(core_error)?;
-        let comment = st
-            .add_issue_comment(issue.id, Some(author), &body)
-            .await
-            .map_err(core_error)?;
+            .map_err(service_error)?;
         Ok(comment.into())
     }
 
@@ -308,13 +304,12 @@ impl Mutation {
         let st = store(ctx)?;
         let repository = st.get_repo(&org, &repo).await.map_err(core_error)?;
         authorize_read(st, &repository, viewer(ctx)).await?;
-        let author = author_id(viewer(ctx))?;
+        let actor = author(viewer(ctx))?;
 
-        let pr = st.get_pr(repository.id, number).await.map_err(core_error)?;
-        let comment = st
-            .add_pr_comment(pr.id, Some(author), &body)
+        let comment = services(ctx)?
+            .comment_pull_request(actor, &org, &repository, number, &body)
             .await
-            .map_err(core_error)?;
+            .map_err(service_error)?;
         Ok(comment.into())
     }
 
@@ -331,6 +326,9 @@ impl Mutation {
         let st = store(ctx)?;
         let repository = st.get_repo(&org, &repo).await.map_err(core_error)?;
         authorize_write(st, &repository, viewer(ctx)).await?;
+        if title.trim().is_empty() {
+            return Err(crate::error::bad_request("milestone title is required"));
+        }
 
         let milestone = st
             .create_milestone(

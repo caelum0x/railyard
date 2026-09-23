@@ -6,6 +6,8 @@
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
+mod forge_cli;
+
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use rit::object::Object;
@@ -96,6 +98,11 @@ enum Command {
     Stash(StashArgs),
     /// Serve one repository over the Git smart-HTTP protocol.
     ServeHttp(ServeHttpArgs),
+    /// Work with rithub issues: list, view, create, close, reopen, comment.
+    Issue(forge_cli::IssueArgs),
+    /// Work with rithub pull requests: list, view, create, merge, close,
+    /// reopen, comment, diff, checks.
+    Pr(forge_cli::PrArgs),
 }
 
 #[derive(Args)]
@@ -419,6 +426,8 @@ fn run() -> Result<()> {
         Command::CherryPick(args) => cmd_cherry_pick_cli(&cli, args),
         Command::Stash(args) => cmd_stash_cli(&cli, args),
         Command::ServeHttp(args) => cmd_serve_http(args),
+        Command::Issue(args) => forge_cli::cmd_issue(&cli.repo, args),
+        Command::Pr(args) => forge_cli::cmd_pr(&cli.repo, args),
     }
 }
 

@@ -94,3 +94,11 @@ pub fn store<'a>(ctx: &'a Context<'_>) -> async_graphql::Result<&'a PgStore> {
 pub fn git_host<'a>(ctx: &'a Context<'_>) -> async_graphql::Result<&'a GitHostHandle> {
     ctx.data::<GitHostHandle>()
 }
+
+/// The per-request forge service port (injected by the transport). Mutations
+/// with side effects go through it; a missing handle is a server wiring error.
+pub fn services<'a>(
+    ctx: &'a Context<'_>,
+) -> async_graphql::Result<&'a crate::services::ForgeServicesHandle> {
+    ctx.data::<crate::services::ForgeServicesHandle>()
+}

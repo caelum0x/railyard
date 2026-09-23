@@ -143,6 +143,16 @@ pub trait IssueStore {
     async fn list_issue_comments(&self, issue_id: Uuid) -> Result<Vec<IssueComment>>;
 
     async fn create_label(&self, repo_id: Uuid, name: &str, color: &str) -> Result<Label>;
+    /// Rename and/or recolor a label. Conflicts if the new name is taken.
+    async fn update_label(
+        &self,
+        repo_id: Uuid,
+        label_id: Uuid,
+        name: &str,
+        color: &str,
+    ) -> Result<Label>;
+    /// Delete a label (it is removed from every issue). `false` if absent.
+    async fn delete_label(&self, repo_id: Uuid, label_id: Uuid) -> Result<bool>;
     async fn add_issue_label(&self, issue_id: Uuid, label_id: Uuid) -> Result<()>;
     async fn list_issue_labels(&self, issue_id: Uuid) -> Result<Vec<Label>>;
     /// Replace all labels on an issue with the provided set (idempotent wipe+add).
@@ -334,6 +344,42 @@ impl IssueStore for PgStore {
             name: row.get("name"),
             color: row.get("color"),
         })
+    }
+
+    async fn update_label(
+        &self,
+        repo_id: Uuid,
+        label_id: Uuid,
+        name: &str,
+        color: &str,
+    ) -> Result<Label> {
+        let row = sqlx::query(
+            "UPDATE labels SET name = $3, color = $4 WHERE repo_id = $1 AND id = $2 \
+             RETURNING id, repo_id, name, color",
+        )
+        .bind(repo_id)
+        .bind(label_id)
+        .bind(name)
+        .bind(color)
+        .fetch_one(self.pool())
+        .await
+        .map_err(|e| CoreError::from_sqlx("label", name, e))?;
+        Ok(Label {
+            id: row.get("id"),
+            repo_id: row.get("repo_id"),
+            name: row.get("name"),
+            color: row.get("color"),
+        })
+    }
+
+    async fn delete_label(&self, repo_id: Uuid, label_id: Uuid) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM labels WHERE repo_id = $1 AND id = $2")
+            .bind(repo_id)
+            .bind(label_id)
+            .execute(self.pool())
+            .await
+            .map_err(|e| CoreError::from_sqlx("label", &label_id.to_string(), e))?;
+        Ok(result.rows_affected() > 0)
     }
 
     async fn add_issue_label(&self, issue_id: Uuid, label_id: Uuid) -> Result<()> {

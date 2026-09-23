@@ -302,3 +302,137 @@ pub async fn grant_team_repo(
     state.store.grant_team_repo(team.id, repo.id, role).await?;
     Ok(Json(json!({ "team": team.name, "repo": repo.name, "role": role.as_str() })))
 }
+
+// --- team removal (shared with the web org page) -------------------------------
+
+/// Remove `username` from `team` in `org`. 404 if they were not a member.
+pub async fn remove_team_member_in(
+    state: &AppState,
+    org: &rithub_core::Organization,
+    actor: &rithub_core::User,
+    team: &str,
+    username: &str,
+) -> Result<(), AppError> {
+    let team = state.store.get_team(org.id, team).await?;
+    let user = state.store.get_user(username.trim()).await?;
+    if !state.store.remove_team_member(team.id, user.id).await? {
+        return Err(AppError::not_found(format!(
+            "{} is not a member of team {}",
+            user.username, team.name
+        )));
+    }
+    crate::collab_svc::enqueue_audit(
+        state,
+        None,
+        Some(actor),
+        "team.member_removed",
+        Some(&format!("{}/{}", org.name, team.name)),
+        Some(&user.username),
+    );
+    Ok(())
+}
+
+/// Revoke `team`'s access to `repo` in `org`. 404 if it had none.
+pub async fn revoke_team_repo_in(
+    state: &AppState,
+    org: &rithub_core::Organization,
+    actor: &rithub_core::User,
+    team: &str,
+    repo: &str,
+) -> Result<(), AppError> {
+    let team = state.store.get_team(org.id, team).await?;
+    let meta = state.store.get_repo(&org.name, repo).await?;
+    if !state.store.revoke_team_repo(team.id, meta.id).await? {
+        return Err(AppError::not_found(format!(
+            "team {} has no access to {}",
+            team.name, meta.name
+        )));
+    }
+    crate::collab_svc::enqueue_audit(
+        state,
+        Some(meta.id),
+        Some(actor),
+        "team.access_revoked",
+        Some(&format!("{}/{}", org.name, team.name)),
+        Some(&meta.name),
+    );
+    Ok(())
+}
+
+/// Delete `team` (memberships and repository grants cascade).
+pub async fn delete_team_in(
+    state: &AppState,
+    org: &rithub_core::Organization,
+    actor: &rithub_core::User,
+    team: &str,
+) -> Result<(), AppError> {
+    let team = state.store.get_team(org.id, team).await?;
+    state.store.delete_team(team.id).await?;
+    crate::collab_svc::enqueue_audit(
+        state,
+        None,
+        Some(actor),
+        "team.deleted",
+        Some(&format!("{}/{}", org.name, team.name)),
+        None,
+    );
+    Ok(())
+}
+
+/// `GET /api/orgs/{org}/teams/{team}` — the team with its members and repos.
+pub async fn get_team(
+    State(state): State<AppState>,
+    Path((org, team)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let (org, _) = authz::org_for_role(&state, &headers, &org, Role::Member).await?;
+    let team = state.store.get_team(org.id, &team).await?;
+    let members: Vec<String> = state
+        .store
+        .list_team_members(team.id)
+        .await?
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect();
+    let repos: Vec<serde_json::Value> = state
+        .store
+        .list_team_repos(team.id)
+        .await?
+        .into_iter()
+        .map(|(_, name, role)| json!({ "repo": name, "role": role.as_str() }))
+        .collect();
+    Ok(Json(json!({ "id": team.id, "name": team.name, "members": members, "repos": repos })))
+}
+
+/// `DELETE /api/orgs/{org}/teams/{team}` (org admins).
+pub async fn delete_team(
+    State(state): State<AppState>,
+    Path((org, team)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, AppError> {
+    let (org, actor) = authz::org_for_role(&state, &headers, &org, Role::Admin).await?;
+    delete_team_in(&state, &org, &actor, &team).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/orgs/{org}/teams/{team}/members/{username}` (org admins).
+pub async fn remove_team_member(
+    State(state): State<AppState>,
+    Path((org, team, username)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, AppError> {
+    let (org, actor) = authz::org_for_role(&state, &headers, &org, Role::Admin).await?;
+    remove_team_member_in(&state, &org, &actor, &team, &username).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/orgs/{org}/teams/{team}/repos/{repo}` (org admins).
+pub async fn revoke_team_repo(
+    State(state): State<AppState>,
+    Path((org, team, repo)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, AppError> {
+    let (org, actor) = authz::org_for_role(&state, &headers, &org, Role::Admin).await?;
+    revoke_team_repo_in(&state, &org, &actor, &team, &repo).await?;
+    Ok(StatusCode::NO_CONTENT)
+}

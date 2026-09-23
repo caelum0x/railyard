@@ -30,6 +30,7 @@ gix-pack = "0.60.0"
 globset = "=0.4.20"
 sha1 = "0.10"
 thiserror = "2"
+serde_json = "1"
 
 # Smart-HTTP transport (Phase 3 C). axum/tokio power the async listener; the
 # pkt-line/pack/negotiation logic stays in the synchronous core and is called

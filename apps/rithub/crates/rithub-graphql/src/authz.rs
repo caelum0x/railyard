@@ -117,3 +117,24 @@ pub async fn authorize_org_manage(
         _ => Err(forbidden()),
     }
 }
+
+/// Authorize repository **administration** (rename, visibility, default
+/// branch): an authenticated user holding the `admin` token scope and an
+/// effective Admin role, matching REST `PATCH /api/orgs/{org}/repos/{repo}`.
+/// Deploy keys can never administer a repository.
+pub async fn authorize_admin(
+    store: &PgStore,
+    repo: &Repository,
+    viewer: &Viewer,
+) -> async_graphql::Result<()> {
+    match viewer {
+        Viewer::User { .. } => {
+            if !viewer.has_scope("admin") {
+                return Err(forbidden());
+            }
+        }
+        Viewer::DeployKey { .. } => return Err(forbidden()),
+        Viewer::Anonymous => return Err(unauthenticated()),
+    }
+    require_role(store, repo, viewer, RepoRole::Admin).await
+}

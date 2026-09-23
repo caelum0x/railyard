@@ -433,8 +433,66 @@ async fn teams_card(state: &AppState, org: &Organization, role: Role, repos: &[r
         .collect();
     for team in &teams {
         let t = esc(&team.name);
-        out.push_str(&format!("<div class=\"comment\"><div class=\"comment-h\"><strong>{t}</strong></div><div class=\"comment-b\">"));
-        if role >= Role::Admin {
+        let members = state.store.list_team_members(team.id).await.unwrap_or_default();
+        let grants = state.store.list_team_repos(team.id).await.unwrap_or_default();
+        let admin = role >= Role::Admin;
+        let delete_btn = if admin {
+            format!(
+                "<form method=\"post\" action=\"/{o}/-/teams/{t}/delete\" style=\"display:inline\" \
+                 onsubmit=\"return confirm('Delete team {t}? Its members lose any access granted through it.')\">\
+                 <button class=\"btn small danger\" type=\"submit\">Delete team</button></form>"
+            )
+        } else {
+            String::new()
+        };
+        out.push_str(&format!(
+            "<div class=\"comment\"><div class=\"comment-h row\" style=\"justify-content:space-between\">\
+             <strong>{t}</strong> <span class=\"muted\">{mc} member(s) \u{00b7} {rc} repositor{ry}</span>{delete_btn}</div>\
+             <div class=\"comment-b\">",
+            mc = members.len(),
+            rc = grants.len(),
+            ry = if grants.len() == 1 { "y" } else { "ies" },
+        ));
+        if members.is_empty() {
+            out.push_str("<p class=\"muted\">No members yet.</p>");
+        } else {
+            out.push_str("<p><strong>Members</strong></p><ul class=\"plain\">");
+            for (_, username) in &members {
+                let u = esc(username);
+                let remove = if admin {
+                    format!(
+                        " <form method=\"post\" action=\"/{o}/-/teams/{t}/members/{u}/remove\" style=\"display:inline\">\
+                         <button class=\"btn small\" type=\"submit\">Remove</button></form>"
+                    )
+                } else {
+                    String::new()
+                };
+                out.push_str(&format!("<li><a href=\"/{u}\">@{u}</a>{remove}</li>"));
+            }
+            out.push_str("</ul>");
+        }
+        if grants.is_empty() {
+            out.push_str("<p class=\"muted\">No repository access granted yet.</p>");
+        } else {
+            out.push_str("<p><strong>Repository access</strong></p><ul class=\"plain\">");
+            for (_, repo_name, repo_role) in &grants {
+                let rn = esc(repo_name);
+                let revoke = if admin {
+                    format!(
+                        " <form method=\"post\" action=\"/{o}/-/teams/{t}/repos/{rn}/revoke\" style=\"display:inline\">\
+                         <button class=\"btn small\" type=\"submit\">Revoke</button></form>"
+                    )
+                } else {
+                    String::new()
+                };
+                out.push_str(&format!(
+                    "<li><a href=\"/{o}/{rn}\">{rn}</a> <span class=\"muted\">{}</span>{revoke}</li>",
+                    repo_role.as_str()
+                ));
+            }
+            out.push_str("</ul>");
+        }
+        if admin {
             out.push_str(&format!(
                 "<form method=\"post\" action=\"/{o}/-/teams/{t}/members\" class=\"row\">\
                  <input name=\"username\" placeholder=\"add member by username\" required style=\"flex:1\" aria-label=\"Username\">\
@@ -660,5 +718,60 @@ pub async fn team_repo_grant(
     match result {
         Ok(()) => Redirect::to(&format!("/{org}?notice=saved")).into_response(),
         Err(e) => app_error_page(&session, e.into()),
+    }
+}
+
+/// POST /{org}/-/teams/{team}/members/{user}/remove (admins)
+pub async fn team_member_remove(
+    State(state): State<AppState>,
+    Path((org, team, username)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let (organization, actor) = match org_admin(&state, &session, &org, Role::Admin).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    match crate::governance_api::remove_team_member_in(&state, &organization, &actor, &team, &username)
+        .await
+    {
+        Ok(()) => Redirect::to(&format!("/{org}?notice=removed")).into_response(),
+        Err(e) => app_error_page(&session, e),
+    }
+}
+
+/// POST /{org}/-/teams/{team}/repos/{repo}/revoke (admins)
+pub async fn team_repo_revoke(
+    State(state): State<AppState>,
+    Path((org, team, repo)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let (organization, actor) = match org_admin(&state, &session, &org, Role::Admin).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    match crate::governance_api::revoke_team_repo_in(&state, &organization, &actor, &team, &repo)
+        .await
+    {
+        Ok(()) => Redirect::to(&format!("/{org}?notice=removed")).into_response(),
+        Err(e) => app_error_page(&session, e),
+    }
+}
+
+/// POST /{org}/-/teams/{team}/delete (admins)
+pub async fn team_delete(
+    State(state): State<AppState>,
+    Path((org, team)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let (organization, actor) = match org_admin(&state, &session, &org, Role::Admin).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    match crate::governance_api::delete_team_in(&state, &organization, &actor, &team).await {
+        Ok(()) => Redirect::to(&format!("/{org}?notice=deleted")).into_response(),
+        Err(e) => app_error_page(&session, e),
     }
 }

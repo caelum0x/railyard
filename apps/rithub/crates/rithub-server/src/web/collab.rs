@@ -509,12 +509,35 @@ pub async fn labels_page(
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    let labels = state.store.list_labels(meta.id).await.unwrap_or_default();
+    let labels = match state.store.list_labels(meta.id).await {
+        Ok(l) => l,
+        Err(e) => return app_error_page(&session, e.into()),
+    };
+    let can_write = role.is_some_and(|r| r.can_write());
+    let (o, r) = (esc(&org), esc(&repo));
     let mut body = notice_html(q.notice.as_deref());
     body.push_str(&repo_header(&org, &repo, &meta, "issues", role));
     body.push_str("<div class=\"card\"><h3>Labels</h3>");
     if labels.is_empty() {
         body.push_str("<p class=\"muted\">No labels yet.</p>");
+    } else if can_write {
+        // Writers get an inline edit row (rename / recolor) and a delete action.
+        for l in &labels {
+            let id = l.id;
+            body.push_str(&format!(
+                "<div class=\"row\" style=\"margin:6px 0\">{chip}\
+                 <form method=\"post\" action=\"/{o}/{r}/labels/{id}/edit\" class=\"row\" style=\"flex:1\">\
+                 <input name=\"name\" value=\"{name}\" required maxlength=\"50\" style=\"flex:2\" aria-label=\"Label name\">\
+                 <input name=\"color\" type=\"color\" value=\"#{color}\" style=\"width:60px;padding:2px\" aria-label=\"Label color\">\
+                 <button class=\"btn small\" type=\"submit\">Save</button></form>\
+                 <form method=\"post\" action=\"/{o}/{r}/labels/{id}/delete\" \
+                 onsubmit=\"return confirm('Delete label {name}? It will be removed from every issue.')\">\
+                 <button class=\"btn small danger\" type=\"submit\">Delete</button></form></div>",
+                chip = label_chip(&l.name, &l.color),
+                name = esc(&l.name),
+                color = esc(&l.color),
+            ));
+        }
     } else {
         body.push_str("<div class=\"row\">");
         for l in &labels {
@@ -522,14 +545,12 @@ pub async fn labels_page(
         }
         body.push_str("</div>");
     }
-    if role.is_some_and(|r| r.can_write()) {
+    if can_write {
         body.push_str(&format!(
             "<form method=\"post\" action=\"/{o}/{r}/labels\" class=\"row\" style=\"margin-top:12px\">\
              <input name=\"name\" placeholder=\"label name\" required maxlength=\"50\" style=\"flex:2\" aria-label=\"Label name\">\
              <input name=\"color\" type=\"color\" value=\"#0969da\" style=\"width:60px;padding:2px\" aria-label=\"Label color\">\
-             <button class=\"btn\" type=\"submit\">Create label</button></form>",
-            o = esc(&org),
-            r = esc(&repo)
+             <button class=\"btn\" type=\"submit\">Create label</button></form>"
         ));
     }
     body.push_str("</div>");
@@ -552,21 +573,51 @@ pub async fn label_create(
 ) -> Response {
     let session = session_user(&state, &headers).await;
     let next = format!("/{org}/{repo}/labels");
-    let (meta, _) = match web_repo_role(&state, &session, &org, &repo, RepoRole::Write, &next).await {
+    let (meta, user) = match web_repo_role(&state, &session, &org, &repo, RepoRole::Write, &next).await {
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    let name = form.name.trim();
-    if name.is_empty() || name.len() > 50 {
-        return error_page(&session, StatusCode::BAD_REQUEST, "label name must be 1-50 characters");
-    }
-    let color = form.color.trim().trim_start_matches('#');
-    if color.len() != 6 || !color.chars().all(|c| c.is_ascii_hexdigit()) {
-        return error_page(&session, StatusCode::BAD_REQUEST, "label color must be 6 hex digits");
-    }
-    match state.store.create_label(meta.id, name, &color.to_ascii_lowercase()).await {
+    match crate::collab_svc::create_label(&state, &meta, &user, &form.name, Some(&form.color)).await {
         Ok(_) => Redirect::to(&format!("{next}?notice=created")).into_response(),
-        Err(e) => app_error_page(&session, e.into()),
+        Err(e) => app_error_page(&session, e),
+    }
+}
+
+/// POST /{org}/{repo}/labels/{id}/edit (Write)
+pub async fn label_edit(
+    State(state): State<AppState>,
+    Path((org, repo, id)): Path<(String, String, uuid::Uuid)>,
+    headers: HeaderMap,
+    Form(form): Form<LabelForm>,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let next = format!("/{org}/{repo}/labels");
+    let (meta, user) = match web_repo_role(&state, &session, &org, &repo, RepoRole::Write, &next).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let color = Some(form.color.as_str()).filter(|c| !c.trim().is_empty());
+    match crate::collab_svc::edit_label(&state, &meta, &user, id, Some(&form.name), color).await {
+        Ok(_) => Redirect::to(&format!("{next}?notice=saved")).into_response(),
+        Err(e) => app_error_page(&session, e),
+    }
+}
+
+/// POST /{org}/{repo}/labels/{id}/delete (Write)
+pub async fn label_delete(
+    State(state): State<AppState>,
+    Path((org, repo, id)): Path<(String, String, uuid::Uuid)>,
+    headers: HeaderMap,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let next = format!("/{org}/{repo}/labels");
+    let (meta, user) = match web_repo_role(&state, &session, &org, &repo, RepoRole::Write, &next).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    match crate::collab_svc::delete_label(&state, &meta, &user, id).await {
+        Ok(()) => Redirect::to(&format!("{next}?notice=deleted")).into_response(),
+        Err(e) => app_error_page(&session, e),
     }
 }
 

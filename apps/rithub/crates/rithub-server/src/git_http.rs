@@ -139,18 +139,19 @@ pub async fn git_post(
             };
             match state.host.receive_pack(&owner, repo_name, &body, &policy) {
                 Ok(outcome) => {
-                    audit_push(&state, &owner, &meta, caller.as_ref(), &outcome).await;
-                    // Refresh the search index for this repo's git content after a
-                    // push that actually moved refs. Detached + best-effort so it
-                    // never delays or fails the client's push.
-                    if outcome.changed {
-                        let st = state.clone();
-                        let owner_s = owner.clone();
-                        let meta_c = meta.clone();
-                        tokio::spawn(async move {
-                            crate::search_index::index_repo_git(&st, &owner_s, &meta_c).await;
-                        });
-                    }
+                    let report = PushReport {
+                        rejected: outcome.rejected,
+                        changed: outcome.changed,
+                        reason: outcome.reason.clone(),
+                        // Over HTTP the new tips are resolved by the CI worker.
+                        ref_updates: outcome
+                            .ref_updates
+                            .iter()
+                            .map(|r| RefUpdate { name: r.clone(), new_sha: None, deleted: false })
+                            .collect(),
+                    };
+                    post_push(&state, &owner, &meta, caller.as_ref().and_then(Caller::user), &report)
+                        .await;
                     smart(outcome.response, "application/x-git-receive-pack-result")
                 }
                 // A malformed request body (bad framing) is the client's fault.
@@ -161,20 +162,41 @@ pub async fn git_post(
     }
 }
 
-/// Record a push outcome (accepted or rejected) in the audit log.
-async fn audit_push(
+/// One ref touched by a push.
+pub(crate) struct RefUpdate {
+    /// Full ref name (`refs/heads/main`).
+    pub name: String,
+    /// The new tip when known (SSH diffs refs); `None` lets the CI worker
+    /// resolve it (HTTP).
+    pub new_sha: Option<String>,
+    /// The ref was deleted by this push.
+    pub deleted: bool,
+}
+
+/// Transport-neutral result of a receive-pack, shared by HTTP and SSH.
+pub(crate) struct PushReport {
+    pub rejected: bool,
+    pub changed: bool,
+    pub reason: Option<String>,
+    pub ref_updates: Vec<RefUpdate>,
+}
+
+/// Everything that follows a push, identical for the HTTP and SSH transports:
+/// audit (`push` / `push.rejected`), the signed `push` webhook, Rago metering,
+/// CI dispatch per updated ref, and a search re-index of the repo's git content.
+pub(crate) async fn post_push(
     state: &AppState,
     owner: &str,
     meta: &RepoMeta,
-    caller: Option<&Caller>,
-    outcome: &rithub_git::ReceivePackOutcome,
+    user: Option<&rithub_core::User>,
+    report: &PushReport,
 ) {
-    let user = caller.and_then(Caller::user);
     let actor_name = user.map(|u| u.username.as_str()).unwrap_or("deploy-key");
-    let target = outcome.ref_updates.join(",");
-    let (action, detail) = if outcome.rejected {
-        ("push.rejected", outcome.reason.clone())
-    } else if outcome.changed {
+    let ref_names: Vec<String> = report.ref_updates.iter().map(|r| r.name.clone()).collect();
+    let target = ref_names.join(",");
+    let (action, detail) = if report.rejected {
+        ("push.rejected", report.reason.clone())
+    } else if report.changed {
         ("push", None)
     } else {
         return; // nothing happened (e.g. up-to-date); don't spam the log
@@ -191,14 +213,18 @@ async fn audit_push(
     )
     .await;
 
+    if action != "push" {
+        return;
+    }
+
     // Enqueue a signed webhook `push` event job on a successful ref update.
-    if action == "push" {
+    {
         use rithub_core::{OutboxStore, KIND_WEBHOOK_DELIVERY};
         let state2 = state.clone();
         let repo_id = meta.id;
         let repo_name = meta.name.clone();
         let pusher = actor_name.to_string();
-        let refs = outcome.ref_updates.clone();
+        let refs = ref_names.clone();
         tokio::spawn(async move {
             let payload = serde_json::json!({
                 "repo_id": repo_id,
@@ -215,40 +241,48 @@ async fn audit_push(
                 .inspect_err(|e| tracing::warn!(error = %e, "failed to enqueue push webhook job"))
                 .ok();
         });
-
-        // Meter the accepted push against the org's Rago subscription (no-op
-        // when billing is not configured). Keyed by the updated refs + time so
-        // a retried delivery of the same event dedupes.
-        crate::billing::meter(
-            owner,
-            crate::billing::METRIC_CI_PUSH,
-            format!(
-                "push|{}|{}|{}",
-                meta.id,
-                outcome.ref_updates.join(","),
-                time::OffsetDateTime::now_utc().unix_timestamp()
-            ),
-            serde_json::json!({
-                "repo": format!("{owner}/{}", meta.name),
-                "refs": outcome.ref_updates.len(),
-            }),
-        );
-
-        // Dispatch CI for each updated ref. The worker resolves the ref to a
-        // head sha and seeds a queued check run (deleted refs simply fail to
-        // resolve and are skipped there).
-        for reference in &outcome.ref_updates {
-            crate::ci::dispatch_check_runs(
-                state,
-                meta.id,
-                owner,
-                &meta.name,
-                "", // head sha unknown here; the worker resolves `ref`.
-                reference,
-                "push",
-            );
-        }
     }
+
+    // Meter the accepted push against the org's Rago subscription (no-op
+    // when billing is not configured). Keyed by the updated refs + time so
+    // a retried delivery of the same event dedupes.
+    crate::billing::meter(
+        owner,
+        crate::billing::METRIC_CI_PUSH,
+        format!(
+            "push|{}|{}|{}",
+            meta.id,
+            target,
+            time::OffsetDateTime::now_utc().unix_timestamp()
+        ),
+        serde_json::json!({
+            "repo": format!("{owner}/{}", meta.name),
+            "refs": ref_names.len(),
+        }),
+    );
+
+    // Dispatch CI for each updated ref. When the new tip is unknown the worker
+    // resolves `ref` (deleted refs simply fail to resolve and are skipped).
+    for update in report.ref_updates.iter().filter(|u| !u.deleted) {
+        crate::ci::dispatch_check_runs(
+            state,
+            meta.id,
+            owner,
+            &meta.name,
+            update.new_sha.as_deref().unwrap_or(""),
+            &update.name,
+            "push",
+        );
+    }
+
+    // Refresh the search index for this repo's git content. Detached +
+    // best-effort so it never delays or fails the client's push.
+    let st = state.clone();
+    let owner_s = owner.to_string();
+    let meta_c = meta.clone();
+    tokio::spawn(async move {
+        crate::search_index::index_repo_git(&st, &owner_s, &meta_c).await;
+    });
 }
 
 /// Look up repository metadata (visibility + owning org) or map a miss to 404.

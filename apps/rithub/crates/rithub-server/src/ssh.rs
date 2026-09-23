@@ -16,6 +16,12 @@
 //! stdin/stdout protocol. Protection is applied by passing the repo's protected
 //! branches to `rit receive-pack --block-branch <b>` for non-admin pushers, so
 //! a direct push to a protected branch is rejected exactly as over HTTP.
+//!
+//! After a push the repository's refs are diffed against a pre-push snapshot
+//! and the rit report-status is scanned for rejected refs; the result feeds the
+//! same [`crate::git_http::post_push`] the HTTP transport uses, so an SSH push
+//! is audited, fires the `push` webhook, is metered to Rago, dispatches CI, and
+//! re-indexes search exactly like an HTTPS push.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -27,8 +33,8 @@ use russh::keys::key::{KeyPair, PublicKey};
 use russh::keys::PublicKeyBase64;
 use russh::server::{Auth, Config, Handler, Msg, Server as _, Session};
 use russh::{Channel, ChannelId, CryptoVec};
-use rithub_core::{AccessStore, DeployKeyStore, RepoRole, ReviewStore, SshKeyStore, Store, User,
-                   Visibility};
+use rithub_core::{AccessStore, DeployKeyStore, RepoRole, Repository as RepoMeta, ReviewStore,
+                   SshKeyStore, Store, User, Visibility};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
@@ -199,7 +205,14 @@ impl Handler for SshHandler {
 
         match self.prepare(&command).await {
             Ok(plan) => {
-                spawn_pipe(handle, channel_id, channel, self.rit_bin.clone(), plan);
+                spawn_pipe(
+                    self.state.clone(),
+                    handle,
+                    channel_id,
+                    channel,
+                    self.rit_bin.clone(),
+                    plan,
+                );
             }
             Err(message) => {
                 let _ = handle
@@ -225,6 +238,12 @@ struct Plan {
     git_dir: String,
     /// Protected branches to block for a non-admin pusher (receive only).
     block_branches: Vec<String>,
+    /// The repository's owning org name (as addressed by the client).
+    org: String,
+    /// The repository metadata (for post-push audit/webhooks/billing/CI).
+    meta: RepoMeta,
+    /// The pushing user; `None` for a deploy key.
+    pusher: Option<User>,
 }
 
 impl SshHandler {
@@ -261,8 +280,11 @@ impl SshHandler {
                         }
                         Ok(Plan {
                             service,
-                            git_dir: meta.disk_path,
+                            git_dir: meta.disk_path.clone(),
                             block_branches: Vec::new(),
+                            org: org.clone(),
+                            meta,
+                            pusher: Some(user.clone()),
                         })
                     }
                     "git-receive-pack" => {
@@ -281,8 +303,11 @@ impl SshHandler {
                             };
                         Ok(Plan {
                             service,
-                            git_dir: meta.disk_path,
+                            git_dir: meta.disk_path.clone(),
                             block_branches,
+                            org: org.clone(),
+                            meta,
+                            pusher: Some(user.clone()),
                         })
                     }
                     _ => Err("unsupported service".into()),
@@ -297,8 +322,11 @@ impl SshHandler {
                 match service {
                     "git-upload-pack" => Ok(Plan {
                         service,
-                        git_dir: meta.disk_path,
+                        git_dir: meta.disk_path.clone(),
                         block_branches: Vec::new(),
+                        org: org.clone(),
+                        meta,
+                        pusher: None,
                     }),
                     "git-receive-pack" => {
                         if *read_only {
@@ -313,8 +341,11 @@ impl SshHandler {
                             .unwrap_or_default();
                         Ok(Plan {
                             service,
-                            git_dir: meta.disk_path,
+                            git_dir: meta.disk_path.clone(),
                             block_branches,
+                            org: org.clone(),
+                            meta,
+                            pusher: None,
                         })
                     }
                     _ => Err("unsupported service".into()),
@@ -328,8 +359,15 @@ impl SshHandler {
 // Channel piping
 // ---------------------------------------------------------------------------
 
-/// Pipe the SSH channel to a `rit` subprocess serving the git command.
+/// How many trailing bytes of rit's output to keep for report-status scanning.
+/// The report-status is the last thing receive-pack writes and is tiny.
+const REPORT_TAIL_BYTES: usize = 64 * 1024;
+
+/// Pipe the SSH channel to a `rit` subprocess serving the git command. For a
+/// push, the refs are snapshotted before and after so the post-push pipeline
+/// (audit, webhook, billing, CI, search) runs exactly as over HTTP.
 fn spawn_pipe(
+    state: AppState,
     handle: russh::server::Handle,
     channel_id: ChannelId,
     channel: Channel<Msg>,
@@ -337,17 +375,19 @@ fn spawn_pipe(
     plan: Plan,
 ) {
     use std::process::Stdio;
+    use tokio::io::AsyncReadExt;
     use tokio::process::Command;
 
     tokio::spawn(async move {
+        let is_push = plan.service == "git-receive-pack";
         let mut command = Command::new(&*rit_bin);
-        if plan.service == "git-upload-pack" {
-            command.arg("upload-pack");
-        } else {
+        if is_push {
             command.arg("receive-pack");
             for branch in &plan.block_branches {
                 command.arg("--block-branch").arg(branch);
             }
+        } else {
+            command.arg("upload-pack");
         }
         command
             .arg(&plan.git_dir)
@@ -355,9 +395,17 @@ fn spawn_pipe(
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
 
+        // Pre-push ref snapshot (the repo is addressed by its current name).
+        let before = if is_push {
+            state.host.ref_snapshot(&plan.org, &plan.meta.name).ok()
+        } else {
+            None
+        };
+
         let mut child = match command.spawn() {
             Ok(child) => child,
-            Err(_) => {
+            Err(e) => {
+                tracing::error!(error = %e, "spawning rit for SSH git command failed");
                 let _ = handle.exit_status_request(channel_id, 1).await;
                 let _ = handle.close(channel_id).await;
                 return;
@@ -374,8 +422,26 @@ fn spawn_pipe(
             let _ = tokio::io::copy(&mut client_read, &mut child_stdin).await;
             let _ = child_stdin.shutdown().await;
         });
-        // git stdout → client.
-        let _ = tokio::io::copy(&mut child_stdout, &mut client_write).await;
+        // git stdout → client, keeping a bounded tail for report-status.
+        let mut tail: Vec<u8> = Vec::new();
+        let mut buf = vec![0u8; 32 * 1024];
+        loop {
+            let n = match child_stdout.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            if client_write.write_all(&buf[..n]).await.is_err() {
+                break;
+            }
+            if is_push {
+                tail.extend_from_slice(&buf[..n]);
+                if tail.len() > REPORT_TAIL_BYTES {
+                    let excess = tail.len() - REPORT_TAIL_BYTES;
+                    tail.drain(..excess);
+                }
+            }
+        }
+        let _ = client_write.flush().await;
         let _ = client_write.shutdown().await;
         let _ = to_child.await;
 
@@ -385,10 +451,106 @@ fn spawn_pipe(
             .ok()
             .and_then(|s| s.code())
             .unwrap_or(0) as u32;
+
+        if is_push {
+            let after = state.host.ref_snapshot(&plan.org, &plan.meta.name).ok();
+            let report = push_report(before.as_ref(), after.as_ref(), &tail);
+            crate::git_http::post_push(
+                &state,
+                &plan.org,
+                &plan.meta,
+                plan.pusher.as_ref(),
+                &report,
+            )
+            .await;
+        }
+
         let _ = handle.exit_status_request(channel_id, code).await;
         let _ = handle.eof(channel_id).await;
         let _ = handle.close(channel_id).await;
     });
+}
+
+type RefMap = std::collections::BTreeMap<String, String>;
+
+/// Build the transport-neutral push report from the before/after ref snapshots
+/// (what actually changed) and the report-status tail (what was rejected).
+fn push_report(
+    before: Option<&RefMap>,
+    after: Option<&RefMap>,
+    report_tail: &[u8],
+) -> crate::git_http::PushReport {
+    use crate::git_http::RefUpdate;
+
+    let empty = RefMap::new();
+    let before = before.unwrap_or(&empty);
+    let after = after.unwrap_or(&empty);
+    let mut ref_updates: Vec<RefUpdate> = Vec::new();
+    for (name, new) in after {
+        if before.get(name) != Some(new) {
+            ref_updates.push(RefUpdate {
+                name: name.clone(),
+                new_sha: Some(new.clone()),
+                deleted: false,
+            });
+        }
+    }
+    for name in before.keys().filter(|n| !after.contains_key(*n)) {
+        ref_updates.push(RefUpdate {
+            name: name.clone(),
+            new_sha: None,
+            deleted: true,
+        });
+    }
+    let changed = !ref_updates.is_empty();
+
+    let (rejected_refs, reason) = rejected_refs(report_tail);
+    if !changed && !rejected_refs.is_empty() {
+        return crate::git_http::PushReport {
+            rejected: true,
+            changed: false,
+            reason,
+            ref_updates: rejected_refs
+                .into_iter()
+                .map(|name| RefUpdate { name, new_sha: None, deleted: false })
+                .collect(),
+        };
+    }
+    crate::git_http::PushReport {
+        rejected: false,
+        changed,
+        reason: None,
+        ref_updates,
+    }
+}
+
+/// Scan receive-pack report-status output for `ng <ref> <reason>` lines. The
+/// text survives side-band framing intact inside each pkt-line payload.
+fn rejected_refs(tail: &[u8]) -> (Vec<String>, Option<String>) {
+    let text = String::from_utf8_lossy(tail);
+    let mut refs = Vec::new();
+    let mut reason = None;
+    let mut rest = text.as_ref();
+    while let Some(pos) = rest.find("ng refs/") {
+        let line = &rest[pos + 3..];
+        let end = line.find(['\n', '\0']).unwrap_or(line.len());
+        let line = &line[..end];
+        let (name, why) = line.split_once(' ').unwrap_or((line, ""));
+        if !name.is_empty() && !refs.iter().any(|r| r == name) {
+            refs.push(name.to_string());
+        }
+        if reason.is_none() {
+            reason = Some(if why.contains("protected branch") {
+                "protected branch".to_string()
+            } else if why.trim().is_empty() {
+                "rejected".to_string()
+            } else {
+                why.chars().take(120).collect()
+            });
+        }
+        rest = &rest[pos + 3 + end..];
+    }
+    (refs, reason)
 }
 
 // ---------------------------------------------------------------------------

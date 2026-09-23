@@ -18,6 +18,11 @@
 //! let response = schema.execute(request.data(viewer)).await;
 //! ```
 //!
+//! Side-effecting mutations (repo create/update, issues, PRs, comments) are
+//! delegated through the [`ForgeServices`] port, injected per request with
+//! `request.data(services_handle)`, so GraphQL writes fire the same webhooks,
+//! notifications, audit, billing, CI, and indexing as REST.
+//!
 //! The SDL can be exported for tooling/codegen with [`RithubSchema::sdl`].
 
 mod authz;
@@ -25,9 +30,13 @@ mod context;
 mod error;
 mod mutation;
 mod query;
+mod services;
 mod types;
 
-pub use context::{git_host, store, viewer, GitHost, GitHostHandle, Viewer};
+pub use context::{git_host, services, store, viewer, GitHost, GitHostHandle, Viewer};
+pub use services::{
+    ForgeServices, ForgeServicesHandle, IssueEdit, PullRequestEdit, PullRequestInput, ServiceError,
+};
 pub use mutation::{MilestoneStateInput, Mutation, PrStateInput};
 pub use query::Query;
 pub use types::{

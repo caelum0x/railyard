@@ -9,7 +9,7 @@
 //! the browser behaves exactly like one opened over the API.
 
 use rithub_core::{
-    Issue, IssueComment, IssueState, IssueStore, MilestoneStore, NewIssue, OutboxStore,
+    DirectoryStore, Issue, IssueComment, IssueState, IssueStore, MilestoneStore, NewIssue, OutboxStore,
     PullRequest, Repository, Store, UpdateIssue, User, KIND_AUDIT_APPEND, KIND_EMAIL_NOTIFICATION,
     KIND_NOTIFICATION_FAN_OUT, KIND_WEBHOOK_DELIVERY,
 };
@@ -413,7 +413,7 @@ pub struct LabelSpec {
 }
 
 /// Validate a label color as 6 hex digits (with or without `#`).
-fn normalize_color(color: Option<&str>) -> Result<String, AppError> {
+pub(crate) fn normalize_color(color: Option<&str>) -> Result<String, AppError> {
     let c = color.unwrap_or("cccccc").trim().trim_start_matches('#');
     if c.len() == 6 && c.chars().all(|ch| ch.is_ascii_hexdigit()) {
         Ok(c.to_ascii_lowercase())
@@ -508,4 +508,89 @@ pub async fn update_issue(
     );
     index_issue(state, r, &detail.issue).await;
     Ok(detail)
+}
+
+// ---------------------------------------------------------------------------
+// Labels
+// ---------------------------------------------------------------------------
+
+fn validate_label_name(name: &str) -> Result<&str, AppError> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 50 {
+        return Err(AppError::bad_request("label name must be 1-50 characters"));
+    }
+    Ok(name)
+}
+
+/// Create (or recolor, if it exists) a repository label.
+pub async fn create_label(
+    state: &AppState,
+    meta: &Repository,
+    actor: &User,
+    name: &str,
+    color: Option<&str>,
+) -> Result<rithub_core::Label, AppError> {
+    let name = validate_label_name(name)?;
+    let color = normalize_color(color)?;
+    let label = state.store.create_label(meta.id, name, &color).await?;
+    enqueue_audit(state, Some(meta.id), Some(actor), "label.created", Some(&label.name), Some(&color));
+    Ok(label)
+}
+
+/// Rename and/or recolor the label `label_id` (absent fields are unchanged).
+pub async fn edit_label(
+    state: &AppState,
+    meta: &Repository,
+    actor: &User,
+    label_id: Uuid,
+    name: Option<&str>,
+    color: Option<&str>,
+) -> Result<rithub_core::Label, AppError> {
+    let existing = state
+        .store
+        .list_labels(meta.id)
+        .await?
+        .into_iter()
+        .find(|l| l.id == label_id)
+        .ok_or_else(|| AppError::not_found("label not found"))?;
+    let name = validate_label_name(name.unwrap_or(&existing.name))?;
+    let color = match color {
+        Some(c) => normalize_color(Some(c))?,
+        None => existing.color.clone(),
+    };
+    let label = state.store.update_label(meta.id, label_id, name, &color).await?;
+    enqueue_audit(state, Some(meta.id), Some(actor), "label.updated", Some(&label.name), Some(&color));
+    Ok(label)
+}
+
+/// Delete the label `label_id` (removed from every issue).
+pub async fn delete_label(
+    state: &AppState,
+    meta: &Repository,
+    actor: &User,
+    label_id: Uuid,
+) -> Result<(), AppError> {
+    let labels = state.store.list_labels(meta.id).await?;
+    let label = labels
+        .into_iter()
+        .find(|l| l.id == label_id)
+        .ok_or_else(|| AppError::not_found("label not found"))?;
+    state.store.delete_label(meta.id, label_id).await?;
+    enqueue_audit(state, Some(meta.id), Some(actor), "label.deleted", Some(&label.name), None);
+    Ok(())
+}
+
+/// Find a label by exact name.
+pub async fn label_by_name(
+    state: &AppState,
+    meta: &Repository,
+    name: &str,
+) -> Result<rithub_core::Label, AppError> {
+    state
+        .store
+        .list_labels(meta.id)
+        .await?
+        .into_iter()
+        .find(|l| l.name == name)
+        .ok_or_else(|| AppError::not_found(format!("label not found: {name}")))
 }

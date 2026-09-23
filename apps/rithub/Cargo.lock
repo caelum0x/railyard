@@ -3442,6 +3442,7 @@ dependencies = [
  "gix-odb",
  "gix-pack",
  "globset",
+ "serde_json",
  "sha1",
  "thiserror 2.0.20",
  "tokio",
@@ -3477,6 +3478,7 @@ name = "rithub-graphql"
 version = "0.1.0"
 dependencies = [
  "async-graphql",
+ "async-trait",
  "rithub-core",
  "serde",
  "serde_json",

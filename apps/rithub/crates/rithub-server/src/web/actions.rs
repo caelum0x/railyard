@@ -161,6 +161,7 @@ pub async fn actions_page(
 pub async fn run_detail(
     State(state): State<AppState>,
     Path((org, repo, id)): Path<(String, String, Uuid)>,
+    Query(q): Query<ActionsQuery>,
     headers: HeaderMap,
 ) -> Response {
     let session = session_user(&state, &headers).await;
@@ -180,10 +181,43 @@ pub async fn run_detail(
         .filter(|u| u.starts_with("https://") || u.starts_with("http://"))
         .map(|u| format!("<a class=\"btn small\" href=\"{u}\" rel=\"noopener noreferrer\" target=\"_blank\">Open full log</a>", u = esc(u)))
         .unwrap_or_default();
-    let mut body = repo_header(&org, &repo, &meta, "actions", role);
+    let can_write = role.is_some_and(|r| r.can_write());
+    let controls = if !can_write {
+        String::new()
+    } else if run.status == rithub_core::CheckRunStatus::Completed {
+        format!(
+            "<form method=\"post\" action=\"/{o}/{r}/actions/runs/{id}/rerun\" class=\"inline-form\">\
+             <button class=\"btn small\" type=\"submit\">Re-run</button></form>"
+        )
+    } else {
+        format!(
+            "<form method=\"post\" action=\"/{o}/{r}/actions/runs/{id}/rerun\" class=\"inline-form\">\
+             <button class=\"btn small\" type=\"submit\">Re-run</button></form>\
+             <form method=\"post\" action=\"/{o}/{r}/actions/runs/{id}/cancel\" class=\"inline-form\" \
+             onsubmit=\"return confirm('Cancel this run?')\">\
+             <button class=\"btn small danger\" type=\"submit\">Cancel run</button></form>"
+        )
+    };
+    // A queued run with no registered runner will never be picked up: say so.
+    let stuck = if run.status == rithub_core::CheckRunStatus::Queued
+        && state.store.list_runners(meta.id).await.map(|r| r.is_empty()).unwrap_or(false)
+    {
+        format!(
+            "<div class=\"notice\" role=\"status\">No runner is registered for this repository, so this run \
+             will stay queued. Register a runner on the <a href=\"/{o}/{r}/actions\">Actions</a> page, cancel \
+             the run, or remove <code>{name}</code> from the required checks in \
+             <a href=\"/{o}/{r}/settings/branches\">branch settings</a>.</div>",
+            name = esc(&run.name)
+        )
+    } else {
+        String::new()
+    };
+    let mut body = notice_html(q.notice.as_deref());
+    body.push_str(&repo_header(&org, &repo, &meta, "actions", role));
+    body.push_str(&stuck);
     body.push_str(&format!(
         "<div class=\"card\"><div class=\"row\"><h2>{name}</h2><span class=\"pill\">{status}</span>\
-         <span class=\"spacer\"></span>{details}</div>\
+         <span class=\"spacer\"></span>{controls}{details}</div>\
          <table><tr><td>Commit</td><td><a class=\"mono\" href=\"/{o}/{r}/commit/{sha}\">{sha}</a></td></tr>\
          <tr><td>Conclusion</td><td>{conclusion}</td></tr>\
          <tr><td>Queued</td><td>{created}</td></tr>\
@@ -259,5 +293,42 @@ pub async fn runner_delete(
             Redirect::to(&format!("{next}?notice=removed")).into_response()
         }
         Err(e) => app_error_page(&session, e.into()),
+    }
+}
+
+/// POST /{org}/{repo}/actions/runs/{id}/rerun (Write)
+pub async fn run_rerun(
+    State(state): State<AppState>,
+    Path((org, repo, id)): Path<(String, String, Uuid)>,
+    headers: HeaderMap,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let next = format!("/{org}/{repo}/actions/runs/{id}");
+    let (meta, user) = match web_repo_role(&state, &session, &org, &repo, RepoRole::Write, &next).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    match crate::ci::rerun_check_run(&state, &org, &meta, &user, id).await {
+        Ok(run) => Redirect::to(&format!("/{org}/{repo}/actions/runs/{}?notice=rerun", run.id))
+            .into_response(),
+        Err(e) => app_error_page(&session, e),
+    }
+}
+
+/// POST /{org}/{repo}/actions/runs/{id}/cancel (Write)
+pub async fn run_cancel(
+    State(state): State<AppState>,
+    Path((org, repo, id)): Path<(String, String, Uuid)>,
+    headers: HeaderMap,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let next = format!("/{org}/{repo}/actions/runs/{id}");
+    let (meta, user) = match web_repo_role(&state, &session, &org, &repo, RepoRole::Write, &next).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    match crate::ci::cancel_check_run(&state, &org, &meta, &user, id).await {
+        Ok(_) => Redirect::to(&format!("{next}?notice=cancelled")).into_response(),
+        Err(e) => app_error_page(&session, e),
     }
 }

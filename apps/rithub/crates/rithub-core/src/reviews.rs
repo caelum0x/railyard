@@ -137,6 +137,8 @@ pub trait ReviewStore {
     ) -> Result<Option<BranchProtection>>;
     /// Branch names in a repo that block direct pushes.
     async fn list_push_protected_branches(&self, repo_id: Uuid) -> Result<Vec<String>>;
+    /// Remove a branch's protection rule. Returns `false` if none existed.
+    async fn delete_branch_protection(&self, repo_id: Uuid, branch: &str) -> Result<bool>;
 }
 
 impl ReviewStore for PgStore {
@@ -295,6 +297,17 @@ impl ReviewStore for PgStore {
         .await
         .map_err(map_db)?;
         Ok(rows)
+    }
+
+    async fn delete_branch_protection(&self, repo_id: Uuid, branch: &str) -> Result<bool> {
+        let result =
+            sqlx::query("DELETE FROM branch_protections WHERE repo_id = $1 AND branch = $2")
+                .bind(repo_id)
+                .bind(branch)
+                .execute(self.pool())
+                .await
+                .map_err(map_db)?;
+        Ok(result.rows_affected() > 0)
     }
 }
 

@@ -298,10 +298,14 @@ pub async fn branches_page(
         Ok(v) => v,
         Err(r) => return r,
     };
-    let branches = state.host.branches(&org, &repo).unwrap_or_default();
+    let branches = match crate::branches::list_branches(&state, &org, &meta).await {
+        Ok(b) => b,
+        Err(e) => return app_error_page(&session, e),
+    };
     let (o, r) = (esc(&org), esc(&repo));
     let mut rows = String::new();
-    for b in &branches {
+    for info in &branches {
+        let b = &info.name;
         let p = state.store.get_branch_protection(meta.id, b).await.ok().flatten();
         let summary = match &p {
             Some(p) => format!(
@@ -320,8 +324,43 @@ pub async fn branches_page(
             .as_ref()
             .map(|p| (p.required_approvals, p.block_direct_push, p.required_checks.join(", ")))
             .unwrap_or((1, true, String::new()));
+        let tip = info
+            .sha
+            .as_deref()
+            .map(|sha| format!(" <span class=\"muted mono\">{}</span>", esc(&sha[..sha.len().min(10)])))
+            .unwrap_or_default();
+        let badge = if info.default {
+            " <span class=\"label-chip\" style=\"background:#eef;color:#223\">default</span>"
+        } else {
+            ""
+        };
+        // Secondary actions: remove the rule (protected) / delete the branch
+        // (never the default branch; protected branches must be unprotected first).
+        let unprotect = if p.is_some() {
+            format!(
+                "<form method=\"post\" action=\"/{o}/{r}/settings/branches/unprotect\" style=\"display:inline\">\
+                 <input type=\"hidden\" name=\"branch\" value=\"{bn}\">\
+                 <button class=\"btn small\" type=\"submit\">Remove protection</button></form>",
+                bn = esc(b)
+            )
+        } else {
+            String::new()
+        };
+        let delete = if !info.default && p.is_none() {
+            format!(
+                "<form method=\"post\" action=\"/{o}/{r}/settings/branches/delete\" style=\"display:inline\" \
+                 onsubmit=\"return confirm('Delete branch {bn}? This cannot be undone.')\">\
+                 <input type=\"hidden\" name=\"branch\" value=\"{bn}\">\
+                 <button class=\"btn small danger\" type=\"submit\">Delete branch</button></form>",
+                bn = esc(b)
+            )
+        } else {
+            String::new()
+        };
         rows.push_str(&format!(
-            "<div class=\"comment\"><div class=\"comment-h\"><strong class=\"mono\">{bn}</strong> \u{2014} {summary}</div>\
+            "<div class=\"comment\"><div class=\"comment-h row\" style=\"justify-content:space-between\">\
+             <span><strong class=\"mono\">{bn}</strong>{badge}{tip} \u{2014} {summary}</span>\
+             <span class=\"row\">{unprotect}{delete}</span></div>\
              <div class=\"comment-b\"><form method=\"post\" action=\"/{o}/{r}/settings/branches\" class=\"row\">\
              <input type=\"hidden\" name=\"branch\" value=\"{bn}\">\
              <label style=\"margin:0\">Required approvals <input name=\"required_approvals\" type=\"number\" min=\"0\" max=\"20\" value=\"{approvals}\" style=\"width:70px\"></label>\
@@ -337,10 +376,11 @@ pub async fn branches_page(
         rows = "<p class=\"muted\">Push a branch to configure protection rules.</p>".into();
     }
     let inner = format!(
-        "<h3>Branch protection</h3>\
+        "<h3>Branches</h3>\
          <p class=\"muted\">Protected branches can require approving reviews and passing status checks \
          before merge, and can block direct pushes (admins may still push).</p>{rows}\
-         <p class=\"hint\">Set required approvals to 0, untick blocking, and clear checks to relax a rule.</p>"
+         <p class=\"hint\">The default branch and protected branches cannot be deleted. Branches used by an \
+         open pull request are kept until it is merged or closed.</p>"
     );
     let body = shell(&org, &repo, &meta, "branches", q.notice.as_deref(), &inner);
     page("Branches", &session, &body).into_response()
@@ -379,6 +419,49 @@ pub async fn branch_protect(
     };
     match crate::collab_api::apply_protection(&state, &meta, &user, &form.branch, &input).await {
         Ok(_) => Redirect::to(&format!("/{org}/{repo}/settings/branches?notice=saved")).into_response(),
+        Err(e) => app_error_page(&session, e),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct BranchForm {
+    branch: String,
+}
+
+/// POST /{org}/{repo}/settings/branches/unprotect
+pub async fn branch_unprotect(
+    State(state): State<AppState>,
+    Path((org, repo)): Path<(String, String)>,
+    headers: HeaderMap,
+    Form(form): Form<BranchForm>,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let (meta, user) = match admin_repo(&state, &session, &org, &repo, "/branches").await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    match crate::branches::remove_protection(&state, &meta, &user, &form.branch).await {
+        Ok(()) => Redirect::to(&format!("/{org}/{repo}/settings/branches?notice=unprotected"))
+            .into_response(),
+        Err(e) => app_error_page(&session, e),
+    }
+}
+
+/// POST /{org}/{repo}/settings/branches/delete
+pub async fn branch_delete(
+    State(state): State<AppState>,
+    Path((org, repo)): Path<(String, String)>,
+    headers: HeaderMap,
+    Form(form): Form<BranchForm>,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let (meta, user) = match admin_repo(&state, &session, &org, &repo, "/branches").await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    match crate::branches::delete_branch(&state, &org, &meta, &user, &form.branch).await {
+        Ok(()) => Redirect::to(&format!("/{org}/{repo}/settings/branches?notice=branch-deleted"))
+            .into_response(),
         Err(e) => app_error_page(&session, e),
     }
 }

@@ -32,3 +32,9 @@ pub fn unauthenticated() -> Error {
 pub fn bad_request(message: impl Into<String>) -> Error {
     Error::new(message.into()).extend_with(|_, e| e.set("code", "BAD_REQUEST"))
 }
+
+/// Convert a service-layer failure (already client-safe) into a GraphQL error.
+pub fn service_error(err: crate::services::ServiceError) -> Error {
+    let code = err.code;
+    Error::new(err.message).extend_with(move |_, e| e.set("code", code))
+}

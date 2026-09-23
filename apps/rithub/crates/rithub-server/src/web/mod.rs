@@ -84,6 +84,12 @@ pub fn routes() -> Router<AppState> {
         .route("/{org}/-/teams", post(account::team_create))
         .route("/{org}/-/teams/{team}/members", post(account::team_member_add))
         .route("/{org}/-/teams/{team}/repos", post(account::team_repo_grant))
+        .route(
+            "/{org}/-/teams/{team}/members/{user}/remove",
+            post(account::team_member_remove),
+        )
+        .route("/{org}/-/teams/{team}/repos/{repo}/revoke", post(account::team_repo_revoke))
+        .route("/{org}/-/teams/{team}/delete", post(account::team_delete))
         // Repo: code browse
         .route("/{org}/{repo}", get(repo::home))
         .route("/{org}/{repo}/fork", post(repo::fork))
@@ -103,6 +109,8 @@ pub fn routes() -> Router<AppState> {
         .route("/{org}/{repo}/issues/{number}/state", post(collab::issue_state))
         .route("/{org}/{repo}/issues/{number}/triage", post(collab::issue_triage))
         .route("/{org}/{repo}/labels", get(collab::labels_page).post(collab::label_create))
+        .route("/{org}/{repo}/labels/{id}/edit", post(collab::label_edit))
+        .route("/{org}/{repo}/labels/{id}/delete", post(collab::label_delete))
         .route(
             "/{org}/{repo}/milestones",
             get(collab::milestones_page).post(collab::milestone_create),
@@ -118,6 +126,7 @@ pub fn routes() -> Router<AppState> {
         .route("/{org}/{repo}/pulls/{number}/comment", post(pulls::pr_comment))
         .route("/{org}/{repo}/pulls/{number}/state", post(pulls::pr_state))
         .route("/{org}/{repo}/pulls/{number}/merge", post(pulls::pr_merge))
+        .route("/{org}/{repo}/pulls/{number}/delete-branch", post(pulls::pr_delete_branch))
         // Repo: audit log
         .route("/{org}/{repo}/audit", get(governance::audit_log))
         // Repo: releases
@@ -138,6 +147,8 @@ pub fn routes() -> Router<AppState> {
         // Repo: actions (check runs + runners)
         .route("/{org}/{repo}/actions", get(actions::actions_page))
         .route("/{org}/{repo}/actions/runs/{id}", get(actions::run_detail))
+        .route("/{org}/{repo}/actions/runs/{id}/rerun", post(actions::run_rerun))
+        .route("/{org}/{repo}/actions/runs/{id}/cancel", post(actions::run_cancel))
         .route("/{org}/{repo}/actions/runners", post(actions::runner_register))
         .route("/{org}/{repo}/actions/runners/{id}/delete", post(actions::runner_delete))
         // Repo: settings
@@ -156,6 +167,8 @@ pub fn routes() -> Router<AppState> {
             "/{org}/{repo}/settings/branches",
             get(settings::branches_page).post(settings::branch_protect),
         )
+        .route("/{org}/{repo}/settings/branches/unprotect", post(settings::branch_unprotect))
+        .route("/{org}/{repo}/settings/branches/delete", post(settings::branch_delete))
         .route(
             "/{org}/{repo}/settings/hooks",
             get(settings::hooks_page).post(settings::hook_create),
@@ -382,6 +395,10 @@ pub fn notice_html(code: Option<&str>) -> String {
         Some("revoked") => "Token revoked.",
         Some("added") => "Added.",
         Some("removed") => "Removed.",
+        Some("unprotected") => "Branch protection removed.",
+        Some("branch-deleted") => "Branch deleted.",
+        Some("rerun") => "A new run was queued.",
+        Some("cancelled") => "Run cancelled.",
         Some("welcome") => "Welcome to rithub. Your account and personal organization are ready.",
         _ => return String::new(),
     };
@@ -637,7 +654,8 @@ h1,h2,h3{margin:.4em 0}h1{font-size:20px}\
 .danger-zone{border-color:var(--bad)}\
 .empty-state{text-align:center;padding:40px 16px;color:var(--muted)}\
 .empty-state h3{font-size:18px;margin-bottom:8px}\
-.label-chip{display:inline-block;padding:0 8px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid rgba(0,0,0,.15)}";
+.label-chip{display:inline-block;padding:0 8px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid rgba(0,0,0,.15)}\
+.plain{list-style:none;padding-left:0;margin:4px 0 10px}.plain li{padding:3px 0}";
 
 /// A colored label chip. `color` is a stored 6-hex value.
 pub fn label_chip(name: &str, color: &str) -> String {

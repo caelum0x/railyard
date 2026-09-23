@@ -1116,6 +1116,7 @@ dependencies = [
  "gix-odb",
  "gix-pack",
  "globset",
+ "serde_json",
  "sha1",
  "tempfile",
  "thiserror",

@@ -13,6 +13,7 @@ serde_json.workspace = true
 uuid.workspace = true
 time.workspace = true
 tracing.workspace = true
+async-trait = "0.1"
 # GraphQL engine. `time` + `uuid` features map the domain's OffsetDateTime/Uuid
 # onto GraphQL scalars. Kept off the git plane on purpose: this crate owns no
 # git internals — on-disk repo creation is delegated through the `GitHost` trait,

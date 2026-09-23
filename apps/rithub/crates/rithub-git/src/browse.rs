@@ -38,6 +38,23 @@ impl RepoHost {
         self.ref_names(org, repo, "refs/tags/")
     }
 
+    /// Every ref (`refs/...`) mapped to its hex oid. Used to diff a repository's
+    /// refs across a push served out-of-process (the SSH transport), so the
+    /// caller learns exactly which refs were created, moved, or deleted.
+    pub fn ref_snapshot(
+        &self,
+        org: &str,
+        repo: &str,
+    ) -> Result<std::collections::BTreeMap<String, String>> {
+        let repository = self.open(org, repo)?;
+        Ok(repository
+            .refs()
+            .list()?
+            .into_iter()
+            .map(|(name, oid)| (name, oid.to_hex()))
+            .collect())
+    }
+
     fn ref_names(&self, org: &str, repo: &str, prefix: &str) -> Result<Vec<String>> {
         let repository = self.open(org, repo)?;
         let mut names: Vec<String> = repository
@@ -48,6 +65,21 @@ impl RepoHost {
             .collect();
         names.sort();
         Ok(names)
+    }
+
+    /// Delete `refs/heads/<branch>` with a compare-and-delete against its current
+    /// tip (so a concurrent push is never silently discarded), then refresh the
+    /// dumb-HTTP server info. Returns the tip the branch pointed at.
+    pub fn delete_branch(&self, org: &str, repo: &str, branch: &str) -> Result<ObjectId> {
+        let repository = self.open(org, repo)?;
+        let name = format!("refs/heads/{branch}");
+        let tip = repository
+            .refs()
+            .resolve(&name)
+            .map_err(|_| GitHostError::NotFound(format!("branch {branch}")))?;
+        repository.refs().compare_and_delete(&name, tip)?;
+        let _ = rit::update_server_info(&repository);
+        Ok(tip)
     }
 
     /// The default branch name (from `HEAD`), defaulting to `main`.

@@ -353,10 +353,17 @@ pub async fn pr_detail(
         body.push_str(&merge_box(&state, &org, &repo, &meta, &pr, can_write, &session).await);
     } else if let Some(sha) = &pr.merge_commit_sha {
         body.push_str(&format!(
-            "<div class=\"card\"><p class=\"ok\">Merged as <a href=\"/{o}/{r}/commit/{sha}\" class=\"mono\">{short}</a></p></div>",
+            "<div class=\"card\"><p class=\"ok\">Merged as <a href=\"/{o}/{r}/commit/{sha}\" class=\"mono\">{short}</a></p>",
             sha = esc(sha),
             short = esc(&sha[..sha.len().min(8)])
         ));
+        body.push_str(&head_branch_cleanup(&state, &org, &repo, &pr, can_write));
+        body.push_str("</div>");
+    } else if pr.state == PrState::Closed {
+        let cleanup = head_branch_cleanup(&state, &org, &repo, &pr, can_write);
+        if !cleanup.is_empty() {
+            body.push_str(&format!("<div class=\"card\">{cleanup}</div>"));
+        }
     }
 
     // Comment + close/reopen.
@@ -554,6 +561,65 @@ pub async fn pr_comment(
             Html(format!("<div class=\"notice bad-notice\">{}</div>", esc(&e.client_message()))),
         )
             .into_response(),
+        Err(e) => app_error_page(&session, e),
+    }
+}
+
+/// The "Delete branch" control shown on a merged/closed same-repo PR whose head
+/// branch still exists (writers only). Empty when not applicable.
+fn head_branch_cleanup(
+    state: &AppState,
+    org: &str,
+    repo: &str,
+    pr: &rithub_core::PullRequest,
+    can_write: bool,
+) -> String {
+    if !can_write || pr.head_repo_id.is_some() {
+        return String::new();
+    }
+    if state.host.resolve_branch(org, repo, &pr.head_branch).is_err() {
+        return format!(
+            "<p class=\"muted\">The <code>{}</code> branch has been deleted.</p>",
+            esc(&pr.head_branch)
+        );
+    }
+    format!(
+        "<form method=\"post\" action=\"/{o}/{r}/pulls/{n}/delete-branch\" class=\"row\" \
+         onsubmit=\"return confirm('Delete branch {b}?')\">\
+         <span class=\"muted\">The <code>{b}</code> branch can be safely deleted.</span>\
+         <button class=\"btn small\" type=\"submit\">Delete branch</button></form>",
+        o = esc(org),
+        r = esc(repo),
+        n = pr.number,
+        b = esc(&pr.head_branch),
+    )
+}
+
+/// POST /{org}/{repo}/pulls/{number}/delete-branch — delete a merged or
+/// closed same-repo PR's head branch (Write).
+pub async fn pr_delete_branch(
+    State(state): State<AppState>,
+    Path((org, repo, number)): Path<(String, String, i32)>,
+    headers: HeaderMap,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let next = format!("/{org}/{repo}/pulls/{number}");
+    let (meta, user) = match web_repo_role(&state, &session, &org, &repo, RepoRole::Write, &next).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let pr = match state.store.get_pr(meta.id, number).await {
+        Ok(p) => p,
+        Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "pull request not found"),
+    };
+    if pr.state == PrState::Open {
+        return error_page(&session, StatusCode::CONFLICT, "close or merge the pull request before deleting its branch");
+    }
+    if pr.head_repo_id.is_some() {
+        return error_page(&session, StatusCode::BAD_REQUEST, "the head branch of a fork pull request lives in the fork");
+    }
+    match crate::branches::delete_branch(&state, &org, &meta, &user, &pr.head_branch).await {
+        Ok(()) => Redirect::to(&format!("{next}?notice=branch-deleted")).into_response(),
         Err(e) => app_error_page(&session, e),
     }
 }

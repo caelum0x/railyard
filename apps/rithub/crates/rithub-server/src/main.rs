@@ -35,6 +35,7 @@ mod audit;
 mod auth;
 mod authz;
 mod billing;
+mod branches;
 mod ci;
 mod collab_api;
 mod collab_svc;
@@ -267,6 +268,14 @@ fn build_router(state: AppState) -> Router {
             post(collab_api::comment_issue).get(collab_api::list_issue_comments),
         )
         .route(
+            "/api/orgs/{org}/repos/{repo}/labels",
+            get(collab_api::list_labels).post(collab_api::create_label),
+        )
+        .route(
+            "/api/orgs/{org}/repos/{repo}/labels/{name}",
+            axum::routing::patch(collab_api::update_label).delete(collab_api::delete_label),
+        )
+        .route(
             "/api/orgs/{org}/repos/{repo}/issues/{number}/labels",
             post(collab_api::label_issue),
         )
@@ -318,7 +327,17 @@ fn build_router(state: AppState) -> Router {
         // --- protected branches ---
         .route(
             "/api/orgs/{org}/repos/{repo}/branches/{branch}/protection",
-            post(collab_api::set_protection).get(collab_api::get_protection),
+            post(collab_api::set_protection)
+                .get(collab_api::get_protection)
+                .delete(branches::api_delete_protection),
+        )
+        .route(
+            "/api/orgs/{org}/repos/{repo}/branches",
+            get(branches::api_list_branches),
+        )
+        .route(
+            "/api/orgs/{org}/repos/{repo}/branches/{branch}",
+            axum::routing::delete(branches::api_delete_branch),
         )
         // --- webhooks ---
         .route(
@@ -384,6 +403,14 @@ fn build_router(state: AppState) -> Router {
             axum::routing::patch(ci::update_check_run),
         )
         .route(
+            "/api/orgs/{org}/repos/{repo}/check-runs/{id}/rerun",
+            post(ci::api_rerun_check_run),
+        )
+        .route(
+            "/api/orgs/{org}/repos/{repo}/check-runs/{id}/cancel",
+            post(ci::api_cancel_check_run),
+        )
+        .route(
             "/api/orgs/{org}/repos/{repo}/commits/{sha}/check-runs",
             get(ci::list_commit_check_runs),
         )
@@ -439,6 +466,18 @@ fn build_router(state: AppState) -> Router {
         .route(
             "/api/orgs/{org}/teams/{team}/repos",
             post(governance_api::grant_team_repo),
+        )
+        .route(
+            "/api/orgs/{org}/teams/{team}",
+            get(governance_api::get_team).delete(governance_api::delete_team),
+        )
+        .route(
+            "/api/orgs/{org}/teams/{team}/members/{username}",
+            delete(governance_api::remove_team_member),
+        )
+        .route(
+            "/api/orgs/{org}/teams/{team}/repos/{repo}",
+            delete(governance_api::revoke_team_repo),
         )
         // --- admin: job outbox ---
         .route("/api/admin/jobs", get(jobs_api::list_jobs))

@@ -69,6 +69,16 @@ pub trait AccessStore {
     async fn add_team_member(&self, team_id: Uuid, user_id: Uuid) -> Result<()>;
     async fn grant_team_repo(&self, team_id: Uuid, repo_id: Uuid, role: RepoRole) -> Result<()>;
     async fn get_team(&self, org_id: Uuid, name: &str) -> Result<Team>;
+    /// Team members as `(user_id, username)`, sorted by username.
+    async fn list_team_members(&self, team_id: Uuid) -> Result<Vec<(Uuid, String)>>;
+    /// Repositories a team can access as `(repo_id, repo_name, role)`.
+    async fn list_team_repos(&self, team_id: Uuid) -> Result<Vec<(Uuid, String, RepoRole)>>;
+    /// Remove a member from a team. Returns `false` if they were not a member.
+    async fn remove_team_member(&self, team_id: Uuid, user_id: Uuid) -> Result<bool>;
+    /// Revoke a team's access to a repository. Returns `false` if none existed.
+    async fn revoke_team_repo(&self, team_id: Uuid, repo_id: Uuid) -> Result<bool>;
+    /// Delete a team (its memberships and repo grants cascade).
+    async fn delete_team(&self, team_id: Uuid) -> Result<bool>;
 
     /// The user's **effective** role on `repo_id` (in org `org_id`), or `None`
     /// if they have no access at all.
@@ -157,6 +167,69 @@ impl AccessStore for PgStore {
         .await
         .map_err(map_db)?;
         Ok(())
+    }
+
+    async fn list_team_members(&self, team_id: Uuid) -> Result<Vec<(Uuid, String)>> {
+        let rows = sqlx::query(
+            "SELECT u.id, u.username FROM team_members tm JOIN users u ON u.id = tm.user_id \
+             WHERE tm.team_id = $1 ORDER BY u.username",
+        )
+        .bind(team_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(map_db)?;
+        Ok(rows.iter().map(|r| (r.get("id"), r.get("username"))).collect())
+    }
+
+    async fn list_team_repos(&self, team_id: Uuid) -> Result<Vec<(Uuid, String, RepoRole)>> {
+        let rows = sqlx::query(
+            "SELECT r.id, r.name, t.role FROM team_repo_access t \
+             JOIN repositories r ON r.id = t.repo_id WHERE t.team_id = $1 ORDER BY r.name",
+        )
+        .bind(team_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(map_db)?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                (
+                    r.get("id"),
+                    r.get("name"),
+                    RepoRole::parse(r.get::<String, _>("role").as_str()),
+                )
+            })
+            .collect())
+    }
+
+    async fn remove_team_member(&self, team_id: Uuid, user_id: Uuid) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
+            .bind(team_id)
+            .bind(user_id)
+            .execute(self.pool())
+            .await
+            .map_err(map_db)?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn revoke_team_repo(&self, team_id: Uuid, repo_id: Uuid) -> Result<bool> {
+        let result =
+            sqlx::query("DELETE FROM team_repo_access WHERE team_id = $1 AND repo_id = $2")
+                .bind(team_id)
+                .bind(repo_id)
+                .execute(self.pool())
+                .await
+                .map_err(map_db)?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn delete_team(&self, team_id: Uuid) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM teams WHERE id = $1")
+            .bind(team_id)
+            .execute(self.pool())
+            .await
+            .map_err(map_db)?;
+        Ok(result.rows_affected() > 0)
     }
 
     async fn get_team(&self, org_id: Uuid, name: &str) -> Result<Team> {

@@ -822,3 +822,77 @@ pub async fn delete_hook(
     svc::enqueue_audit(&state, Some(meta.id), Some(&user), "webhook.deleted", Some(&hook.url), None);
     Ok(StatusCode::NO_CONTENT)
 }
+
+// --- labels -------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct LabelBody {
+    pub name: String,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LabelPatch {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+/// `GET /api/orgs/{org}/repos/{repo}/labels`
+pub async fn list_labels(
+    State(state): State<AppState>,
+    Path((org, repo)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<rithub_core::Label>>, AppError> {
+    let (meta, _) = repo_for_read(&state, &headers, &org, &repo).await?;
+    Ok(Json(state.store.list_labels(meta.id).await?))
+}
+
+/// `POST /api/orgs/{org}/repos/{repo}/labels` (Write)
+pub async fn create_label(
+    State(state): State<AppState>,
+    Path((org, repo)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(input): Json<LabelBody>,
+) -> Result<Json<rithub_core::Label>, AppError> {
+    let (meta, user) = repo_for_role(&state, &headers, &org, &repo, RepoRole::Write).await?;
+    Ok(Json(
+        svc::create_label(&state, &meta, &user, &input.name, input.color.as_deref()).await?,
+    ))
+}
+
+/// `PATCH /api/orgs/{org}/repos/{repo}/labels/{name}` (Write)
+pub async fn update_label(
+    State(state): State<AppState>,
+    Path((org, repo, name)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    Json(input): Json<LabelPatch>,
+) -> Result<Json<rithub_core::Label>, AppError> {
+    let (meta, user) = repo_for_role(&state, &headers, &org, &repo, RepoRole::Write).await?;
+    let label = svc::label_by_name(&state, &meta, &name).await?;
+    Ok(Json(
+        svc::edit_label(
+            &state,
+            &meta,
+            &user,
+            label.id,
+            input.name.as_deref(),
+            input.color.as_deref(),
+        )
+        .await?,
+    ))
+}
+
+/// `DELETE /api/orgs/{org}/repos/{repo}/labels/{name}` (Write)
+pub async fn delete_label(
+    State(state): State<AppState>,
+    Path((org, repo, name)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, AppError> {
+    let (meta, user) = repo_for_role(&state, &headers, &org, &repo, RepoRole::Write).await?;
+    let label = svc::label_by_name(&state, &meta, &name).await?;
+    svc::delete_label(&state, &meta, &user, label.id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}

@@ -409,3 +409,149 @@ fn parse_conclusion(value: Option<&str>) -> Result<Option<CheckConclusion>, AppE
             .ok_or_else(|| AppError::bad_request(format!("invalid check run conclusion: {s}"))),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Re-run + cancel (users with Write; shared with the web Actions pages)
+// ---------------------------------------------------------------------------
+
+/// Fan a `check_run` webhook event out so runners learn about the change.
+fn announce_check_run(
+    state: &AppState,
+    org: &str,
+    repo: &rithub_core::Repository,
+    run: &CheckRun,
+    action: &str,
+    sender: &rithub_core::User,
+) {
+    crate::collab_svc::enqueue_webhook(
+        state,
+        repo.id,
+        "check_run",
+        json!({
+            "event": "check_run",
+            "action": action,
+            "repo": format!("{org}/{}", repo.name),
+            "sender": sender.username,
+            "check_run": {
+                "id": run.id,
+                "name": run.name,
+                "head_sha": run.head_sha,
+                "status": run.status.as_str(),
+                "conclusion": run.conclusion.map(|c| c.as_str()),
+            },
+        }),
+    );
+}
+
+/// Queue a fresh run of the same check on the same commit. The new run becomes
+/// the latest for that name (superseding the old one in roll-ups and merge
+/// gates) and a `check_run` `rerequested` event notifies runners.
+pub async fn rerun_check_run(
+    state: &AppState,
+    org: &str,
+    repo: &rithub_core::Repository,
+    actor: &rithub_core::User,
+    check_run_id: Uuid,
+) -> Result<CheckRun, AppError> {
+    let previous = state.store.get_check_run(repo.id, check_run_id).await?;
+    let run = state
+        .store
+        .create_check_run(
+            repo.id,
+            NewCheckRun {
+                runner_id: None,
+                head_sha: &previous.head_sha,
+                name: &previous.name,
+                external_id: None,
+                status: CheckRunStatus::Queued,
+                conclusion: None,
+                details_url: None,
+                output_title: None,
+                output_summary: None,
+            },
+        )
+        .await?;
+    crate::collab_svc::enqueue_audit(
+        state,
+        Some(repo.id),
+        Some(actor),
+        "check_run.rerequested",
+        Some(&previous.name),
+        Some(&previous.head_sha),
+    );
+    announce_check_run(state, org, repo, &run, "rerequested", actor);
+    Ok(run)
+}
+
+/// Cancel a queued or in-progress run (completed with conclusion `cancelled`).
+pub async fn cancel_check_run(
+    state: &AppState,
+    org: &str,
+    repo: &rithub_core::Repository,
+    actor: &rithub_core::User,
+    check_run_id: Uuid,
+) -> Result<CheckRun, AppError> {
+    let current = state.store.get_check_run(repo.id, check_run_id).await?;
+    if current.status == CheckRunStatus::Completed {
+        return Err(AppError::conflict("this check run has already completed"));
+    }
+    let title = format!("Cancelled by {}", actor.username);
+    let run = state
+        .store
+        .update_check_run(
+            repo.id,
+            check_run_id,
+            CheckRunPatch {
+                status: Some(CheckRunStatus::Completed),
+                conclusion: Some(CheckConclusion::Cancelled),
+                details_url: None,
+                output_title: Some(&title),
+                output_summary: None,
+            },
+        )
+        .await?;
+    crate::collab_svc::enqueue_audit(
+        state,
+        Some(repo.id),
+        Some(actor),
+        "check_run.cancelled",
+        Some(&run.name),
+        Some(&run.head_sha),
+    );
+    announce_check_run(state, org, repo, &run, "cancelled", actor);
+    Ok(run)
+}
+
+/// `POST /api/orgs/{org}/repos/{repo}/check-runs/{id}/rerun` (Write)
+pub async fn api_rerun_check_run(
+    State(state): State<AppState>,
+    Path((org, repo, check_run_id)): Path<(String, String, Uuid)>,
+    headers: HeaderMap,
+) -> Result<Json<CheckRun>, AppError> {
+    let (meta, user) = crate::authz::repo_for_role(
+        &state,
+        &headers,
+        &org,
+        &repo,
+        rithub_core::RepoRole::Write,
+    )
+    .await?;
+    Ok(Json(rerun_check_run(&state, &org, &meta, &user, check_run_id).await?))
+}
+
+/// `POST /api/orgs/{org}/repos/{repo}/check-runs/{id}/cancel` (Write)
+pub async fn api_cancel_check_run(
+    State(state): State<AppState>,
+    Path((org, repo, check_run_id)): Path<(String, String, Uuid)>,
+    headers: HeaderMap,
+) -> Result<Json<CheckRun>, AppError> {
+    let (meta, user) = crate::authz::repo_for_role(
+        &state,
+        &headers,
+        &org,
+        &repo,
+        rithub_core::RepoRole::Write,
+    )
+    .await?;
+    Ok(Json(cancel_check_run(&state, &org, &meta, &user, check_run_id).await?))
+}
