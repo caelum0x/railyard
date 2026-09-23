@@ -141,6 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/healthz", get(healthz))
+        .route("/admin", get(admin_page))
         .route("/v1/echo", protected)
         .merge(discovery_api)
         .merge(mcp_api)
@@ -159,6 +160,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Open liveness probe — never gated.
 async fn healthz() -> impl IntoResponse {
     (StatusCode::OK, "ok\n")
+}
+
+/// `GET /admin` — a self-contained operator console (static HTML + vanilla JS, no
+/// build step). It reads only Turnstile's existing OPEN endpoints: the priced-tool
+/// catalog (`GET /v1/tools`) and per-request settlement status
+/// (`GET /v1/settlements/:request_id`). Both are unauthenticated by design, so the
+/// page adds no auth path and no bypass; it surfaces exactly what those endpoints
+/// return. Turnstile exposes no challenge/settlement list endpoint, and the page
+/// says so rather than inventing one.
+async fn admin_page() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("../assets/admin.html"))
 }
 
 /// The paid tool. Echoes the body and reports ACTUAL usage (here: one microdollar

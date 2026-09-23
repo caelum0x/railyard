@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Abacus Admin</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #181b24; --border: #262b38; --fg: #e6e8ee;
+    --muted: #8b91a1; --accent: #6ea8fe; --danger: #f2668b; --ok: #55c98a;
+    --row: #1e222d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+  header .spacer { flex: 1; }
+  input, button {
+    font: inherit; color: var(--fg); background: var(--row);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
+  }
+  input { min-width: 280px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #0b1020; border-color: var(--accent); font-weight: 600; }
+  button:hover { filter: brightness(1.08); }
+  #status { font-size: 12px; color: var(--muted); }
+  #status.err { color: var(--danger); }
+  #status.ok { color: var(--ok); }
+  main { padding: 20px; max-width: 900px; }
+  .note {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; margin-bottom: 18px; color: var(--muted); font-size: 13px;
+  }
+  .note b { color: var(--fg); }
+  .lookup { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    overflow: auto;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td {
+    text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--border);
+    font-variant-numeric: tabular-nums; vertical-align: top;
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; width: 220px; }
+  td.mono, th.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; word-break: break-all; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 12px;
+    background: var(--row); border: 1px solid var(--border);
+  }
+  .section-title { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; margin: 22px 0 8px; }
+  .empty, .loading { padding: 28px; color: var(--muted); text-align: center; }
+  .gate { max-width: 480px; margin: 60px auto; text-align: center; }
+  .gate p { color: var(--muted); }
+  code { background: var(--row); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Abacus Admin</h1>
+  <input id="key" type="password" placeholder="X-API-Key (ingress key)" autocomplete="off" />
+  <button id="connect" class="primary">Connect</button>
+  <button id="logout" style="display:none">Sign out</button>
+  <div class="spacer"></div>
+  <span id="status">Not connected</span>
+</header>
+
+<div id="gate" class="gate">
+  <p>Enter the Abacus ingress API key to look up spend receipts.<br />
+  Requests use the <code>X-API-Key</code> header — the same credential the enforced
+  <code>/v1/proxy</code> and <code>/v1/receipts</code> endpoints require. No bypass.</p>
+</div>
+
+<div id="app" style="display:none">
+  <main>
+    <div class="note">
+      Abacus is a spend-enforcement reverse proxy. Its only authenticated read
+      endpoint is <b>GET&nbsp;/v1/receipts/:request_id</b> — the money system-of-record
+      for a <b>single</b> enforced request. There is no HTTP endpoint that lists
+      receipts, spend policies, budgets, or holds, so this console looks up one
+      receipt by its <code>request_id</code> (the <code>x-request-id</code> correlation
+      key returned by a proxied call). Nothing here is fabricated.
+    </div>
+    <div class="lookup">
+      <input id="request_id" placeholder="request_id" autocomplete="off" />
+      <button id="lookup" class="primary">Look up receipt</button>
+    </div>
+    <div id="view" class="card"><div class="empty">Enter a request_id to view its receipt.</div></div>
+  </main>
+</div>
+
+<script>
+"use strict";
+(function () {
+  const KEY_STORE = "abacus_admin_key";
+  const el = (id) => document.getElementById(id);
+  const statusEl = el("status");
+
+  function setStatus(msg, kind) {
+    statusEl.textContent = msg;
+    statusEl.className = kind || "";
+  }
+
+  function getKey() { return sessionStorage.getItem(KEY_STORE) || ""; }
+  function setKey(k) {
+    if (k) sessionStorage.setItem(KEY_STORE, k);
+    else sessionStorage.removeItem(KEY_STORE);
+  }
+
+  function esc(v) {
+    if (v === null || v === undefined) return "";
+    return String(v).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // µ$ (micros of a dollar) → dollar string.
+  function usd(micros) {
+    if (micros === null || micros === undefined || micros === "") return "";
+    const n = Number(micros);
+    if (Number.isNaN(n)) return esc(micros);
+    return "$" + (n / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.$/, ".0")
+      + ' <span class="badge">' + esc(micros) + " µ$</span>";
+  }
+
+  function badge(text) {
+    if (text === null || text === undefined || text === "") return "—";
+    return '<span class="badge">' + esc(text) + "</span>";
+  }
+
+  async function api(path) {
+    const res = await fetch(path, {
+      headers: { "X-API-Key": getKey(), "Accept": "application/json" },
+    });
+    if (res.status === 401 || res.status === 403) throw new Error("Unauthorized — check the ingress API key.");
+    if (res.status === 404) throw new Error("No receipt found for that request_id.");
+    if (!res.ok) throw new Error("HTTP " + res.status + " on " + path);
+    const body = await res.json();
+    // { success, data } envelope.
+    return body && Object.prototype.hasOwnProperty.call(body, "data") ? body.data : body;
+  }
+
+  function row(label, valueHtml, mono) {
+    return "<tr><th>" + esc(label) + "</th><td" + (mono ? ' class="mono"' : "") + ">"
+      + (valueHtml === "" || valueHtml === undefined ? "—" : valueHtml) + "</td></tr>";
+  }
+
+  function renderReceipt(r) {
+    if (!r || typeof r !== "object") {
+      el("view").innerHTML = '<div class="empty">No receipt.</div>';
+      return;
+    }
+    const proof = r.settlement_proof || {};
+    const html =
+      "<table><tbody>"
+      + row("Request ID", esc(r.request_id), true)
+      + row("Outcome", badge(r.outcome))
+      + row("Agent ID", esc(r.agent_id), true)
+      + row("Run ID", esc(r.run_id), true)
+      + row("Budget ID", esc(r.budget_id), true)
+      + row("Payer Account", esc(r.payer_account), true)
+      + row("Hold ID", esc(r.hold_id), true)
+      + row("Reserved", usd(r.reserved_micros))
+      + row("Captured", usd(r.captured_micros))
+      + row("Balance After", usd(r.balance_after_micros))
+      + row("Settlement Seq", esc(r.settlement_seq))
+      + "</tbody></table>"
+      + '<div class="section-title">Settlement Proof</div>'
+      + '<table><tbody>'
+      + row("Sequence", esc(proof.sequence))
+      + row("Operation", esc(proof.operation), true)
+      + row("Operation Hash", esc(proof.operation_hash), true)
+      + row("Receipt Hash", esc(proof.receipt_hash), true)
+      + row("Signature", esc(proof.signature), true)
+      + "</tbody></table>";
+    const wrap = document.createElement("div");
+    wrap.innerHTML = html;
+    const view = el("view");
+    view.innerHTML = "";
+    view.appendChild(wrap);
+  }
+
+  async function load() {
+    const id = el("request_id").value.trim();
+    if (!id) { setStatus("Enter a request_id.", "err"); return; }
+    el("view").innerHTML = '<div class="loading">Loading…</div>';
+    try {
+      const data = await api("/v1/receipts/" + encodeURIComponent(id));
+      renderReceipt(data);
+      setStatus("Connected", "ok");
+    } catch (e) {
+      el("view").innerHTML = '<div class="empty">' + esc(e.message) + "</div>";
+      setStatus(e.message, "err");
+      if (/Unauthorized/.test(e.message)) showGate();
+    }
+  }
+
+  function showApp() {
+    el("gate").style.display = "none";
+    el("app").style.display = "";
+    el("logout").style.display = "";
+  }
+
+  function showGate() {
+    el("app").style.display = "none";
+    el("gate").style.display = "";
+    el("logout").style.display = "none";
+    el("key").value = "";
+  }
+
+  el("connect").onclick = () => {
+    const k = el("key").value.trim();
+    if (!k) { setStatus("Enter the ingress API key.", "err"); return; }
+    setKey(k);
+    setStatus("Connected", "ok");
+    showApp();
+  };
+  el("key").addEventListener("keydown", (e) => { if (e.key === "Enter") el("connect").click(); });
+  el("logout").onclick = () => { setKey(""); setStatus("Not connected"); showGate(); };
+  el("lookup").onclick = load;
+  el("request_id").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
+
+  if (getKey()) showApp(); else showGate();
+})();
+</script>
+</body>
+</html>

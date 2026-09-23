@@ -91,9 +91,20 @@ pub struct AppState {
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/v1/chat/completions", post(chat_completions))
+        .route("/admin", get(admin_page))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .with_state(state)
+}
+
+/// `GET /admin` — a self-contained operator console (static HTML + vanilla JS,
+/// no build step). The page is served unauthenticated, but every data request it
+/// makes carries the operator's `Authorization: Bearer <admin-token>` against the
+/// same authenticated `/v1/control` endpoints — there is no server-side bypass. It
+/// only surfaces what those real endpoints return: tenants, apps, provisioning
+/// keys, per-app daily usage, and tenant users.
+async fn admin_page() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("../assets/admin.html"))
 }
 
 async fn healthz() -> impl IntoResponse {

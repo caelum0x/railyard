@@ -78,9 +78,21 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .merge(protected)
+        .route("/admin", get(admin_page))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .with_state(state)
+}
+
+/// `GET /admin` — a self-contained operator console (static HTML + vanilla JS, no
+/// build step). The page loads unauthenticated, but every data request it makes
+/// carries the operator's `X-API-Key` — the same ingress credential the enforced
+/// endpoints require — against the real `GET /v1/receipts/:request_id` route.
+/// There is no server-side bypass and no new auth path. Abacus exposes no list or
+/// policy read endpoint over HTTP, so the console honestly surfaces only single
+/// receipt lookups by `request_id`.
+async fn admin_page() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("../assets/admin.html"))
 }
 
 async fn healthz() -> &'static str {

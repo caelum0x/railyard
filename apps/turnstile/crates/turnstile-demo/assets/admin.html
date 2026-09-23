@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Turnstile Admin</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #181b24; --border: #262b38; --fg: #e6e8ee;
+    --muted: #8b91a1; --accent: #6ea8fe; --danger: #f2668b; --ok: #55c98a;
+    --row: #1e222d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+  header .spacer { flex: 1; }
+  input, button {
+    font: inherit; color: var(--fg); background: var(--row);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
+  }
+  input { min-width: 280px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #0b1020; border-color: var(--accent); font-weight: 600; }
+  button:hover { filter: brightness(1.08); }
+  #status { font-size: 12px; color: var(--muted); }
+  #status.err { color: var(--danger); }
+  #status.ok { color: var(--ok); }
+  nav { display: flex; gap: 4px; padding: 12px 20px 0; flex-wrap: wrap; }
+  nav button {
+    background: transparent; border: 1px solid transparent; border-bottom: none;
+    border-radius: 6px 6px 0 0; color: var(--muted); padding: 8px 14px;
+  }
+  nav button.active { color: var(--fg); background: var(--panel); border-color: var(--border); }
+  main { padding: 0 20px 40px; max-width: 960px; }
+  .note {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; margin: 16px 0; color: var(--muted); font-size: 13px;
+  }
+  .note b { color: var(--fg); }
+  .toolbar { display: flex; align-items: center; gap: 10px; padding: 12px 0; flex-wrap: wrap; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 0 8px 8px 8px; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td {
+    text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--border);
+    font-variant-numeric: tabular-nums; vertical-align: top;
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  tbody tr:hover { background: var(--row); }
+  td.mono, th.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; word-break: break-all; }
+  .kv th { width: 220px; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 12px;
+    background: var(--row); border: 1px solid var(--border);
+  }
+  .section-title { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; margin: 22px 0 8px; }
+  .empty, .loading { padding: 28px; color: var(--muted); text-align: center; }
+  .count { color: var(--muted); font-size: 12px; }
+  code { background: var(--row); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Turnstile Admin</h1>
+  <div class="spacer"></div>
+  <span id="status">Ready</span>
+</header>
+
+<nav id="tabs"></nav>
+<main>
+  <div id="toolbar" class="toolbar"></div>
+  <div id="note" class="note"></div>
+  <div id="view" class="card"><div class="loading">Loading…</div></div>
+</main>
+
+<script>
+"use strict";
+(function () {
+  const el = (id) => document.getElementById(id);
+  const statusEl = el("status");
+
+  function setStatus(msg, kind) {
+    statusEl.textContent = msg;
+    statusEl.className = kind || "";
+  }
+
+  function esc(v) {
+    if (v === null || v === undefined) return "";
+    return String(v).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // µ$ (micros of a dollar) → dollar string, keeping the raw micros visible.
+  function usd(micros) {
+    if (micros === null || micros === undefined || micros === "") return "";
+    const n = Number(micros);
+    if (Number.isNaN(n)) return esc(micros);
+    return "$" + (n / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.$/, ".0")
+      + ' <span class="badge">' + esc(micros) + " µ$</span>";
+  }
+
+  function badge(text) {
+    if (text === null || text === undefined || text === "") return "—";
+    return '<span class="badge">' + esc(text) + "</span>";
+  }
+
+  // Turnstile's read endpoints (discovery + settlement status) are intentionally
+  // OPEN/unauthenticated by design, so no key is sent — matching the real service.
+  async function api(path) {
+    const res = await fetch(path, { headers: { "Accept": "application/json" } });
+    if (res.status === 404) throw new Error("Not found: " + path);
+    if (!res.ok) throw new Error("HTTP " + res.status + " on " + path);
+    return res.json();
+  }
+
+  function row(label, valueHtml, mono) {
+    return "<tr><th>" + esc(label) + "</th><td" + (mono ? ' class="mono"' : "") + ">"
+      + (valueHtml === "" || valueHtml === undefined ? "—" : valueHtml) + "</td></tr>";
+  }
+
+  const NOTES = {
+    registry: 'This is the deployment\'s live priced-tool catalog from the OPEN '
+      + '<b>GET /v1/tools</b> discovery endpoint — the single source of truth for what '
+      + 'this Turnstile charges (payee, currency, per-tool price and scheme).',
+    settlement: 'Poll one paid request\'s terminal settlement state from the OPEN '
+      + '<b>GET /v1/settlements/:request_id</b> endpoint, using the '
+      + '<code>AITP-Request-Id</code> a client receives from a paid call. Turnstile '
+      + 'exposes <b>no</b> HTTP endpoint that lists issued challenges or enumerates '
+      + 'settlements, so challenge state cannot be shown here — only a point lookup by id.',
+  };
+
+  const TABS = [
+    { id: "registry", label: "Tool Catalog", params: false, render: renderCatalog, load: loadCatalog },
+    { id: "settlement", label: "Settlement Lookup", params: true, render: null, load: loadSettlement },
+  ];
+  let active = TABS[0];
+
+  function renderTabs() {
+    const nav = el("tabs");
+    nav.innerHTML = "";
+    TABS.forEach((t) => {
+      const b = document.createElement("button");
+      b.textContent = t.label;
+      b.className = t.id === active.id ? "active" : "";
+      b.onclick = () => { active = t; renderTabs(); renderToolbar(); el("note").innerHTML = NOTES[active.id]; run(); };
+      nav.appendChild(b);
+    });
+  }
+
+  function renderToolbar() {
+    const bar = el("toolbar");
+    bar.innerHTML = "";
+    if (active.id === "settlement") {
+      const input = document.createElement("input");
+      input.id = "request_id";
+      input.placeholder = "request_id (AITP-Request-Id)";
+      input.autocomplete = "off";
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") run(); });
+      bar.appendChild(input);
+      const btn = document.createElement("button");
+      btn.className = "primary";
+      btn.textContent = "Look up";
+      btn.onclick = run;
+      bar.appendChild(btn);
+    } else {
+      const btn = document.createElement("button");
+      btn.textContent = "Refresh";
+      btn.onclick = run;
+      bar.appendChild(btn);
+      const c = document.createElement("span");
+      c.id = "count"; c.className = "count";
+      bar.appendChild(c);
+    }
+  }
+
+  function renderCatalog(cat) {
+    if (!cat || typeof cat !== "object") {
+      el("view").innerHTML = '<div class="empty">No catalog.</div>';
+      return;
+    }
+    const meta =
+      "<table class=\"kv\"><tbody>"
+      + row("AITP Version", esc(cat.aitp_version))
+      + row("Payee", esc(cat.payee), true)
+      + row("Currency", badge(cat.currency))
+      + "</tbody></table>";
+    const tools = Array.isArray(cat.tools) ? cat.tools : [];
+    let table;
+    if (tools.length === 0) {
+      table = '<div class="empty">No tools advertised.</div>';
+    } else {
+      const body = tools.map((t) =>
+        "<tr><td>" + esc(t.name) + "</td><td class=\"mono\">" + esc(t.resource) + "</td><td>"
+        + esc(t.description) + "</td><td>" + usd(t.price_micros) + "</td><td>"
+        + badge(t.scheme) + "</td></tr>").join("");
+      table = "<table><thead><tr><th>Name</th><th>Resource</th><th>Description</th>"
+        + "<th>Price</th><th>Scheme</th></tr></thead><tbody>" + body + "</tbody></table>";
+    }
+    const view = el("view");
+    view.innerHTML = meta + '<div class="section-title">Priced Tools</div>' + table;
+    const c = el("count"); if (c) c.textContent = tools.length + " tool" + (tools.length === 1 ? "" : "s");
+  }
+
+  function renderSettlement(s) {
+    if (!s || typeof s !== "object") {
+      el("view").innerHTML = '<div class="empty">No settlement.</div>';
+      return;
+    }
+    let html =
+      "<table class=\"kv\"><tbody>"
+      + row("Request ID", esc(s.request_id), true)
+      + row("Phase", badge(s.phase))
+      + row("Settled", badge(s.settled ? "yes" : "no"))
+      + row("Scheme", badge(s.scheme))
+      + row("Payer", esc(s.payer), true)
+      + row("Payee", esc(s.payee), true)
+      + row("Resource", esc(s.resource), true)
+      + row("Authorized", usd(s.authorized_micros))
+      + row("Hold", esc(s.hold), true)
+      + row("Actual", usd(s.actual_micros))
+      + row("Error", esc(s.error))
+      + "</tbody></table>";
+    if (s.receipt && typeof s.receipt === "object") {
+      const r = s.receipt;
+      html += '<div class="section-title">Signed Receipt</div>'
+        + "<table class=\"kv\"><tbody>"
+        + row("Seq", esc(r.seq))
+        + row("Operation", esc(r.op), true)
+        + row("Operation Hash", esc(r.op_hash), true)
+        + row("Amount", usd(r.amount_micros))
+        + row("Balance After", usd(r.balance_after_micros))
+        + row("Prev Hash", esc(r.prev_hash), true)
+        + row("Hash", esc(r.hash), true)
+        + row("Signature", esc(r.sig), true)
+        + "</tbody></table>";
+    }
+    el("view").innerHTML = html;
+  }
+
+  async function loadCatalog() {
+    const cat = await api("/v1/tools");
+    renderCatalog(cat);
+  }
+
+  async function loadSettlement() {
+    const input = el("request_id");
+    const id = input ? input.value.trim() : "";
+    if (!id) {
+      el("view").innerHTML = '<div class="empty">Enter a request_id to look up its settlement.</div>';
+      setStatus("Enter a request_id.", "");
+      return;
+    }
+    const data = await api("/v1/settlements/" + encodeURIComponent(id));
+    renderSettlement(data);
+  }
+
+  async function run() {
+    el("view").innerHTML = '<div class="loading">Loading…</div>';
+    try {
+      await active.load();
+      setStatus("OK", "ok");
+    } catch (e) {
+      el("view").innerHTML = '<div class="empty">' + esc(e.message) + "</div>";
+      setStatus(e.message, "err");
+    }
+  }
+
+  renderTabs();
+  renderToolbar();
+  el("note").innerHTML = NOTES[active.id];
+  run();
+})();
+</script>
+</body>
+</html>

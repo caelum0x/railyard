@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Vend Admin</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #181b24; --border: #262b38; --fg: #e6e8ee;
+    --muted: #8b91a1; --accent: #6ea8fe; --danger: #f2668b; --ok: #55c98a;
+    --row: #1e222d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+  header .spacer { flex: 1; }
+  input, button, select {
+    font: inherit; color: var(--fg); background: var(--row);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
+  }
+  input { min-width: 280px; }
+  input.param { min-width: 220px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #0b1020; border-color: var(--accent); font-weight: 600; }
+  button:hover { filter: brightness(1.08); }
+  #status { font-size: 12px; color: var(--muted); }
+  #status.err { color: var(--danger); }
+  #status.ok { color: var(--ok); }
+  nav {
+    display: flex; gap: 4px; padding: 12px 20px 0; flex-wrap: wrap;
+  }
+  nav button {
+    background: transparent; border: 1px solid transparent; border-bottom: none;
+    border-radius: 6px 6px 0 0; color: var(--muted); padding: 8px 14px;
+  }
+  nav button.active { color: var(--fg); background: var(--panel); border-color: var(--border); }
+  main { padding: 0 20px 40px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 0 8px 8px 8px;
+    overflow: auto;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td {
+    text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--border);
+    white-space: nowrap; font-variant-numeric: tabular-nums;
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  tbody tr:hover { background: var(--row); }
+  td.mono, th.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 12px;
+    background: var(--row); border: 1px solid var(--border);
+  }
+  .empty, .loading { padding: 28px; color: var(--muted); text-align: center; }
+  .gate { max-width: 480px; margin: 80px auto; text-align: center; }
+  .gate p { color: var(--muted); }
+  .toolbar { display: flex; align-items: center; gap: 10px; padding: 12px 0; flex-wrap: wrap; }
+  .count { color: var(--muted); font-size: 12px; }
+  .hint { color: var(--muted); font-size: 12px; }
+  code { background: var(--row); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Vend Admin</h1>
+  <input id="key" type="password" placeholder="Bearer admin token" autocomplete="off" />
+  <button id="connect" class="primary">Connect</button>
+  <button id="logout" style="display:none">Sign out</button>
+  <div class="spacer"></div>
+  <span id="status">Not connected</span>
+</header>
+
+<div id="gate" class="gate">
+  <p>Enter the Vend administrator token to load live control-plane data.<br />
+  Requests use <code>Authorization: Bearer &lt;token&gt;</code> against the same
+  <code>/v1/control</code> endpoints that serve this page — no server-side bypass.</p>
+</div>
+
+<div id="app" style="display:none">
+  <nav id="tabs"></nav>
+  <main>
+    <div class="toolbar" id="toolbar"></div>
+    <div id="view" class="card"><div class="loading">Loading…</div></div>
+  </main>
+</div>
+
+<script>
+"use strict";
+(function () {
+  const KEY_STORE = "vend_admin_key";
+  const el = (id) => document.getElementById(id);
+  const statusEl = el("status");
+
+  function setStatus(msg, kind) {
+    statusEl.textContent = msg;
+    statusEl.className = kind || "";
+  }
+
+  function getKey() { return sessionStorage.getItem(KEY_STORE) || ""; }
+  function setKey(k) {
+    if (k) sessionStorage.setItem(KEY_STORE, k);
+    else sessionStorage.removeItem(KEY_STORE);
+  }
+
+  // Escape everything data-derived before it touches innerHTML.
+  function esc(v) {
+    if (v === null || v === undefined) return "";
+    return String(v).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // µ$ (micros of a dollar) → dollar string.
+  function usd(micros) {
+    if (micros === null || micros === undefined || micros === "") return "";
+    const n = Number(micros);
+    if (Number.isNaN(n)) return esc(micros);
+    return "$" + (n / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.$/, ".0");
+  }
+
+  function num(v) {
+    if (v === null || v === undefined) return "";
+    return esc(v);
+  }
+
+  function badge(text) {
+    if (text === null || text === undefined || text === "") return "—";
+    return '<span class="badge">' + esc(text) + "</span>";
+  }
+
+  function bool(v) { return badge(v ? "yes" : "no"); }
+
+  function list(arr) {
+    if (!Array.isArray(arr) || arr.length === 0) return "—";
+    return arr.map((v) => esc(v)).join(", ");
+  }
+
+  function markup(p) {
+    if (!p || typeof p !== "object") return "—";
+    return esc(p.markup_bps) + " bps / min " + usd(p.min_fee_micros)
+      + " / plat " + esc(p.platform_fee_bps) + " bps / " + esc(p.funding_mode);
+  }
+
+  async function api(path) {
+    const res = await fetch(path, {
+      headers: { "Authorization": "Bearer " + getKey(), "Accept": "application/json" },
+    });
+    if (res.status === 401 || res.status === 403) throw new Error("Unauthorized — check the admin token.");
+    if (!res.ok) throw new Error("HTTP " + res.status + " on " + path);
+    const body = await res.json();
+    // Control-plane responses are the { success, data } envelope.
+    return body && Object.prototype.hasOwnProperty.call(body, "data") ? body.data : body;
+  }
+
+  // Each tab: label, params it needs, the path builder, whether the payload is a
+  // single object or an array, and columns. Only endpoints the real control plane
+  // exposes are represented here.
+  const TABS = [
+    {
+      id: "tenants", label: "Tenants",
+      params: [],
+      path: () => "/v1/control/tenants",
+      single: false,
+      cols: [
+        { h: "Tenant ID", f: (r) => esc(r.id), mono: true },
+        { h: "Name", f: (r) => esc(r.name) },
+        { h: "Mint Account", f: (r) => esc(r.mint_account_id), mono: true },
+      ],
+    },
+    {
+      id: "apps", label: "Apps",
+      params: [{ key: "tenant_id", label: "Tenant ID", required: true }],
+      path: (p) => "/v1/control/tenants/" + encodeURIComponent(p.tenant_id) + "/apps",
+      single: false,
+      cols: [
+        { h: "App ID", f: (r) => esc(r.id), mono: true },
+        { h: "Name", f: (r) => esc(r.name) },
+        { h: "Enabled", f: (r) => bool(r.enabled) },
+        { h: "ZDR", f: (r) => bool(r.zdr) },
+        { h: "Models", f: (r) => list(r.model_allowlist) },
+        { h: "Markup Policy", f: (r) => markup(r.markup_policy) },
+        { h: "Mint Account", f: (r) => esc(r.mint_account_id), mono: true },
+      ],
+    },
+    {
+      id: "keys", label: "API Keys",
+      params: [{ key: "app_id", label: "App ID", required: true }],
+      path: (p) => "/v1/control/apps/" + encodeURIComponent(p.app_id) + "/keys",
+      single: false,
+      cols: [
+        { h: "Key ID", f: (r) => esc(r.id), mono: true },
+        { h: "Prefix", f: (r) => esc(r.prefix), mono: true },
+        { h: "Scope", f: (r) => badge(r.scope) },
+        { h: "Status", f: (r) => badge(r.status) },
+        { h: "App ID", f: (r) => esc(r.app_id), mono: true },
+        { h: "Daily Cap", f: (r) => usd(r.daily_cap_micros) },
+        { h: "Per End-User Cap", f: (r) => usd(r.per_end_user_daily_cap_micros) },
+      ],
+    },
+    {
+      id: "usage", label: "Usage",
+      params: [
+        { key: "app_id", label: "App ID", required: true },
+        { key: "utc_day", label: "UTC Day (YYYY-MM-DD)", required: false },
+      ],
+      path: (p) => "/v1/control/apps/" + encodeURIComponent(p.app_id) + "/usage"
+        + (p.utc_day ? "?utc_day=" + encodeURIComponent(p.utc_day) : ""),
+      single: true,
+      cols: [
+        { h: "App ID", f: (r) => esc(r.app_id), mono: true },
+        { h: "UTC Day", f: (r) => esc(r.utc_day) },
+        { h: "Requests", f: (r) => num(r.requests) },
+        { h: "Pending", f: (r) => num(r.pending_requests) },
+        { h: "Captured", f: (r) => num(r.captured_requests) },
+        { h: "Released", f: (r) => num(r.released_requests) },
+        { h: "Pending Charge", f: (r) => usd(r.pending_charge_micros) },
+        { h: "Captured Charge", f: (r) => usd(r.captured_charge_micros) },
+      ],
+    },
+    {
+      id: "users", label: "Users",
+      params: [{ key: "tenant_id", label: "Tenant ID", required: true }],
+      path: (p) => "/v1/control/tenants/" + encodeURIComponent(p.tenant_id) + "/users",
+      single: false,
+      cols: [
+        { h: "User ID", f: (r) => esc(r.id), mono: true },
+        { h: "Email", f: (r) => esc(r.email) },
+        { h: "Display Name", f: (r) => esc(r.display_name) },
+        { h: "Role", f: (r) => badge(r.role) },
+        { h: "Status", f: (r) => badge(r.status) },
+        { h: "Providers", f: (r) => list(r.external_providers) },
+        { h: "Created", f: (r) => esc((r.created_at || "").slice(0, 10)) },
+      ],
+    },
+  ];
+
+  let active = TABS[0];
+  const paramState = {}; // key -> value, shared across tabs (tenant_id/app_id reused)
+
+  function renderTabs() {
+    const nav = el("tabs");
+    nav.innerHTML = "";
+    TABS.forEach((t) => {
+      const b = document.createElement("button");
+      b.textContent = t.label;
+      b.className = t.id === active.id ? "active" : "";
+      b.onclick = () => { active = t; renderTabs(); renderToolbar(); maybeLoad(); };
+      nav.appendChild(b);
+    });
+  }
+
+  function renderToolbar() {
+    const bar = el("toolbar");
+    bar.innerHTML = "";
+    active.params.forEach((param) => {
+      const input = document.createElement("input");
+      input.className = "param";
+      input.placeholder = param.label + (param.required ? " *" : "");
+      input.value = paramState[param.key] || "";
+      input.oninput = () => { paramState[param.key] = input.value.trim(); };
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
+      bar.appendChild(input);
+    });
+    const refresh = document.createElement("button");
+    refresh.textContent = active.params.length ? "Load" : "Refresh";
+    refresh.onclick = load;
+    bar.appendChild(refresh);
+    const count = document.createElement("span");
+    count.id = "count";
+    count.className = "count";
+    bar.appendChild(count);
+  }
+
+  function missingParams() {
+    return active.params.filter((p) => p.required && !(paramState[p.key] || "").trim());
+  }
+
+  function maybeLoad() {
+    if (missingParams().length === 0) load();
+    else {
+      el("view").innerHTML = '<div class="empty">Enter '
+        + active.params.filter((p) => p.required).map((p) => esc(p.label)).join(", ")
+        + " to load.</div>";
+      const c = el("count"); if (c) c.textContent = "";
+    }
+  }
+
+  function renderRows(payload) {
+    const view = el("view");
+    const rows = active.single ? (payload ? [payload] : []) : payload;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      view.innerHTML = '<div class="empty">No ' + esc(active.label.toLowerCase()) + " found.</div>";
+      const c = el("count"); if (c) c.textContent = "0 rows";
+      return;
+    }
+    const head = active.cols.map((c) =>
+      '<th' + (c.mono ? ' class="mono"' : "") + ">" + esc(c.h) + "</th>").join("");
+    const body = rows.map((r) =>
+      "<tr>" + active.cols.map((c) =>
+        "<td" + (c.mono ? ' class="mono"' : "") + ">" + c.f(r) + "</td>").join("") + "</tr>").join("");
+    view.innerHTML = "<table><thead><tr>" + head + "</tr></thead><tbody>" + body + "</tbody></table>";
+    const c = el("count"); if (c) c.textContent = rows.length + " row" + (rows.length === 1 ? "" : "s");
+  }
+
+  async function load() {
+    const missing = missingParams();
+    if (missing.length) {
+      setStatus("Missing: " + missing.map((p) => p.label).join(", "), "err");
+      return;
+    }
+    el("view").innerHTML = '<div class="loading">Loading…</div>';
+    try {
+      const data = await api(active.path(paramState));
+      renderRows(data);
+      setStatus("Connected", "ok");
+    } catch (e) {
+      el("view").innerHTML = '<div class="empty">' + esc(e.message) + "</div>";
+      setStatus(e.message, "err");
+      if (/Unauthorized/.test(e.message)) showGate();
+    }
+  }
+
+  function showApp() {
+    el("gate").style.display = "none";
+    el("app").style.display = "";
+    el("logout").style.display = "";
+    renderTabs();
+    renderToolbar();
+    maybeLoad();
+  }
+
+  function showGate() {
+    el("app").style.display = "none";
+    el("gate").style.display = "";
+    el("logout").style.display = "none";
+    el("key").value = "";
+  }
+
+  el("connect").onclick = () => {
+    const k = el("key").value.trim();
+    if (!k) { setStatus("Enter an admin token.", "err"); return; }
+    setKey(k);
+    setStatus("Connecting…");
+    showApp();
+  };
+  el("key").addEventListener("keydown", (e) => { if (e.key === "Enter") el("connect").click(); });
+  el("logout").onclick = () => { setKey(""); setStatus("Not connected"); showGate(); };
+
+  if (getKey()) showApp(); else showGate();
+})();
+</script>
+</body>
+</html>
