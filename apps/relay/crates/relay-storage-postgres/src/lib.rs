@@ -4,6 +4,7 @@
 //! durability layer compile, lint, and run database integration tests without
 //! pulling in the gateway's V8/TypeScript toolchain.
 
+mod billing_summary;
 mod challenge;
 mod cost_event;
 mod evidence;
@@ -11,6 +12,9 @@ mod migration;
 mod provider_health;
 mod settlement_outbox;
 
+pub use billing_summary::{
+    DEFAULT_SETTLEMENT_HISTORY_LIMIT, MAX_SETTLEMENT_HISTORY_LIMIT, PostgresBillingSummaryStore,
+};
 pub use challenge::PostgresChallengeStore;
 pub use cost_event::PostgresCostEventStore;
 pub use evidence::PostgresSettlementEvidenceStore;

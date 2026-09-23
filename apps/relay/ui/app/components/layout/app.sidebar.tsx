@@ -10,6 +10,7 @@ import {
   Playground,
   Model,
   Chat,
+  Cost,
   SidebarCollapse,
   SidebarExpand,
 } from "~/components/icons/Icons";
@@ -31,7 +32,7 @@ import {
 import { useActivePath } from "~/hooks/use-active-path";
 import { useAutopilotAvailable } from "~/context/autopilot-available";
 import { useConfig } from "~/context/config";
-import { TensorZeroLogo } from "~/components/icons/Icons";
+import { RelayLogo } from "~/components/icons/Icons";
 import { Link } from "react-router";
 import type { IconProps } from "~/components/icons/Icons";
 import TensorZeroStatusIndicator from "./TensorZeroStatusIndicator";
@@ -71,6 +72,16 @@ const navigation: NavigationSection[] = [
         title: "Models",
         url: "/observability/models",
         icon: Model,
+      },
+    ],
+  },
+  {
+    title: "Billing",
+    items: [
+      {
+        title: "Billing",
+        url: "/billing",
+        icon: Cost,
       },
     ],
   },
@@ -137,9 +148,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               className="text-black hover:bg-transparent focus-visible:bg-transparent active:bg-transparent"
             >
               <Link to="/" className="flex items-center gap-2">
-                <TensorZeroLogo size={16} />
+                <RelayLogo size={16} />
                 <span className="font-semibold whitespace-nowrap transition-opacity duration-200 group-data-[collapsible=icon]:opacity-0">
-                  TensorZero
+                  Relay
                 </span>
               </Link>
             </SidebarMenuButton>

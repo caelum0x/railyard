@@ -194,6 +194,10 @@ fn build_meta_observability_routes(
         .route("/v1/relay/catalog", get(crate::catalog::catalog_handler))
         .route("/v1/relay/quotes", post(crate::catalog::quote_handler))
         .route(
+            "/relay/billing/summary",
+            get(crate::billing_summary::billing_summary_handler),
+        )
+        .route(
             "/v1/billing/cost-events",
             get(crate::cost_feed::list_cost_events_handler),
         )

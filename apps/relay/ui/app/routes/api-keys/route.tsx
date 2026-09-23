@@ -42,7 +42,7 @@ import {
 } from "./expiration";
 
 export const handle: RouteHandle = {
-  crumb: () => ["TensorZero API Keys"],
+  crumb: () => ["Relay API Keys"],
 };
 
 export type ApiKeysData = {
@@ -52,7 +52,7 @@ export type ApiKeysData = {
 };
 
 function ApiKeysPageHeader() {
-  return <PageHeader heading="TensorZero API Keys" />;
+  return <PageHeader heading="Relay API Keys" />;
 }
 
 function ApiKeysContentSkeleton() {

@@ -8,6 +8,7 @@ one rago **organization** (tenant).
 |------|----------|----------------|------|--------------|
 | `autogtm.json` | AutoGTM (VCPeer cold email) | `gtm_email_sent`, `gtm_draft` | `autogtm_growth` ($49/mo) | `package` (emails) + `standard` (drafts) |
 | `menivor.json` | Menivor (video/reel + LLM) | `menivor_media_spend` | `menivor_studio` ($29/mo) | `dynamic` (cost pass-through) |
+| `menivor-reels.json` | Menivor (reel generation) | `reel_generated`, `reel_render_seconds`, `reel_ai_credits` | `menivor_reels` ($0 base) | `standard` (per-unit; matches `RAGO_REEL_PRICING` defaults) |
 | `opentypesafe.json` | opentypesafe (System One / Jev) | `systemone_call` | `opentypesafe_pro` ($0 base) | `graduated` (per-call tiers) |
 
 Each file is an envelope:

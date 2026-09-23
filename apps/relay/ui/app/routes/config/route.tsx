@@ -365,7 +365,7 @@ export default function ConfigEditorRoute({
   return (
     <PageLayout>
       <PageHeader
-        heading="TensorZero Gateway Configuration"
+        heading="Relay Gateway Configuration"
         tag={isDirty && <Badge variant="secondary">Unsaved edits</Badge>}
       />
 

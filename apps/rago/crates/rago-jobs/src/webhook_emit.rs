@@ -20,6 +20,39 @@ use uuid::Uuid;
 
 use crate::JobError;
 
+/// The webhook types the clock/background jobs in this crate actually emit from
+/// a real domain trigger today — the `record_webhook` call sites in
+/// [`crate::clock`] and [`crate::dunning`]. This is the jobs-layer slice of the
+/// full [`WebhookKind`] catalog, the single place to read trigger coverage.
+///
+/// Catalog kinds absent here are **no-op-until-trigger** from the jobs layer —
+/// defined for parity but wired at their real trigger in the owning crate:
+///
+/// * fired elsewhere: `invoice.payment_status_updated` (rago-api payment
+///   webhook), `customer.created`/`customer.updated`, `plan.*`,
+///   `billable_metric.*`, `feature.*`, `quote.*`, `wallet.created`/`updated`,
+///   `wallet_transaction.updated`, `subscription.started`/`updated` etc. from
+///   rago-billing/rago-graphql mutations, and `payment.requires_action`,
+///   `payment.succeeded`, `*_provider_error`, `*.payment_failure`,
+///   `credit_note.*`, `*.resynced` from the rago-integrations payment/provider
+///   path;
+/// * schema-deferred: orders, order_forms, payment_receipts — see
+///   [`WebhookKind::is_schema_deferred`].
+pub const JOB_EMITTED_WEBHOOKS: &[WebhookKind] = &[
+    WebhookKind::InvoiceCreated,
+    WebhookKind::InvoiceDrafted,
+    WebhookKind::InvoicePaymentOverdue,
+    WebhookKind::SubscriptionStarted,
+    WebhookKind::SubscriptionTerminated,
+    WebhookKind::SubscriptionTerminationAlert,
+    WebhookKind::SubscriptionTrialEnded,
+    WebhookKind::WalletTerminated,
+    WebhookKind::WalletDepletedOngoingBalance,
+    WebhookKind::WalletTransactionCreated,
+    WebhookKind::DunningCampaignFinished,
+    WebhookKind::PaymentRequestCreated,
+];
+
 /// Record a pending outbound webhook for a job trigger point.
 ///
 /// Faithful to Lago: a `SendWebhookJob` materializes one `Webhook` per

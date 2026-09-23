@@ -6,6 +6,7 @@ TODO(shuyangli): Figure out a way to generate the HTTP client, possibly from Sch
 
 import { z } from "zod";
 import { BaseTensorZeroClient } from "./base-client";
+import type { BillingSummary } from "~/types/billing";
 import { ZodJsonValueSchema } from "~/utils/clickhouse/common";
 import { logger } from "~/utils/logger";
 import type {
@@ -535,6 +536,33 @@ export class TensorZeroClient extends BaseTensorZeroClient {
       this.handleHttpError({ message, response });
     }
     return (await response.json()) as GetDatapointCountResponse;
+  }
+
+  /**
+   * Gets the authenticated principal's Relay billing summary: wallet rollup,
+   * per-API-key spend, per-model spend, spend/token totals, and recent
+   * settlements. Aggregated from the durable cost-event and settlement-evidence
+   * tables and scoped to the caller.
+   * @param options.settlements - Number of recent settlement receipts to return.
+   * @returns A promise that resolves with the billing summary.
+   * @throws Error if the request fails.
+   */
+  async getBillingSummary(options?: {
+    settlements?: number;
+  }): Promise<BillingSummary> {
+    const searchParams = new URLSearchParams();
+    if (options?.settlements != null) {
+      searchParams.append("settlements", String(options.settlements));
+    }
+    const queryString = searchParams.toString();
+    const endpoint = `/relay/billing/summary${queryString ? `?${queryString}` : ""}`;
+    const response = await this.fetch(endpoint, { method: "GET" });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    const envelope = (await response.json()) as { data: BillingSummary };
+    return envelope.data;
   }
 
   async getObject(path: string): Promise<string> {

@@ -5,6 +5,7 @@
 //! free of database or provider dependencies.
 
 pub mod aitp;
+pub mod billing_summary;
 pub mod error;
 pub mod headers;
 pub mod model;
@@ -14,6 +15,9 @@ pub mod status;
 pub mod usage;
 
 pub use aitp::{AitpChallenge, AitpChallengeDecodeError, AitpScheme, PaymentRequired};
+pub use billing_summary::{
+    BillingSummary, KeySpend, ModelSpend, SettlementRecord, SpendTotals, WalletSummary,
+};
 pub use error::{ApiError, ApiErrorEnvelope, DataEnvelope, SettledReplay};
 pub use model::{ModelSelector, ModelSelectorError, OPENROUTER_CATALOG_PREFIX};
 pub use money::{MICROS_PER_USD, Microdollars, MoneyError};

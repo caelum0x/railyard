@@ -131,7 +131,7 @@ export function GenerateApiKeyModal({
           <DialogDescription>
             {apiKey
               ? "Save this key securely. You won't be able to see it again."
-              : "Create a new API key to authenticate with the TensorZero Gateway."}
+              : "Create a new API key to authenticate with the Relay Gateway."}
           </DialogDescription>
         </DialogHeader>
 

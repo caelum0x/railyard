@@ -38,6 +38,26 @@ export const TensorZeroLogo: React.FC<IconProps> = (props) => (
   </IconWrapper>
 );
 
+export const RelayLogo: React.FC<IconProps> = (props) => (
+  <IconWrapper {...props}>
+    <rect x="0" y="0" width="16" height="16" rx="4" fill="#4F46E5" />
+    <path
+      d="M4.75 5 L7.75 8 L4.75 11"
+      stroke="white"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M8.25 5 L11.25 8 L8.25 11"
+      stroke="white"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </IconWrapper>
+);
+
 export const Placeholder: React.FC<IconProps> = (props) => (
   <IconWrapper {...props}>
     <path
@@ -669,6 +689,7 @@ export const Refresh: React.FC<IconProps> = (props) => (
 );
 
 export const iconComponents: Record<string, React.FC<IconProps>> = {
+  RelayLogo,
   TensorZeroLogo,
   Placeholder,
   Home,

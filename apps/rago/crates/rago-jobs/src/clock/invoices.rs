@@ -91,12 +91,15 @@ fn invoice_object(row: &sqlx::postgres::PgRow) -> serde_json::Value {
     })
 }
 
-/// `Clock::RefreshDraftInvoicesJob` → `Invoices::RefreshDraftJob`. Recomputes
+/// `Clock::RefreshDraftInvoicesJob` → `Invoices::RefreshDraftService`. Recomputes
 /// each draft invoice's monetary totals from its persisted fees, so a draft
-/// reflects the latest usage before finalization. Idempotent (a recompute of
-/// unchanged fees is a no-op). Returns the count refreshed.
+/// reflects the latest usage before finalization, and emits `invoice.drafted`
+/// per refreshed draft (the webhook Lago's `RefreshDraftService` fires). Idempotent
+/// on the data (a recompute of unchanged fees is a no-op); like Lago, the webhook
+/// re-fires on each refresh so subscribers always see the latest draft totals.
+/// Returns the count refreshed.
 pub async fn refresh_draft_invoices(db: &Db) -> Result<u64, JobError> {
-    let r = sqlx::query(
+    let rows = sqlx::query(
         "WITH agg AS ( \
              SELECT invoice_id, \
                     COALESCE(SUM(amount_cents), 0)::bigint AS fees, \
@@ -111,13 +114,19 @@ pub async fn refresh_draft_invoices(db: &Db) -> Result<u64, JobError> {
              total_amount_cents = agg.fees + agg.taxes, \
              updated_at = now() \
          FROM agg \
-         WHERE i.id = agg.invoice_id AND i.status = $1",
+         WHERE i.id = agg.invoice_id AND i.status = $1 \
+         RETURNING i.id, i.organization_id, i.number, i.payment_status, i.currency, i.total_amount_cents",
     )
     .bind(InvoiceStatus::Draft.as_i32())
-    .execute(&db.pool)
+    .fetch_all(&db.pool)
     .await
     .map_err(rago_db::DbError::from)?;
-    Ok(r.rows_affected())
+
+    for row in &rows {
+        let org: Uuid = row.get("organization_id");
+        record_webhook(db, org, WebhookKind::InvoiceDrafted, invoice_object(row)).await?;
+    }
+    Ok(rows.len() as u64)
 }
 
 /// `Clock::RetryFailedInvoicesJob` → `Invoices::RetryService`. Invoices whose

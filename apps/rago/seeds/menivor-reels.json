@@ -1,0 +1,74 @@
+{
+  "consumer": "menivor",
+  "description": "Rago catalog seed for Menivor reel generation — the `menivor_reels` plan and its three per-unit metrics (generated reels, render-seconds, AI credits). Amounts match rago's built-in reel pricing defaults (RAGO_REEL_PRICING, cents-per-unit) so an operator can bill reel usage without setting the env var. Import under the same Menivor org token as menivor.json.",
+  "currency": "USD",
+  "billable_metrics": [
+    {
+      "name": "Reels generated",
+      "code": "reel_generated",
+      "description": "One event per billable reel produced. Counted, not summed.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "Reel render seconds",
+      "code": "reel_render_seconds",
+      "description": "Output video duration billed per whole second. `properties.seconds` carries the quantity.",
+      "aggregation_type": "sum_agg",
+      "field_name": "seconds",
+      "recurring": false
+    },
+    {
+      "name": "Reel AI credits",
+      "code": "reel_ai_credits",
+      "description": "AI model credits (LLM / image / voice) consumed by the render. `properties.credits` carries the quantity.",
+      "aggregation_type": "sum_agg",
+      "field_name": "credits",
+      "recurring": false
+    }
+  ],
+  "plans": [
+    {
+      "name": "Menivor Reels",
+      "code": "menivor_reels",
+      "interval": "monthly",
+      "description": "Metered reel generation: per-reel, per-render-second, and per-AI-credit charges. Prices match the RAGO_REEL_PRICING defaults ($0.20/reel, $0.01/render-second, $0.01/AI credit).",
+      "amount_cents": 0,
+      "amount_currency": "USD",
+      "pay_in_advance": false,
+      "bill_charges_monthly": true,
+      "charges": [
+        {
+          "billable_metric_code": "reel_generated",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.20"
+          }
+        },
+        {
+          "billable_metric_code": "reel_render_seconds",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.01"
+          }
+        },
+        {
+          "billable_metric_code": "reel_ai_credits",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.01"
+          }
+        }
+      ]
+    }
+  ],
+  "sample_events": [
+    {
+      "code": "reel_generated",
+      "note": "POST /reels/usage { render_id, external_subscription_id, generated: true, render_seconds: 30, ai_credits: 8 } expands into one reel_generated event plus reel_render_seconds (properties.seconds) and reel_ai_credits (properties.credits) events, idempotent by render_id."
+    }
+  ]
+}

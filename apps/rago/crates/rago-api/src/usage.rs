@@ -292,16 +292,79 @@ fn first_of_next_month(date: NaiveDate) -> NaiveDate {
 
 // ---- reel generation: billing catalog, usage ingest, credit/cap gate --------
 
+/// Default per-unit reel charge prices, in **cents** per billed unit, applied
+/// when `RAGO_REEL_PRICING` is unset or omits a metric. Non-zero so an operator
+/// can bill reel usage out of the box; override per metric via the env var (or
+/// by editing the plan's charges after provisioning).
+mod reel_pricing_default {
+    /// `reel_generated` — price per generated reel.
+    pub const GENERATED_CENTS: i64 = 20;
+    /// `reel_render_seconds` — price per render-second.
+    pub const RENDER_SECONDS_CENTS: i64 = 1;
+    /// `reel_ai_credits` — price per AI credit consumed.
+    pub const AI_CREDITS_CENTS: i64 = 1;
+}
+
+/// Per-unit reel charge prices in the plan currency's **main unit** — the value
+/// a `standard` charge's `properties.amount` expects — one per reel metric.
+#[derive(Debug, Clone)]
+pub struct ReelPricing {
+    generated: Decimal,
+    render_seconds: Decimal,
+    ai_credits: Decimal,
+}
+
+impl ReelPricing {
+    /// Parse `RAGO_REEL_PRICING` — a JSON object mapping a reel metric `code` to
+    /// an integer **cents-per-unit** price (e.g. `{"reel_generated":25}`) — into
+    /// main-unit charge amounts. Falls back to [`reel_pricing_default`] for any
+    /// metric the variable omits, and to the full default set when the variable
+    /// is unset or not valid JSON. Never fails: a malformed value yields the
+    /// defaults, so a bad env var can never take reel billing down at startup.
+    fn from_env() -> Self {
+        use crate::emit::reel_metric as m;
+        let overrides: std::collections::HashMap<String, i64> =
+            std::env::var("RAGO_REEL_PRICING")
+                .ok()
+                .and_then(|raw| serde_json::from_str(&raw).ok())
+                .unwrap_or_default();
+        let amount = |code: &str, default: i64| {
+            cents_per_unit(overrides.get(code).copied().unwrap_or(default))
+        };
+        Self {
+            generated: amount(m::GENERATED, reel_pricing_default::GENERATED_CENTS),
+            render_seconds: amount(m::RENDER_SECONDS, reel_pricing_default::RENDER_SECONDS_CENTS),
+            ai_credits: amount(m::AI_CREDITS, reel_pricing_default::AI_CREDITS_CENTS),
+        }
+    }
+}
+
+/// Process-wide reel pricing, parsed once from the environment at first use
+/// (effectively at startup — the first `/reels/catalog` or provisioning read).
+fn reel_pricing() -> &'static ReelPricing {
+    static PRICING: std::sync::OnceLock<ReelPricing> = std::sync::OnceLock::new();
+    PRICING.get_or_init(ReelPricing::from_env)
+}
+
+/// A `standard` charge's per-unit `amount` (currency main unit) from an integer
+/// cents-per-unit price: `cents / 100` as an exact 2-dp [`Decimal`]. A negative
+/// override is floored to `0` — pricing is never allowed to go negative.
+fn cents_per_unit(cents: i64) -> Decimal {
+    Decimal::new(cents.max(0), 2)
+}
+
 /// Request-ready billable-metric + plan definitions an operator provisions rago
 /// with so reel usage (`POST /reels/usage`) prices correctly. The `billable_metrics`
 /// entries are `POST /billable_metrics` bodies and `plan` is a `POST /plans` body
 /// (same root-wrapped shape those endpoints accept, minus the wrapper).
 ///
-/// Per-charge `amount` values are placeholders (`"0"`) — an operator sets the
-/// real reel pricing when provisioning; until then reel usage records but bills
-/// nothing.
+/// Per-charge `amount` values are the active reel pricing loaded from
+/// `RAGO_REEL_PRICING` (cents-per-unit), or the built-in [`reel_pricing_default`]
+/// when it is unset. `seeds/menivor-reels.json` ships the same defaults as a
+/// ready-to-import catalog so operators can bill without setting the env var.
 pub fn reel_billing_catalog() -> Value {
     use crate::emit::reel_metric as m;
+    let pricing = reel_pricing();
     json!({
         "billable_metrics": [
             {
@@ -333,12 +396,12 @@ pub fn reel_billing_catalog() -> Value {
             "amount_currency": "USD",
             "pay_in_advance": false,
             "charges": [
-                { "billable_metric_code": m::GENERATED, "charge_model": "standard", "properties": { "amount": "0" } },
-                { "billable_metric_code": m::RENDER_SECONDS, "charge_model": "standard", "properties": { "amount": "0" } },
-                { "billable_metric_code": m::AI_CREDITS, "charge_model": "standard", "properties": { "amount": "0" } },
+                { "billable_metric_code": m::GENERATED, "charge_model": "standard", "properties": { "amount": pricing.generated.to_string() } },
+                { "billable_metric_code": m::RENDER_SECONDS, "charge_model": "standard", "properties": { "amount": pricing.render_seconds.to_string() } },
+                { "billable_metric_code": m::AI_CREDITS, "charge_model": "standard", "properties": { "amount": pricing.ai_credits.to_string() } },
             ],
         },
-        "note": "Charge `amount` values are placeholders — set real reel pricing when provisioning.",
+        "note": "Charge `amount` values are the active reel pricing (RAGO_REEL_PRICING cents-per-unit, or built-in defaults). Set RAGO_REEL_PRICING or edit the charges to re-price.",
     })
 }
 

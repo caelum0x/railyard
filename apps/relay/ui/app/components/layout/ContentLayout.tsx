@@ -4,8 +4,8 @@ export function ContentLayout({ children }: React.PropsWithChildren) {
   const { segments } = useBreadcrumbs();
   const pageTitle =
     segments.length > 0
-      ? [...segments.map((b) => b.label), "TensorZero"].join(" • ")
-      : "Overview • TensorZero";
+      ? [...segments.map((b) => b.label), "Relay"].join(" • ")
+      : "Overview • Relay";
 
   return (
     <>

@@ -197,6 +197,9 @@ export default [
   // API Keys
   route("api-keys", "routes/api-keys/route.tsx"),
 
+  // Billing
+  route("billing", "routes/billing/route.tsx"),
+
   // Config editor
   route("config", "routes/config/route.tsx"),
 

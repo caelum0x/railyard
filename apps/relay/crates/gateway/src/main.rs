@@ -39,6 +39,7 @@ use tensorzero_core::utils::gateway;
 mod aitp;
 mod aitp_challenge_store;
 mod billing;
+mod billing_summary;
 mod catalog;
 mod cli;
 mod cost_feed;
