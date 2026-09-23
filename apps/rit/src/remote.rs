@@ -742,7 +742,14 @@ pub struct PushReport {
     pub up_to_date: bool,
 }
 
-/// `rit push <remote> <src>[:<dst>]` (or `:<dst>` to delete a remote branch).
+/// `rit push <remote> <src>[:<dst>]` (or `:<dst>` to delete a remote ref).
+///
+/// Unqualified names are qualified the way git does it:
+/// - a destination for an existing local TAG (and no same-named branch) goes to
+///   `refs/tags/<name>`, never to a branch of the same name;
+/// - a deletion (`:<name>`) targets whichever of `refs/heads/<name>` /
+///   `refs/tags/<name>` the remote advertises, and fails when neither exists;
+/// - everything else goes to `refs/heads/<name>`.
 pub fn push(repo: &Repository, remote: &str, refspec: &str, force: bool) -> Result<PushReport> {
     let remote_cfg = get_remote(repo, remote)?;
     let endpoint = resolve_endpoint(&remote_cfg.url)?;
@@ -750,29 +757,80 @@ pub fn push(repo: &Repository, remote: &str, refspec: &str, force: bool) -> Resu
         Some((s, d)) => (s.to_string(), d.to_string()),
         None => (refspec.to_string(), refspec.to_string()),
     };
-    let qualify = |name: &str| {
-        if name.starts_with("refs/") { name.to_string() } else { format!("refs/heads/{name}") }
+    let (src, force) = match src.strip_prefix('+') {
+        Some(stripped) => (stripped.to_string(), true),
+        None => (src, force),
     };
-    let dst = qualify(&dst);
-    let new = if src.is_empty() {
-        None
-    } else {
-        Some(repo.resolve(&src).with_context(|| format!("resolving '{src}'"))?)
-    };
+    if dst.is_empty() {
+        bail!("invalid refspec '{refspec}': missing destination");
+    }
 
     let adv = discover(&endpoint, "git-receive-pack")?;
+    let advertised = |name: &str| adv.refs.iter().any(|(n, _)| n == name);
+
+    let (dst, new) = if src.is_empty() {
+        // Deletion: the ref must exist on the remote.
+        let dst = if dst.starts_with("refs/") {
+            dst
+        } else if advertised(&format!("refs/heads/{dst}")) {
+            format!("refs/heads/{dst}")
+        } else if advertised(&format!("refs/tags/{dst}")) {
+            format!("refs/tags/{dst}")
+        } else {
+            format!("refs/heads/{dst}")
+        };
+        if !advertised(&dst) {
+            bail!("unable to delete '{dst}': remote ref does not exist");
+        }
+        (dst, None)
+    } else {
+        let local_tag = if src.starts_with("refs/tags/") {
+            Some(src.clone())
+        } else if !src.starts_with("refs/")
+            && repo.refs().resolve(&format!("refs/tags/{src}")).is_ok()
+            && repo.refs().resolve(&format!("refs/heads/{src}")).is_err()
+        {
+            Some(format!("refs/tags/{src}"))
+        } else {
+            None
+        };
+        // A tag is pushed as its own (possibly annotated) object, unpeeled.
+        let new = match &local_tag {
+            Some(tag_ref) => repo
+                .refs()
+                .resolve(tag_ref)
+                .with_context(|| format!("resolving tag '{tag_ref}'"))?,
+            None => repo.resolve(&src).with_context(|| format!("resolving '{src}'"))?,
+        };
+        let dst = if dst.starts_with("refs/") {
+            dst
+        } else if local_tag.is_some() {
+            format!("refs/tags/{dst}")
+        } else {
+            format!("refs/heads/{dst}")
+        };
+        (dst, Some(new))
+    };
+
     let old = adv.refs.iter().find(|(n, _)| *n == dst).map(|(_, o)| *o);
     if old == new {
         return Ok(PushReport { remote_ref: dst, old, new, objects: 0, up_to_date: true });
     }
-    if let (Some(old), Some(new)) = (old, new) {
-        if !repo.odb().contains(&old) {
-            bail!("the remote {dst} has commits you do not have; run `rit fetch {remote}` and merge first");
+    if let (Some(_), Some(_)) = (old, new) {
+        if dst.starts_with("refs/tags/") && !force {
+            bail!("rejected: tag {dst} already exists on the remote (pass --force to move it)");
         }
-        if !force
-            && !crate::fsck::is_ancestor(repo.odb(), old, new, crate::fsck::ConnectivityLimits::default())?
-        {
-            bail!("rejected: {dst} is not a fast-forward (fetch and merge, or pass --force)");
+    }
+    if let (Some(old), Some(new)) = (old, new) {
+        if !dst.starts_with("refs/tags/") {
+            if !repo.odb().contains(&old) {
+                bail!("the remote {dst} has commits you do not have; run `rit fetch {remote}` and merge first");
+            }
+            if !force
+                && !crate::fsck::is_ancestor(repo.odb(), old, new, crate::fsck::ConnectivityLimits::default())?
+            {
+                bail!("rejected: {dst} is not a fast-forward (fetch and merge, or pass --force)");
+            }
         }
     }
 
@@ -842,6 +900,24 @@ pub fn push(repo: &Repository, remote: &str, refspec: &str, force: bool) -> Resu
         }
     }
     Ok(PushReport { remote_ref: dst, old, new, objects, up_to_date: false })
+}
+
+/// `rit push --tags`: push every local tag the remote does not already have at
+/// the same object. Existing remote tags pointing elsewhere are rejected
+/// unless `force` (tags are not expected to move).
+pub fn push_tags(repo: &Repository, remote: &str, force: bool) -> Result<Vec<PushReport>> {
+    let tags: Vec<String> = repo
+        .refs()
+        .list()?
+        .into_iter()
+        .map(|(name, _)| name)
+        .filter(|name| name.starts_with("refs/tags/"))
+        .collect();
+    let mut reports = Vec::with_capacity(tags.len());
+    for tag in tags {
+        reports.push(push(repo, remote, &format!("{tag}:{tag}"), force)?);
+    }
+    Ok(reports)
 }
 
 fn check_report_status(response: &[u8], dst: &str) -> Result<()> {

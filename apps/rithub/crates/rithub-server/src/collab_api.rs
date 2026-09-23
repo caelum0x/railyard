@@ -40,6 +40,53 @@ pub struct StateFilter {
     pub state: Option<String>,
 }
 
+/// Serialize API items and attach `author_login` (resolved from `author_id`)
+/// so clients can show who wrote an issue, PR, or comment without a second
+/// lookup. Usernames are cached per request; missing users read "ghost".
+async fn with_author_logins<T: Serialize>(
+    state: &AppState,
+    items: Vec<T>,
+) -> Result<Vec<serde_json::Value>, AppError> {
+    use rithub_core::OauthStore;
+    let mut cache: std::collections::HashMap<Uuid, String> = std::collections::HashMap::new();
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let mut v = serde_json::to_value(item)
+            .map_err(|e| AppError::internal(format!("serialize: {e}")))?;
+        let id = v
+            .get("author_id")
+            .and_then(|x| x.as_str())
+            .and_then(|x| Uuid::parse_str(x).ok());
+        let login = match id {
+            Some(id) => match cache.get(&id) {
+                Some(l) => l.clone(),
+                None => {
+                    let l = state
+                        .store
+                        .get_user_by_id(id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|u| u.username)
+                        .unwrap_or_else(|| "ghost".to_string());
+                    cache.insert(id, l.clone());
+                    l
+                }
+            },
+            None => "ghost".to_string(),
+        };
+        if let Some(obj) = v.as_object_mut() {
+            obj.insert("author_login".into(), serde_json::Value::String(login));
+        }
+        out.push(v);
+    }
+    Ok(out)
+}
+
+async fn with_author_login<T: Serialize>(state: &AppState, item: T) -> Result<serde_json::Value, AppError> {
+    Ok(with_author_logins(state, vec![item]).await?.pop().unwrap_or(serde_json::Value::Null))
+}
+
 // --- issues -----------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -65,19 +112,21 @@ pub async fn list_issues(
     Path((org, repo)): Path<(String, String)>,
     headers: HeaderMap,
     Query(filter): Query<StateFilter>,
-) -> Result<Json<Vec<Issue>>, AppError> {
+) -> Result<Json<Vec<serde_json::Value>>, AppError> {
     let (meta, _) = repo_for_read(&state, &headers, &org, &repo).await?;
     let state_filter = filter.state.as_deref().map(IssueState::parse);
-    Ok(Json(state.store.list_issues(meta.id, state_filter).await?))
+    let issues = state.store.list_issues(meta.id, state_filter).await?;
+    Ok(Json(with_author_logins(&state, issues).await?))
 }
 
 pub async fn get_issue(
     State(state): State<AppState>,
     Path((org, repo, number)): Path<(String, String, i32)>,
     headers: HeaderMap,
-) -> Result<Json<IssueDetail>, AppError> {
+) -> Result<Json<serde_json::Value>, AppError> {
     let (meta, _) = repo_for_read(&state, &headers, &org, &repo).await?;
-    Ok(Json(svc::issue_detail(&state, &meta, number).await?))
+    let detail: IssueDetail = svc::issue_detail(&state, &meta, number).await?;
+    Ok(Json(with_author_login(&state, detail).await?))
 }
 
 /// Shared close/reopen body: author or Write may change state.
@@ -138,10 +187,11 @@ pub async fn list_issue_comments(
     State(state): State<AppState>,
     Path((org, repo, number)): Path<(String, String, i32)>,
     headers: HeaderMap,
-) -> Result<Json<Vec<IssueComment>>, AppError> {
+) -> Result<Json<Vec<serde_json::Value>>, AppError> {
     let (meta, _) = repo_for_read(&state, &headers, &org, &repo).await?;
     let issue = state.store.get_issue(meta.id, number).await?;
-    Ok(Json(state.store.list_issue_comments(issue.id).await?))
+    let comments: Vec<IssueComment> = state.store.list_issue_comments(issue.id).await?;
+    Ok(Json(with_author_logins(&state, comments).await?))
 }
 
 #[derive(Debug, Deserialize)]
@@ -305,10 +355,11 @@ pub async fn list_prs(
     Path((org, repo)): Path<(String, String)>,
     headers: HeaderMap,
     Query(filter): Query<StateFilter>,
-) -> Result<Json<Vec<PullRequest>>, AppError> {
+) -> Result<Json<Vec<serde_json::Value>>, AppError> {
     let (meta, _) = repo_for_read(&state, &headers, &org, &repo).await?;
     let state_filter = filter.state.as_deref().map(PrState::parse);
-    Ok(Json(state.store.list_prs(meta.id, state_filter).await?))
+    let prs: Vec<PullRequest> = state.store.list_prs(meta.id, state_filter).await?;
+    Ok(Json(with_author_logins(&state, prs).await?))
 }
 
 #[derive(Debug, Serialize)]
@@ -324,7 +375,7 @@ pub async fn get_pr(
     State(state): State<AppState>,
     Path((org, repo, number)): Path<(String, String, i32)>,
     headers: HeaderMap,
-) -> Result<Json<PrDetail>, AppError> {
+) -> Result<Json<serde_json::Value>, AppError> {
     let (meta, _) = repo_for_read(&state, &headers, &org, &repo).await?;
     let pr = state.store.get_pr(meta.id, number).await?;
     let analysis = svc::current_mergeability(&state, &org, &repo, &pr).ok();
@@ -333,12 +384,13 @@ pub async fn get_pr(
         .count_current_approvals(pr.id, pr.author_id)
         .await
         .unwrap_or(0);
-    Ok(Json(PrDetail {
+    let detail = PrDetail {
         pr,
         mergeable: analysis.as_ref().map(|a| a.mergeable),
         merge_status: analysis.map(|a| a.status),
         approvals,
-    }))
+    };
+    Ok(Json(with_author_login(&state, detail).await?))
 }
 
 pub async fn pr_mergeability(
@@ -449,10 +501,11 @@ pub async fn list_pr_comments(
     State(state): State<AppState>,
     Path((org, repo, number)): Path<(String, String, i32)>,
     headers: HeaderMap,
-) -> Result<Json<Vec<PrComment>>, AppError> {
+) -> Result<Json<Vec<serde_json::Value>>, AppError> {
     let (meta, _) = repo_for_read(&state, &headers, &org, &repo).await?;
     let pr = state.store.get_pr(meta.id, number).await?;
-    Ok(Json(state.store.list_pr_comments(pr.id).await?))
+    let comments: Vec<PrComment> = state.store.list_pr_comments(pr.id).await?;
+    Ok(Json(with_author_logins(&state, comments).await?))
 }
 
 /// Shared close/reopen body: author or Write.

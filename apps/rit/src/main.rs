@@ -1362,11 +1362,18 @@ struct PushArgs {
     /// Remote to push to.
     #[arg(default_value = "origin")]
     remote: String,
-    /// `<src>[:<dst>]` (default: the current branch). `:<dst>` deletes `<dst>`.
-    refspec: Option<String>,
-    /// Allow a non-fast-forward update.
+    /// `<src>[:<dst>]` refspecs (default: the current branch). `:<dst>`
+    /// deletes `<dst>`; with `--delete` these are plain ref names to delete.
+    refspecs: Vec<String>,
+    /// Allow a non-fast-forward update (or moving an existing remote tag).
     #[arg(short, long)]
     force: bool,
+    /// Delete the named refs on the remote (`rit push origin --delete feature`).
+    #[arg(short = 'd', long, conflicts_with = "tags")]
+    delete: bool,
+    /// Push every local tag (in addition to any refspecs given).
+    #[arg(long)]
+    tags: bool,
 }
 
 /// Derive the default clone directory from a URL (`.../repo.git` -> `repo`).
@@ -1484,14 +1491,38 @@ fn cmd_pull(cli: &Cli, args: &PullArgs) -> Result<()> {
 fn cmd_push(cli: &Cli, args: &PushArgs) -> Result<()> {
     let repo = Repository::discover(&cli.repo)
         .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
-    let refspec = match &args.refspec {
-        Some(r) => r.clone(),
-        None => current_branch(&repo)?,
-    };
-    let report = rit::remote::push(&repo, &args.remote, &refspec, args.force)?;
-    if report.up_to_date {
-        println!("Everything up-to-date");
+    let mut refspecs: Vec<String> = if args.delete {
+        if args.refspecs.is_empty() {
+            anyhow::bail!("--delete needs at least one ref name (e.g. `rit push origin --delete feature`)");
+        }
+        args.refspecs
+            .iter()
+            .map(|name| {
+                let name = name.trim();
+                if name.is_empty() || name.contains(':') {
+                    anyhow::bail!("--delete takes plain ref names, got '{name}'");
+                }
+                Ok(format!(":{name}"))
+            })
+            .collect::<Result<_>>()?
     } else {
+        args.refspecs.clone()
+    };
+    if refspecs.is_empty() && !args.tags {
+        refspecs.push(current_branch(&repo)?);
+    }
+    let mut reports = Vec::new();
+    for refspec in &refspecs {
+        reports.push(rit::remote::push(&repo, &args.remote, refspec, args.force)?);
+    }
+    if args.tags {
+        reports.extend(rit::remote::push_tags(&repo, &args.remote, args.force)?);
+    }
+    if reports.iter().all(|r| r.up_to_date) {
+        println!("Everything up-to-date");
+        return Ok(());
+    }
+    for report in reports.iter().filter(|r| !r.up_to_date) {
         match (report.old, report.new) {
             (_, None) => println!(" - [deleted] {}", report.remote_ref),
             (None, Some(new)) => println!(" * [new] {} -> {}", &new.to_string()[..8], report.remote_ref),

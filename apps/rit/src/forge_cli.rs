@@ -223,6 +223,25 @@ fn n(v: &Value, key: &str) -> i64 {
     v.get(key).and_then(Value::as_i64).unwrap_or(0)
 }
 
+/// Who wrote an issue / PR / comment. The forge returns `author_login`
+/// (joined from its users table); `author_name`, an embedded `author`
+/// object/string, or `user.login` are accepted too. Deleted accounts show as
+/// `ghost`, matching the web UI.
+fn author(v: &Value) -> &str {
+    let direct = ["author_login", "author_name", "author", "user_login"]
+        .iter()
+        .find_map(|key| v.get(*key).and_then(Value::as_str).filter(|a| !a.is_empty()));
+    let nested = || {
+        ["author", "user"].iter().find_map(|key| {
+            v.get(*key)
+                .and_then(|o| o.get("login").or_else(|| o.get("username")))
+                .and_then(Value::as_str)
+                .filter(|a| !a.is_empty())
+        })
+    };
+    direct.or_else(nested).unwrap_or("ghost")
+}
+
 /// `2026-09-24T10:11:12Z` -> `2026-09-24`.
 fn day(ts: &str) -> &str {
     ts.get(..10).unwrap_or(ts)
@@ -249,7 +268,7 @@ fn print_comments(forge: &ForgeRepo, sub: &str) -> Result<()> {
     println!("{} comment(s):", list.len());
     for c in &list {
         println!();
-        println!("  -- {} --", day(s(c, "created_at")));
+        println!("  -- {}, {} --", author(c), day(s(c, "created_at")));
         for line in s(c, "body").lines() {
             println!("  {line}");
         }
@@ -268,10 +287,11 @@ pub fn cmd_issue(repo_path: &Path, args: &IssueArgs) -> Result<()> {
             }
             for issue in &list {
                 println!(
-                    "#{:<5} {:<7} {}  {}",
+                    "#{:<5} {:<7} {}  {:<16} {}",
                     n(issue, "number"),
                     s(issue, "state"),
                     day(s(issue, "created_at")),
+                    author(issue),
                     s(issue, "title")
                 );
             }
@@ -280,9 +300,10 @@ pub fn cmd_issue(repo_path: &Path, args: &IssueArgs) -> Result<()> {
             let issue = forge.api("GET", &format!("/issues/{number}"), None)?;
             println!("#{} {}", n(&issue, "number"), s(&issue, "title"));
             println!(
-                "state: {}   opened: {}   comments: {}",
+                "state: {}   opened: {} by {}   comments: {}",
                 s(&issue, "state"),
                 day(s(&issue, "created_at")),
+                author(&issue),
                 n(&issue, "comment_count")
             );
             let join = |key: &str| {
@@ -357,9 +378,10 @@ pub fn cmd_pr(repo_path: &Path, args: &PrArgs) -> Result<()> {
             }
             for pr in &list {
                 println!(
-                    "#{:<5} {:<7} {} -> {}  {}",
+                    "#{:<5} {:<7} {:<16} {} -> {}  {}",
                     n(pr, "number"),
                     s(pr, "state"),
+                    author(pr),
                     s(pr, "head_branch"),
                     s(pr, "base_branch"),
                     s(pr, "title")
@@ -370,11 +392,12 @@ pub fn cmd_pr(repo_path: &Path, args: &PrArgs) -> Result<()> {
             let pr = forge.api("GET", &format!("/pulls/{number}"), None)?;
             println!("#{} {}", n(&pr, "number"), s(&pr, "title"));
             println!(
-                "state: {}   {} -> {}   opened: {}",
+                "state: {}   {} -> {}   opened: {} by {}",
                 s(&pr, "state"),
                 s(&pr, "head_branch"),
                 s(&pr, "base_branch"),
-                day(s(&pr, "created_at"))
+                day(s(&pr, "created_at")),
+                author(&pr)
             );
             let mergeable = match pr.get("mergeable").and_then(Value::as_bool) {
                 Some(true) => "yes",
