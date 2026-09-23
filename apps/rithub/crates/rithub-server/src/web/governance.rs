@@ -3,7 +3,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
-use rithub_core::{AuditStore, NotifyStore, SearchStore, Store};
+use rithub_core::{AuditStore, NotifyStore, Store};
 use serde::Deserialize;
 
 use super::{error_page, esc, page, session_user, short_date};
@@ -106,7 +106,15 @@ pub async fn search(
         esc(&query)
     );
     if !query.is_empty() {
-        let hits = state.store.search(&query, 50).await.unwrap_or_default();
+        // Permission-scoped full-text search (Tantivy or Postgres backend).
+        let mut scope = forge_search::SearchScope::anonymous();
+        if let Some(user) = &session {
+            scope.visible_private_repo_ids =
+                crate::search_index::accessible_private_repo_ids(&state, user.id).await;
+        }
+        let hits = crate::search_index::search(&state, &query, &scope, 50)
+            .await
+            .unwrap_or_default();
         body.push_str(&format!(
             "<div class=\"card\"><h3>{} result(s) for “{}”</h3>",
             hits.len(),
@@ -116,18 +124,27 @@ pub async fn search(
             body.push_str("<p class=\"muted\">No matches.</p>");
         }
         for hit in hits {
+            let (org, repo) = (esc(&hit.org), esc(&hit.repo));
             let href = match hit.kind.as_str() {
-                "issue" => format!("/{}/{}/issues/{}", esc(&hit.org), esc(&hit.repo), hit.number),
-                "pull_request" => format!("/{}/{}/pulls/{}", esc(&hit.org), esc(&hit.repo), hit.number),
-                _ => format!("/{}/{}", esc(&hit.org), esc(&hit.repo)),
+                "issue" => format!("/{org}/{repo}/issues/{}", hit.number),
+                "pull_request" => format!("/{org}/{repo}/pulls/{}", hit.number),
+                "commit" => format!("/{org}/{repo}/commit/{}", esc(&hit.oid)),
+                _ => format!("/{org}/{repo}"),
             };
-            let label = if hit.number > 0 {
-                format!("{}/{} #{} — {}", esc(&hit.org), esc(&hit.repo), hit.number, esc(&hit.title))
+            let what = if hit.number > 0 {
+                format!("{org}/{repo} #{} — {}", hit.number, esc(&hit.title))
+            } else if !hit.path.is_empty() {
+                format!("{org}/{repo} — {}", esc(&hit.path))
             } else {
-                format!("{}/{} — {}", esc(&hit.org), esc(&hit.repo), esc(&hit.title))
+                format!("{org}/{repo} — {}", esc(&hit.title))
+            };
+            let snippet = if hit.snippet.is_empty() {
+                String::new()
+            } else {
+                format!("<div class=\"muted\">{}</div>", esc(&hit.snippet))
             };
             body.push_str(&format!(
-                "<div><span class=\"pill\">{}</span> <a href=\"{href}\">{label}</a></div>",
+                "<div style=\"margin:8px 0\"><span class=\"pill\">{}</span> <a href=\"{href}\">{what}</a>{snippet}</div>",
                 esc(&hit.kind)
             ));
         }

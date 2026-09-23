@@ -1,11 +1,10 @@
 //! JSON API for governance features: CI commit statuses, the audit log, search,
 //! per-repo collaborators, and teams.
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::Json;
 use rithub_core::{
-    AccessStore, AuditStore, CheckState, NewStatus, NotifyStore, RepoRole, SearchStore,
-    StatusStore, Store,
+    AccessStore, AuditStore, CheckState, NewStatus, NotifyStore, RepoRole, StatusStore, Store,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -83,25 +82,8 @@ pub async fn list_audit(
     Ok(Json(json!({ "events": events })))
 }
 
-// --- search -----------------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-pub struct SearchQuery {
-    #[serde(default)]
-    pub q: String,
-}
-
-/// `GET /api/search?q=...`
-pub async fn search(
-    State(state): State<AppState>,
-    Query(query): Query<SearchQuery>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    if query.q.trim().is_empty() {
-        return Ok(Json(json!({ "query": "", "hits": [] })));
-    }
-    let hits = state.store.search(query.q.trim(), 50).await?;
-    Ok(Json(json!({ "query": query.q, "hits": hits })))
-}
+// Note: full-text search moved to `crate::search_api` (Tantivy/Postgres backends
+// with permission scoping). The former ILIKE handler lived here.
 
 // --- collaborators ----------------------------------------------------------
 

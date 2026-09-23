@@ -16,6 +16,8 @@ rust-version = "1.85"
 # Internal crates
 rithub-core = { path = "crates/rithub-core" }
 rithub-git = { path = "crates/rithub-git" }
+rithub-graphql = { path = "crates/rithub-graphql" }
+forge-search = { path = "crates/forge-search" }
 # The from-scratch Rust git — the only dependency that owns git internals.
 rit = { path = "../rit" }
 

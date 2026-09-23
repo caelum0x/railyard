@@ -63,6 +63,7 @@ pub async fn create_repo(
     let disk_path = path.to_string_lossy().into_owned();
 
     let repo = state.store.create_repo(&org, &input, &disk_path).await?;
+    crate::search_index::index_repo(&state, &org.name, &repo).await;
     Ok(Json(repo))
 }
 
@@ -99,7 +100,9 @@ pub async fn update_repo(
         validate_name("repository", new_name)?;
     }
     let repo = state.store.get_repo(&org_name, &repo_name).await?;
-    Ok(Json(state.store.update_repo(repo.id, &input).await?))
+    let updated = state.store.update_repo(repo.id, &input).await?;
+    crate::search_index::index_repo(&state, &org_name, &updated).await;
+    Ok(Json(updated))
 }
 
 /// Request body for seeding a commit.
@@ -149,7 +152,7 @@ pub async fn seed_repo(
     if input.files.is_empty() {
         return Err(AppError::bad_request("seed requires at least one file"));
     }
-    let branch = input.branch.unwrap_or(repo.default_branch);
+    let branch = input.branch.unwrap_or_else(|| repo.default_branch.clone());
     let files: Vec<SeedFile> = input
         .files
         .into_iter()
@@ -169,6 +172,9 @@ pub async fn seed_repo(
         input.author_name.as_deref().unwrap_or("rithub"),
         input.author_email.as_deref().unwrap_or("rithub@localhost"),
     )?;
+
+    // Index the newly-seeded git content (commits + text blobs), best-effort.
+    crate::search_index::index_repo_git(&state, &org_name, &repo).await;
 
     Ok(Json(SeedResponse { commit, branch }))
 }

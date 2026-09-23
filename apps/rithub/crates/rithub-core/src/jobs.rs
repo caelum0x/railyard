@@ -35,6 +35,13 @@ pub const KIND_NOTIFICATION_FAN_OUT: &str = "notification_fan_out";
 ///             "target": str|null, "detail": str|null }`
 pub const KIND_AUDIT_APPEND: &str = "audit_append";
 
+/// Dispatch CI for a pushed/updated commit: seed a `queued` check run and fan a
+/// `check_run` webhook out to any listening external runners.
+///
+/// Payload: `{ "repo_id": uuid, "org": str, "repo": str, "head_sha": str,
+///             "ref": str, "event": str }`
+pub const KIND_CHECK_RUN_DISPATCH: &str = "check_run_dispatch";
+
 /// Send a transactional email to every current audience member of a repo
 /// (org members ∪ collaborators, minus the actor).
 ///

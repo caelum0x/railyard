@@ -11,6 +11,7 @@
 
 pub mod access;
 pub mod audit;
+pub mod ci;
 pub mod deploykeys;
 pub mod domain;
 pub mod error;
@@ -32,6 +33,9 @@ pub mod webhooks;
 
 pub use access::{AccessStore, RepoRole, Team};
 pub use audit::{AuditEvent, AuditStore, NewAuditEvent};
+pub use ci::{
+    CheckConclusion, CheckRun, CheckRunPatch, CheckRunStatus, CiStore, NewCheckRun, Runner,
+};
 pub use deploykeys::DeployKeyStore;
 pub use domain::{
     DeployKey, Membership, NewOrganization, NewRepository, Organization, Repository, Role, Token,
@@ -44,7 +48,7 @@ pub use milestones::{
 };
 pub use notifications::{Notification, NotifyStore};
 pub use pulls::{NewPullRequest, PrComment, PrState, PullRequest, PullRequestStore, UpdatePr};
-pub use releases::{NewRelease, Release, ReleaseStore};
+pub use releases::{NewRelease, Release, ReleaseAsset, ReleaseAssetStore, ReleaseStore};
 pub use reviews::{
     BranchProtection, NewReviewComment, Review, ReviewComment, ReviewState, ReviewStore,
 };
@@ -52,10 +56,10 @@ pub use search::{SearchHit, SearchStore};
 pub use sshkeys::SshKeyStore;
 pub use statuses::{CheckState, CommitStatus, NewStatus, StatusStore};
 pub use store::{PgStore, Store};
-pub use token::{generate_deploy_token, generate_token, hash_token};
+pub use token::{generate_deploy_token, generate_runner_token, generate_token, hash_token};
 pub use validate::validate_name;
 pub use jobs::{
-    OutboxJob, OutboxStore, KIND_AUDIT_APPEND, KIND_EMAIL_NOTIFICATION,
+    OutboxJob, OutboxStore, KIND_AUDIT_APPEND, KIND_CHECK_RUN_DISPATCH, KIND_EMAIL_NOTIFICATION,
     KIND_NOTIFICATION_FAN_OUT, KIND_WEBHOOK_DELIVERY, MAX_ATTEMPTS,
 };
 pub use webhooks::{NewWebhook, Webhook, WebhookStore};

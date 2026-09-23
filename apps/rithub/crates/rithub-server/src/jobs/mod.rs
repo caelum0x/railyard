@@ -11,9 +11,9 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use rithub_core::{
-    AuditStore, NewAuditEvent, OutboxJob, OutboxStore, WebhookStore,
-    KIND_AUDIT_APPEND, KIND_EMAIL_NOTIFICATION, KIND_NOTIFICATION_FAN_OUT,
-    KIND_WEBHOOK_DELIVERY,
+    AuditStore, CheckRunStatus, CiStore, NewAuditEvent, NewCheckRun, OutboxJob, OutboxStore,
+    WebhookStore, KIND_AUDIT_APPEND, KIND_CHECK_RUN_DISPATCH, KIND_EMAIL_NOTIFICATION,
+    KIND_NOTIFICATION_FAN_OUT, KIND_WEBHOOK_DELIVERY,
 };
 
 use crate::state::AppState;
@@ -59,6 +59,7 @@ async fn process_job(state: &AppState, job: OutboxJob) {
         KIND_WEBHOOK_DELIVERY => handle_webhook_delivery(state, &job).await,
         KIND_NOTIFICATION_FAN_OUT => handle_notification_fan_out(state, &job).await,
         KIND_AUDIT_APPEND => handle_audit_append(state, &job).await,
+        KIND_CHECK_RUN_DISPATCH => handle_check_run_dispatch(state, &job).await,
         KIND_EMAIL_NOTIFICATION => handle_email_notification(state, &job).await,
         unknown => {
             warn!(kind = unknown, job_id = %job.id, "unknown job kind — marking dead");
@@ -172,6 +173,86 @@ async fn handle_audit_append(
             target,
             detail,
         })
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Handler: check-run dispatch
+// ---------------------------------------------------------------------------
+
+/// Dispatch CI for a pushed/updated commit: seed a `queued` check run for the
+/// head sha, then enqueue a `check_run` webhook so any listening external runner
+/// can claim it and report back through the check-run report API.
+async fn handle_check_run_dispatch(
+    state: &AppState,
+    job: &OutboxJob,
+) -> std::result::Result<(), String> {
+    let p = &job.payload;
+    let repo_id: Uuid = parse_uuid(p, "repo_id")?;
+    let org = p["org"].as_str().ok_or("missing field: org")?;
+    let repo = p["repo"].as_str().ok_or("missing field: repo")?;
+    let reference = p["ref"].as_str().unwrap_or("");
+    let event = p["event"].as_str().unwrap_or("push");
+
+    // Prefer the sha carried in the payload; fall back to resolving the ref
+    // against the on-disk repo (the worker has the git host).
+    let head_sha = match p["head_sha"].as_str().filter(|s| !s.is_empty()) {
+        Some(s) => s.to_string(),
+        None => {
+            if reference.is_empty() {
+                return Err("check-run dispatch has neither head_sha nor ref".into());
+            }
+            state
+                .host
+                .resolve_commit(org, repo, reference)
+                .map_err(|e| format!("resolving {reference}: {e}"))?
+                .to_hex()
+        }
+    };
+
+    let run = state
+        .store
+        .create_check_run(
+            repo_id,
+            NewCheckRun {
+                runner_id: None,
+                head_sha: &head_sha,
+                name: crate::ci::DEFAULT_CHECK_NAME,
+                external_id: None,
+                status: CheckRunStatus::Queued,
+                conclusion: None,
+                details_url: None,
+                output_title: None,
+                output_summary: None,
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Fan a `check_run` webhook out so external runners are notified there is
+    // work. (Delivery itself is a separate durable job.)
+    let webhook_payload = serde_json::json!({
+        "repo_id": repo_id,
+        "event": "check_run",
+        "event_payload": {
+            "event": "check_run",
+            "action": "queued",
+            "repo": format!("{org}/{repo}"),
+            "check_run": {
+                "id": run.id,
+                "name": run.name,
+                "head_sha": head_sha,
+                "status": run.status.as_str(),
+            },
+            "ref": reference,
+            "trigger": event,
+        },
+    });
+    state
+        .store
+        .enqueue_job(KIND_WEBHOOK_DELIVERY, webhook_payload)
         .await
         .map_err(|e| e.to_string())?;
     Ok(())

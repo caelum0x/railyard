@@ -139,7 +139,18 @@ pub async fn git_post(
             };
             match state.host.receive_pack(&owner, repo_name, &body, &policy) {
                 Ok(outcome) => {
-                    audit_push(&state, &meta, caller.as_ref(), &outcome).await;
+                    audit_push(&state, &owner, &meta, caller.as_ref(), &outcome).await;
+                    // Refresh the search index for this repo's git content after a
+                    // push that actually moved refs. Detached + best-effort so it
+                    // never delays or fails the client's push.
+                    if outcome.changed {
+                        let st = state.clone();
+                        let owner_s = owner.clone();
+                        let meta_c = meta.clone();
+                        tokio::spawn(async move {
+                            crate::search_index::index_repo_git(&st, &owner_s, &meta_c).await;
+                        });
+                    }
                     smart(outcome.response, "application/x-git-receive-pack-result")
                 }
                 // A malformed request body (bad framing) is the client's fault.
@@ -153,6 +164,7 @@ pub async fn git_post(
 /// Record a push outcome (accepted or rejected) in the audit log.
 async fn audit_push(
     state: &AppState,
+    owner: &str,
     meta: &RepoMeta,
     caller: Option<&Caller>,
     outcome: &rithub_git::ReceivePackOutcome,
@@ -203,6 +215,21 @@ async fn audit_push(
                 .inspect_err(|e| tracing::warn!(error = %e, "failed to enqueue push webhook job"))
                 .ok();
         });
+
+        // Dispatch CI for each updated ref. The worker resolves the ref to a
+        // head sha and seeds a queued check run (deleted refs simply fail to
+        // resolve and are skipped there).
+        for reference in &outcome.ref_updates {
+            crate::ci::dispatch_check_runs(
+                state,
+                meta.id,
+                owner,
+                &meta.name,
+                "", // head sha unknown here; the worker resolves `ref`.
+                reference,
+                "push",
+            );
+        }
     }
 }
 

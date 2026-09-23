@@ -13,6 +13,8 @@ path = "src/main.rs"
 [dependencies]
 rithub-core.workspace = true
 rithub-git.workspace = true
+rithub-graphql.workspace = true
+forge-search.workspace = true
 tokio.workspace = true
 axum.workspace = true
 tower.workspace = true
@@ -27,6 +29,8 @@ anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 base64 = "0.22"
+async-graphql = { version = "7", default-features = false, features = ["time", "uuid", "graphiql"] }
+async-graphql-axum = "7"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 hmac = "0.12"
 sha2 = "0.10"

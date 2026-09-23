@@ -5,7 +5,7 @@ use axum::body::Body;
 use axum::extract::{Form, Path, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
-use rithub_core::{Repository as RepoMeta, ReleaseStore, Store, User};
+use rithub_core::{Repository as RepoMeta, ReleaseAssetStore, ReleaseStore, Store, User};
 use serde::Deserialize;
 
 use super::{error_page, esc, page, session_user, short_date};
@@ -60,10 +60,31 @@ pub async fn list(
         body.push_str("<p class=\"muted\">No releases yet.</p>");
     }
     for r in releases {
+        // Binary assets attached to this release (compiled artifacts, etc.).
+        let assets = state.store.list_assets(r.id).await.unwrap_or_default();
+        let mut asset_html = String::new();
+        for a in &assets {
+            asset_html.push_str(&format!(
+                "<li><a href=\"/api/orgs/{org}/repos/{repo}/releases/{tag}/assets/{id}\">{name}</a> \
+<span class=\"muted\">({size} bytes)</span></li>",
+                org = esc(&org),
+                repo = esc(&repo),
+                tag = esc(&r.tag),
+                id = a.id,
+                name = esc(&a.filename),
+                size = a.size_bytes,
+            ));
+        }
+        let assets_block = if asset_html.is_empty() {
+            String::new()
+        } else {
+            format!("<p class=\"muted\">Assets</p><ul>{asset_html}</ul>")
+        };
         body.push_str(&format!(
             "<div class=\"card\"><h3>{name} <span class=\"muted\">{tag}</span></h3>\
 <p class=\"muted\">{sha} · {date}</p><div>{notes}</div>\
-<p><a class=\"btn\" href=\"/{org}/{repo}/releases/{tag}/archive.tar.gz\">Source (tar.gz)</a></p></div>",
+<p><a class=\"btn\" href=\"/{org}/{repo}/releases/{tag}/archive.tar.gz\">Source (tar.gz)</a></p>\
+{assets_block}</div>",
             name = esc(&r.name),
             tag = esc(&r.tag),
             sha = esc(&r.target_sha[..r.target_sha.len().min(8)]),

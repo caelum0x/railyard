@@ -115,3 +115,117 @@ impl ReleaseStore for PgStore {
         Ok(release_from_row(&row))
     }
 }
+
+// ---------------------------------------------------------------------------
+// Release assets: uploaded binaries attached to a release. The bytes live on
+// the data-root filesystem; this owns only the metadata + storage pointer.
+// ---------------------------------------------------------------------------
+
+/// A binary asset attached to a release.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReleaseAsset {
+    pub id: Uuid,
+    pub release_id: Uuid,
+    pub filename: String,
+    pub content_type: String,
+    pub size_bytes: i64,
+    /// Absolute on-disk path. Not serialized: an internal storage detail.
+    #[serde(skip_serializing)]
+    pub storage_path: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+fn asset_from_row(row: &sqlx::postgres::PgRow) -> ReleaseAsset {
+    use sqlx::Row;
+    ReleaseAsset {
+        id: row.get("id"),
+        release_id: row.get("release_id"),
+        filename: row.get("filename"),
+        content_type: row.get("content_type"),
+        size_bytes: row.get("size_bytes"),
+        storage_path: row.get("storage_path"),
+        created_at: row.get("created_at"),
+    }
+}
+
+/// Release-asset persistence.
+#[allow(async_fn_in_trait)]
+pub trait ReleaseAssetStore {
+    async fn create_asset(
+        &self,
+        release_id: Uuid,
+        filename: &str,
+        content_type: &str,
+        size_bytes: i64,
+        storage_path: &str,
+    ) -> Result<ReleaseAsset>;
+    async fn list_assets(&self, release_id: Uuid) -> Result<Vec<ReleaseAsset>>;
+    async fn get_asset(&self, release_id: Uuid, asset_id: Uuid) -> Result<ReleaseAsset>;
+    /// Delete an asset row, returning it so the caller can unlink the blob.
+    async fn delete_asset(&self, release_id: Uuid, asset_id: Uuid) -> Result<ReleaseAsset>;
+}
+
+impl ReleaseAssetStore for PgStore {
+    async fn create_asset(
+        &self,
+        release_id: Uuid,
+        filename: &str,
+        content_type: &str,
+        size_bytes: i64,
+        storage_path: &str,
+    ) -> Result<ReleaseAsset> {
+        let row = sqlx::query(
+            "INSERT INTO release_assets (release_id, filename, content_type, size_bytes, storage_path) \
+             VALUES ($1, $2, $3, $4, $5) \
+             RETURNING id, release_id, filename, content_type, size_bytes, storage_path, created_at",
+        )
+        .bind(release_id)
+        .bind(filename)
+        .bind(content_type)
+        .bind(size_bytes)
+        .bind(storage_path)
+        .fetch_one(self.pool())
+        .await
+        .map_err(|e| CoreError::from_sqlx("release_asset", filename, e))?;
+        Ok(asset_from_row(&row))
+    }
+
+    async fn list_assets(&self, release_id: Uuid) -> Result<Vec<ReleaseAsset>> {
+        let rows = sqlx::query(
+            "SELECT id, release_id, filename, content_type, size_bytes, storage_path, created_at \
+             FROM release_assets WHERE release_id = $1 ORDER BY created_at",
+        )
+        .bind(release_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| CoreError::from_sqlx("release_asset", "*", e))?;
+        Ok(rows.iter().map(asset_from_row).collect())
+    }
+
+    async fn get_asset(&self, release_id: Uuid, asset_id: Uuid) -> Result<ReleaseAsset> {
+        let row = sqlx::query(
+            "SELECT id, release_id, filename, content_type, size_bytes, storage_path, created_at \
+             FROM release_assets WHERE release_id = $1 AND id = $2",
+        )
+        .bind(release_id)
+        .bind(asset_id)
+        .fetch_one(self.pool())
+        .await
+        .map_err(|e| CoreError::from_sqlx("release_asset", &asset_id.to_string(), e))?;
+        Ok(asset_from_row(&row))
+    }
+
+    async fn delete_asset(&self, release_id: Uuid, asset_id: Uuid) -> Result<ReleaseAsset> {
+        let row = sqlx::query(
+            "DELETE FROM release_assets WHERE release_id = $1 AND id = $2 \
+             RETURNING id, release_id, filename, content_type, size_bytes, storage_path, created_at",
+        )
+        .bind(release_id)
+        .bind(asset_id)
+        .fetch_one(self.pool())
+        .await
+        .map_err(|e| CoreError::from_sqlx("release_asset", &asset_id.to_string(), e))?;
+        Ok(asset_from_row(&row))
+    }
+}

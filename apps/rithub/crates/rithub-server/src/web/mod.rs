@@ -116,12 +116,14 @@ pub fn page(title: &str, session: &Option<User>, body: &str) -> Html<String> {
     Html(format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-<title>{title} · rithub</title><style>{CSS}</style></head><body>\
+<title>{title} · rithub</title><style>{CSS}</style>\
+<style>{HL_CSS}</style></head><body>\
 <header class=\"nav\"><a href=\"/\" class=\"brand\">rithub</a><div class=\"spacer\"></div>{nav_auth}</header>\
 <main class=\"wrap\">{body}</main>\
 <footer class=\"foot\">rithub — a from-scratch Rust git forge on <code>rit</code></footer>\
 </body></html>",
         title = esc(title),
+        HL_CSS = forge_search::highlight::highlight_css(),
     ))
 }
 

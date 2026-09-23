@@ -14,6 +14,9 @@ pub const TOKEN_PREFIX: &str = "rithub_pat_";
 /// Human-recognizable prefix for deploy-key bearer tokens.
 pub const DEPLOY_TOKEN_PREFIX: &str = "rithub_dk_";
 
+/// Human-recognizable prefix for CI runner bearer tokens.
+pub const RUNNER_TOKEN_PREFIX: &str = "rithub_ci_";
+
 /// Generate a new personal access token (prefix + 256 bits of hex entropy).
 pub fn generate_token() -> String {
     // Two v4 UUIDs give 244 bits of randomness — ample for a bearer token.
@@ -28,6 +31,15 @@ pub fn generate_token() -> String {
 pub fn generate_deploy_token() -> String {
     format!(
         "{DEPLOY_TOKEN_PREFIX}{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    )
+}
+
+/// Generate a new CI runner bearer token (same entropy, distinct prefix).
+pub fn generate_runner_token() -> String {
+    format!(
+        "{RUNNER_TOKEN_PREFIX}{}{}",
         Uuid::new_v4().simple(),
         Uuid::new_v4().simple()
     )

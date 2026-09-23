@@ -1,0 +1,20 @@
+[package]
+name = "rithub-graphql"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "GraphQL API surface for the rithub forge (Query + Mutation over the domain store, sharing REST auth). The plan calls this crate forge-graphql."
+
+[dependencies]
+rithub-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+time.workspace = true
+tracing.workspace = true
+# GraphQL engine. `time` + `uuid` features map the domain's OffsetDateTime/Uuid
+# onto GraphQL scalars. Kept off the git plane on purpose: this crate owns no
+# git internals — on-disk repo creation is delegated through the `GitHost` trait,
+# which `rithub-server` implements over `rithub-git`.
+async-graphql = { version = "7", default-features = false, features = ["time", "uuid"] }

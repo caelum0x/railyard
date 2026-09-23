@@ -235,6 +235,15 @@ pub async fn create_issue(
         format!("[{org}/{repo}] Issue #{} opened: {}", issue.number, issue.title),
         format!("A new issue was opened in {org}/{repo}.\n\n#{}: {}\n", issue.number, issue.title),
     );
+    crate::search_index::index_issue(
+        &state,
+        &org,
+        &meta,
+        issue.number as i64,
+        &issue.title,
+        issue.body.as_deref().unwrap_or(""),
+    )
+    .await;
     Ok(Json(issue))
 }
 
@@ -473,6 +482,15 @@ pub async fn update_issue(
         .map(|u| u.username)
         .collect();
     let comment_count = state.store.list_issue_comments(issue.id).await?.len();
+    crate::search_index::index_issue(
+        &state,
+        &org,
+        &meta,
+        issue.number as i64,
+        &issue.title,
+        issue.body.as_deref().unwrap_or(""),
+    )
+    .await;
     Ok(Json(IssueDetail {
         issue,
         labels: labels.into_iter().map(|l| l.name).collect(),
@@ -600,6 +618,28 @@ pub async fn create_pr(
             base = pr.base_branch,
         ),
     );
+    // Dispatch CI for the PR head commit so runners can report check runs
+    // against it (surfaced on the PR via GET .../pulls/{n}/check-runs).
+    if let Some(head_sha) = pr.head_sha.as_deref() {
+        crate::ci::dispatch_check_runs(
+            &state,
+            meta.id,
+            &org,
+            &repo,
+            head_sha,
+            &pr.head_branch,
+            "pull_request",
+        );
+    }
+    crate::search_index::index_pull(
+        &state,
+        &org,
+        &meta,
+        pr.number as i64,
+        &pr.title,
+        pr.body.as_deref().unwrap_or(""),
+    )
+    .await;
     Ok(Json(pr))
 }
 
@@ -846,6 +886,15 @@ pub async fn update_pr(
         _ => state.store.get_pr(meta.id, number).await?,
     };
 
+    crate::search_index::index_pull(
+        &state,
+        &org,
+        &meta,
+        pr.number as i64,
+        &pr.title,
+        pr.body.as_deref().unwrap_or(""),
+    )
+    .await;
     Ok(Json(pr))
 }
 

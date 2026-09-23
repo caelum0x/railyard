@@ -246,7 +246,16 @@ pub async fn blob(
         ));
     } else {
         let text = String::from_utf8_lossy(&content.bytes);
-        body.push_str(&format!("<pre>{}</pre>", esc(&text)));
+        // Syntax-highlight to class-based spans; fall back to escaped plain text
+        // for binary-ish, oversized, or unrecognized files.
+        match forge_search::highlight::highlight_blob_html(&text, &path) {
+            Some(html) => {
+                body.push_str(&format!("<pre class=\"hlcode\">{html}</pre>"));
+            }
+            None => {
+                body.push_str(&format!("<pre>{}</pre>", esc(&text)));
+            }
+        }
     }
     page(&esc(&path), &session, &body).into_response()
 }
@@ -341,23 +350,14 @@ pub fn render_diff_html(diff: &DiffResult) -> String {
             out.push_str("<pre>Binary file not shown.</pre></div>");
             continue;
         }
-        out.push_str("<pre>");
-        for line in file.patch.lines() {
-            let class = if line.starts_with("@@") {
-                "hunk"
-            } else if line.starts_with('+') && !line.starts_with("+++") {
-                "add"
-            } else if line.starts_with('-') && !line.starts_with("---") {
-                "del"
-            } else {
-                ""
-            };
-            if class.is_empty() {
-                out.push_str(&format!("{}\n", esc(line)));
-            } else {
-                out.push_str(&format!("<span class=\"{class}\">{}</span>\n", esc(line)));
-            }
-        }
+        // Syntax-highlighted unified diff: each line carries its diff role class
+        // (add/del/ctx/hunk) plus per-line language spans. All content is escaped
+        // inside the highlighter, so the patch text cannot inject markup.
+        out.push_str("<pre class=\"hlcode hldiff\">");
+        out.push_str(&forge_search::highlight::highlight_diff_html(
+            &file.path,
+            &file.patch,
+        ));
         out.push_str("</pre></div>");
     }
     out

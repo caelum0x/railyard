@@ -1,12 +1,14 @@
 //! Shared application state: the metadata store, the git-hosting layer, and
 //! an optional SMTP transport for outbound email.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use lettre::AsyncSmtpTransport;
 use lettre::Tokio1Executor;
 use rithub_core::PgStore;
 use rithub_git::RepoHost;
+use rithub_graphql::RithubSchema;
 
 /// SMTP configuration read from environment variables.
 #[derive(Clone, Debug)]
@@ -66,6 +68,16 @@ pub struct AppState {
     pub host: RepoHost,
     /// SMTP transport for outbound email, if configured.
     pub mailer: Option<Arc<AsyncSmtpTransport<Tokio1Executor>>>,
+    /// The durable data root ($RITHUB_DATA_ROOT). Release-asset blobs live under
+    /// `<data_root>/release-assets/`; shared so handlers can resolve blob paths.
+    pub data_root: Arc<PathBuf>,
+    /// The forge GraphQL schema, mounted at `/graphql`. Cheap to clone (Arc
+    /// inside). Shares the same store + git host as the REST/git plane.
+    pub graphql: RithubSchema,
+    /// The full-text search index (Tantivy), when the `tantivy` backend is
+    /// active. `None` under the Postgres search backend or when disabled. Cheap
+    /// to clone (Arc inside). See [`crate::search_index`].
+    pub search: Option<Arc<forge_search::SearchIndex>>,
 }
 
 impl AppState {
@@ -74,11 +86,31 @@ impl AppState {
         store: PgStore,
         host: RepoHost,
         mailer: Option<AsyncSmtpTransport<Tokio1Executor>>,
+        data_root: PathBuf,
     ) -> Self {
+        // The GraphQL schema shares the same store and on-disk git host as the
+        // REST/git plane, so all three surfaces stay consistent.
+        let graphql = crate::graphql::build_schema(store.clone(), host.clone());
         Self {
             store,
             host,
             mailer: mailer.map(Arc::new),
+            data_root: Arc::new(data_root),
+            graphql,
+            search: None,
         }
+    }
+
+    /// Attach a full-text search index (Tantivy backend). Call after [`AppState::new`].
+    pub fn with_search(mut self, index: forge_search::SearchIndex) -> Self {
+        self.search = Some(Arc::new(index));
+        self
+    }
+
+    /// Absolute directory that holds the blobs for a given release.
+    pub fn release_asset_dir(&self, release_id: uuid::Uuid) -> PathBuf {
+        self.data_root
+            .join("release-assets")
+            .join(release_id.to_string())
     }
 }

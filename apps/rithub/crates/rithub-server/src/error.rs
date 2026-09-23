@@ -47,16 +47,28 @@ impl AppError {
             message: message.into(),
         }
     }
+
+    /// A 500 Internal Server Error. The detail is logged (see [`IntoResponse`])
+    /// but a generic message is returned to the client.
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: message.into(),
+        }
+    }
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        if self.status.is_server_error() {
+        // Server-error details are logged but never returned to the client.
+        let client_message = if self.status.is_server_error() {
             tracing::error!(status = %self.status, message = %self.message, "request failed");
+            "internal server error".to_string()
         } else {
             tracing::debug!(status = %self.status, message = %self.message, "request rejected");
-        }
-        (self.status, Json(json!({ "error": self.message }))).into_response()
+            self.message
+        };
+        (self.status, Json(json!({ "error": client_message }))).into_response()
     }
 }
 

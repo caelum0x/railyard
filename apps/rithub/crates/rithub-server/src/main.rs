@@ -25,14 +25,18 @@
 mod api;
 mod audit;
 mod auth;
+mod ci;
 mod collab_api;
 mod error;
 mod git_http;
 mod governance_api;
+mod graphql;
 mod jobs;
 mod jobs_api;
 mod milestones_api;
 mod releases_api;
+mod search_api;
+mod search_index;
 mod ssh;
 mod state;
 mod web;
@@ -99,7 +103,42 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("SMTP not configured (SMTP_HOST unset) — email notifications disabled");
     }
 
-    let state = AppState::new(PgStore::new(pool), RepoHost::new(&data_root), mailer);
+    let state = AppState::new(
+        PgStore::new(pool),
+        RepoHost::new(&data_root),
+        mailer,
+        data_root.clone(),
+    );
+
+    // Full-text search: open the on-disk Tantivy index (default backend) and
+    // attach it. Under `RITHUB_SEARCH_BACKEND=postgres` the native index is
+    // skipped and the tsvector `search_documents` table answers queries.
+    let state = if search_index::SearchBackend::from_env()
+        == search_index::SearchBackend::Tantivy
+    {
+        let index_dir = data_root.join("search-index");
+        match forge_search::SearchIndex::open(&index_dir) {
+            Ok(idx) => {
+                tracing::info!(dir = %index_dir.display(), "search index (tantivy) ready");
+                state.with_search(idx)
+            }
+            Err(error) => {
+                tracing::error!(%error, "opening search index failed — search degraded");
+                state
+            }
+        }
+    } else {
+        tracing::info!("search backend = postgres (tsvector); native index disabled");
+        state
+    };
+
+    // One-shot maintenance subcommand: `rithub-server reindex` rebuilds the
+    // search index from Postgres + git, then exits.
+    if std::env::args().nth(1).as_deref() == Some("reindex") {
+        let n = search_index::reindex_all(&state).await?;
+        tracing::info!(documents = n, "reindex complete");
+        return Ok(());
+    }
 
     // SSH transport: enabled when RITHUB_SSH_BIND is set.
     // The host key is persisted at $RITHUB_DATA_ROOT/ssh_host_key (ed25519,
@@ -269,6 +308,41 @@ fn build_router(state: AppState) -> Router {
             "/api/orgs/{org}/repos/{repo}/releases/{tag}/archive",
             get(releases_api::download_archive),
         )
+        // --- release assets (binary uploads) ---
+        .route(
+            "/api/orgs/{org}/repos/{repo}/releases/{tag}/assets",
+            post(releases_api::upload_asset).get(releases_api::list_assets),
+        )
+        .route(
+            "/api/orgs/{org}/repos/{repo}/releases/{tag}/assets/{asset_id}",
+            get(releases_api::download_asset).delete(releases_api::delete_asset),
+        )
+        // --- CI runners (external-runner registration) ---
+        .route(
+            "/api/orgs/{org}/repos/{repo}/runners",
+            post(ci::register_runner).get(ci::list_runners),
+        )
+        .route(
+            "/api/orgs/{org}/repos/{repo}/runners/{id}",
+            delete(ci::delete_runner),
+        )
+        // --- check runs (runner report API + surfacing) ---
+        .route(
+            "/api/orgs/{org}/repos/{repo}/check-runs",
+            post(ci::create_check_run),
+        )
+        .route(
+            "/api/orgs/{org}/repos/{repo}/check-runs/{id}",
+            axum::routing::patch(ci::update_check_run),
+        )
+        .route(
+            "/api/orgs/{org}/repos/{repo}/commits/{sha}/check-runs",
+            get(ci::list_commit_check_runs),
+        )
+        .route(
+            "/api/orgs/{org}/repos/{repo}/pulls/{number}/check-runs",
+            get(ci::list_pr_check_runs),
+        )
         // --- CI statuses ---
         .route(
             "/api/orgs/{org}/repos/{repo}/commits/{sha}/statuses",
@@ -283,7 +357,8 @@ fn build_router(state: AppState) -> Router {
             "/api/orgs/{org}/repos/{repo}/audit",
             get(governance_api::list_audit),
         )
-        .route("/api/search", get(governance_api::search))
+        // Full-text search (Tantivy or Postgres backend), permission-scoped.
+        .route("/api/search", get(search_api::search))
         .route(
             "/api/users/{username}/notifications",
             get(governance_api::list_notifications),
@@ -308,6 +383,14 @@ fn build_router(state: AppState) -> Router {
             "/api/admin/jobs/{id}/redeliver",
             post(jobs_api::redeliver_job),
         )
+        // --- admin: search index reindex ---
+        .route("/api/admin/search/reindex", post(search_api::reindex))
+        // --- GraphQL API (Query + Mutation), plus SDL export + dev playground ---
+        .route(
+            "/graphql",
+            get(graphql::graphiql).post(graphql::graphql_handler),
+        )
+        .route("/graphql/schema", get(graphql::graphql_schema))
         // Git smart + dumb HTTP: one catch-all per method.
         .route(
             "/{owner}/{repo}/{*path}",
