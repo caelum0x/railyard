@@ -28,7 +28,7 @@
 //! | invoice.created **[LIVE]** | rago-jobs clock/invoices.rs (`finalize_invoices`) + scheduler.rs |
 //! | invoice.one_off_created **[LIVE]** | rago-api breadth.rs (`create_one_off_invoice`) |
 //! | invoice.paid_credit_added | no-op until `Credits::AppliedPrepaidCreditService` |
-//! | invoice.generated | no-op until PDF generation path |
+//! | invoice.generated **[LIVE]** | rago-jobs clock/invoices.rs + scheduler.rs, rago-api subs.rs (`finalize_invoice`) + breadth.rs (one-off) — `file_url` → `/invoices/:id/download` |
 //! | invoice.drafted **[LIVE]** | rago-jobs clock/invoices.rs (`refresh_draft_invoices`) |
 //! | invoice.ready_to_finalize | no-op until tax pull / finalize path |
 //! | invoice.voided **[LIVE]** | rago-api subs.rs (`void_invoice`) |
@@ -54,8 +54,8 @@
 //! | customer.tax_provider_error | no-op until tax provider customer error |
 //! | customer.vies_check | no-op until EU auto-taxes VIES path |
 //! | credit_note.created **[LIVE]** | rago-api handlers.rs + rago-graphql admin_mutations.rs |
-//! | credit_note.generated | no-op until PDF generation path |
-//! | credit_note.refund_failure | no-op until refund failure delivery path |
+//! | credit_note.generated **[LIVE]** | rago-api handlers.rs + rago-graphql admin_mutations.rs (after creation) — `file_url` → `/credit_notes/:id/download` |
+//! | credit_note.refund_failure **[LIVE]** | rago-jobs refunds.rs (provider refund declined) |
 //! | integration.provider_error | no-op until integration provider error path |
 //! | order.created | no-op until orders schema (schema-deferred) |
 //! | order.executed **[LIVE]** | rago-graphql admin_mutations5.rs (`execute_order`) |
@@ -69,8 +69,8 @@
 //! | payment_receipt.created | no-op until payment_receipts schema (schema-deferred) |
 //! | payment_receipt.generated | no-op until payment_receipts schema (schema-deferred) |
 //! | payment_request.created **[LIVE]** | rago-jobs dunning.rs (`create_and_charge_payment_request`) |
-//! | payment_request.payment_failure | no-op until payment failure delivery path |
-//! | payment_request.payment_status_updated | no-op until payment request update service |
+//! | payment_request.payment_failure **[LIVE]** | rago-jobs dunning.rs (an invoice of the request could not be paid) |
+//! | payment_request.payment_status_updated **[LIVE]** | rago-jobs dunning.rs (aggregate status after charging) |
 //! | plan.created **[LIVE]** | rago-graphql mutation.rs |
 //! | plan.deleted **[LIVE]** | rago-graphql admin_mutations.rs |
 //! | plan.updated **[LIVE]** | rago-graphql admin_mutations.rs |
@@ -80,7 +80,7 @@
 //! | quote.created **[LIVE]** | rago-graphql admin_mutations5.rs |
 //! | quote.approved **[LIVE]** | rago-graphql admin_mutations5.rs |
 //! | quote.voided **[LIVE]** | rago-graphql admin_mutations5.rs |
-//! | subscription.canceled | no-op until cancel service |
+//! | subscription.canceled **[LIVE]** | rago-api handlers.rs + rago-graphql mutation.rs (terminating a pending subscription) |
 //! | subscription.incomplete | no-op until incomplete-activation path |
 //! | subscription.terminated **[LIVE]** | rago-jobs clock/subscriptions.rs (`terminate_ended_subscriptions`) |
 //! | subscription.started **[LIVE]** | rago-jobs clock/subscriptions.rs (`activate_subscriptions`) |
@@ -119,6 +119,7 @@ use crate::JobError;
 pub const JOB_EMITTED_WEBHOOKS: &[WebhookKind] = &[
     // clock/invoices.rs
     WebhookKind::InvoiceCreated,           // finalize_invoices + scheduler billing cycle
+    WebhookKind::InvoiceGenerated,         // finalize_invoices + scheduler billing cycle
     WebhookKind::InvoiceDrafted,           // refresh_draft_invoices
     WebhookKind::InvoicePaymentOverdue,    // mark_invoices_as_payment_overdue
     // scheduler.rs (billing cycle)
@@ -136,7 +137,69 @@ pub const JOB_EMITTED_WEBHOOKS: &[WebhookKind] = &[
     // dunning.rs
     WebhookKind::DunningCampaignFinished,
     WebhookKind::PaymentRequestCreated,
+    WebhookKind::PaymentRequestPaymentStatusUpdated,
+    WebhookKind::PaymentRequestPaymentFailure,
+    // refunds.rs
+    WebhookKind::CreditNoteRefundFailure,
 ];
+
+/// Env var holding the public base URL of this Rago deployment (e.g.
+/// `https://billing.example.com`). Used to build absolute `file_url`s in
+/// `*.generated` webhooks; without it the URL is the API-relative path.
+pub const PUBLIC_URL_ENV: &str = "RAGO_PUBLIC_URL";
+
+/// The download URL of a rendered document: `resource` is `invoices` or
+/// `credit_notes`. Downloads are served on demand by the API (authenticated
+/// with the org's API key), so the URL is stable for the document's lifetime.
+pub fn document_url(resource: &str, id: Uuid) -> String {
+    let path = format!("/api/v1/{resource}/{id}/download");
+    match std::env::var(PUBLIC_URL_ENV).ok().filter(|v| !v.trim().is_empty()) {
+        Some(base) => format!("{}{path}", base.trim_end_matches('/')),
+        None => path,
+    }
+}
+
+/// Emit `invoice.generated` for an invoice whose document is now available
+/// (it has been finalized). `object` is the invoice payload; `file_url` is
+/// added.
+pub async fn record_invoice_generated(
+    db: &Db,
+    organization_id: Uuid,
+    invoice_id: Uuid,
+    object: Value,
+) -> Result<bool, JobError> {
+    record_webhook(db, organization_id, WebhookKind::InvoiceGenerated, with_file_url(object, "invoices", invoice_id)).await
+}
+
+/// Emit `credit_note.generated` for a newly issued credit note.
+pub async fn record_credit_note_generated(
+    db: &Db,
+    organization_id: Uuid,
+    credit_note_id: Uuid,
+    object: Value,
+) -> Result<bool, JobError> {
+    record_webhook(
+        db,
+        organization_id,
+        WebhookKind::CreditNoteGenerated,
+        with_file_url(object, "credit_notes", credit_note_id),
+    )
+    .await
+}
+
+fn with_file_url(object: Value, resource: &str, id: Uuid) -> Value {
+    let mut map = match object {
+        Value::Object(m) => m,
+        other => {
+            let mut m = serde_json::Map::new();
+            m.insert("object".into(), other);
+            m
+        }
+    };
+    map.insert("lago_id".into(), Value::String(id.to_string()));
+    map.insert("file_url".into(), Value::String(document_url(resource, id)));
+    Value::Object(map)
+}
 
 /// Record a pending outbound webhook for a job trigger point.
 ///

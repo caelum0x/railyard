@@ -347,6 +347,15 @@ impl Invoice {
     async fn id(&self) -> ID {
         self.invoice.id.into()
     }
+    /// Download URL of the invoice PDF (rendered on request; authenticate
+    /// with the organization's API key).
+    async fn file_url(&self) -> String {
+        rago_jobs::webhook_emit::document_url("invoices", self.invoice.id)
+    }
+    /// Download URL of the invoice's EN 16931 XML.
+    async fn xml_url(&self) -> String {
+        format!("{}.xml", rago_jobs::webhook_emit::document_url("invoices", self.invoice.id))
+    }
     async fn number(&self) -> &str {
         &self.invoice.number
     }
@@ -541,6 +550,10 @@ pub struct CreditNote(pub m::CreditNote);
 impl CreditNote {
     async fn id(&self) -> ID {
         self.0.id.into()
+    }
+    /// Download URL of the credit-note PDF (rendered on request).
+    async fn file_url(&self) -> String {
+        rago_jobs::webhook_emit::document_url("credit_notes", self.0.id)
     }
     async fn number(&self) -> &str {
         &self.0.number

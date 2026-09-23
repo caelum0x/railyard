@@ -53,6 +53,54 @@ impl Db {
         Ok(())
     }
 
+    /// Seal and store the inbound webhook signing secret of a provider (Stripe
+    /// `whsec_…`, GoCardless webhook endpoint secret, Adyen HMAC key).
+    pub async fn store_payment_provider_webhook_secret(
+        &self,
+        provider_id: Uuid,
+        secret: &str,
+    ) -> std::result::Result<(), StoreSecretError> {
+        let sealed = secrets::seal(secret).map_err(StoreSecretError::Secret)?;
+        sqlx::query(
+            "UPDATE payment_providers SET encrypted_webhook_secret = $2, webhook_secret_ref = $3, updated_at = now() WHERE id = $1",
+        )
+        .bind(provider_id)
+        .bind(sealed)
+        .bind(secrets::mask(secret))
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StoreSecretError::Db(e.into()))?;
+        Ok(())
+    }
+
+    /// The opened inbound webhook secrets of the org's active providers of
+    /// `provider_type` (an org may run several accounts of one provider; a
+    /// signature is accepted when it verifies against any of them).
+    pub async fn provider_webhook_secrets(&self, org: Uuid, provider_type: &str) -> Result<Vec<String>> {
+        let rows = sqlx::query(
+            "SELECT encrypted_webhook_secret FROM payment_providers \
+             WHERE organization_id = $1 AND provider_type = $2 AND deleted_at IS NULL \
+               AND encrypted_webhook_secret IS NOT NULL ORDER BY created_at",
+        )
+        .bind(org)
+        .bind(provider_type)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let sealed: String = r.get("encrypted_webhook_secret");
+                match secrets::open(&sealed) {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "payment provider webhook secret unavailable");
+                        None
+                    }
+                }
+            })
+            .collect())
+    }
+
     /// The org's active provider of `provider_type` (or its first provider of
     /// any type when `None`), with the secret opened.
     pub async fn provider_credentials(

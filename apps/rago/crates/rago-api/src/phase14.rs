@@ -76,6 +76,11 @@ pub async fn create_integration(
     let integration_type = req_s(p, "integration_type")?;
     let provider_code = req_s(p, "provider_code")?;
     let code = req_s(p, "code")?;
+    // OAuth tokens are sealed at rest; refuse to connect without the key
+    // rather than persisting plaintext credentials.
+    if !rago_db::secrets::is_configured() {
+        return Err(ApiError::validation("integration", "encryption_key_missing: set RAGO_ENCRYPTION_KEY"));
+    }
 
     let client = OAuthClient::new(oauth_config(true)?, rago_integrations::default_transport());
     let tokens = client

@@ -174,8 +174,9 @@ impl AdminMutation2 {
     }
 
     /// `RegenerateInvoice` (`Mutations::Invoices::RegenerateFromVoided`) —
-    /// clone a voided invoice's header into a fresh finalized invoice. Fees are
-    /// not regenerated (the billing engine's job — a documented follow-up).
+    /// re-issue a VOIDED invoice as a fresh finalized invoice carrying a copy
+    /// of every fee, so the new invoice's totals are backed by its line items.
+    /// Emits `invoice.created` + `invoice.generated`.
     async fn regenerate_invoice(&self, ctx: &Context<'_>, voided_invoice_id: ID) -> Result<Invoice> {
         let org = require_org(ctx)?;
         let src = db(ctx)
@@ -183,6 +184,13 @@ impl AdminMutation2 {
             .await?
             .filter(|i| i.organization_id == org.id)
             .ok_or_else(|| async_graphql::Error::new("invoice_not_found"))?;
+        if !matches!(src.status, InvoiceStatus::Voided) {
+            return Err(async_graphql::Error::new("invoice_not_voided"));
+        }
+        let src_fees = db(ctx).fees_for_invoice(src.id).await?;
+        if src_fees.is_empty() {
+            return Err(async_graphql::Error::new("invoice_has_no_fees_to_regenerate"));
+        }
         let now = Utc::now();
         let mut clone = src.clone();
         clone.id = Uuid::new_v4();
@@ -193,11 +201,29 @@ impl AdminMutation2 {
         clone.created_at = now;
         clone.updated_at = now;
         db(ctx).insert_invoice(&clone).await?;
+        for fee in &src_fees {
+            let mut copy = fee.clone();
+            copy.id = Uuid::new_v4();
+            copy.invoice_id = Some(clone.id);
+            db(ctx).insert_fee(&copy).await?;
+        }
+        let object = serde_json::json!({
+            "lago_id": clone.id,
+            "number": clone.number,
+            "status": clone.status.as_str(),
+            "payment_status": clone.payment_status.as_str(),
+            "currency": clone.currency,
+            "total_amount_cents": clone.total_amount_cents,
+            "regenerated_from_invoice_id": src.id,
+        });
+        crate::webhook_emit::emit(db(ctx), org.id, rago_integrations::webhooks::WebhookKind::InvoiceCreated, object.clone()).await;
+        let _ = rago_jobs::webhook_emit::record_invoice_generated(db(ctx), org.id, clone.id, object).await;
         load_invoice(ctx, clone).await
     }
 
-    /// `ResendInvoiceEmail` (`Mutations::Invoices::ResendEmail`) — returns the
-    /// invoice; actual email dispatch is an async job (documented follow-up).
+    /// `ResendInvoiceEmail` (`Mutations::Invoices::ResendEmail`) — renders the
+    /// invoice email and sends it to the customer through the API's mailer.
+    /// Errors when the customer has no email address or delivery fails.
     async fn resend_invoice_email(&self, ctx: &Context<'_>, id: ID) -> Result<Invoice> {
         let org = require_org(ctx)?;
         let invoice = db(ctx)
@@ -205,11 +231,27 @@ impl AdminMutation2 {
             .await?
             .filter(|i| i.organization_id == org.id)
             .ok_or_else(|| async_graphql::Error::new("invoice_not_found"))?;
+        let mailer = ctx
+            .data_opt::<crate::GraphMailer>()
+            .ok_or_else(|| async_graphql::Error::new("mailer_not_configured"))?;
+        let to = match invoice.customer_id {
+            Some(cid) => db(ctx).find_customer(cid).await?.and_then(|c| c.email),
+            None => None,
+        }
+        .filter(|e| e.contains('@'))
+        .ok_or_else(|| async_graphql::Error::new("customer_email_missing"))?;
+        let fees = db(ctx).fees_for_invoice(invoice.id).await?;
+        let email = rago_mail::builders::invoice_finalized_email(&invoice, &fees, &to);
+        mailer
+            .0
+            .send(&email)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("email_delivery_failed: {e}")))?;
         load_invoice(ctx, invoice).await
     }
 
     /// `DownloadXmlInvoice` (`Mutations::Invoices::DownloadXml`) — returns the
-    /// invoice; XML rendering is an async job (documented follow-up).
+    /// invoice; its `xmlUrl` serves the EN 16931 XML rendered on request.
     async fn download_xml_invoice(&self, ctx: &Context<'_>, id: ID) -> Result<Invoice> {
         require_org(ctx)?;
         let invoice = db(ctx)

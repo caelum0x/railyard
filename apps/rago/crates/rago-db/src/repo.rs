@@ -1951,6 +1951,8 @@ impl Db {
         expires_at: Option<NaiveDateTime>,
         settings: &serde_json::Value,
     ) -> Result<()> {
+        let access_token = access_token.map(seal_token);
+        let refresh_token = refresh_token.map(seal_token);
         sqlx::query("INSERT INTO integration_connections (id, organization_id, integration_type, provider_code, name, access_token, refresh_token, token_expires_at, settings, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now(),now())")
             .bind(id).bind(org).bind(integration_type).bind(provider_code).bind(name)
             .bind(access_token).bind(refresh_token).bind(expires_at).bind(settings)
@@ -1979,8 +1981,8 @@ impl Db {
                 r.get::<Uuid, _>("id"),
                 r.get::<String, _>("integration_type"),
                 r.get::<String, _>("provider_code"),
-                r.get::<Option<String>, _>("access_token"),
-                r.get::<Option<String>, _>("refresh_token"),
+                r.get::<Option<String>, _>("access_token").map(|t| open_token(&t)),
+                r.get::<Option<String>, _>("refresh_token").map(|t| open_token(&t)),
                 r.get::<Option<NaiveDateTime>, _>("token_expires_at"),
             )
         }))
@@ -1997,7 +1999,7 @@ impl Db {
         Ok(row.map(|r| {
             (
                 r.get::<Uuid, _>("id"),
-                r.get::<Option<String>, _>("access_token"),
+                r.get::<Option<String>, _>("access_token").map(|t| open_token(&t)),
             )
         }))
     }
@@ -2009,6 +2011,8 @@ impl Db {
         refresh_token: Option<&str>,
         expires_at: Option<NaiveDateTime>,
     ) -> Result<()> {
+        let access_token = seal_token(access_token);
+        let refresh_token = refresh_token.map(seal_token);
         sqlx::query("UPDATE integration_connections SET access_token = $2, refresh_token = COALESCE($3, refresh_token), token_expires_at = $4, updated_at = now() WHERE id = $1")
             .bind(id).bind(access_token).bind(refresh_token).bind(expires_at)
             .execute(&self.pool).await?;
@@ -2938,4 +2942,34 @@ where
     .execute(exec)
     .await?;
     Ok(())
+}
+
+/// Seal an OAuth token for `integration_connections` (AES-GCM under
+/// `RAGO_ENCRYPTION_KEY`). The API refuses to connect integrations without the
+/// key (see `rago_api::phase14::create_integration`), so the plaintext branch is
+/// only reachable from internal callers on a key-less single-tenant setup and is
+/// logged.
+fn seal_token(token: &str) -> String {
+    match crate::secrets::seal(token) {
+        Ok(sealed) => sealed,
+        Err(e) => {
+            tracing::warn!(error = %e, "integration token stored unsealed (RAGO_ENCRYPTION_KEY missing)");
+            token.to_string()
+        }
+    }
+}
+
+/// Open a stored OAuth token; legacy plaintext rows (no `v1:` prefix) pass
+/// through unchanged.
+fn open_token(stored: &str) -> String {
+    if !stored.starts_with("v1:") {
+        return stored.to_string();
+    }
+    match crate::secrets::open(stored) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "integration token could not be opened");
+            String::new()
+        }
+    }
 }

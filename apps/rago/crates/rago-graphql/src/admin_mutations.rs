@@ -52,9 +52,10 @@ fn aggregation_i32(s: &str) -> Option<i32> {
         "sum_agg" => SumAgg,
         "max_agg" => MaxAgg,
         "unique_count_agg" => UniqueCountAgg,
-        "weighted_sum_agg" => WeightedSumAgg,
+        // weighted_sum_agg / custom_agg are not accepted: the billing engine
+        // cannot compute fees for them, so a metric using one would fail every
+        // invoice it appears on.
         "latest_agg" => LatestAgg,
-        "custom_agg" => CustomAgg,
         _ => return None,
     }
     .as_i32())
@@ -588,7 +589,7 @@ impl AdminMutation {
     }
 
     /// `DownloadInvoice` (`Mutations::Invoices::Download`) — returns the invoice
-    /// object; PDF rendering is an async job (documented follow-up).
+    /// with its `fileUrl`; the PDF is rendered on request at that URL.
     async fn download_invoice(&self, ctx: &Context<'_>, id: ID) -> Result<Invoice> {
         require_org(ctx)?;
         let invoice = db(ctx)
@@ -676,6 +677,29 @@ impl AdminMutation {
         }
         // `CreditNotes::CreateService` emits `credit_note.created`.
         emit(db(ctx), org.id, WebhookKind::CreditNoteCreated, json!({ "lago_id": cn.id, "number": cn.number, "lago_invoice_id": cn.invoice_id, "total_amount_cents": cn.total_amount_cents })).await;
+        let _ = rago_jobs::webhook_emit::record_credit_note_generated(
+            db(ctx),
+            org.id,
+            cn.id,
+            json!({ "number": cn.number, "lago_invoice_id": cn.invoice_id, "total_amount_cents": cn.total_amount_cents, "currency": cn.total_amount_currency }),
+        )
+        .await;
+        // Pay the refund portion back through the provider that captured the
+        // invoice's payment; refund_status reflects the provider's answer.
+        if cn.refund_amount_cents > 0 {
+            let transport = rago_integrations::default_transport();
+            match rago_jobs::refunds::refund_invoice(db(ctx), &transport, &invoice, Some(cn.refund_amount_cents), Some(&cn)).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(rejection)) => {
+                    db(ctx).update_credit_note_refund_status(cn.id, 2).await?;
+                    return Err(async_graphql::Error::new(format!("credit_note_created_refund_rejected: {}", rejection.code())));
+                }
+                Err(e) => return Err(async_graphql::Error::new(format!("credit_note_created_refund_error: {e}"))),
+            }
+            if let Some(updated) = db(ctx).find_credit_note(cn.id).await? {
+                return Ok(CreditNote(updated));
+            }
+        }
         Ok(CreditNote(cn))
     }
 
@@ -706,7 +730,7 @@ impl AdminMutation {
     }
 
     /// `DownloadCreditNote` (`Mutations::CreditNotes::Download`) — returns the
-    /// credit-note object; PDF rendering is an async job (documented follow-up).
+    /// credit note with its `fileUrl`; the PDF is rendered on request there.
     async fn download_credit_note(&self, ctx: &Context<'_>, id: ID) -> Result<CreditNote> {
         require_org(ctx)?;
         let cn = db(ctx)

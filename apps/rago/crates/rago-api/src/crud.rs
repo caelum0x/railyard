@@ -654,9 +654,10 @@ fn aggregation_i32(s: &str) -> Option<i32> {
         "sum_agg" => AggregationType::SumAgg,
         "max_agg" => AggregationType::MaxAgg,
         "unique_count_agg" => AggregationType::UniqueCountAgg,
-        "weighted_sum_agg" => AggregationType::WeightedSumAgg,
+        // weighted_sum_agg / custom_agg are not accepted: the billing engine
+        // cannot compute fees for them, so a metric using one would fail every
+        // invoice it appears on.
         "latest_agg" => AggregationType::LatestAgg,
-        "custom_agg" => AggregationType::CustomAgg,
         _ => return None,
     }
     .as_i32())

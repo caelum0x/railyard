@@ -30,6 +30,7 @@ pub mod dunning;
 pub mod payments;
 pub mod prepaid_settle;
 pub mod queue;
+pub mod refunds;
 pub mod scheduler;
 pub mod sso;
 pub mod webhook_delivery;

@@ -333,17 +333,30 @@ pub async fn terminate_subscription(
         .ok_or_else(|| ApiError::NotFound("subscription".into()))?;
     let plan = st.db.find_plan(sub.plan_id).await?;
 
-    sub.status = SubscriptionStatus::Terminated;
-    sub.terminated_at = Some(now());
+    // `Subscriptions::TerminateService`: a subscription that never started is
+    // canceled (`subscription.canceled`); an active one is terminated
+    // (`subscription.terminated`).
+    let was_pending = matches!(sub.status, SubscriptionStatus::Pending);
+    if was_pending {
+        sub.status = SubscriptionStatus::Canceled;
+    } else {
+        sub.status = SubscriptionStatus::Terminated;
+        sub.terminated_at = Some(now());
+    }
     sub.canceled_at = Some(now());
     sub.updated_at = now();
     st.db.update_subscription(&sub).await?;
 
     // external_customer_id is looked up for the response.
     let ext_customer = external_customer_id_for(&st, sub.customer_id).await?;
-    Ok(Json(json!({
-        "subscription": ser::subscription(&sub, &plan, &ext_customer)
-    })))
+    let body = ser::subscription(&sub, &plan, &ext_customer);
+    let kind = if was_pending {
+        rago_integrations::webhooks::WebhookKind::SubscriptionCanceled
+    } else {
+        rago_integrations::webhooks::WebhookKind::SubscriptionTerminated
+    };
+    crate::emit::webhook(&st.db, auth.organization.id, kind, body.clone()).await;
+    Ok(Json(json!({ "subscription": body })))
 }
 
 async fn external_customer_id_for(st: &AppState, customer_id: Uuid) -> ApiResult<String> {
@@ -714,6 +727,9 @@ pub async fn create_credit_note(
     let seq = st.db.next_credit_note_sequential_id(invoice.id).await?;
     let mut cn = build_cn(&invoice, &fees, items, refund, seq);
     cn.customer_id = invoice.customer_id.unwrap_or_default();
+    if let Some(reason) = s(p, "reason").and_then(|r| credit_note_reason_i32(&r)) {
+        cn.reason = reason;
+    }
     st.db.insert_credit_note(&cn).await?;
 
     // `CreditNotes::CreateService` emits `credit_note.created`.
@@ -724,7 +740,24 @@ pub async fn create_credit_note(
         json!({ "lago_id": cn.id, "number": cn.number, "lago_invoice_id": cn.invoice_id, "total_amount_cents": cn.total_amount_cents }),
     )
     .await;
-    Ok(Json(json!({ "credit_note": ser::credit_note(&cn) })))
+    let _ = rago_jobs::webhook_emit::record_credit_note_generated(&st.db, invoice.organization_id, cn.id, ser::credit_note(&cn)).await;
+
+    // A refund portion is paid back through the provider that captured the
+    // invoice's payment; the credit note's refund_status reflects the outcome.
+    let refund = match crate::refunds::refund_credit_note_at_provider(&st, &invoice, &cn).await {
+        Ok(Some(Ok(r))) => json!({ "status": r.state.as_str(), "provider": r.provider, "error": r.error }),
+        Ok(Some(Err(rejection))) => {
+            let _ = st.db.update_credit_note_refund_status(cn.id, 2).await;
+            json!({ "status": "failed", "error": rejection.code() })
+        }
+        Ok(None) => Value::Null,
+        Err(e) => {
+            tracing::error!(error = %e, credit_note_id = %cn.id, "credit note refund failed");
+            json!({ "status": "failed", "error": "refund_error" })
+        }
+    };
+    let cn = st.db.find_credit_note(cn.id).await?.unwrap_or(cn);
+    Ok(Json(json!({ "credit_note": ser::credit_note(&cn), "refund": refund })))
 }
 
 // ---- applied coupons -------------------------------------------------------
@@ -783,15 +816,29 @@ pub async fn create_applied_coupon(
 
 // ---- enum parsing ----------------------------------------------------------
 
+/// Lago credit-note `reason` code → persisted integer.
+fn credit_note_reason_i32(s: &str) -> Option<i32> {
+    Some(match s {
+        "duplicated_charge" => 0,
+        "product_unsatisfactory" => 1,
+        "order_change" => 2,
+        "order_cancellation" => 3,
+        "fraudulent_charge" => 4,
+        "other" => 5,
+        _ => return None,
+    })
+}
+
 fn aggregation_from_str(s: &str) -> Option<AggregationType> {
     Some(match s {
         "count_agg" => AggregationType::CountAgg,
         "sum_agg" => AggregationType::SumAgg,
         "max_agg" => AggregationType::MaxAgg,
         "unique_count_agg" => AggregationType::UniqueCountAgg,
-        "weighted_sum_agg" => AggregationType::WeightedSumAgg,
+        // weighted_sum_agg / custom_agg are not accepted: the billing engine
+        // cannot compute fees for them, so a metric using one would fail every
+        // invoice it appears on.
         "latest_agg" => AggregationType::LatestAgg,
-        "custom_agg" => AggregationType::CustomAgg,
         _ => return None,
     })
 }
@@ -857,20 +904,9 @@ impl NextMonth for chrono::NaiveDate {
 }
 
 // ---- refunds ---------------------------------------------------------------
-
-/// `POST /invoices/:id/refund` — refund the invoice's payment (marks the
-/// payment refunded + invoice `payment_status` refunded).
-pub async fn refund_invoice(
-    State(st): State<AppState>,
-    _auth: Authed,
-    Path(id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    let invoice = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
-    st.db.refund_invoice(invoice.id).await?;
-    let updated = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
-    let fees = st.db.fees_for_invoice(updated.id).await?;
-    Ok(Json(json!({ "invoice": ser::invoice(&updated, &fees) })))
-}
+//
+// `POST /invoices/:id/refund` lives in [`crate::refunds`]: it refunds the
+// captured payment at the provider instead of only flipping local status.
 
 // ---- entitlements ----------------------------------------------------------
 

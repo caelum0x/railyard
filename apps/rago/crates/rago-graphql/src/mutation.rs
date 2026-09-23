@@ -354,12 +354,27 @@ impl Mutation {
             .await?
             .ok_or_else(|| async_graphql::Error::new("subscription_not_found"))?;
         let plan = db(ctx).find_plan(sub.plan_id).await?;
-        sub.status = SubscriptionStatus::Terminated;
-        sub.terminated_at = Some(now());
+        // A subscription that never started is canceled; an active one is
+        // terminated (`Subscriptions::TerminateService`).
+        let was_pending = matches!(sub.status, SubscriptionStatus::Pending);
+        if was_pending {
+            sub.status = SubscriptionStatus::Canceled;
+        } else {
+            sub.status = SubscriptionStatus::Terminated;
+            sub.terminated_at = Some(now());
+        }
         sub.canceled_at = Some(now());
         sub.updated_at = now();
         db(ctx).update_subscription(&sub).await?;
         let ext = db(ctx).customer_external_id(sub.customer_id).await?.unwrap_or_default();
+        let kind = if was_pending { WebhookKind::SubscriptionCanceled } else { WebhookKind::SubscriptionTerminated };
+        emit(
+            db(ctx),
+            org.id,
+            kind,
+            json!({ "lago_id": sub.id, "external_id": sub.external_id, "external_customer_id": ext, "plan_code": plan.code, "status": sub.status.as_str() }),
+        )
+        .await;
         Ok(Subscription {
             plan_code: plan.code.clone(),
             plan_amount_cents: plan.amount_cents,
@@ -781,9 +796,10 @@ fn aggregation_from_str(s: &str) -> Option<AggregationType> {
         "sum_agg" => AggregationType::SumAgg,
         "max_agg" => AggregationType::MaxAgg,
         "unique_count_agg" => AggregationType::UniqueCountAgg,
-        "weighted_sum_agg" => AggregationType::WeightedSumAgg,
+        // weighted_sum_agg / custom_agg are not accepted: the billing engine
+        // cannot compute fees for them, so a metric using one would fail every
+        // invoice it appears on.
         "latest_agg" => AggregationType::LatestAgg,
-        "custom_agg" => AggregationType::CustomAgg,
         _ => return None,
     })
 }

@@ -128,6 +128,61 @@ pub fn adyen_event(item: &Value) -> ProviderWebhookEvent {
     }
 }
 
+// ---- refunds ---------------------------------------------------------------
+
+/// A provider notification about a refund Rago issued.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderRefundEvent {
+    pub provider_refund_id: String,
+    pub state: super::RefundState,
+    pub provider_status: String,
+}
+
+/// GoCardless `refunds` resource events (`paid`, `refund_settled`, `failed`,
+/// `bounced`, `funds_returned`, ...).
+pub fn gocardless_refund_events(payload: &str) -> Result<Vec<ProviderRefundEvent>, WebhookError> {
+    let json: Value =
+        serde_json::from_str(payload).map_err(|e| WebhookError::InvalidPayload(e.to_string()))?;
+    let events = json.get("events").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut out = Vec::new();
+    for ev in events {
+        if ev.get("resource_type").and_then(Value::as_str) != Some("refunds") {
+            continue;
+        }
+        let Some(refund_id) = ev.pointer("/links/refund").and_then(Value::as_str) else {
+            continue;
+        };
+        let action = ev.get("action").and_then(Value::as_str).unwrap_or("").to_string();
+        let state = match action.as_str() {
+            "paid" | "refund_settled" => super::RefundState::Succeeded,
+            "failed" | "bounced" | "funds_returned" | "cancelled" => super::RefundState::Failed,
+            _ => super::RefundState::Pending,
+        };
+        out.push(ProviderRefundEvent { provider_refund_id: refund_id.to_string(), state, provider_status: action });
+    }
+    Ok(out)
+}
+
+/// Adyen `REFUND` / `REFUND_FAILED` notification for a refund (its own
+/// `pspReference`). `None` for any other event code.
+pub fn adyen_refund_event(item: &Value) -> Option<ProviderRefundEvent> {
+    let event_code = item.get("eventCode").and_then(Value::as_str).unwrap_or("");
+    let success = item.get("success").and_then(Value::as_str) == Some("true");
+    let state = match (event_code, success) {
+        ("REFUND", true) => super::RefundState::Succeeded,
+        ("REFUND", false) | ("REFUND_FAILED", _) => super::RefundState::Failed,
+        _ => return None,
+    };
+    let id = item.get("pspReference").and_then(Value::as_str)?.to_string();
+    Some(ProviderRefundEvent { provider_refund_id: id, state, provider_status: event_code.to_string() })
+}
+
+/// The payment PSP reference an Adyen modification (refund, cancellation)
+/// applies to.
+pub fn adyen_original_reference(item: &Value) -> Option<String> {
+    item.get("originalReference").and_then(Value::as_str).map(str::to_string)
+}
+
 // ---- helpers ---------------------------------------------------------------
 
 fn hmac_hex(secret: &str, payload: &str) -> String {

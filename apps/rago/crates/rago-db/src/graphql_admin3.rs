@@ -23,6 +23,8 @@ pub struct PaymentProviderRow {
     pub secret_ref: Option<String>,
     pub success_redirect_url: Option<String>,
     pub settings: Value,
+    /// Masked (`****last4`) inbound webhook signing secret, if one is stored.
+    pub webhook_secret_ref: Option<String>,
 }
 
 fn payment_provider_row(r: &sqlx::postgres::PgRow) -> PaymentProviderRow {
@@ -32,6 +34,7 @@ fn payment_provider_row(r: &sqlx::postgres::PgRow) -> PaymentProviderRow {
         code: r.get("code"),
         name: r.get("name"),
         secret_ref: r.get("secret_ref"),
+        webhook_secret_ref: r.try_get("webhook_secret_ref").ok().flatten(),
         success_redirect_url: r.get("success_redirect_url"),
         settings: r.get("settings"),
     }

@@ -89,3 +89,16 @@ pub fn build_schema(db: Db) -> RagoSchema {
         .data(GraphQlData { db })
         .finish()
 }
+
+/// The email transport resolvers use to send customer emails (resend).
+#[derive(Clone)]
+pub struct GraphMailer(pub std::sync::Arc<dyn rago_mail::EmailTransport>);
+
+/// Build the schema with the API's email transport, so mutations that send
+/// email (`resendInvoiceEmail`) use the same mailer as the REST surface.
+pub fn build_schema_with_mailer(db: Db, mailer: std::sync::Arc<dyn rago_mail::EmailTransport>) -> RagoSchema {
+    Schema::build(Query::default(), Mutation::default(), EmptySubscription)
+        .data(GraphQlData { db })
+        .data(GraphMailer(mailer))
+        .finish()
+}

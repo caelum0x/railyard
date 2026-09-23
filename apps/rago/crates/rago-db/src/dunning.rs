@@ -381,6 +381,20 @@ impl Db {
         Ok(())
     }
 
+    /// Set a payment request's aggregate `payment_status` (`pending` |
+    /// `succeeded` | `failed`); returns whether it changed.
+    pub async fn set_payment_request_status(&self, id: Uuid, status: &str) -> Result<bool> {
+        let r = sqlx::query(
+            "UPDATE payment_requests SET payment_status = $2, updated_at = now() \
+             WHERE id = $1 AND payment_status <> $2",
+        )
+        .bind(id)
+        .bind(status)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     /// Invoice ids linked to a payment request (for the sweep's charge step and
     /// for tests).
     pub async fn payment_request_invoice_ids(&self, payment_request_id: Uuid) -> Result<Vec<Uuid>> {

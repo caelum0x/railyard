@@ -2421,6 +2421,7 @@ dependencies = [
  "rago-db",
  "rago-integrations",
  "rago-jobs",
+ "rago-mail",
  "rust_decimal",
  "rust_decimal_macros",
  "serde_json",

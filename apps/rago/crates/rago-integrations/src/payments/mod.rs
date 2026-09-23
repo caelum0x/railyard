@@ -28,6 +28,11 @@ use crate::transport::TransportError;
 /// replay of the same attempt reuses the key (deduplicated by the provider); a
 /// legitimate retry of a declined charge gets a fresh key, because providers
 /// cache 4xx results (e.g. Stripe `card_declined`) under a key for 24h.
+/// Provider idempotency key for a refund.
+pub fn refund_idempotency_key(refund_id: &Uuid) -> String {
+    format!("refund-{refund_id}")
+}
+
 pub fn idempotency_key(payment_id: &Uuid, attempt: u32) -> String {
     if attempt == 0 {
         format!("payment-{payment_id}")
@@ -129,4 +134,67 @@ pub trait PaymentProvider: Send + Sync {
     /// Create and confirm a payment for the invoice, returning the mapped
     /// outcome.
     async fn create_payment(&self, req: &PaymentRequest) -> Result<PaymentOutcome, PaymentError>;
+
+    /// Refund (part of) a previously captured payment at the provider
+    /// (`PaymentProviders::*::Refunds::CreateService`).
+    async fn refund_payment(&self, req: &RefundRequest) -> Result<RefundOutcome, PaymentError> {
+        let _ = req;
+        Err(PaymentError::NotImplemented(self.payment_type()))
+    }
+}
+
+/// A request to refund a captured payment.
+#[derive(Debug, Clone)]
+pub struct RefundRequest {
+    /// Rago refund id (idempotency key `refund-<id>`).
+    pub refund_id: Uuid,
+    /// Provider payment id the refund applies to (Stripe `pi_…`, GoCardless
+    /// `PM…`, Adyen PSP reference).
+    pub provider_payment_id: String,
+    pub amount_cents: i64,
+    /// ISO currency code.
+    pub currency: String,
+    /// Total refunded on this payment INCLUDING this refund (GoCardless
+    /// `total_amount_confirmation`).
+    pub total_refunded_cents: i64,
+    /// Lago credit-note reason (`duplicated_charge`, `fraudulent_charge`, …).
+    pub reason: Option<String>,
+    /// Human-readable reference (credit-note or invoice number).
+    pub reference: String,
+}
+
+/// The provider-side state of a refund.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefundState {
+    Pending,
+    Succeeded,
+    Failed,
+}
+
+impl RefundState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RefundState::Pending => "pending",
+            RefundState::Succeeded => "succeeded",
+            RefundState::Failed => "failed",
+        }
+    }
+
+    /// The credit-note `refund_status` integer (`pending`=0, `succeeded`=1,
+    /// `failed`=2).
+    pub fn credit_note_status(self) -> i32 {
+        match self {
+            RefundState::Pending => 0,
+            RefundState::Succeeded => 1,
+            RefundState::Failed => 2,
+        }
+    }
+}
+
+/// The outcome of a provider refund.
+#[derive(Debug, Clone)]
+pub struct RefundOutcome {
+    pub provider_refund_id: String,
+    pub provider_status: String,
+    pub state: RefundState,
 }

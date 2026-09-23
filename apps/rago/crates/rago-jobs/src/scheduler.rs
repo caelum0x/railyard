@@ -149,6 +149,16 @@ pub async fn bill_and_collect<T: HttpTransport>(
         {
             webhooks_written += 1;
         }
+        if matches!(invoice.status, rago_core::enums::InvoiceStatus::Finalized) {
+            // The finalized invoice's document is downloadable from now on.
+            crate::webhook_emit::record_invoice_generated(
+                db,
+                subscription.organization_id,
+                invoice.id,
+                invoice_webhook_object(&invoice),
+            )
+            .await?;
+        }
         for fee in &fees {
             if record_webhook(
                 db,

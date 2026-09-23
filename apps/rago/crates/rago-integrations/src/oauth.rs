@@ -55,6 +55,24 @@ impl<T: HttpTransport> OAuthClient<T> {
         self.token_request(form).await
     }
 
+    /// Exchange an authorization `code` bound to a PKCE `code_verifier`
+    /// (RFC 7636) for tokens.
+    pub async fn exchange_code_with_verifier(
+        &self,
+        code: &str,
+        code_verifier: &str,
+    ) -> Result<OAuthTokens, IntegrationError> {
+        let form = form_encode(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("client_id", &self.config.client_id),
+            ("client_secret", &self.config.client_secret),
+            ("redirect_uri", &self.config.redirect_uri),
+            ("code_verifier", code_verifier),
+        ]);
+        self.token_request(form).await
+    }
+
     /// Refresh the access token with a stored refresh token
     /// (grant_type=refresh_token).
     pub async fn refresh(&self, refresh_token: &str) -> Result<OAuthTokens, IntegrationError> {
@@ -99,6 +117,25 @@ impl<T: HttpTransport> OAuthClient<T> {
                 .to_string(),
         })
     }
+}
+
+/// Build a URL query string (`k=v&…`, percent-encoded).
+pub fn query_string(pairs: &[(&str, &str)]) -> String {
+    form_encode(pairs)
+}
+
+/// A fresh high-entropy PKCE code verifier / OAuth state value (64 hex chars,
+/// 244 random bits).
+pub fn random_token() -> String {
+    format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple())
+}
+
+/// PKCE `S256` code challenge: base64url(no padding) of SHA-256(verifier).
+pub fn pkce_challenge(code_verifier: &str) -> String {
+    use base64::Engine;
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(code_verifier.as_bytes());
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
 }
 
 fn form_encode(pairs: &[(&str, &str)]) -> String {

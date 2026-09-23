@@ -256,6 +256,8 @@ pub fn credit_note(cn: &CreditNote) -> Value {
         "balance_amount_cents": cn.balance_amount_cents,
         "credit_amount_cents": cn.credit_amount_cents,
         "refund_amount_cents": cn.refund_amount_cents,
+        "refund_status": cn.refund_status.map(|s| match s { 1 => "succeeded", 2 => "failed", _ => "pending" }),
+        "credit_status": cn.credit_status.map(|s| match s { 1 => "consumed", 2 => "voided", _ => "available" }),
         "coupons_adjustment_amount_cents": cn.coupons_adjustment_amount_cents,
         "taxes_rate": cn.taxes_rate,
         "created_at": ts(cn.created_at),

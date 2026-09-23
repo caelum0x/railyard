@@ -17,6 +17,10 @@ pub struct PaymentProvider {
     pub name: Option<String>,
     pub secret_ref: Option<String>,
     pub success_redirect_url: Option<String>,
+    /// Masked inbound webhook signing secret (`****last4`), when stored.
+    pub webhook_secret_ref: Option<String>,
+    /// Provider settings (merchant account, 3DS flags, ...). Never secrets.
+    pub settings: async_graphql::Json<serde_json::Value>,
 }
 
 impl From<rago_db::PaymentProviderRow> for PaymentProvider {
@@ -28,6 +32,8 @@ impl From<rago_db::PaymentProviderRow> for PaymentProvider {
             name: r.name,
             secret_ref: r.secret_ref,
             success_redirect_url: r.success_redirect_url,
+            webhook_secret_ref: r.webhook_secret_ref,
+            settings: async_graphql::Json(r.settings),
         }
     }
 }

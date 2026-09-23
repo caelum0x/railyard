@@ -208,23 +208,42 @@ pub async fn create_one_off_invoice(
         ser::invoice(&invoice, &fees),
     )
     .await;
+    if matches!(invoice.status, rago_core::enums::InvoiceStatus::Finalized) {
+        let _ = rago_jobs::webhook_emit::record_invoice_generated(&st.db, org, invoice.id, ser::invoice(&invoice, &fees)).await;
+    }
     send_invoice_finalized(&st, &invoice, &fees, customer.email.as_deref()).await;
 
     Ok(Json(json!({ "invoice": ser::invoice(&invoice, &fees) })))
 }
 
 /// Render the invoice-finalized email and send it through the injectable
-/// transport (`InvoiceMailer#finalized`). Best-effort: a mail failure never
-/// fails the billing request.
-pub async fn send_invoice_finalized(st: &AppState, invoice: &Invoice, fees: &[Fee], to: Option<&str>) {
+/// transport (`InvoiceMailer#finalized`). Billing paths treat it as
+/// best-effort (a mail failure never fails the billing request); the result
+/// says what actually happened so an explicit resend can report it.
+pub async fn send_invoice_finalized(st: &AppState, invoice: &Invoice, fees: &[Fee], to: Option<&str>) -> EmailOutcome {
     let Some(to) = to.filter(|t| t.contains('@')) else {
         tracing::info!(invoice_id = %invoice.id, "invoice email skipped: customer has no email address");
-        return;
+        return EmailOutcome::NoRecipient;
     };
     let email = builders::invoice_finalized_email(invoice, fees, to);
-    if st.mailer.send(&email).await.is_ok() {
-        crate::observability::incr("emails_sent");
+    match st.mailer.send(&email).await {
+        Ok(_) => {
+            crate::observability::incr("emails_sent");
+            EmailOutcome::Sent
+        }
+        Err(e) => {
+            tracing::warn!(invoice_id = %invoice.id, error = %e, "invoice email failed");
+            EmailOutcome::Failed(e.to_string())
+        }
     }
+}
+
+/// What happened to an invoice email.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EmailOutcome {
+    Sent,
+    NoRecipient,
+    Failed(String),
 }
 
 /// `GET /emails` — captured emails (verification only; only populated when the

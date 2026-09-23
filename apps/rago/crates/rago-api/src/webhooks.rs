@@ -6,6 +6,16 @@
 //! over the raw body, maps `payment_intent.succeeded/payment_failed/refunded`
 //! to a payable status, updates the matching Payment + Invoice, and emits the
 //! Lago outbound `invoice.payment_status_updated` webhook.
+//!
+//! Signing secrets are per organization: each org's payment provider row
+//! stores its own sealed webhook secret (Stripe `whsec_…`, GoCardless endpoint
+//! secret, Adyen HMAC key), looked up by the `:organization_id` in the route.
+//! The `RAGO_STRIPE_WEBHOOK_SECRET` / `RAGO_GOCARDLESS_WEBHOOK_SECRET` /
+//! `RAGO_ADYEN_HMAC_KEY` env vars remain a single-tenant fallback used only when
+//! the org has no stored secret.
+//!
+//! Refund notifications (Stripe `refund.*`, GoCardless `refunds` events, Adyen
+//! `REFUND`) settle the refunds Rago issued (see `rago_jobs::refunds`).
 
 use axum::body::Bytes;
 use axum::extract::{Path, State};
@@ -20,6 +30,55 @@ use uuid::Uuid;
 
 use crate::state::AppState;
 
+/// The org's stored webhook secrets for `provider`, else the env fallback.
+async fn webhook_secrets(
+    state: &AppState,
+    organization_id: Uuid,
+    provider: &str,
+    env_var: &str,
+) -> Result<Vec<String>, (StatusCode, String)> {
+    let mut secrets = state
+        .db
+        .provider_webhook_secrets(organization_id, provider)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "webhook secret lookup failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "db error".to_string())
+        })?;
+    if secrets.is_empty() {
+        if let Some(v) = std::env::var(env_var).ok().filter(|v| !v.trim().is_empty()) {
+            secrets.push(v);
+        }
+    }
+    if secrets.is_empty() {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("{provider} webhook secret not configured for this organization"),
+        ));
+    }
+    Ok(secrets)
+}
+
+/// Settle a refund Rago issued from a provider notification.
+async fn apply_refund(
+    state: &AppState,
+    organization_id: Uuid,
+    ev: &rago_integrations::ProviderRefundEvent,
+) -> Result<bool, (StatusCode, String)> {
+    rago_jobs::refunds::apply_refund_notification(
+        &state.db,
+        organization_id,
+        &ev.provider_refund_id,
+        ev.state,
+        &ev.provider_status,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "refund notification failed");
+        (StatusCode::INTERNAL_SERVER_ERROR, "db error".to_string())
+    })
+}
+
 /// `POST /webhooks/stripe/:organization_id`.
 pub async fn stripe_webhook(
     State(state): State<AppState>,
@@ -32,23 +91,42 @@ pub async fn stripe_webhook(
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid body".into()),
     };
 
-    // Verify the Stripe signature over the raw body with the endpoint secret.
-    let secret = std::env::var("RAGO_STRIPE_WEBHOOK_SECRET").unwrap_or_default();
+    // Verify the Stripe signature over the raw body with the org's endpoint
+    // secret(s).
+    let secrets = match webhook_secrets(&state, organization_id, "stripe", "RAGO_STRIPE_WEBHOOK_SECRET").await {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
     let sig = headers
         .get("Stripe-Signature")
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default();
-    if secret.is_empty() {
-        return (StatusCode::INTERNAL_SERVER_ERROR, "webhook secret not configured".into());
-    }
-    if let Err(e) = verify_signature(payload, sig, &secret, Utc::now().timestamp(), DEFAULT_TOLERANCE_SECS) {
-        return (StatusCode::BAD_REQUEST, format!("signature error: {e}"));
+    let now = Utc::now().timestamp();
+    let mut last_err = None;
+    let verified = secrets.iter().any(|secret| match verify_signature(payload, sig, secret, now, DEFAULT_TOLERANCE_SECS) {
+        Ok(()) => true,
+        Err(e) => {
+            last_err = Some(e);
+            false
+        }
+    });
+    if !verified {
+        let msg = last_err.map(|e| e.to_string()).unwrap_or_else(|| "signature mismatch".into());
+        return (StatusCode::BAD_REQUEST, format!("signature error: {msg}"));
     }
 
     let event = match parse_event(payload) {
         Ok(e) => e,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("invalid payload: {e}")),
     };
+
+    if let Some(refund) = event.refund_event() {
+        return match apply_refund(&state, organization_id, &refund).await {
+            Ok(true) => (StatusCode::OK, "refund updated".into()),
+            Ok(false) => (StatusCode::OK, "refund not found".into()),
+            Err(e) => e,
+        };
+    }
 
     sync_payment_status(&state, organization_id, &event.object_id, event.incoming_status()).await
 }
@@ -65,13 +143,23 @@ pub async fn gocardless_webhook(
         Ok(s) => s,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid body".into()),
     };
-    let secret = std::env::var("RAGO_GOCARDLESS_WEBHOOK_SECRET").unwrap_or_default();
-    if secret.is_empty() {
-        return (StatusCode::INTERNAL_SERVER_ERROR, "webhook secret not configured".into());
-    }
+    let secrets = match webhook_secrets(&state, organization_id, "gocardless", "RAGO_GOCARDLESS_WEBHOOK_SECRET").await {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
     let sig = headers.get("Webhook-Signature").and_then(|v| v.to_str().ok()).unwrap_or_default();
-    if rago_integrations::gocardless_verify(payload, sig, &secret).is_err() {
+    if !secrets.iter().any(|secret| rago_integrations::gocardless_verify(payload, sig, secret).is_ok()) {
         return (StatusCode::BAD_REQUEST, "invalid signature".into());
+    }
+    match rago_integrations::gocardless_refund_events(payload) {
+        Ok(refunds) => {
+            for ev in refunds {
+                if let Err(e) = apply_refund(&state, organization_id, &ev).await {
+                    return e;
+                }
+            }
+        }
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("invalid payload: {e}")),
     }
     let events = match rago_integrations::gocardless_parse(payload) {
         Ok(e) => e,
@@ -94,10 +182,10 @@ pub async fn adyen_webhook(
         Ok(s) => s,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid body".into()),
     };
-    let secret_hex = std::env::var("RAGO_ADYEN_HMAC_KEY").unwrap_or_default();
-    if secret_hex.is_empty() {
-        return (StatusCode::INTERNAL_SERVER_ERROR, "hmac key not configured".into());
-    }
+    let keys = match webhook_secrets(&state, organization_id, "adyen", "RAGO_ADYEN_HMAC_KEY").await {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
     let json: serde_json::Value = match serde_json::from_str(payload) {
         Ok(v) => v,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("invalid payload: {e}")),
@@ -105,8 +193,24 @@ pub async fn adyen_webhook(
     let items = json.get("notificationItems").and_then(|v| v.as_array()).cloned().unwrap_or_default();
     for item in items {
         let item = item.pointer("/NotificationRequestItem").unwrap_or(&item);
-        if rago_integrations::adyen_verify(item, &secret_hex).is_err() {
+        if !keys.iter().any(|k| rago_integrations::adyen_verify(item, k).is_ok()) {
             return (StatusCode::BAD_REQUEST, "invalid signature".into());
+        }
+        if let Some(refund) = rago_integrations::adyen_refund_event(item) {
+            match apply_refund(&state, organization_id, &refund).await {
+                Ok(true) => continue,
+                Ok(false) => {
+                    // A refund issued outside Rago (Adyen Customer Area): only a
+                    // successful refund marks the original payment refunded.
+                    if refund.state == rago_integrations::RefundState::Succeeded {
+                        if let Some(original) = rago_integrations::adyen_original_reference(item) {
+                            let _ = sync_payment_status(&state, organization_id, &original, IncomingStatus::Refunded).await;
+                        }
+                    }
+                    continue;
+                }
+                Err(e) => return e,
+            }
         }
         let ev = rago_integrations::adyen_event(item);
         let _ = sync_payment_status(&state, organization_id, &ev.provider_payment_id, ev.status).await;

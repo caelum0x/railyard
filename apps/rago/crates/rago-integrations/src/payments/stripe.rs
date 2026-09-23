@@ -11,7 +11,10 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::{PaymentError, PaymentOutcome, PaymentProvider, PaymentRequest, PayableStatus};
+use super::{
+    PaymentError, PaymentOutcome, PaymentProvider, PaymentRequest, PayableStatus, RefundOutcome,
+    RefundRequest, RefundState,
+};
 use crate::transport::HttpTransport;
 
 const STRIPE_PAYMENT_INTENTS_URL: &str = "https://api.stripe.com/v1/payment_intents";
@@ -337,6 +340,58 @@ impl<T: HttpTransport> PaymentProvider for StripeProvider<T> {
             provider_payment_id,
             provider_status,
         })
+    }
+
+    /// `PaymentProviders::Stripe::Refunds::CreateService` — `POST /v1/refunds`
+    /// against the PaymentIntent, idempotent per Rago refund id.
+    async fn refund_payment(&self, req: &RefundRequest) -> Result<RefundOutcome, PaymentError> {
+        let mut pairs = vec![
+            ("payment_intent".to_string(), req.provider_payment_id.clone()),
+            ("amount".to_string(), req.amount_cents.to_string()),
+            ("metadata[lago_refund_id]".to_string(), req.refund_id.to_string()),
+            ("metadata[reference]".to_string(), req.reference.clone()),
+        ];
+        pairs.push(("reason".to_string(), stripe_refund_reason(req.reason.as_deref()).to_string()));
+        let json = self
+            .post_form(
+                &format!("{STRIPE_API}/refunds"),
+                &pairs,
+                Some(super::refund_idempotency_key(&req.refund_id)),
+            )
+            .await?;
+        let provider_refund_id = json
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| PaymentError::InvalidResponse("missing refund id".into()))?
+            .to_string();
+        let provider_status = json
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("pending")
+            .to_string();
+        Ok(RefundOutcome {
+            state: stripe_refund_state(&provider_status),
+            provider_refund_id,
+            provider_status,
+        })
+    }
+}
+
+/// Map a Lago credit-note reason onto Stripe's refund `reason` enum.
+fn stripe_refund_reason(reason: Option<&str>) -> &'static str {
+    match reason {
+        Some("duplicated_charge") => "duplicate",
+        Some("fraudulent_charge") => "fraudulent",
+        _ => "requested_by_customer",
+    }
+}
+
+/// Stripe refund status → [`RefundState`].
+pub fn stripe_refund_state(status: &str) -> RefundState {
+    match status {
+        "succeeded" => RefundState::Succeeded,
+        "failed" | "canceled" => RefundState::Failed,
+        _ => RefundState::Pending,
     }
 }
 

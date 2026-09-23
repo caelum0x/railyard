@@ -16,6 +16,9 @@ pub struct StripePaymentProviderInput {
     #[graphql(name = "supports3ds")]
     pub supports_3ds: Option<bool>,
     pub require_terms_of_service_consent: Option<bool>,
+    /// Stripe webhook endpoint signing secret (`whsec_…`) for inbound
+    /// payment events on `/webhooks/stripe/:organization_id`.
+    pub webhook_secret: Option<String>,
 }
 
 #[derive(InputObject)]
@@ -35,6 +38,8 @@ pub struct GocardlessPaymentProviderInput {
     pub name: String,
     pub access_code: Option<String>,
     pub success_redirect_url: Option<String>,
+    /// GoCardless webhook endpoint secret for inbound payment events.
+    pub webhook_secret: Option<String>,
 }
 
 #[derive(InputObject)]

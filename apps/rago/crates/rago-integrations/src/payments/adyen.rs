@@ -12,10 +12,14 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use super::{PaymentError, PaymentOutcome, PaymentProvider, PaymentRequest, PayableStatus};
+use super::{
+    PaymentError, PaymentOutcome, PaymentProvider, PaymentRequest, PayableStatus, RefundOutcome,
+    RefundRequest, RefundState,
+};
 use crate::transport::HttpTransport;
 
 const ADYEN_PAYMENTS_URL: &str = "https://checkout-test.adyen.com/v71/payments";
+const ADYEN_CHECKOUT_BASE: &str = "https://checkout-test.adyen.com/v71";
 const PROCESSING_STATUSES: &[&str] = &["AuthorisedPending", "Received"];
 const SUCCESS_STATUSES: &[&str] =
     &["Authorised", "SentForSettle", "SettleScheduled", "Settled", "Refunded"];
@@ -121,5 +125,43 @@ impl<T: HttpTransport> PaymentProvider for AdyenProvider<T> {
             provider_payment_id: psp_reference,
             provider_status: result_code,
         })
+    }
+
+    /// `PaymentProviders::Adyen::Refunds::CreateService` — `POST
+    /// /payments/{pspReference}/refunds`. Adyen answers `received`; the final
+    /// outcome arrives asynchronously as a `REFUND` notification.
+    async fn refund_payment(&self, req: &RefundRequest) -> Result<RefundOutcome, PaymentError> {
+        let headers = vec![
+            ("X-API-Key".to_string(), self.api_key.clone()),
+            ("Content-Type".to_string(), "application/json".to_string()),
+            ("Idempotency-Key".to_string(), super::refund_idempotency_key(&req.refund_id)),
+        ];
+        let body = json!({
+            "amount": { "value": req.amount_cents, "currency": req.currency.to_uppercase() },
+            "merchantAccount": self.merchant_account,
+            "reference": req.reference,
+        })
+        .to_string();
+        let url = format!("{ADYEN_CHECKOUT_BASE}/payments/{}/refunds", req.provider_payment_id);
+        let resp = self.transport.post(&url, &headers, body).await?;
+        let json: Value = serde_json::from_str(&resp.body)
+            .map_err(|e| PaymentError::InvalidResponse(e.to_string()))?;
+        if !resp.is_success() {
+            return Err(PaymentError::Provider {
+                code: json.get("errorCode").and_then(Value::as_str).map(str::to_string),
+                message: json
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("adyen refund error")
+                    .to_string(),
+            });
+        }
+        let provider_refund_id = json
+            .get("pspReference")
+            .and_then(Value::as_str)
+            .ok_or_else(|| PaymentError::InvalidResponse("missing pspReference".into()))?
+            .to_string();
+        let provider_status = json.get("status").and_then(Value::as_str).unwrap_or("received").to_string();
+        Ok(RefundOutcome { provider_refund_id, provider_status, state: RefundState::Pending })
     }
 }

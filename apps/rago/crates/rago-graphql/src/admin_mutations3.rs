@@ -54,6 +54,46 @@ async fn persist_secret(ctx: &Context<'_>, provider_id: &ID, secret: &Option<Str
         }))
 }
 
+/// Seal and store a provider's inbound webhook signing secret.
+async fn persist_webhook_secret(ctx: &Context<'_>, provider_id: &ID, secret: &Option<String>) -> Result<()> {
+    let Some(secret) = secret.as_deref().map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(());
+    };
+    db(ctx)
+        .store_payment_provider_webhook_secret(uuid(provider_id)?, secret)
+        .await
+        .map_err(|e| async_graphql::Error::new(match e {
+            rago_db::StoreSecretError::Secret(rago_db::secrets::SecretError::KeyMissing) => {
+                "encryption_key_missing: set RAGO_ENCRYPTION_KEY to store provider credentials".to_string()
+            }
+            other => other.to_string(),
+        }))
+}
+
+/// Seal an integration credential for storage in the integration's settings
+/// (`None` when not provided). Fails with a clear configuration error when
+/// `RAGO_ENCRYPTION_KEY` is not set rather than dropping the credential.
+fn seal_setting(secret: &Option<String>) -> Result<Option<String>> {
+    let Some(v) = secret.as_deref().map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    rago_db::secrets::seal(v).map(Some).map_err(|e| async_graphql::Error::new(match e {
+        rago_db::secrets::SecretError::KeyMissing => {
+            "encryption_key_missing: set RAGO_ENCRYPTION_KEY to store integration credentials".to_string()
+        }
+        other => other.to_string(),
+    }))
+}
+
+/// Re-read a provider after its secrets were stored so masked refs are current.
+async fn reload(ctx: &Context<'_>, provider: PaymentProvider) -> Result<PaymentProvider> {
+    Ok(db(ctx).find_payment_provider(uuid(&provider.id)?).await?.map(Into::into).unwrap_or(provider))
+}
+
+/// Providers Rago can actually collect with (charge, refund, inbound webhooks).
+const UNSUPPORTED_PROVIDER: &str =
+    "payment_provider_not_supported: Rago collects payments with Stripe, GoCardless or Adyen";
+
 /// Admin CRUD mutation root — slice 3 (merged into the schema's `Mutation`).
 #[derive(Default)]
 pub struct AdminMutation3;
@@ -74,7 +114,8 @@ impl AdminMutation3 {
             .await?;
         let provider: PaymentProvider = row.into();
         persist_secret(ctx, &provider.id, &input.secret_key).await?;
-        Ok(provider)
+        persist_webhook_secret(ctx, &provider.id, &input.webhook_secret).await?;
+        reload(ctx, provider).await
     }
     async fn update_stripe_payment_provider(&self, ctx: &Context<'_>, input: StripePaymentProviderInput) -> Result<PaymentProvider> {
         self.add_stripe_payment_provider(ctx, input).await
@@ -86,14 +127,15 @@ impl AdminMutation3 {
         let settings = json!({
             "merchant_account": input.merchant_account,
             "live_prefix": input.live_prefix,
-            "hmac_ref": mask(&input.hmac_key),
         });
         let row = db(ctx)
             .upsert_payment_provider(org.id, "adyen", &input.code, Some(&input.name), mask(&input.api_key).as_deref(), input.success_redirect_url.as_deref(), &settings)
             .await?;
         let provider: PaymentProvider = row.into();
         persist_secret(ctx, &provider.id, &input.api_key).await?;
-        Ok(provider)
+        // The HMAC key verifies inbound Adyen notifications for this org.
+        persist_webhook_secret(ctx, &provider.id, &input.hmac_key).await?;
+        reload(ctx, provider).await
     }
     async fn update_adyen_payment_provider(&self, ctx: &Context<'_>, input: AdyenPaymentProviderInput) -> Result<PaymentProvider> {
         self.add_adyen_payment_provider(ctx, input).await
@@ -107,7 +149,8 @@ impl AdminMutation3 {
             .await?;
         let provider: PaymentProvider = row.into();
         persist_secret(ctx, &provider.id, &input.access_code).await?;
-        Ok(provider)
+        persist_webhook_secret(ctx, &provider.id, &input.webhook_secret).await?;
+        reload(ctx, provider).await
     }
     async fn update_gocardless_payment_provider(&self, ctx: &Context<'_>, input: GocardlessPaymentProviderInput) -> Result<PaymentProvider> {
         self.add_gocardless_payment_provider(ctx, input).await
@@ -115,37 +158,29 @@ impl AdminMutation3 {
 
     /// `AddCashfreePaymentProvider`.
     async fn add_cashfree_payment_provider(&self, ctx: &Context<'_>, input: CashfreePaymentProviderInput) -> Result<PaymentProvider> {
-        let org = require_org(ctx)?;
-        let settings = json!({ "client_id": input.client_id });
-        let row = db(ctx)
-            .upsert_payment_provider(org.id, "cashfree", &input.code, Some(&input.name), mask(&input.client_secret).as_deref(), input.success_redirect_url.as_deref(), &settings)
-            .await?;
-        let provider: PaymentProvider = row.into();
-        persist_secret(ctx, &provider.id, &input.client_secret).await?;
-        Ok(provider)
+        // Rago has no cashfree collection, refund or webhook integration; accepting
+        // the credentials would leave invoices silently uncollected.
+        require_org(ctx)?;
+        let _ = input;
+        Err(async_graphql::Error::new(UNSUPPORTED_PROVIDER))
     }
 
     /// `AddFlutterwavePaymentProvider`.
     async fn add_flutterwave_payment_provider(&self, ctx: &Context<'_>, input: FlutterwavePaymentProviderInput) -> Result<PaymentProvider> {
-        let org = require_org(ctx)?;
-        let row = db(ctx)
-            .upsert_payment_provider(org.id, "flutterwave", &input.code, Some(&input.name), mask(&input.secret_key).as_deref(), input.success_redirect_url.as_deref(), &json!({}))
-            .await?;
-        let provider: PaymentProvider = row.into();
-        persist_secret(ctx, &provider.id, &input.secret_key).await?;
-        Ok(provider)
+        // Rago has no flutterwave collection, refund or webhook integration; accepting
+        // the credentials would leave invoices silently uncollected.
+        require_org(ctx)?;
+        let _ = input;
+        Err(async_graphql::Error::new(UNSUPPORTED_PROVIDER))
     }
 
     /// `AddMoneyhashPaymentProvider`.
     async fn add_moneyhash_payment_provider(&self, ctx: &Context<'_>, input: MoneyhashPaymentProviderInput) -> Result<PaymentProvider> {
-        let org = require_org(ctx)?;
-        let settings = json!({ "flow_id": input.flow_id });
-        let row = db(ctx)
-            .upsert_payment_provider(org.id, "moneyhash", &input.code, Some(&input.name), mask(&input.api_key).as_deref(), input.success_redirect_url.as_deref(), &settings)
-            .await?;
-        let provider: PaymentProvider = row.into();
-        persist_secret(ctx, &provider.id, &input.api_key).await?;
-        Ok(provider)
+        // Rago has no moneyhash collection, refund or webhook integration; accepting
+        // the credentials would leave invoices silently uncollected.
+        require_org(ctx)?;
+        let _ = input;
+        Err(async_graphql::Error::new(UNSUPPORTED_PROVIDER))
     }
 
     /// `DestroyPaymentProvider`.
@@ -283,10 +318,12 @@ impl AdminMutation3 {
             "account_id": input.account_id,
             "client_id": input.client_id,
             "client_secret_ref": mask(&input.client_secret),
+            "client_secret_sealed": seal_setting(&input.client_secret)?,
             "connection_id": input.connection_id,
             "script_endpoint_url": input.script_endpoint_url,
             "token_id": input.token_id,
             "token_secret_ref": mask(&input.token_secret),
+            "token_secret_sealed": seal_setting(&input.token_secret)?,
             "sync_invoices": input.sync_invoices.unwrap_or(false),
             "sync_credit_notes": input.sync_credit_notes.unwrap_or(false),
             "sync_payments": input.sync_payments.unwrap_or(false),
@@ -311,7 +348,11 @@ impl AdminMutation3 {
     /// `CreateAnrokIntegration`.
     async fn create_anrok_integration(&self, ctx: &Context<'_>, input: CreateAnrokIntegrationInput) -> Result<Integration> {
         let org = require_org(ctx)?;
-        let settings = json!({ "api_key_ref": mask(&input.api_key), "connection_id": input.connection_id });
+        let settings = json!({
+            "api_key_ref": mask(&input.api_key),
+            "api_key_sealed": seal_setting(&input.api_key)?,
+            "connection_id": input.connection_id,
+        });
         let row = db(ctx).insert_integration(Uuid::new_v4(), org.id, "tax", "anrok", Some(&input.code), Some(&input.name), &settings).await?;
         Ok(row.into())
     }
@@ -322,6 +363,7 @@ impl AdminMutation3 {
         let settings = json!({
             "account_id": input.account_id,
             "license_key_ref": mask(&input.license_key),
+            "license_key_sealed": seal_setting(&input.license_key)?,
             "company_code": input.company_code,
             "connection_id": input.connection_id,
         });
@@ -358,6 +400,7 @@ impl AdminMutation3 {
             "organization_name": input.organization_name,
             "client_id": input.client_id,
             "client_secret_ref": mask(&input.client_secret),
+            "client_secret_sealed": seal_setting(&input.client_secret)?,
         });
         let code = input.code.clone().unwrap_or_else(|| input.domain.clone());
         let row = db(ctx).insert_integration(Uuid::new_v4(), org.id, "auth", "okta", Some(&code), input.name.as_deref(), &settings).await?;

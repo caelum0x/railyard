@@ -30,7 +30,7 @@ impl Db {
             "SELECT id, integration_type, provider_code, name, \
                     (access_token IS NOT NULL) AS has_access, (refresh_token IS NOT NULL) AS has_refresh, \
                     token_expires_at \
-             FROM integration_connections WHERE organization_id = $1 ORDER BY created_at DESC",
+             FROM integration_connections WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC",
         )
         .bind(org)
         .fetch_all(&self.pool)

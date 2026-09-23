@@ -12,10 +12,14 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use super::{PaymentError, PaymentOutcome, PaymentProvider, PaymentRequest, PayableStatus};
+use super::{
+    PaymentError, PaymentOutcome, PaymentProvider, PaymentRequest, PayableStatus, RefundOutcome,
+    RefundRequest, RefundState,
+};
 use crate::transport::HttpTransport;
 
 const GOCARDLESS_PAYMENTS_URL: &str = "https://api.gocardless.com/payments";
+const GOCARDLESS_REFUNDS_URL: &str = "https://api.gocardless.com/refunds";
 const GOCARDLESS_VERSION: &str = "2015-07-06";
 const SUCCESS_STATUSES: &[&str] = &["paid_out"];
 const FAILED_STATUSES: &[&str] = &["cancelled", "customer_approval_denied", "failed", "charged_back"];
@@ -123,5 +127,53 @@ impl<T: HttpTransport> PaymentProvider for GocardlessProvider<T> {
             provider_payment_id,
             provider_status,
         })
+    }
+
+    /// `PaymentProviders::Gocardless::Refunds::CreateService` — `POST /refunds`
+    /// linked to the payment, with the cumulative `total_amount_confirmation`
+    /// GoCardless requires as a double-refund guard.
+    async fn refund_payment(&self, req: &RefundRequest) -> Result<RefundOutcome, PaymentError> {
+        let headers = vec![
+            ("Authorization".to_string(), format!("Bearer {}", self.access_token)),
+            ("GoCardless-Version".to_string(), GOCARDLESS_VERSION.to_string()),
+            ("Content-Type".to_string(), "application/json".to_string()),
+            ("Idempotency-Key".to_string(), super::refund_idempotency_key(&req.refund_id)),
+        ];
+        let body = json!({
+            "refunds": {
+                "amount": req.amount_cents,
+                "total_amount_confirmation": req.total_refunded_cents,
+                "links": { "payment": req.provider_payment_id },
+                "metadata": { "lago_refund_id": req.refund_id.to_string() },
+            }
+        })
+        .to_string();
+        let resp = self.transport.post(GOCARDLESS_REFUNDS_URL, &headers, body).await?;
+        let json: Value = serde_json::from_str(&resp.body)
+            .map_err(|e| PaymentError::InvalidResponse(e.to_string()))?;
+        if !resp.is_success() {
+            let err = json.pointer("/error");
+            return Err(PaymentError::Provider {
+                code: err.and_then(|e| e.get("type")).and_then(Value::as_str).map(str::to_string),
+                message: err
+                    .and_then(|e| e.get("message"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("gocardless refund error")
+                    .to_string(),
+            });
+        }
+        let refund = json.pointer("/refunds").unwrap_or(&Value::Null);
+        let provider_refund_id = refund
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| PaymentError::InvalidResponse("missing refunds.id".into()))?
+            .to_string();
+        let provider_status = refund.get("status").and_then(Value::as_str).unwrap_or("created").to_string();
+        let state = match provider_status.as_str() {
+            "paid" => RefundState::Succeeded,
+            "cancelled" | "bounced" | "failed" | "funds_returned" => RefundState::Failed,
+            _ => RefundState::Pending,
+        };
+        Ok(RefundOutcome { provider_refund_id, provider_status, state })
     }
 }

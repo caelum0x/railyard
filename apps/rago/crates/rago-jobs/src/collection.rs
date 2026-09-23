@@ -117,6 +117,27 @@ pub async fn resolve_provider(db: &Db, org: Uuid) -> Result<Option<ResolvedProvi
     }))
 }
 
+/// Resolve the organization's credentials for one specific provider kind (the
+/// provider that captured a payment, for refunds): the dashboard-configured
+/// row of that type with its sealed secret, else the env fallback.
+pub async fn resolve_provider_of_kind(db: &Db, org: Uuid, kind: &str) -> Result<Option<ResolvedProvider>, JobError> {
+    let configured = db.provider_credentials(org, Some(kind)).await?;
+    let (settings, redirect, secret) = match configured {
+        Some(c) => (c.settings, c.success_redirect_url, c.secret.or_else(|| env_secret(kind))),
+        None => (
+            json!({ "merchant_account": env_nonempty("RAGO_ADYEN_MERCHANT_ACCOUNT") }),
+            env_nonempty("RAGO_CHECKOUT_SUCCESS_URL"),
+            env_secret(kind),
+        ),
+    };
+    Ok(secret.map(|secret| ResolvedProvider {
+        kind: kind.to_string(),
+        secret,
+        settings,
+        success_redirect_url: redirect,
+    }))
+}
+
 /// Resolve (creating on first use) the customer's Stripe customer id, and its
 /// payment method (stored, else looked up at Stripe and stored).
 pub async fn ensure_stripe_customer<T: HttpTransport>(

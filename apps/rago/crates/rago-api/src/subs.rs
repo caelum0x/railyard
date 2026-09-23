@@ -332,8 +332,11 @@ pub async fn resend_credit_note_email(
         .filter(|e| e.contains('@'))
         .ok_or_else(|| ApiError::validation("customer", "email_missing"))?;
     let email = rago_mail::builders::credit_note_email(&cn, &to);
-    let sent = st.mailer.send(&email).await.is_ok();
-    Ok(Json(json!({ "credit_note": { "lago_id": cn.id, "email_resent": sent } })))
+    if let Err(e) = st.mailer.send(&email).await {
+        tracing::warn!(credit_note_id = %cn.id, error = %e, "credit note email failed");
+        return Err(ApiError::Validation(json!({ "email": [format!("delivery_failed: {e}")] })));
+    }
+    Ok(Json(json!({ "credit_note": { "lago_id": cn.id, "email_resent": true } })))
 }
 
 /// `POST /credit_notes/:id/download_xml` — the credit-note e-invoice XML
@@ -407,8 +410,23 @@ pub async fn finalize_invoice(
     _auth: Authed,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
+    let before = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
     let inv = st.db.finalize_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
-    Ok(Json(invoice_response(&st, inv).await?))
+    let body = invoice_response(&st, inv.clone()).await?;
+    // Only a draft → finalized transition emits (a re-finalize is a no-op).
+    if matches!(before.status, rago_core::enums::InvoiceStatus::Draft)
+        && matches!(inv.status, rago_core::enums::InvoiceStatus::Finalized)
+    {
+        crate::emit::webhook(
+            &st.db,
+            inv.organization_id,
+            rago_integrations::webhooks::WebhookKind::InvoiceCreated,
+            body["invoice"].clone(),
+        )
+        .await;
+        let _ = rago_jobs::webhook_emit::record_invoice_generated(&st.db, inv.organization_id, inv.id, body["invoice"].clone()).await;
+    }
+    Ok(Json(body))
 }
 
 /// `PUT /invoices/:id/refresh` — recompute the invoice totals from its fees.
@@ -451,8 +469,11 @@ pub async fn resend_invoice_email(
         Some(cid) => st.db.find_customer(cid).await?.and_then(|c| c.email),
         None => None,
     };
-    crate::breadth::send_invoice_finalized(&st, &inv, &fees, email.as_deref()).await;
-    Ok(Json(json!({ "invoice": { "lago_id": inv.id, "email_resent": true } })))
+    match crate::breadth::send_invoice_finalized(&st, &inv, &fees, email.as_deref()).await {
+        crate::breadth::EmailOutcome::Sent => Ok(Json(json!({ "invoice": { "lago_id": inv.id, "email_resent": true } }))),
+        crate::breadth::EmailOutcome::NoRecipient => Err(ApiError::validation("customer", "email_missing")),
+        crate::breadth::EmailOutcome::Failed(e) => Err(ApiError::Validation(json!({ "email": [format!("delivery_failed: {e}")] }))),
+    }
 }
 
 /// `PUT /invoices/:id/sync_salesforce_id` — record the Salesforce id of an

@@ -27,6 +27,7 @@ pub mod observability;
 pub mod pagination;
 pub mod payments;
 pub mod reads;
+pub mod refunds;
 pub mod phase14;
 pub mod phase15;
 pub mod resources;
@@ -111,7 +112,8 @@ pub fn router(state: AppState) -> Router {
         .route("/invoices/:id/download", get(handlers::download_invoice_pdf))
         .route("/invoices/:id/download.xml", get(handlers::download_invoice_xml))
         .route("/invoices/:id/apply_provider_taxes", post(integrations::apply_provider_taxes_to_invoice))
-        .route("/invoices/:id/refund", post(handlers::refund_invoice))
+        .route("/invoices/:id/refund", post(refunds::refund_invoice))
+        .route("/invoices/:id/refunds", get(refunds::list_invoice_refunds))
         .route("/invoices/:id/void", post(subs::void_invoice))
         .route("/invoices/:id/finalize", put(subs::finalize_invoice))
         .route("/invoices/:id/refresh", put(subs::refresh_invoice))
@@ -134,6 +136,7 @@ pub fn router(state: AppState) -> Router {
         .route("/credit_notes/:id/download", get(phase14::download_credit_note_pdf))
         .route("/credit_notes/:id/download_xml", post(subs::download_credit_note_xml))
         .route("/credit_notes/:id/void", put(subs::void_credit_note))
+        .route("/credit_notes/:id/refund", post(refunds::refund_credit_note))
         .route("/credit_notes/:id/resend_email", post(subs::resend_credit_note_email))
         .route("/credit_notes/estimate", post(handlers::estimate_credit_note))
         .route("/invoices/:id/receipt", get(phase14::download_payment_receipt_pdf))

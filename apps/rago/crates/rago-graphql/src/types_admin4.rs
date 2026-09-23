@@ -29,6 +29,15 @@ pub struct LoginPayload {
     pub user: User,
 }
 
+/// A started SSO login: send the browser to `url`; the IdP redirects back
+/// with `code` + `state` for the matching `*Login` mutation.
+#[derive(SimpleObject)]
+pub struct SsoAuthorization {
+    pub url: String,
+    pub state: String,
+    pub provider: String,
+}
+
 /// `Types::MembershipType`.
 #[derive(SimpleObject)]
 pub struct Membership {

@@ -38,6 +38,16 @@ fn idp_unconfigured(provider: &str) -> bool {
     std::env::var(key).map(|v| v.is_empty()).unwrap_or(true)
 }
 
+/// Canonical IdP name.
+fn normalize_idp(provider: &str) -> Result<&'static str> {
+    match provider.trim().to_ascii_lowercase().as_str() {
+        "google" => Ok("google"),
+        "okta" => Ok("okta"),
+        "entra_id" | "entraid" | "entra" | "azure" => Ok("entra_id"),
+        other => Err(async_graphql::Error::new(format!("unsupported_idp: {other}"))),
+    }
+}
+
 /// Admin CRUD mutation root — slice 5 (merged into the schema's `Mutation`).
 #[derive(Default)]
 pub struct AdminMutation5;
@@ -234,25 +244,38 @@ impl AdminMutation5 {
         self.data_export(ctx, "credit_notes", format, filters).await
     }
 
-    // ---- SSO login (shape only; IdP round-trip is owner-gated) -----------
+    // ---- SSO login --------------------------------------------------------
 
-    /// `OktaLogin` — exchanges the auth code with the configured Okta tenant.
-    /// Without a configured IdP this returns a structured `idp_not_configured`
-    /// error rather than faking an IdP round-trip.
-    async fn okta_login(&self, ctx: &Context<'_>, code: String, state: String) -> Result<crate::types_admin4::LoginPayload> {
-        let _ = state;
-        Self::sso(ctx, "okta", &code).await
+    /// `SsoAuthorize` — start an SSO login for `provider` (`google`, `okta`,
+    /// `entra_id`): mints a single-use `state` bound to a PKCE verifier and
+    /// returns the IdP authorize URL. Returns `idp_not_configured` when the
+    /// provider's client credentials are not set on the server.
+    async fn sso_authorize(&self, ctx: &Context<'_>, provider: String) -> Result<crate::types_admin4::SsoAuthorization> {
+        let provider = normalize_idp(&provider)?;
+        if idp_unconfigured(provider) {
+            return Err(async_graphql::Error::new("idp_not_configured"));
+        }
+        let started = rago_jobs::sso::start(db(ctx), provider)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(crate::types_admin4::SsoAuthorization { url: started.authorize_url, state: started.state, provider: provider.to_string() })
     }
 
-    /// `GoogleLoginUser`.
-    async fn google_login(&self, ctx: &Context<'_>, code: String) -> Result<crate::types_admin4::LoginPayload> {
-        Self::sso(ctx, "google", &code).await
+    /// `OktaLogin` — verifies the server-issued `state`, then exchanges the
+    /// auth code (with its PKCE verifier) with the configured Okta tenant.
+    async fn okta_login(&self, ctx: &Context<'_>, code: String, state: String) -> Result<crate::types_admin4::LoginPayload> {
+        Self::sso(ctx, "okta", &code, &state).await
+    }
+
+    /// `GoogleLoginUser` — `state` is required (issued by `ssoAuthorize`).
+    async fn google_login(&self, ctx: &Context<'_>, code: String, state: Option<String>) -> Result<crate::types_admin4::LoginPayload> {
+        let state = state.ok_or_else(|| async_graphql::Error::new("sso_state_missing"))?;
+        Self::sso(ctx, "google", &code, &state).await
     }
 
     /// `EntraIdLogin`.
     async fn entra_id_login(&self, ctx: &Context<'_>, code: String, state: String) -> Result<crate::types_admin4::LoginPayload> {
-        let _ = state;
-        Self::sso(ctx, "entra_id", &code).await
+        Self::sso(ctx, "entra_id", &code, &state).await
     }
 
     /// `CreateEntraIdIntegration` — persist the EntraId (Azure AD) config row.
@@ -300,12 +323,12 @@ impl AdminMutation5 {
 impl AdminMutation5 {
     /// OAuth code exchange with the IdP → verified email → existing user →
     /// session JWT (same token `loginUser` issues). SSO never creates users.
-    async fn sso(ctx: &Context<'_>, provider: &str, code: &str) -> Result<crate::types_admin4::LoginPayload> {
+    async fn sso(ctx: &Context<'_>, provider: &str, code: &str, state: &str) -> Result<crate::types_admin4::LoginPayload> {
         if idp_unconfigured(provider) {
             return Err(async_graphql::Error::new("idp_not_configured"));
         }
         let transport = rago_integrations::default_transport();
-        let email = rago_jobs::sso::verified_email(&transport, provider, code)
+        let email = rago_jobs::sso::complete(db(ctx), &transport, provider, code, state)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
         let (user_id, user_email, _) = db(ctx)

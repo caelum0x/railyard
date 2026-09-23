@@ -466,44 +466,60 @@
   });
 
   // ---- settings -------------------------------------------------------------------------------------------
+  const PROVIDER_LABEL = { stripe: "Stripe", gocardless: "GoCardless", adyen: "Adyen" };
   R.route("/settings", async () => {
     const [org, gql, integ] = await Promise.all([
       api.get("/api/v1/organizations"),
-      api.graphql("query { paymentProviders { id providerType code name secretRef successRedirectUrl } }").catch((e) => ({ error: e.message })),
+      api.graphql("query { paymentProviders { id providerType code name secretRef webhookSecretRef successRedirectUrl settings } }").catch((e) => ({ error: e.message })),
       api.get("/api/v1/integrations").catch(() => ({ integrations: [] })),
     ]);
     const o = org.organization;
     const providers = gql.paymentProviders || [];
+    function webhookUrl(kind) { return location.origin + "/webhooks/" + kind + "/" + o.lago_id; }
     const view = $("#view");
     view.innerHTML = head("Settings", "Organization profile, payment collection and integrations.") +
       card("Organization", '<div class="body">' + kv([
         ["Name", esc(o.name)], ["Default currency", esc(o.default_currency)], ["Billing email", esc(o.email)], ["Country", esc(o.country)],
         ["Timezone", esc(o.timezone)], ["Tax ID", esc(o.tax_identification_number)], ["Document locale", esc(o.document_locale)],
         ["Organization ID", '<span class="mono">' + esc(o.lago_id) + "</span>"],
-        ["Stripe webhook URL", '<span class="mono">' + esc(location.origin + "/webhooks/stripe/" + o.lago_id) + "</span>"],
+        ["Stripe webhook URL", '<span class="mono">' + esc(webhookUrl("stripe")) + "</span>"],
+        ["GoCardless webhook URL", '<span class="mono">' + esc(webhookUrl("gocardless")) + "</span>"],
+        ["Adyen webhook URL", '<span class="mono">' + esc(webhookUrl("adyen")) + "</span>"],
       ]) + "</div>", btn("edit_org", "Edit", "edit")) +
       card("Payment providers", (gql.error ? '<div class="error-box">' + esc(gql.error) + "</div>" : "") + table([
         { h: "Provider", f: (r) => badge(r.providerType) },
         { h: "Code", f: (r) => esc(r.code), cls: "mono" },
         { h: "Name", f: (r) => esc(r.name) },
-        { h: "Secret", f: (r) => esc(r.secretRef || "not set"), cls: "mono" },
+        { h: "API secret", f: (r) => esc(r.secretRef || "not set"), cls: "mono" },
+        { h: "Webhook secret", f: (r) => esc(r.webhookSecretRef || "not set"), cls: "mono" },
         { h: "Return URL", f: (r) => esc(r.successRedirectUrl), cls: "mono" },
-        { h: "", f: (r) => '<button type="button" data-del-provider="' + esc(r.id) + '">' + icon("trash") + "Remove</button>" },
-      ], providers, { empty: "No provider configured. Invoices are not charged automatically until you connect Stripe (or set RAGO_STRIPE_SECRET_KEY on the server)." }),
-      btn("stripe", "Connect Stripe", "pay", "primary")) +
+        { h: "", f: (r) => '<button type="button" data-edit-provider="' + esc(r.id) + '">' + icon("edit") + "Edit</button> " +
+          '<button type="button" data-del-provider="' + esc(r.id) + '">' + icon("trash") + "Remove</button>" },
+      ], providers, { empty: "No provider configured. Invoices are not charged automatically until you connect Stripe, GoCardless or Adyen." }),
+      btn("stripe", "Connect Stripe", "pay", "primary") + btn("gocardless", "Connect GoCardless", "pay") + btn("adyen", "Connect Adyen", "pay")) +
       card("Integrations", table([
         { h: "Type", f: (r) => badge(r.integration_type) },
         { h: "Provider", f: (r) => esc(r.provider_code) },
         { h: "Name", f: (r) => esc(r.name) },
-        { h: "Access token", f: (r) => (r.has_access_token ? "present" : "missing") },
+        { h: "Credentials", f: (r) => (r.integration_type === "tax" ? "API key (encrypted)" : r.has_access_token ? "OAuth token present" : "OAuth token missing") },
         { h: "Expires", f: (r) => datetime(r.expires_at) },
         { h: "", f: (r) => (r.has_refresh_token ? '<button type="button" data-refresh-int="' + esc(r.lago_id) + '">' + icon("refresh") + "Refresh token</button>" : "") },
-      ], integ.integrations, { empty: "No tax, accounting or CRM integration connected." }));
+        { h: "", f: (r) => '<button type="button" data-del-int="' + esc(r.lago_id) + '">' + icon("trash") + "Remove</button>" },
+      ], integ.integrations, { empty: "No tax, accounting or CRM integration connected." }),
+      btn("anrok", "Connect Anrok", "link") + btn("avalara", "Connect Avalara", "link"));
     R.$$("[data-del-provider]", view).forEach((b) => (b.onclick = () => R.confirmAction("Remove provider", "Stop charging through this provider?", "Remove", async () => {
       await api.graphql("mutation($id: ID!) { destroyPaymentProvider(id: $id) }", { id: b.dataset.delProvider });
       return "Provider removed";
     })));
-    R.$$("[data-refresh-int]", view).forEach((b) => (b.onclick = async () => {
+    R.$$("[data-edit-provider]", view).forEach((b) => (b.onclick = () => {
+      const existing = providers.find((pr) => pr.id === b.dataset.editProvider);
+      if (existing) providerForm(existing.providerType, existing);
+    }));
+    R.$$("[data-del-int]", view).forEach((b) => (b.onclick = () => R.confirmAction("Remove integration", "Disconnect this integration? Syncs and tax calculation through it stop.", "Remove", async () => {
+      await api.graphql("mutation($id: ID!) { destroyIntegration(id: $id) }", { id: b.dataset.delInt });
+      return "Integration removed";
+    })));
+        R.$$("[data-refresh-int]", view).forEach((b) => (b.onclick = async () => {
       try { await api.post("/api/v1/integrations/" + enc(b.dataset.refreshInt) + "/refresh"); R.toast("Token refreshed", "ok"); R.render(); } catch (e) { R.toast(e.message, "err"); }
     }));
     finish(view, {
@@ -519,23 +535,102 @@
         onSubmit: async (v) => { await api.put("/api/v1/organizations", { organization: v }); return "Organization updated"; },
         after: R.render,
       }),
-      stripe: () => R.openForm({
-        title: "Connect Stripe",
-        intro: "The secret key is encrypted at rest (requires RAGO_ENCRYPTION_KEY on the server) and only its last 4 characters are shown afterwards. Point a Stripe webhook at the URL shown under Organization.",
+      anrok: () => R.openForm({
+        title: "Connect Anrok",
+        intro: "Invoice taxes are calculated by Anrok with this organization's API key (encrypted at rest; requires RAGO_ENCRYPTION_KEY and RAGO_TAX_BASE_URL on the server).",
         fields: [
-          { name: "code", label: "Code", required: true, value: "stripe" },
-          { name: "name", label: "Name", required: true, value: "Stripe" },
-          { name: "secretKey", label: "Secret key", type: "password", required: true, placeholder: "sk_live_..." },
-          { name: "successRedirectUrl", label: "Return URL after checkout", type: "url", placeholder: "https://your-app.example/billing" },
+          { name: "code", label: "Code", required: true, value: "anrok" },
+          { name: "name", label: "Name", required: true, value: "Anrok" },
+          { name: "apiKey", label: "API key", type: "password", required: true },
+          { name: "connectionId", label: "Connection ID" },
         ],
         submitLabel: "Connect",
         onSubmit: async (v) => {
-          await api.graphql("mutation($input: StripePaymentProviderInput!) { addStripePaymentProvider(input: $input) { id } }", { input: v });
-          return "Stripe connected";
+          const input = {};
+          Object.keys(v).forEach((k) => { if (v[k]) input[k] = v[k]; });
+          await api.graphql("mutation($input: CreateAnrokIntegrationInput!) { createAnrokIntegration(input: $input) { id } }", { input });
+          return "Anrok connected";
         },
         after: R.render,
       }),
+      avalara: () => R.openForm({
+        title: "Connect Avalara",
+        intro: "Invoice taxes are calculated by Avalara with this organization's license key (encrypted at rest; requires RAGO_ENCRYPTION_KEY and RAGO_TAX_BASE_URL on the server).",
+        fields: [
+          { name: "code", label: "Code", required: true, value: "avalara" },
+          { name: "name", label: "Name", required: true, value: "Avalara" },
+          { name: "accountId", label: "Account ID", required: true },
+          { name: "licenseKey", label: "License key", type: "password", required: true },
+          { name: "companyCode", label: "Company code", required: true },
+          { name: "connectionId", label: "Connection ID" },
+        ],
+        submitLabel: "Connect",
+        onSubmit: async (v) => {
+          const input = {};
+          Object.keys(v).forEach((k) => { if (v[k]) input[k] = v[k]; });
+          await api.graphql("mutation($input: CreateAvalaraIntegrationInput!) { createAvalaraIntegration(input: $input) { id } }", { input });
+          return "Avalara connected";
+        },
+        after: R.render,
+      }),
+      stripe: () => providerForm("stripe"),
+      gocardless: () => providerForm("gocardless"),
+      adyen: () => providerForm("adyen"),
     });
+
+    // Connect or edit a payment provider. Secrets are write-only: leaving a
+    // secret empty on edit keeps the stored one.
+    function providerForm(kind, existing) {
+      const editing = !!existing;
+      const settings = (existing && existing.settings) || {};
+      const secretHint = editing ? "leave empty to keep the stored value" : "";
+      const common = [
+        { name: "code", label: "Code", required: true, value: existing ? existing.code : kind },
+        { name: "name", label: "Name", required: true, value: existing ? existing.name : PROVIDER_LABEL[kind] },
+      ];
+      const spec = {
+        stripe: {
+          fields: [
+            { name: "secretKey", label: "Secret key", type: "password", required: !editing, placeholder: editing ? secretHint : "sk_live_..." },
+            { name: "webhookSecret", label: "Webhook signing secret", type: "password", placeholder: editing ? secretHint : "whsec_..." },
+            { name: "successRedirectUrl", label: "Return URL after checkout", type: "url", value: existing ? existing.successRedirectUrl : "", placeholder: "https://your-app.example/billing" },
+          ],
+          mutation: "mutation($input: StripePaymentProviderInput!) { addStripePaymentProvider(input: $input) { id } }",
+        },
+        gocardless: {
+          fields: [
+            { name: "accessCode", label: "Access token", type: "password", required: !editing, placeholder: editing ? secretHint : "live_..." },
+            { name: "webhookSecret", label: "Webhook endpoint secret", type: "password", placeholder: secretHint },
+            { name: "successRedirectUrl", label: "Return URL after mandate setup", type: "url", value: existing ? existing.successRedirectUrl : "" },
+          ],
+          mutation: "mutation($input: GocardlessPaymentProviderInput!) { addGocardlessPaymentProvider(input: $input) { id } }",
+        },
+        adyen: {
+          fields: [
+            { name: "apiKey", label: "API key", type: "password", required: !editing, placeholder: secretHint },
+            { name: "merchantAccount", label: "Merchant account", required: true, value: settings.merchant_account || "" },
+            { name: "hmacKey", label: "Notification HMAC key (hex)", type: "password", placeholder: secretHint },
+            { name: "livePrefix", label: "Live URL prefix", value: settings.live_prefix || "" },
+            { name: "successRedirectUrl", label: "Return URL", type: "url", value: existing ? existing.successRedirectUrl : "" },
+          ],
+          mutation: "mutation($input: AdyenPaymentProviderInput!) { addAdyenPaymentProvider(input: $input) { id } }",
+        },
+      }[kind];
+      R.openForm({
+        title: (editing ? "Edit " : "Connect ") + PROVIDER_LABEL[kind],
+        intro: "Credentials are encrypted at rest (requires RAGO_ENCRYPTION_KEY on the server); only their last 4 characters are shown afterwards. " +
+          "Create a webhook in " + PROVIDER_LABEL[kind] + " pointing at " + webhookUrl(kind) + " and paste its signing secret here so payment and refund events are verified for this organization.",
+        fields: common.concat(spec.fields),
+        submitLabel: editing ? "Save" : "Connect",
+        onSubmit: async (v) => {
+          const input = {};
+          Object.keys(v).forEach((k) => { if (v[k] !== "" && v[k] !== null && v[k] !== undefined) input[k] = v[k]; });
+          await api.graphql(spec.mutation, { input });
+          return PROVIDER_LABEL[kind] + (editing ? " updated" : " connected");
+        },
+        after: R.render,
+      });
+    }
   });
 
   R.boot();

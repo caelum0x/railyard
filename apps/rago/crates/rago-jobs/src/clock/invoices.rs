@@ -40,6 +40,8 @@ pub async fn finalize_invoices(db: &Db) -> Result<u64, JobError> {
     for row in &rows {
         let org: Uuid = row.get("organization_id");
         record_webhook(db, org, WebhookKind::InvoiceCreated, invoice_object(row)).await?;
+        // The finalized invoice's document is now available for download.
+        crate::webhook_emit::record_invoice_generated(db, org, row.get("id"), invoice_object(row)).await?;
     }
     Ok(rows.len() as u64)
 }

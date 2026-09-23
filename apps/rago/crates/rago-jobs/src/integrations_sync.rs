@@ -8,6 +8,11 @@
 //! configuration is an explicit [`JobError::NotConfigured`], never a fabricated
 //! provider response.
 //!
+//! Tax credentials are per organization: the Anrok API key / Avalara license
+//! key (and Avalara company code) saved from the dashboard are sealed into the
+//! org's tax integration settings and resolved here; `RAGO_TAX_API_KEY` /
+//! `RAGO_AVALARA_COMPANY_CODE` remain a single-tenant fallback.
+//!
 //! Env: `RAGO_TAX_BASE_URL` + `RAGO_TAX_API_KEY` (tax), `RAGO_ACCOUNTING_BASE_URL`
 //! (accounting; the connection's OAuth access token authenticates), and
 //! `RAGO_CRM_BASE_URL` (CRM).
@@ -43,6 +48,31 @@ fn env_required(name: &'static str) -> Result<String, JobError> {
         .ok()
         .filter(|v| !v.trim().is_empty())
         .ok_or(JobError::NotConfigured(name))
+}
+
+/// Per-org tax credentials: `(api_key, avalara_company_code)`.
+///
+/// Uses the org's `anrok` / `avalara` integration (sealed `api_key_sealed` /
+/// `license_key_sealed` in its settings), else the env fallback.
+pub async fn tax_credentials(db: &Db, org: Uuid, provider_code: &str) -> Result<(String, Option<String>), JobError> {
+    let provider = if provider_code == "avalara" { "avalara" } else { "anrok" };
+    let integration = db
+        .list_integrations(org)
+        .await?
+        .into_iter()
+        .find(|i| i.integration_type == "tax" && i.provider_code == provider);
+    if let Some(i) = integration {
+        let sealed_key = if provider == "avalara" { "license_key_sealed" } else { "api_key_sealed" };
+        let company = i.settings.get("company_code").and_then(|v| v.as_str()).map(str::to_string);
+        if let Some(sealed) = i.settings.get(sealed_key).and_then(|v| v.as_str()) {
+            let key = rago_db::secrets::open(sealed)
+                .map_err(|e| JobError::Integration(format!("{provider}_credentials_unavailable: {e}")))?;
+            return Ok((key, company));
+        }
+    }
+    let key = env_required("RAGO_TAX_API_KEY")?;
+    let company = std::env::var("RAGO_AVALARA_COMPANY_CODE").ok().filter(|v| !v.is_empty());
+    Ok((key, company))
 }
 
 fn integration_err(e: impl std::fmt::Display) -> JobError {
@@ -94,7 +124,7 @@ pub async fn apply_provider_taxes_to_invoice<T: HttpTransport>(
     provider_code: &str,
 ) -> Result<(Invoice, Vec<Fee>), JobError> {
     let base_url = env_required("RAGO_TAX_BASE_URL")?;
-    let api_key = env_required("RAGO_TAX_API_KEY")?;
+    let (api_key, company_code) = tax_credentials(db, org, provider_code).await?;
     let mut invoice = load_invoice(db, org, invoice_id).await?;
     let mut fees = db.fees_for_invoice(invoice.id).await?;
     let req = tax_request(
@@ -106,7 +136,7 @@ pub async fn apply_provider_taxes_to_invoice<T: HttpTransport>(
 
     let results = match provider_code {
         "avalara" => {
-            let company = std::env::var("RAGO_AVALARA_COMPANY_CODE").unwrap_or_else(|_| "DEFAULT".into());
+            let company = company_code.clone().unwrap_or_else(|| "DEFAULT".into());
             AvalaraTaxProvider::new(base_url, api_key, company, transport)
                 .fetch_invoice_taxes(&req)
                 .await
@@ -163,7 +193,7 @@ pub async fn void_invoice_taxes<T: HttpTransport>(
     invoice_id: Uuid,
 ) -> Result<(), JobError> {
     let base_url = env_required("RAGO_TAX_BASE_URL")?;
-    let api_key = env_required("RAGO_TAX_API_KEY")?;
+    let (api_key, _) = tax_credentials(db, org, "anrok").await?;
     let invoice = load_invoice(db, org, invoice_id).await?;
     AnrokTaxProvider::new(base_url, api_key, transport)
         .void_invoice(&invoice.id.to_string())
@@ -179,7 +209,7 @@ pub async fn report_credit_note_taxes<T: HttpTransport>(
     credit_note_id: Uuid,
 ) -> Result<(), JobError> {
     let base_url = env_required("RAGO_TAX_BASE_URL")?;
-    let api_key = env_required("RAGO_TAX_API_KEY")?;
+    let (api_key, _) = tax_credentials(db, org, "anrok").await?;
     let cn = db
         .find_credit_note(credit_note_id)
         .await?

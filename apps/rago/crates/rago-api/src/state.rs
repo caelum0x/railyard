@@ -25,8 +25,8 @@ pub struct AppState {
 impl AppState {
     /// Default state: an in-memory capture mailer (inspectable at `/emails`).
     pub fn new(db: Db) -> Self {
-        let schema = rago_graphql::build_schema(db.clone());
         let capture = Arc::new(CaptureTransport::new());
+        let schema = rago_graphql::build_schema_with_mailer(db.clone(), capture.clone());
         Self {
             db,
             schema,
@@ -38,8 +38,8 @@ impl AppState {
     /// Live state: the real SMTP transport (owner-gated, `--features live`).
     #[cfg(feature = "live")]
     pub fn new_live(db: Db) -> Result<Self, rago_mail::MailError> {
-        let schema = rago_graphql::build_schema(db.clone());
         let mailer = Arc::new(rago_mail::SmtpTransport::from_env()?);
+        let schema = rago_graphql::build_schema_with_mailer(db.clone(), mailer.clone());
         Ok(Self {
             db,
             schema,

@@ -441,7 +441,7 @@
         fields: [
           { name: "name", label: "Name", required: true },
           { name: "code", label: "Code (event code)", required: true, placeholder: "api_calls" },
-          { name: "aggregation_type", label: "Aggregation", type: "select", options: [["count_agg", "Count events"], ["sum_agg", "Sum of a property"], ["max_agg", "Max of a property"], ["unique_count_agg", "Unique count of a property"], ["latest_agg", "Latest value"], ["weighted_sum_agg", "Weighted sum"]] },
+          { name: "aggregation_type", label: "Aggregation", type: "select", options: [["count_agg", "Count events"], ["sum_agg", "Sum of a property"], ["max_agg", "Max of a property"], ["unique_count_agg", "Unique count of a property"], ["latest_agg", "Latest value"]] },
           { name: "field_name", label: "Property to aggregate", placeholder: "required unless counting events" },
           { name: "recurring", label: "Recurring (value carries over between periods)", type: "checkbox" },
           { name: "description", label: "Description" },
@@ -506,6 +506,9 @@
     const inv = (await api.get(base)).invoice;
     let payments = [];
     try { payments = (await api.get("/api/v1/payments?invoice_id=" + enc(p.id))).payments || []; } catch (_) { payments = []; }
+    let refunds = [];
+    let refundsError = "";
+    try { refunds = (await api.get(base + "/refunds")).refunds || []; } catch (e) { refundsError = e.message; }
     const fin = inv.status === "finalized";
     const unpaid = fin && inv.payment_status !== "succeeded";
     const view = $("#view");
@@ -541,7 +544,15 @@
         { h: "Status", f: (r) => badge(r.status) },
         { h: "Amount", f: (r) => money(r.amount_cents, r.amount_currency), cls: "num" },
         { h: "Lago ID", f: (r) => esc(r.lago_id), cls: "mono" },
-      ], payments, { empty: "No payment attempts yet." }));
+      ], payments, { empty: "No payment attempts yet." })) +
+      card("Refunds", refundsError ? '<div class="body">Refunds could not be loaded: ' + esc(refundsError) + "</div>" : table([
+        { h: "Provider", f: (r) => esc(r.provider) },
+        { h: "Status", f: (r) => badge(r.status) },
+        { h: "Amount", f: (r) => money(r.amount_cents, r.currency), cls: "num" },
+        { h: "Provider ref", f: (r) => esc(r.provider_refund_id || "-"), cls: "mono" },
+        { h: "Credit note", f: (r) => r.lago_credit_note_id ? '<a href="#/credit_notes/' + esc(r.lago_credit_note_id) + '">View</a>' : "-" },
+        { h: "Error", f: (r) => esc(r.error || "") },
+      ], refunds, { empty: "No refunds issued." }));
     finish(view, {
       pdf: () => api.download(base + "/download", inv.number + ".pdf"),
       xml: () => api.download(base + "/download.xml", inv.number + ".xml"),
@@ -563,7 +574,13 @@
         return "Invoice marked as paid";
       }),
       email: async () => { await api.post(base + "/resend_email"); R.toast("Invoice email sent", "ok"); },
-      refund: () => R.confirmAction("Refund invoice", "Mark the payment refunded.", "Refund", async () => { await api.post(base + "/refund"); return "Invoice refunded"; }),
+      refund: () => R.confirmAction("Refund invoice", "Refund the full remaining captured amount of " + inv.number + " to the customer through the payment provider that collected it. This moves money and cannot be undone.", "Refund", async () => {
+        const r = await api.post(base + "/refund", {});
+        const rf = r.refund || {};
+        if (rf.status === "failed") throw new Error("The provider declined the refund: " + (rf.error || "unknown error"));
+        if (rf.provider === "manual") return "Refund recorded (the payment was collected outside a provider; return the money manually)";
+        return rf.status === "succeeded" ? "Refund succeeded at " + rf.provider : "Refund submitted to " + rf.provider + " (pending confirmation)";
+      }),
       void: () => R.confirmAction("Void invoice", "Void " + inv.number + "? It will no longer be collectible.", "Void", async () => { await api.post(base + "/void"); return "Invoice voided"; }),
       credit: () => creditNoteForm(inv),
     });
@@ -581,6 +598,9 @@
         if (!items.length) throw new Error("Enter an amount for at least one fee.");
         const r = await api.post("/api/v1/credit_notes", { credit_note: { invoice_id: inv.lago_id, reason: v.reason, refund_amount_cents: v.refund, items } });
         location.hash = "#/credit_notes/" + r.credit_note.lago_id;
+        if (r.refund && r.refund.status === "failed") {
+          R.toast("Credit note issued, but the refund failed: " + (r.refund.error || "provider error"), "err");
+        }
         return "Credit note " + r.credit_note.number + " issued";
       },
     });
@@ -607,18 +627,23 @@
     const base = "/api/v1/credit_notes/" + enc(p.id);
     const cn = (await api.get(base)).credit_note;
     const view = $("#view");
-    view.innerHTML = head("Credit note " + cn.number, "", btn("pdf", "PDF", "download") + btn("xml", "XML", "download") + btn("email", "Resend email", "refresh") +
-      btn("refunded", "Mark refund succeeded", "check") + btn("void", "Void", "trash", "danger"), '<a href="#/credit_notes">Credit notes</a>') +
+    const canRetryRefund = cn.refund_amount_cents > 0 && cn.refund_status === "failed";
+    view.innerHTML = head("Credit note " + cn.number, cn.refund_status ? "Refund " + badge(cn.refund_status) : "", btn("pdf", "PDF", "download") + btn("xml", "XML", "download") + btn("email", "Resend email", "refresh") +
+      (canRetryRefund ? btn("retry_refund", "Retry refund", "retry", "primary") : "") + btn("void", "Void", "trash", "danger"), '<a href="#/credit_notes">Credit notes</a>') +
       card("Details", '<div class="body">' + kv([
         ["Invoice", '<a href="#/invoices/' + esc(cn.lago_invoice_id) + '">' + esc(cn.lago_invoice_id) + "</a>"], ["Issued", date(cn.issuing_date)],
         ["Reason", esc(cn.reason)], ["Total", money(cn.total_amount_cents, cn.currency)], ["Taxes", money(cn.taxes_amount_cents, cn.currency)],
-        ["Credit", money(cn.credit_amount_cents, cn.currency)], ["Refund", money(cn.refund_amount_cents, cn.currency)], ["Remaining credit", money(cn.balance_amount_cents, cn.currency)],
+        ["Credit", money(cn.credit_amount_cents, cn.currency)], ["Refund", money(cn.refund_amount_cents, cn.currency)], ["Refund status", cn.refund_status ? badge(cn.refund_status) : "No refund"], ["Remaining credit", money(cn.balance_amount_cents, cn.currency)],
       ]) + "</div>");
     finish(view, {
       pdf: () => api.download(base + "/download", cn.number + ".pdf"),
       xml: () => api.postDownload(base + "/download_xml", cn.number + ".xml"),
       email: async () => { await api.post(base + "/resend_email"); R.toast("Credit note email sent", "ok"); },
-      refunded: async () => { await api.put(base, { credit_note: { refund_status: "succeeded" } }); R.toast("Refund marked succeeded", "ok"); R.render(); },
+      retry_refund: () => R.confirmAction("Retry refund", "Send the " + money(cn.refund_amount_cents, cn.currency) + " refund to the payment provider again?", "Retry refund", async () => {
+        const r = await api.post(base + "/refund");
+        if (r.refund && r.refund.status === "failed") throw new Error("The provider declined the refund: " + (r.refund.error || "unknown error"));
+        return r.refund && r.refund.status === "succeeded" ? "Refund succeeded" : "Refund submitted (pending confirmation)";
+      }),
       void: () => R.confirmAction("Void credit note", "Void " + cn.number + "? Remaining credit is cancelled.", "Void", async () => { await api.put(base + "/void"); return "Credit note voided"; }),
     });
   });

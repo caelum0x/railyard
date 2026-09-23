@@ -265,17 +265,69 @@ async fn create_and_charge_payment_request<T: HttpTransport>(
     // idempotency key. One invoice's outage never blocks the others.
     let mut charged = 0u64;
     if cfg.charge {
+        let mut succeeded = 0usize;
+        let mut failures: Vec<serde_json::Value> = Vec::new();
         for invoice_id in &plan.invoice_ids {
             let Some(invoice) = db.find_invoice(*invoice_id).await? else { continue };
             match collect_invoice(db, transport, &invoice).await {
-                Ok(CollectOutcome::Charged(_)) => charged += 1,
-                Ok(CollectOutcome::Skipped(reason)) => tracing::info!(
-                    invoice_id = %invoice.id,
-                    reason = reason.code(),
-                    "dunning: invoice not charged"
-                ),
+                Ok(CollectOutcome::Charged(status)) => {
+                    charged += 1;
+                    match status {
+                        rago_integrations::PayableStatus::Succeeded => succeeded += 1,
+                        rago_integrations::PayableStatus::Failed => {
+                            failures.push(json!({ "lago_invoice_id": invoice.id, "message": "payment_failed" }))
+                        }
+                        rago_integrations::PayableStatus::Pending => {}
+                    }
+                }
+                Ok(CollectOutcome::Skipped(reason)) => {
+                    tracing::info!(invoice_id = %invoice.id, reason = reason.code(), "dunning: invoice not charged");
+                    if matches!(reason, crate::SkipReason::NoPaymentMethod | crate::SkipReason::ProviderCustomerMissing) {
+                        failures.push(json!({ "lago_invoice_id": invoice.id, "message": reason.code() }));
+                    }
+                }
                 Err(e) => tracing::error!(invoice_id = %invoice.id, error = %e, "dunning: collection error"),
             }
+        }
+
+        // Aggregate payment-request outcome → `payment_request.payment_status_updated`
+        // (+ `payment_request.payment_failure` when any invoice could not be paid).
+        let status = if !failures.is_empty() {
+            "failed"
+        } else if succeeded == plan.invoice_ids.len() {
+            "succeeded"
+        } else {
+            "pending"
+        };
+        if db.set_payment_request_status(request_id, status).await? {
+            record_webhook(
+                db,
+                org,
+                WebhookKind::PaymentRequestPaymentStatusUpdated,
+                json!({
+                    "lago_id": request_id,
+                    "external_customer_id": candidate.external_id,
+                    "amount_cents": plan.amount_cents,
+                    "amount_currency": plan.currency,
+                    "payment_status": status,
+                    "lago_invoice_ids": plan.invoice_ids,
+                }),
+            )
+            .await?;
+        }
+        if !failures.is_empty() {
+            record_webhook(
+                db,
+                org,
+                WebhookKind::PaymentRequestPaymentFailure,
+                json!({
+                    "lago_payable_id": request_id,
+                    "lago_customer_id": candidate.customer_id,
+                    "external_customer_id": candidate.external_id,
+                    "provider_error": { "failures": failures },
+                }),
+            )
+            .await?;
         }
     }
 

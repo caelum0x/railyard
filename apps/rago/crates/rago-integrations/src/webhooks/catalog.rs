@@ -119,7 +119,7 @@ pub enum WebhookKind {
     InvoiceOneOffCreated,
     /// no-op until `Credits::AppliedPrepaidCreditService` is implemented.
     InvoicePaidCreditAdded,
-    /// no-op until `Invoices::GeneratePdfService` (PDF generation path) is implemented.
+    /// Fired when an invoice is finalized (document downloadable; carries `file_url`).
     InvoiceGenerated,
     /// Fired by rago-jobs `refresh_draft_invoices` clock.
     InvoiceDrafted,
@@ -179,9 +179,9 @@ pub enum WebhookKind {
     // ── credit notes ────────────────────────────────────────────────────────
     /// Fired by rago-api `create_credit_note` and rago-graphql `create_credit_note`.
     CreditNoteCreated,
-    /// no-op until `CreditNotes::GeneratePdfService` (PDF generation) is implemented.
+    /// Fired after credit-note creation (carries `file_url`).
     CreditNoteGenerated,
-    /// no-op until `CreditNotes::Refunds::*` refund failure path is implemented.
+    /// Fired by rago-jobs `refunds` when the provider declines a credit-note refund.
     CreditNoteRefundFailure,
 
     // ── integrations ────────────────────────────────────────────────────────
@@ -219,9 +219,9 @@ pub enum WebhookKind {
     // ── payment requests ────────────────────────────────────────────────────
     /// Fired by rago-jobs dunning sweep (`create_and_charge_payment_request`).
     PaymentRequestCreated,
-    /// no-op until `PaymentProviders::DeliverErrorWebhookService` (payment request failure) is implemented.
+    /// Fired by rago-jobs `dunning` when an invoice of a payment request cannot be paid.
     PaymentRequestPaymentFailure,
-    /// no-op until `PaymentRequests::UpdateService` is implemented.
+    /// Fired by rago-jobs `dunning` with the payment request's aggregate status.
     PaymentRequestPaymentStatusUpdated,
 
     // ── plans ───────────────────────────────────────────────────────────────
@@ -249,7 +249,7 @@ pub enum WebhookKind {
     QuoteVoided,
 
     // ── subscriptions ───────────────────────────────────────────────────────
-    /// no-op until `Subscriptions::CancelService` is implemented.
+    /// Fired when a pending (never started) subscription is terminated.
     SubscriptionCanceled,
     /// no-op until incomplete-activation path (`Subscriptions::ActivateService` failure) is implemented.
     SubscriptionIncomplete,

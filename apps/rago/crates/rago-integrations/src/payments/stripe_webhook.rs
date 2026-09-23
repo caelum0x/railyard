@@ -57,6 +57,23 @@ impl StripeEvent {
         }
     }
 
+    /// A refund-object event (`refund.created|updated|failed`,
+    /// `charge.refund.updated`) as a refund notification.
+    pub fn refund_event(&self) -> Option<super::provider_webhook::ProviderRefundEvent> {
+        if !matches!(
+            self.event_type.as_str(),
+            "refund.created" | "refund.updated" | "refund.failed" | "charge.refund.updated"
+        ) {
+            return None;
+        }
+        let status = self.object_status.clone().unwrap_or_else(|| "pending".into());
+        Some(super::provider_webhook::ProviderRefundEvent {
+            provider_refund_id: self.object_id.clone(),
+            state: super::stripe::stripe_refund_state(&status),
+            provider_status: status,
+        })
+    }
+
     pub fn lago_payment_id(&self) -> Option<&str> {
         self.metadata.get("lago_payment_id").and_then(Value::as_str)
     }
