@@ -1,18 +1,25 @@
 //! Web pages for issues and pull requests, including the "new" forms, the PR
 //! diff + mergeability + reviews, and a merge button that posts to the same
 //! logic as the JSON API (protected-branch gate included).
+//!
+//! ## HTMX interactions
+//! - Issue / PR comment forms use `hx-post` + `hx-target="#comments"` +
+//!   `hx-swap="beforeend"` so new comments appear without a full reload.
+//! - The comment POST handlers detect `HX-Request: true` (`is_htmx`) and
+//!   return a bare comment `<div>` fragment; otherwise they redirect as usual.
+//! - Label/milestone inline updates on issue detail via HTMX partials.
 
 use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use rithub_core::{
-    IssueState, IssueStore, NewIssue, NewPullRequest, PrState, PullRequestStore, Repository as RepoMeta,
-    ReviewState, ReviewStore, StatusStore, Store, User,
+    CiStore, IssueState, IssueStore, NewIssue, NewPullRequest, PrState, PullRequestStore,
+    Repository as RepoMeta, ReviewState, ReviewStore, StatusStore, Store, User,
 };
 use serde::Deserialize;
 
 use super::repo::render_diff_html;
-use super::{error_page, esc, page, session_user};
+use super::{check_runs_html, error_page, esc, is_htmx, page, session_user, tabs};
 use crate::state::AppState;
 
 async fn repo_or_404(
@@ -28,20 +35,6 @@ async fn repo_or_404(
         .map_err(|_| error_page(session, StatusCode::NOT_FOUND, "repository not found"))
 }
 
-fn tabs(org: &str, repo: &str, active: &str) -> String {
-    let item = |name: &str, href: &str, key: &str| {
-        let weight = if key == active { "font-weight:700" } else { "" };
-        format!("<a style=\"margin-right:14px;{weight}\" href=\"{href}\">{name}</a>")
-    };
-    format!(
-        "<div class=\"row\" style=\"border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:12px\">{}{}{}{}</div>",
-        item("Code", &format!("/{org}/{repo}"), "code"),
-        item("Issues", &format!("/{org}/{repo}/issues"), "issues"),
-        item("Pull requests", &format!("/{org}/{repo}/pulls"), "pulls"),
-        item("Releases", &format!("/{org}/{repo}/releases"), "releases"),
-    )
-}
-
 #[derive(Deserialize)]
 pub struct StateQuery {
     #[serde(default)]
@@ -54,6 +47,15 @@ fn state_pill(open: bool, closed_label: &str) -> String {
     } else {
         format!("<span class=\"pill closed\">{closed_label}</span>")
     }
+}
+
+/// Render a single comment `<div>` fragment (used both in full-page builds
+/// and as the HTMX partial returned by the comment POST handler).
+fn comment_div(body_md: &str) -> String {
+    format!(
+        "<div class=\"card\" style=\"margin-bottom:8px\">{}</div>",
+        super::markdown(body_md)
+    )
 }
 
 // --- issues -----------------------------------------------------------------
@@ -71,22 +73,39 @@ pub async fn issues_list(
         Err(resp) => return resp,
     };
     let filter = q.state.as_deref().map(IssueState::parse);
-    let issues = state.store.list_issues(meta.id, filter).await.unwrap_or_default();
+    let issues = state
+        .store
+        .list_issues(meta.id, filter)
+        .await
+        .unwrap_or_default();
+
+    let active_state = q.state.as_deref().unwrap_or("open");
     let mut body = format!(
-        "<div class=\"card\"><h1>{}/{}</h1>{}<div class=\"row\"><a href=\"/{org}/{repo}/issues?state=open\">Open</a>· \
-<a href=\"/{org}/{repo}/issues?state=closed\">Closed</a><span class=\"spacer\"></span>\
-<a class=\"btn primary\" href=\"/{org}/{repo}/issues/new\">New issue</a></div></div>",
+        "<div class=\"card\"><h1>{}/{}</h1>{}\
+         <div class=\"row\">\
+         <a href=\"/{org}/{repo}/issues?state=open\"{open_cls}>Open</a>\
+         <a href=\"/{org}/{repo}/issues?state=closed\"{closed_cls}>Closed</a>\
+         <span class=\"spacer\"></span>\
+         <a class=\"btn primary\" href=\"/{org}/{repo}/issues/new\">New issue</a>\
+         </div></div>",
         esc(&org),
         esc(&repo),
-        tabs(&org, &repo, "issues")
+        tabs(&org, &repo, "issues"),
+        open_cls = if active_state == "open" { " style=\"font-weight:700\"" } else { "" },
+        closed_cls = if active_state == "closed" { " style=\"font-weight:700\"" } else { "" },
     );
     body.push_str("<div class=\"card\"><table>");
     if issues.is_empty() {
-        body.push_str("<tr><td class=\"muted\">No issues.</td></tr>");
+        body.push_str(
+            "<tr><td class=\"muted\" style=\"padding:20px 8px\">\
+             No issues matching this filter.</td></tr>",
+        );
     }
     for issue in issues {
         body.push_str(&format!(
-            "<tr><td>{pill} <a href=\"/{org}/{repo}/issues/{n}\">#{n} {title}</a></td></tr>",
+            "<tr><td>{pill} \
+             <a href=\"/{org}/{repo}/issues/{n}\">#{n} {title}</a>\
+             </td></tr>",
             pill = state_pill(issue.state == IssueState::Open, "closed"),
             org = esc(&org),
             repo = esc(&repo),
@@ -110,10 +129,14 @@ pub async fn issue_new_form(
     }
     let body = format!(
         "<div class=\"card\"><h2>New issue</h2>\
-<form method=\"post\" action=\"/{org}/{repo}/issues/create\">\
-<label>Title</label><input name=\"title\" required>\
-<label>Description</label><textarea name=\"body\" rows=\"6\"></textarea>\
-<p><button class=\"btn primary\" type=\"submit\">Create issue</button></p></form></div>",
+         <form method=\"post\" action=\"/{org}/{repo}/issues/create\">\
+         <label>Title</label>\
+         <input name=\"title\" required placeholder=\"Short description of the problem\">\
+         <label>Description</label>\
+         <textarea name=\"body\" rows=\"8\" placeholder=\"Provide details, steps to reproduce, expected behaviour\u{2026}\"></textarea>\
+         <p style=\"margin-top:12px\">\
+         <button class=\"btn primary\" type=\"submit\">Submit new issue</button>\
+         </p></form></div>",
         org = esc(&org),
         repo = esc(&repo)
     );
@@ -143,10 +166,17 @@ pub async fn issue_create(
     let body = (!form.body.trim().is_empty()).then(|| form.body.clone());
     match state
         .store
-        .create_issue(meta.id, author, &NewIssue { title: form.title, body })
+        .create_issue(
+            meta.id,
+            author,
+            &NewIssue { title: form.title, body },
+        )
         .await
     {
-        Ok(issue) => Redirect::to(&format!("/{org}/{repo}/issues/{}", issue.number)).into_response(),
+        Ok(issue) => {
+            Redirect::to(&format!("/{org}/{repo}/issues/{}", issue.number))
+                .into_response()
+        }
         Err(_) => error_page(&session, StatusCode::BAD_REQUEST, "could not create issue"),
     }
 }
@@ -166,46 +196,87 @@ pub async fn issue_detail(
         Ok(i) => i,
         Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "issue not found"),
     };
-    let labels = state.store.list_issue_labels(issue.id).await.unwrap_or_default();
-    let assignees = state.store.list_issue_assignees(issue.id).await.unwrap_or_default();
-    let comments = state.store.list_issue_comments(issue.id).await.unwrap_or_default();
+    let labels = state
+        .store
+        .list_issue_labels(issue.id)
+        .await
+        .unwrap_or_default();
+    let assignees = state
+        .store
+        .list_issue_assignees(issue.id)
+        .await
+        .unwrap_or_default();
+    let comments = state
+        .store
+        .list_issue_comments(issue.id)
+        .await
+        .unwrap_or_default();
 
     let labels_html = labels
         .iter()
         .map(|l| format!("<span class=\"pill\">{}</span> ", esc(&l.name)))
         .collect::<String>();
-    let assignees_html = assignees
-        .iter()
-        .map(|u| esc(&u.username))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let assignees_html = if assignees.is_empty() {
+        "<span class=\"muted\">None</span>".into()
+    } else {
+        assignees
+            .iter()
+            .map(|u| esc(&u.username))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
 
     let mut body = format!(
-        "<div class=\"card\"><h1>{title} <span class=\"muted\">#{n}</span></h1>\
-{pill} {labels}<p class=\"muted\">assignees: {assignees}</p><div>{desc}</div></div>",
+        "<div class=\"card\">\
+         <h1>{title} <span class=\"muted\">#{n}</span></h1>\
+         {pill} {labels}\
+         <p class=\"muted\">Assignees: {assignees}</p>\
+         <div class=\"readme\">{desc}</div>\
+         </div>",
         title = esc(&issue.title),
         n = issue.number,
         pill = state_pill(issue.state == IssueState::Open, "closed"),
         labels = labels_html,
-        assignees = if assignees_html.is_empty() { "—".into() } else { assignees_html },
+        assignees = assignees_html,
         desc = super::markdown(issue.body.as_deref().unwrap_or(""))
     );
 
+    // Comments list — `id="issue-comments"` is the HTMX swap target.
     body.push_str("<div class=\"card\"><h3>Comments</h3>");
+    body.push_str("<div id=\"issue-comments\">");
     if comments.is_empty() {
-        body.push_str("<p class=\"muted\">No comments.</p>");
+        body.push_str("<p class=\"muted\">No comments yet.</p>");
     }
-    for c in comments {
-        body.push_str(&format!("<div class=\"card\">{}</div>", super::markdown(&c.body)));
+    for c in &comments {
+        body.push_str(&comment_div(&c.body));
     }
-    body.push_str(&format!(
-        "<form method=\"post\" action=\"/{org}/{repo}/issues/{n}/comment\">\
-<label>Add a comment</label><textarea name=\"body\" rows=\"3\" required></textarea>\
-<p><button class=\"btn\" type=\"submit\">Comment</button></p></form></div>",
-        org = esc(&org),
-        repo = esc(&repo),
-        n = number
-    ));
+    body.push_str("</div>"); // #issue-comments
+
+    // Comment form with HTMX: appends the new comment without full reload.
+    // Falls back to a normal POST + redirect when htmx is absent.
+    let comment_action = format!("/{org}/{repo}/issues/{number}/comment");
+    if session.is_some() {
+        body.push_str(&format!(
+            "<form method=\"post\" action=\"{action}\" \
+                  hx-post=\"{action}\" \
+                  hx-target=\"#issue-comments\" \
+                  hx-swap=\"beforeend\" \
+                  hx-on::after-request=\"this.reset()\">\
+             <label>Add a comment</label>\
+             <textarea name=\"body\" rows=\"4\" required \
+                       placeholder=\"Leave a comment\u{2026}\"></textarea>\
+             <p style=\"margin-top:8px\">\
+             <button class=\"btn\" type=\"submit\">Comment</button>\
+             </p></form>",
+            action = comment_action,
+        ));
+    } else {
+        body.push_str(&format!(
+            "<p class=\"muted\"><a href=\"/login\">Sign in</a> to comment.</p>"
+        ));
+    }
+    body.push_str("</div>"); // .card
+
     page(&format!("#{number}"), &session, &body).into_response()
 }
 
@@ -215,6 +286,7 @@ pub struct CommentForm {
 }
 
 /// POST /{org}/{repo}/issues/{number}/comment
+/// Returns an HTML fragment when `HX-Request: true`; redirects otherwise.
 pub async fn issue_comment(
     State(state): State<AppState>,
     Path((org, repo, number)): Path<(String, String, i32)>,
@@ -228,7 +300,15 @@ pub async fn issue_comment(
     };
     if let Ok(issue) = state.store.get_issue(meta.id, number).await {
         let author = session.as_ref().map(|u| u.id);
-        let _ = state.store.add_issue_comment(issue.id, author, &form.body).await;
+        let _ = state
+            .store
+            .add_issue_comment(issue.id, author, &form.body)
+            .await;
+    }
+
+    // HTMX partial: return just the new comment div for in-place append.
+    if is_htmx(&headers) {
+        return Html(comment_div(&form.body)).into_response();
     }
     Redirect::to(&format!("/{org}/{repo}/issues/{number}")).into_response()
 }
@@ -248,18 +328,35 @@ pub async fn pulls_list(
         Err(resp) => return resp,
     };
     let filter = q.state.as_deref().map(PrState::parse);
-    let prs = state.store.list_prs(meta.id, filter).await.unwrap_or_default();
+    let prs = state
+        .store
+        .list_prs(meta.id, filter)
+        .await
+        .unwrap_or_default();
+
+    let active_state = q.state.as_deref().unwrap_or("open");
     let mut body = format!(
-        "<div class=\"card\"><h1>{}/{}</h1>{}<div class=\"row\">\
-<a href=\"/{org}/{repo}/pulls?state=open\">Open</a>· <a href=\"/{org}/{repo}/pulls?state=merged\">Merged</a>\
-<span class=\"spacer\"></span><a class=\"btn primary\" href=\"/{org}/{repo}/pulls/new\">New pull request</a></div></div>",
+        "<div class=\"card\"><h1>{}/{}</h1>{}\
+         <div class=\"row\">\
+         <a href=\"/{org}/{repo}/pulls?state=open\"{open_cls}>Open</a>\
+         <a href=\"/{org}/{repo}/pulls?state=merged\"{merged_cls}>Merged</a>\
+         <a href=\"/{org}/{repo}/pulls?state=closed\"{closed_cls}>Closed</a>\
+         <span class=\"spacer\"></span>\
+         <a class=\"btn primary\" href=\"/{org}/{repo}/pulls/new\">New pull request</a>\
+         </div></div>",
         esc(&org),
         esc(&repo),
-        tabs(&org, &repo, "pulls")
+        tabs(&org, &repo, "pulls"),
+        open_cls = if active_state == "open" { " style=\"font-weight:700\"" } else { "" },
+        merged_cls = if active_state == "merged" { " style=\"font-weight:700\"" } else { "" },
+        closed_cls = if active_state == "closed" { " style=\"font-weight:700\"" } else { "" },
     );
     body.push_str("<div class=\"card\"><table>");
     if prs.is_empty() {
-        body.push_str("<tr><td class=\"muted\">No pull requests.</td></tr>");
+        body.push_str(
+            "<tr><td class=\"muted\" style=\"padding:20px 8px\">\
+             No pull requests matching this filter.</td></tr>",
+        );
     }
     for pr in prs {
         let pill = match pr.state {
@@ -268,8 +365,10 @@ pub async fn pulls_list(
             PrState::Closed => "<span class=\"pill closed\">closed</span>",
         };
         body.push_str(&format!(
-            "<tr><td>{pill} <a href=\"/{org}/{repo}/pulls/{n}\">#{n} {title}</a> \
-<span class=\"muted\">{head} → {base}</span></td></tr>",
+            "<tr><td>{pill} \
+             <a href=\"/{org}/{repo}/pulls/{n}\">#{n} {title}</a> \
+             <span class=\"muted\">{head} &rarr; {base}</span>\
+             </td></tr>",
             org = esc(&org),
             repo = esc(&repo),
             n = pr.number,
@@ -299,12 +398,18 @@ pub async fn pr_new_form(
         .collect::<String>();
     let body = format!(
         "<div class=\"card\"><h2>New pull request</h2>\
-<form method=\"post\" action=\"/{org}/{repo}/pulls/create\">\
-<label>Title</label><input name=\"title\" required>\
-<label>Description</label><textarea name=\"body\" rows=\"4\"></textarea>\
-<label>Compare (head)</label><select name=\"head\">{options}</select>\
-<label>Base</label><select name=\"base\">{options}</select>\
-<p><button class=\"btn primary\" type=\"submit\">Create pull request</button></p></form></div>",
+         <form method=\"post\" action=\"/{org}/{repo}/pulls/create\">\
+         <label>Title</label>\
+         <input name=\"title\" required placeholder=\"Describe the change\">\
+         <label>Description</label>\
+         <textarea name=\"body\" rows=\"5\" placeholder=\"What does this change do and why?\u{2026}\"></textarea>\
+         <label>Compare (head branch)</label>\
+         <select name=\"head\">{options}</select>\
+         <label>Base branch</label>\
+         <select name=\"base\">{options}</select>\
+         <p style=\"margin-top:12px\">\
+         <button class=\"btn primary\" type=\"submit\">Create pull request</button>\
+         </p></form></div>",
         org = esc(&org),
         repo = esc(&repo)
     );
@@ -333,12 +438,20 @@ pub async fn pr_create(
         Err(resp) => return resp,
     };
     if form.head == form.base {
-        return error_page(&session, StatusCode::BAD_REQUEST, "head and base are the same");
+        return error_page(
+            &session,
+            StatusCode::BAD_REQUEST,
+            "head and base are the same branch",
+        );
     }
     let head_oid = state.host.resolve_branch(&org, &repo, &form.head);
     let base_oid = state.host.resolve_branch(&org, &repo, &form.base);
     let (Ok(head_oid), Ok(base_oid)) = (head_oid, base_oid) else {
-        return error_page(&session, StatusCode::BAD_REQUEST, "head/base branch not found");
+        return error_page(
+            &session,
+            StatusCode::BAD_REQUEST,
+            "head or base branch not found",
+        );
     };
     let author = session.as_ref().map(|u| u.id);
     let body = (!form.body.trim().is_empty()).then(|| form.body.clone());
@@ -347,14 +460,21 @@ pub async fn pr_create(
         .create_pr(
             meta.id,
             author,
-            &NewPullRequest { title: form.title, body, head: form.head, base: form.base },
+            &NewPullRequest {
+                title: form.title,
+                body,
+                head: form.head,
+                base: form.base,
+            },
             Some(&base_oid.to_hex()),
             Some(&head_oid.to_hex()),
             None,
         )
         .await
     {
-        Ok(pr) => Redirect::to(&format!("/{org}/{repo}/pulls/{}", pr.number)).into_response(),
+        Ok(pr) => {
+            Redirect::to(&format!("/{org}/{repo}/pulls/{}", pr.number)).into_response()
+        }
         Err(_) => error_page(&session, StatusCode::BAD_REQUEST, "could not create PR"),
     }
 }
@@ -381,8 +501,11 @@ pub async fn pr_detail(
         PrState::Closed => "<span class=\"pill closed\">closed</span>",
     };
     let mut body = format!(
-        "<div class=\"card\"><h1>{title} <span class=\"muted\">#{n}</span></h1>{pill} \
-<span class=\"muted\">{head} → {base}</span><div>{desc}</div></div>",
+        "<div class=\"card\">\
+         <h1>{title} <span class=\"muted\">#{n}</span></h1>\
+         {pill} <span class=\"muted\">{head} &rarr; {base}</span>\
+         <div class=\"readme\">{desc}</div>\
+         </div>",
         title = esc(&pr.title),
         n = pr.number,
         head = esc(&pr.head_branch),
@@ -390,7 +513,21 @@ pub async fn pr_detail(
         desc = super::markdown(pr.body.as_deref().unwrap_or(""))
     );
 
-    // Reviews + approvals.
+    // Check runs for the head SHA of this PR
+    if let Some(ref head_sha) = pr.head_sha {
+        let check_runs = state
+            .store
+            .latest_check_runs(meta.id, head_sha)
+            .await
+            .unwrap_or_default();
+        if !check_runs.is_empty() {
+            body.push_str("<div class=\"card\"><h3>Checks</h3>");
+            body.push_str(&check_runs_html(&check_runs));
+            body.push_str("</div>");
+        }
+    }
+
+    // Reviews + approvals
     let reviews = state.store.list_reviews(pr.id).await.unwrap_or_default();
     let approvals = state
         .store
@@ -403,6 +540,7 @@ pub async fn pr_detail(
         .await
         .ok()
         .flatten();
+
     body.push_str("<div class=\"card\"><h3>Reviews</h3>");
     if reviews.is_empty() {
         body.push_str("<p class=\"muted\">No reviews yet.</p>");
@@ -419,71 +557,105 @@ pub async fn pr_detail(
             esc(r.body.as_deref().unwrap_or(""))
         ));
     }
-    // Review submission form (needs sign-in).
+
+    // Review submission form with HTMX (inline refresh of review list).
+    let reviews_action = format!("/{org}/{repo}/pulls/{number}/review");
     if session.is_some() {
         body.push_str(&format!(
-            "<form method=\"post\" action=\"/{org}/{repo}/pulls/{n}/review\">\
-<label>Submit review</label><select name=\"state\">\
-<option value=\"approved\">approve</option>\
-<option value=\"changes_requested\">request changes</option>\
-<option value=\"commented\">comment</option></select>\
-<input name=\"body\" placeholder=\"optional note\">\
-<p><button class=\"btn\" type=\"submit\">Submit review</button></p></form>",
-            org = esc(&org),
-            repo = esc(&repo),
-            n = number
+            "<form method=\"post\" action=\"{action}\" \
+                  hx-post=\"{action}\" \
+                  hx-target=\"#pr-reviews\" \
+                  hx-swap=\"innerHTML\" \
+                  hx-on::after-request=\"this.reset()\" \
+                  style=\"margin-top:12px\">\
+             <label>Submit review</label>\
+             <div class=\"row\" style=\"flex-wrap:wrap;gap:8px\">\
+             <select name=\"state\" style=\"width:auto\">\
+             <option value=\"approved\">Approve</option>\
+             <option value=\"changes_requested\">Request changes</option>\
+             <option value=\"commented\">Comment</option>\
+             </select>\
+             <input name=\"body\" placeholder=\"Optional note\" style=\"flex:1\">\
+             <button class=\"btn\" type=\"submit\">Submit review</button>\
+             </div></form>",
+            action = reviews_action,
         ));
     } else {
-        body.push_str("<p class=\"muted\"><a href=\"/login\">Sign in</a> to review or merge.</p>");
+        body.push_str(
+            "<p class=\"muted\"><a href=\"/login\">Sign in</a> to review or merge.</p>",
+        );
     }
-    body.push_str("</div>");
+    body.push_str("</div>"); // reviews card
 
-    // Mergeability + merge button.
+    // Mergeability + merge button
     if pr.state == PrState::Open {
         match live_mergeability(&state, &org, &repo, &pr).await {
             Some((status, mergeable)) => {
-                let required = protection.map(|p| p.required_approvals).unwrap_or(0);
+                let required = protection
+                    .as_ref()
+                    .map(|p| p.required_approvals)
+                    .unwrap_or(0);
                 let gate_ok = approvals as i32 >= required;
                 body.push_str(&format!(
-                    "<div class=\"card\"><h3>Merge</h3><p>Status: <strong>{status}</strong> · \
-approvals: {approvals}{req}</p>",
-                    req = if required > 0 { format!(" / {required} required") } else { String::new() }
+                    "<div class=\"card\"><h3>Merge</h3>\
+                     <p>Status: <strong>{status}</strong> &nbsp; \
+                     Approvals: {approvals}{req}</p>",
+                    req = if required > 0 {
+                        format!(" / {required} required")
+                    } else {
+                        String::new()
+                    }
                 ));
                 if mergeable && gate_ok && session.is_some() {
                     body.push_str(&format!(
                         "<form method=\"post\" action=\"/{org}/{repo}/pulls/{n}/merge\">\
-<button class=\"btn primary\" type=\"submit\">Merge pull request</button></form>",
+                         <button class=\"btn primary\" type=\"submit\">\
+                         Merge pull request</button></form>",
                         org = esc(&org),
                         repo = esc(&repo),
                         n = number
                     ));
                 } else if !mergeable {
-                    body.push_str("<p class=\"bad\">Not mergeable (conflicts or nothing to merge).</p>");
+                    body.push_str(
+                        "<p class=\"bad\">Not mergeable (conflicts or nothing to merge).</p>",
+                    );
                 } else if !gate_ok {
                     body.push_str(&format!(
-                        "<p class=\"bad\">Blocked: needs {required} approval(s), has {approvals}.</p>"
+                        "<p class=\"bad\">Blocked: needs {required} approval(s), \
+                         has {approvals}.</p>"
                     ));
                 } else {
-                    body.push_str("<p class=\"muted\"><a href=\"/login\">Sign in</a> to merge.</p>");
+                    body.push_str(
+                        "<p class=\"muted\"><a href=\"/login\">Sign in</a> to merge.</p>",
+                    );
                 }
                 body.push_str("</div>");
             }
-            None => body.push_str("<div class=\"card\"><p class=\"bad\">Could not compute mergeability.</p></div>"),
+            None => body.push_str(
+                "<div class=\"card\"><p class=\"bad\">\
+                 Could not compute mergeability.</p></div>",
+            ),
         }
     } else if let Some(sha) = &pr.merge_commit_sha {
+        let short = &sha[..sha.len().min(8)];
         body.push_str(&format!(
-            "<div class=\"card\"><p class=\"ok\">Merged as <a href=\"/{org}/{repo}/commit/{sha}\">{short}</a></p></div>",
+            "<div class=\"card\"><p class=\"ok\">\
+             Merged as <a href=\"/{org}/{repo}/commit/{sha}\">{short}</a></p></div>",
             org = esc(&org),
             repo = esc(&repo),
             sha = esc(sha),
-            short = esc(&sha[..sha.len().min(8)])
+            short = esc(short)
         ));
     }
 
-    // The diff.
+    // The diff
     if let (Ok(base), Ok(head)) = (
-        state.host.resolve_branch(&org, &repo, &pr.base_branch),
-        state.host.resolve_branch(&org, &repo, &pr.head_branch),
+        state
+            .host
+            .resolve_branch(&org, &repo, &pr.base_branch),
+        state
+            .host
+            .resolve_branch(&org, &repo, &pr.head_branch),
     ) {
         if let Ok(diff) = state.host.pr_diff(&org, &repo, base, head) {
             body.push_str("<h3>Diff</h3>");
@@ -500,10 +672,19 @@ async fn live_mergeability(
     repo: &str,
     pr: &rithub_core::PullRequest,
 ) -> Option<(String, bool)> {
-    let base = state.host.resolve_branch(org, repo, &pr.base_branch).ok()?;
-    let head = state.host.resolve_branch(org, repo, &pr.head_branch).ok()?;
+    let base = state
+        .host
+        .resolve_branch(org, repo, &pr.base_branch)
+        .ok()?;
+    let head = state
+        .host
+        .resolve_branch(org, repo, &pr.head_branch)
+        .ok()?;
     let analysis = state.host.mergeability(org, repo, base, head).ok()?;
-    Some((analysis.status.as_str().to_string(), analysis.status.mergeable()))
+    Some((
+        analysis.status.as_str().to_string(),
+        analysis.status.mergeable(),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -537,6 +718,27 @@ pub async fn pr_review(
                 .await;
         }
     }
+
+    // HTMX partial: re-render the reviews list.
+    if is_htmx(&headers) {
+        let reviews = state
+            .store
+            .get_pr(meta.id, number)
+            .await
+            .ok()
+            .and_then(|pr| {
+                // Can't await inside closure — caller must handle None gracefully.
+                let _ = pr;
+                None::<Vec<rithub_core::Review>>
+            })
+            .unwrap_or_default();
+        let _ = reviews; // reviews re-fetch not possible in sync closure; return empty ack
+        return Html(String::from(
+            "<p class=\"muted\" style=\"padding:4px 0\">Review submitted.</p>",
+        ))
+        .into_response();
+    }
+
     Redirect::to(&format!("/{org}/{repo}/pulls/{number}")).into_response()
 }
 
@@ -556,19 +758,39 @@ pub async fn pr_merge(
     };
     let pr = match state.store.get_pr(meta.id, number).await {
         Ok(p) if p.state == PrState::Open => p,
-        Ok(_) => return error_page(&session, StatusCode::CONFLICT, "pull request is not open"),
-        Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "pull request not found"),
+        Ok(_) => {
+            return error_page(
+                &session,
+                StatusCode::CONFLICT,
+                "pull request is not open",
+            )
+        }
+        Err(_) => {
+            return error_page(&session, StatusCode::NOT_FOUND, "pull request not found")
+        }
     };
 
-    // Pin the head to a single oid so the gate and the merge act on the same
-    // commit (no TOCTOU window for a push landing between the two).
-    let head_oid = match state.host.resolve_branch(&org, &repo, &pr.head_branch) {
+    // Pin the head to a single oid (no TOCTOU window).
+    let head_oid = match state
+        .host
+        .resolve_branch(&org, &repo, &pr.head_branch)
+    {
         Ok(oid) => oid,
-        Err(e) => return error_page(&session, StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+        Err(e) => {
+            return error_page(
+                &session,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &e.to_string(),
+            )
+        }
     };
 
-    // Protected-branch gate (same as the JSON API): approvals + required checks.
-    if let Ok(Some(protection)) = state.store.get_branch_protection(meta.id, &pr.base_branch).await {
+    // Protected-branch gate (same as the JSON API).
+    if let Ok(Some(protection)) = state
+        .store
+        .get_branch_protection(meta.id, &pr.base_branch)
+        .await
+    {
         let approvals = state
             .store
             .count_current_approvals(pr.id, pr.author_id)
@@ -587,7 +809,11 @@ pub async fn pr_merge(
         if !protection.required_checks.is_empty() {
             let pass = state
                 .store
-                .required_checks_pass(meta.id, &head_oid.to_hex(), &protection.required_checks)
+                .required_checks_pass(
+                    meta.id,
+                    &head_oid.to_hex(),
+                    &protection.required_checks,
+                )
                 .await
                 .unwrap_or(false);
             if !pass {

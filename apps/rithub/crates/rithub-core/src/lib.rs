@@ -20,6 +20,7 @@ pub mod jobs;
 pub mod milestones;
 pub mod notifications;
 pub mod numbering;
+pub mod oauth;
 pub mod pulls;
 pub mod releases;
 pub mod reviews;
@@ -47,6 +48,7 @@ pub use milestones::{
     Milestone, MilestoneStore, MilestoneWithProgress, NewMilestone, UpdateMilestone,
 };
 pub use notifications::{Notification, NotifyStore};
+pub use oauth::{OauthIdentity, OauthStore};
 pub use pulls::{NewPullRequest, PrComment, PrState, PullRequest, PullRequestStore, UpdatePr};
 pub use releases::{NewRelease, Release, ReleaseAsset, ReleaseAssetStore, ReleaseStore};
 pub use reviews::{

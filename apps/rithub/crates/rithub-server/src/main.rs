@@ -34,6 +34,7 @@ mod graphql;
 mod jobs;
 mod jobs_api;
 mod milestones_api;
+mod oauth;
 mod releases_api;
 mod search_api;
 mod search_index;
@@ -396,6 +397,8 @@ fn build_router(state: AppState) -> Router {
             "/{owner}/{repo}/{*path}",
             get(git_http::git_get).post(git_http::git_post),
         )
+        // OAuth2 / SSO login (authorization-code flow: start + callback).
+        .merge(oauth::routes())
         // Server-rendered web UI (landing, repo browse, issues, PRs, releases).
         .merge(web::routes())
         .layer(DefaultBodyLimit::max(MAX_GIT_BODY_BYTES))

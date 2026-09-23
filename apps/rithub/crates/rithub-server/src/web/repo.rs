@@ -1,14 +1,17 @@
 //! Repository browse pages: home (file tree + README), tree navigation, blob
-//! view, commit history, and a single-commit diff. All content is read live from
-//! `rit` via `RepoHost`.
+//! view, commit history, and a single-commit diff. All content is read live
+//! from `rit` via `RepoHost`.
 
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use rithub_core::{Repository as RepoMeta, Store};
+use rithub_core::{CiStore, Repository as RepoMeta, Store};
 use rithub_git::{DiffResult, RepoHost};
 
-use super::{error_page, esc, markdown, page, session_user, short_date};
+use super::{
+    breadcrumbs, check_runs_html, error_page, esc, markdown, page, session_user, short_date,
+    tabs,
+};
 use crate::state::AppState;
 
 /// Look up repo metadata or render a 404 page.
@@ -25,21 +28,6 @@ async fn repo_or_404(
         .map_err(|_| error_page(session, StatusCode::NOT_FOUND, "repository not found"))
 }
 
-/// The repo tab bar (Code / Issues / Pull requests / Releases).
-fn tabs(org: &str, repo: &str, active: &str) -> String {
-    let item = |name: &str, href: &str, key: &str| {
-        let weight = if key == active { "font-weight:700" } else { "" };
-        format!("<a style=\"margin-right:14px;{weight}\" href=\"{href}\">{name}</a>")
-    };
-    format!(
-        "<div class=\"row\" style=\"border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:12px\">{}{}{}{}</div>",
-        item("Code", &format!("/{org}/{repo}"), "code"),
-        item("Issues", &format!("/{org}/{repo}/issues"), "issues"),
-        item("Pull requests", &format!("/{org}/{repo}/pulls"), "pulls"),
-        item("Releases", &format!("/{org}/{repo}/releases"), "releases"),
-    )
-}
-
 /// A branch selector that navigates the tree view on change.
 fn branch_select(org: &str, repo: &str, branches: &[String], current: &str) -> String {
     if branches.is_empty() {
@@ -54,7 +42,7 @@ fn branch_select(org: &str, repo: &str, branches: &[String], current: &str) -> S
         ));
     }
     format!(
-        "<select style=\"width:auto\" onchange=\"location=this.value\">{opts}</select>"
+        "<select style=\"width:auto\" onchange=\"location.href=this.value\">{opts}</select>"
     )
 }
 
@@ -65,7 +53,8 @@ fn clone_box(headers: &HeaderMap, org: &str, repo: &str) -> String {
         .and_then(|h| h.to_str().ok())
         .unwrap_or("localhost");
     format!(
-        "<div class=\"card\"><strong>Clone</strong><pre>git clone http://{host}/{org}/{repo}.git</pre></div>",
+        "<div class=\"card\"><strong>Clone via HTTP</strong>\
+         <pre>git clone http://{host}/{org}/{repo}.git</pre></div>",
         org = esc(org),
         repo = esc(repo)
     )
@@ -82,14 +71,22 @@ pub async fn home(
         return resp;
     }
     let host = &state.host;
-    let default_branch = host.default_branch(&org, &repo).unwrap_or_else(|_| "main".into());
+    let default_branch =
+        host.default_branch(&org, &repo).unwrap_or_else(|_| "main".into());
 
-    let mut body = format!("<div class=\"card\"><h1>{}/{}</h1>", esc(&org), esc(&repo));
-    body.push_str(&tabs(&org, &repo, "code"));
+    let mut body = format!(
+        "<div class=\"card\"><h1>{}/{}</h1>{}",
+        esc(&org),
+        esc(&repo),
+        tabs(&org, &repo, "code")
+    );
 
     match host.is_empty_repo(&org, &repo) {
         Ok(true) | Err(_) => {
-            body.push_str("<p class=\"muted\">This repository is empty. Push a commit to get started.</p></div>");
+            body.push_str(
+                "<div class=\"empty-state\"><h3>Repository is empty</h3>\
+                 <p>Push a commit to get started.</p></div></div>",
+            );
             body.push_str(&clone_box(&headers, &org, &repo));
             return page(&format!("{org}/{repo}"), &session, &body).into_response();
         }
@@ -98,9 +95,12 @@ pub async fn home(
 
     let branches = host.branches(&org, &repo).unwrap_or_default();
     body.push_str(&format!(
-        "<div class=\"row\">{} <a href=\"/{org}/{repo}/commits/{b}\">commits</a></div>",
-        branch_select(&org, &repo, &branches, &default_branch),
-        b = esc(&default_branch)
+        "<div class=\"row\" style=\"margin-bottom:12px\">\
+         {sel}\
+         <a href=\"/{org}/{repo}/commits/{b}\" class=\"muted\">History</a>\
+         </div>",
+        sel = branch_select(&org, &repo, &branches, &default_branch),
+        b = esc(&default_branch),
     ));
     body.push_str("</div>");
 
@@ -111,12 +111,13 @@ pub async fn home(
     };
     body.push_str(&render_tree(host, &org, &repo, &default_branch, "", commit));
 
-    // Rendered README, if present at the root.
+    // Rendered README, if present at root.
     if let Ok(content) = host.read_blob_at(&org, &repo, commit, "README.md") {
         if !content.binary {
             let md = String::from_utf8_lossy(&content.bytes);
             body.push_str(&format!(
-                "<div class=\"card\"><strong>README.md</strong><div class=\"readme\">{}</div></div>",
+                "<div class=\"card\"><strong>README.md</strong>\
+                 <div class=\"readme\">{}</div></div>",
                 markdown(&md)
             ));
         }
@@ -127,6 +128,8 @@ pub async fn home(
 }
 
 /// Render a tree listing card for `path` at `rev`.
+/// File-tree rows carry HTMX attributes for in-page navigation (graceful
+/// degradation: without htmx the `href` still navigates normally).
 fn render_tree(
     host: &RepoHost,
     org: &str,
@@ -137,9 +140,14 @@ fn render_tree(
 ) -> String {
     let items = match host.list_tree(org, repo, commit, path) {
         Ok(items) => items,
-        Err(_) => return "<div class=\"card\"><p class=\"bad\">path not found</p></div>".into(),
+        Err(_) => {
+            return "<div class=\"card\"><p class=\"bad\">path not found</p></div>".into()
+        }
     };
-    let mut out = String::from("<div class=\"card\"><table>");
+    let mut out = String::from(
+        "<div class=\"card\" id=\"file-tree\">\
+         <table>",
+    );
     if !path.is_empty() {
         let parent = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
         let href = if parent.is_empty() {
@@ -147,7 +155,12 @@ fn render_tree(
         } else {
             format!("/{org}/{repo}/tree/{rev}/{parent}")
         };
-        out.push_str(&format!("<tr><td><a href=\"{href}\">..</a></td></tr>"));
+        out.push_str(&format!(
+            "<tr><td>\
+             <a href=\"{href}\" \
+                hx-get=\"{href}\" hx-target=\"#file-tree\" hx-swap=\"outerHTML\" hx-push-url=\"true\">\
+             ..</a></td></tr>"
+        ));
     }
     for item in items {
         let child = if path.is_empty() {
@@ -155,14 +168,28 @@ fn render_tree(
         } else {
             format!("{path}/{}", item.name)
         };
-        let (icon, href) = if item.is_dir {
-            ("📁", format!("/{org}/{repo}/tree/{rev}/{}", esc(&child)))
+        let (kind, href) = if item.is_dir {
+            let h = format!("/{org}/{repo}/tree/{rev}/{}", esc(&child));
+            ("dir", h)
         } else {
-            ("📄", format!("/{org}/{repo}/blob/{rev}/{}", esc(&child)))
+            let h = format!("/{org}/{repo}/blob/{rev}/{}", esc(&child));
+            ("file", h)
+        };
+        // Directories use in-tree HTMX navigation; blobs navigate normally
+        // (blob page swaps the whole body via hx-boost).
+        let htmx_attrs = if kind == "dir" {
+            format!(
+                " hx-get=\"{href}\" hx-target=\"#file-tree\" hx-swap=\"outerHTML\" hx-push-url=\"true\""
+            )
+        } else {
+            String::new()
         };
         out.push_str(&format!(
-            "<tr><td>{icon} <a href=\"{href}\">{}</a></td></tr>",
-            esc(&item.name)
+            "<tr><td>\
+             <a href=\"{href}\"{htmx_attrs}>{icon} {name}</a>\
+             </td></tr>",
+            icon = if kind == "dir" { "&#x1F4C1;" } else { "&#x1F4C4;" },
+            name = esc(&item.name),
         ));
     }
     out.push_str("</table></div>");
@@ -203,15 +230,54 @@ async fn tree_common(
         Ok(c) => c,
         Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "revision not found"),
     };
+
+    let mut path_breadcrumb = String::new();
+    path_breadcrumb.push_str(&breadcrumbs(&[
+        (&org, Some(&format!("/{org}/{repo}"))),
+        (&repo, Some(&format!("/{org}/{repo}"))),
+        (&rev, Some(&format!("/{org}/{repo}/tree/{rev}"))),
+    ]));
+    // Append path segments to breadcrumb
+    if !path.is_empty() {
+        path_breadcrumb.push_str("<nav class=\"breadcrumbs\" aria-label=\"path\">");
+        let mut acc = String::new();
+        let segs: Vec<&str> = path.split('/').collect();
+        for (i, seg) in segs.iter().enumerate() {
+            if i > 0 {
+                acc.push('/');
+            }
+            acc.push_str(seg);
+            if i + 1 < segs.len() {
+                let href = format!("/{org}/{repo}/tree/{rev}/{acc}");
+                path_breadcrumb.push_str(&format!(
+                    "<span class=\"bc-sep\">/</span><a href=\"{href}\">{}</a>",
+                    esc(seg)
+                ));
+            } else {
+                path_breadcrumb.push_str(&format!(
+                    "<span class=\"bc-sep\">/</span><span aria-current=\"page\">{}</span>",
+                    esc(seg)
+                ));
+            }
+        }
+        path_breadcrumb.push_str("</nav>");
+    }
+
     let mut body = format!(
-        "<div class=\"card\"><h1>{}/{}</h1>{}<p class=\"muted\">{} @ {}</p></div>",
+        "{path_breadcrumb}\
+         <div class=\"card\"><h1>{}/{}</h1>{}</div>",
         esc(&org),
         esc(&repo),
         tabs(&org, &repo, "code"),
-        esc(&rev),
-        esc(if path.is_empty() { "/" } else { &path })
     );
-    body.push_str(&render_tree(&state.host, &org, &repo, &rev, &path, commit));
+    body.push_str(&render_tree(
+        &state.host,
+        &org,
+        &repo,
+        &rev,
+        &path,
+        commit,
+    ));
     page(&format!("{org}/{repo}"), &session, &body).into_response()
 }
 
@@ -233,21 +299,58 @@ pub async fn blob(
         Ok(c) => c,
         Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "file not found"),
     };
+
+    // Breadcrumb: org / repo / rev / path segments
+    let tree_href = format!("/{org}/{repo}/tree/{rev}");
+    let mut bc = breadcrumbs(&[
+        (&org, Some(&format!("/{org}/{repo}"))),
+        (&repo, Some(&format!("/{org}/{repo}"))),
+        (&rev, Some(&tree_href)),
+    ]);
+    bc.push_str("<nav class=\"breadcrumbs\" aria-label=\"file path\">");
+    let mut acc = String::new();
+    let segs: Vec<&str> = path.split('/').collect();
+    for (i, seg) in segs.iter().enumerate() {
+        if i > 0 {
+            acc.push('/');
+        }
+        acc.push_str(seg);
+        if i + 1 < segs.len() {
+            let href = format!("/{org}/{repo}/tree/{rev}/{acc}");
+            bc.push_str(&format!(
+                "<span class=\"bc-sep\">/</span><a href=\"{href}\">{}</a>",
+                esc(seg)
+            ));
+        } else {
+            bc.push_str(&format!(
+                "<span class=\"bc-sep\">/</span><span aria-current=\"page\">{}</span>",
+                esc(seg)
+            ));
+        }
+    }
+    bc.push_str("</nav>");
+
     let mut body = format!(
-        "<div class=\"card\"><h2>{}</h2><p class=\"muted\">{} @ {}</p></div>",
-        esc(&path),
-        esc(&org),
-        esc(&rev)
+        "{bc}\
+         <div class=\"card\">\
+         <h2>{path_display}</h2>\
+         <p class=\"muted\">{org} / {repo} @ {rev}</p>\
+         </div>",
+        bc = bc,
+        path_display = esc(&path),
+        org = esc(&org),
+        repo = esc(&repo),
+        rev = esc(&rev),
     );
+
     if content.binary {
         body.push_str(&format!(
-            "<div class=\"card\"><p class=\"muted\">Binary file ({} bytes) not shown.</p></div>",
+            "<div class=\"card\"><p class=\"muted\">\
+             Binary file ({} bytes) not shown.</p></div>",
             content.bytes.len()
         ));
     } else {
         let text = String::from_utf8_lossy(&content.bytes);
-        // Syntax-highlight to class-based spans; fall back to escaped plain text
-        // for binary-ish, oversized, or unrecognized files.
         match forge_search::highlight::highlight_blob_html(&text, &path) {
             Some(html) => {
                 body.push_str(&format!("<pre class=\"hlcode\">{html}</pre>"));
@@ -274,7 +377,10 @@ pub async fn commits(
         Ok(c) => c,
         Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "revision not found"),
     };
-    let history = state.host.history(&org, &repo, commit, 100).unwrap_or_default();
+    let history = state
+        .host
+        .history(&org, &repo, commit, 100)
+        .unwrap_or_default();
     let mut body = format!(
         "<div class=\"card\"><h1>{}/{}</h1>{}<h3>Commits on {}</h3></div>",
         esc(&org),
@@ -283,10 +389,15 @@ pub async fn commits(
         esc(&rev)
     );
     body.push_str("<div class=\"card\"><table>");
+    if history.is_empty() {
+        body.push_str("<tr><td class=\"muted\">No commits.</td></tr>");
+    }
     for c in history {
         body.push_str(&format!(
-            "<tr><td><a href=\"/{org}/{repo}/commit/{oid}\">{summary}</a><br>\
-<span class=\"muted\">{short} · {who} · {date}</span></td></tr>",
+            "<tr><td>\
+             <a href=\"/{org}/{repo}/commit/{oid}\">{summary}</a><br>\
+             <span class=\"muted\">{short} &middot; {who} &middot; {date}</span>\
+             </td></tr>",
             org = esc(&org),
             repo = esc(&repo),
             oid = esc(&c.oid),
@@ -307,25 +418,52 @@ pub async fn commit_detail(
     headers: HeaderMap,
 ) -> Response {
     let session = session_user(&state, &headers).await;
-    if let Err(resp) = repo_or_404(&state, &session, &org, &repo).await {
-        return resp;
-    }
+    let meta = match repo_or_404(&state, &session, &org, &repo).await {
+        Ok(m) => m,
+        Err(resp) => return resp,
+    };
     let commit = match state.host.resolve_commit(&org, &repo, &oid) {
         Ok(c) => c,
         Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "commit not found"),
     };
     let (info, diff) = match state.host.commit_detail(&org, &repo, commit) {
         Ok(v) => v,
-        Err(_) => return error_page(&session, StatusCode::INTERNAL_SERVER_ERROR, "diff failed"),
+        Err(_) => {
+            return error_page(
+                &session,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "diff failed",
+            )
+        }
     };
+
+    // Check runs for this commit's SHA
+    let check_runs = state
+        .store
+        .latest_check_runs(meta.id, &oid)
+        .await
+        .unwrap_or_default();
+
     let mut body = format!(
-        "<div class=\"card\"><h2>{}</h2><p class=\"muted\">{} · {} · {}</p><pre>{}</pre></div>",
-        esc(&info.summary),
-        esc(&info.oid),
-        esc(&info.author_name),
-        short_date(info.time),
-        esc(&info.message)
+        "<div class=\"card\">\
+         <h2>{summary}</h2>\
+         <p class=\"muted\">{short} &middot; {who} &middot; {date}</p>\
+         <pre style=\"white-space:pre-wrap\">{message}</pre>\
+         </div>",
+        summary = esc(&info.summary),
+        short = esc(&info.oid[..info.oid.len().min(8)]),
+        who = esc(&info.author_name),
+        date = short_date(info.time),
+        message = esc(&info.message)
     );
+
+    // Check-runs status for this commit
+    if !check_runs.is_empty() {
+        body.push_str("<div class=\"card\"><h3>Checks</h3>");
+        body.push_str(&check_runs_html(&check_runs));
+        body.push_str("</div>");
+    }
+
     body.push_str(&render_diff_html(&diff));
     page("Commit", &session, &body).into_response()
 }
@@ -333,26 +471,30 @@ pub async fn commit_detail(
 /// Render a `DiffResult` as coloured unified-diff HTML.
 pub fn render_diff_html(diff: &DiffResult) -> String {
     let mut out = format!(
-        "<div class=\"card\"><strong>{} file(s) changed</strong> <span class=\"ok\">+{}</span> <span class=\"bad\">-{}</span></div>",
-        diff.files.len(),
-        diff.additions,
-        diff.deletions
+        "<div class=\"card\">\
+         <strong>{n} file(s) changed</strong> \
+         <span class=\"ok\">+{add}</span> \
+         <span class=\"bad\">-{del}</span>\
+         </div>",
+        n = diff.files.len(),
+        add = diff.additions,
+        del = diff.deletions
     );
     for file in &diff.files {
         out.push_str(&format!(
-            "<div class=\"diff\"><div class=\"h\">{} {} <span class=\"ok\">+{}</span> <span class=\"bad\">-{}</span></div>",
-            file.status,
-            esc(&file.path),
-            file.additions,
-            file.deletions
+            "<div class=\"diff\">\
+             <div class=\"h\">{status} {path} \
+             <span class=\"ok\">+{add}</span> \
+             <span class=\"bad\">-{del}</span></div>",
+            status = file.status,
+            path = esc(&file.path),
+            add = file.additions,
+            del = file.deletions
         ));
         if file.binary {
             out.push_str("<pre>Binary file not shown.</pre></div>");
             continue;
         }
-        // Syntax-highlighted unified diff: each line carries its diff role class
-        // (add/del/ctx/hunk) plus per-line language spans. All content is escaped
-        // inside the highlighter, so the patch text cannot inject markup.
         out.push_str("<pre class=\"hlcode hldiff\">");
         out.push_str(&forge_search::highlight::highlight_diff_html(
             &file.path,
