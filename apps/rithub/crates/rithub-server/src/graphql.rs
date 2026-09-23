@@ -91,7 +91,17 @@ pub async fn graphiql() -> Response {
 }
 
 /// `GET /graphql/schema` — export the schema SDL for tooling and client codegen.
-pub async fn graphql_schema(State(state): State<AppState>) -> Response {
+/// Available to authenticated callers (or everyone when `RITHUB_GRAPHIQL` is set).
+pub async fn graphql_schema(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if std::env::var("RITHUB_GRAPHIQL").is_err() {
+        match crate::authz::api_caller(&state, &headers).await {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return (StatusCode::UNAUTHORIZED, "authentication required").into_response()
+            }
+            Err(e) => return axum::response::IntoResponse::into_response(e),
+        }
+    }
     (
         [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
         state.graphql.sdl(),

@@ -91,36 +91,53 @@ pub struct RunnerResponse {
 pub async fn register_runner(
     State(state): State<AppState>,
     Path((org, repo)): Path<(String, String)>,
+    headers: HeaderMap,
     Json(input): Json<RegisterRunner>,
 ) -> Result<Json<RunnerResponse>, AppError> {
-    if input.name.trim().is_empty() {
-        return Err(AppError::bad_request("runner name is required"));
+    let (meta, user) =
+        crate::authz::repo_for_role(&state, &headers, &org, &repo, rithub_core::RepoRole::Admin)
+            .await?;
+    Ok(Json(add_runner(&state, &meta, &user, &input.name).await?))
+}
+
+/// Register a runner and mint its one-time token (shared with the web UI).
+pub async fn add_runner(
+    state: &AppState,
+    meta: &rithub_core::Repository,
+    user: &rithub_core::User,
+    name: &str,
+) -> Result<RunnerResponse, AppError> {
+    let name = name.trim();
+    if name.is_empty() || name.len() > 100 {
+        return Err(AppError::bad_request("runner name must be 1-100 characters"));
     }
-    let meta = state.store.get_repo(&org, &repo).await?;
     let token = generate_runner_token();
     let runner = state
         .store
-        .register_runner(meta.id, input.name.trim(), &hash_token(&token), None)
+        .register_runner(meta.id, name, &hash_token(&token), Some(user.id))
         .await?;
     crate::audit::record(
-        &state,
+        state,
         Some(meta.id),
-        None,
-        "ci",
+        Some(user.id),
+        &user.username,
         "runner.registered",
         Some(&runner.name),
         None,
     )
     .await;
-    Ok(Json(RunnerResponse { runner, token }))
+    Ok(RunnerResponse { runner, token })
 }
 
 /// `GET /api/orgs/{org}/repos/{repo}/runners`
 pub async fn list_runners(
     State(state): State<AppState>,
     Path((org, repo)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Result<Json<Vec<Runner>>, AppError> {
-    let meta = state.store.get_repo(&org, &repo).await?;
+    let (meta, _) =
+        crate::authz::repo_for_role(&state, &headers, &org, &repo, rithub_core::RepoRole::Write)
+            .await?;
     Ok(Json(state.store.list_runners(meta.id).await?))
 }
 
@@ -128,14 +145,17 @@ pub async fn list_runners(
 pub async fn delete_runner(
     State(state): State<AppState>,
     Path((org, repo, runner_id)): Path<(String, String, Uuid)>,
+    headers: HeaderMap,
 ) -> Result<StatusCode, AppError> {
-    let meta = state.store.get_repo(&org, &repo).await?;
+    let (meta, user) =
+        crate::authz::repo_for_role(&state, &headers, &org, &repo, rithub_core::RepoRole::Admin)
+            .await?;
     state.store.delete_runner(meta.id, runner_id).await?;
     crate::audit::record(
         &state,
         Some(meta.id),
-        None,
-        "ci",
+        Some(user.id),
+        &user.username,
         "runner.deleted",
         Some(&runner_id.to_string()),
         None,
@@ -318,8 +338,9 @@ pub async fn update_check_run(
 pub async fn list_commit_check_runs(
     State(state): State<AppState>,
     Path((org, repo, sha)): Path<(String, String, String)>,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let meta = state.store.get_repo(&org, &repo).await?;
+    let (meta, _) = crate::authz::repo_for_read(&state, &headers, &org, &repo).await?;
     let runs = state.store.latest_check_runs(meta.id, &sha).await?;
     Ok(Json(check_runs_envelope(&sha, runs)))
 }
@@ -328,8 +349,9 @@ pub async fn list_commit_check_runs(
 pub async fn list_pr_check_runs(
     State(state): State<AppState>,
     Path((org, repo, number)): Path<(String, String, i32)>,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let meta = state.store.get_repo(&org, &repo).await?;
+    let (meta, _) = crate::authz::repo_for_read(&state, &headers, &org, &repo).await?;
     let pr = state.store.get_pr(meta.id, number).await?;
     let head = pr
         .head_sha

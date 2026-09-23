@@ -77,6 +77,7 @@ pub mod receive;
 pub mod receive_pack;
 pub mod reflog;
 pub mod refs;
+pub mod remote;
 pub mod repo;
 pub mod sequencer;
 pub mod server;

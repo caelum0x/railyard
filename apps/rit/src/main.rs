@@ -78,6 +78,16 @@ enum Command {
     UploadPack(UploadPackArgs),
     /// Join another branch's history into the current one. Like `git merge`.
     Merge(MergeArgs),
+    /// Clone a repository from a rithub/smart-HTTP URL or a local path. Like `git clone`.
+    Clone(CloneArgs),
+    /// Manage configured remotes. Like `git remote`.
+    Remote(RemoteArgs),
+    /// Download branches from a remote into `refs/remotes/<remote>/*`. Like `git fetch`.
+    Fetch(FetchArgs),
+    /// Fetch the current branch's upstream and fast-forward to it. Like `git pull --ff-only`.
+    Pull(PullArgs),
+    /// Upload a branch to a remote. Like `git push`.
+    Push(PushArgs),
     /// Reapply commits on top of another base tip. Like `git rebase`.
     Rebase(RebaseArgs),
     /// Apply the changes of existing commits. Like `git cherry-pick`.
@@ -400,6 +410,11 @@ fn run() -> Result<()> {
         Command::ReceivePack(args) => cmd_receive_pack(args),
         Command::UploadPack(args) => cmd_upload_pack(args),
         Command::Merge(args) => cmd_merge_cli(&cli, args),
+        Command::Clone(args) => cmd_clone(args),
+        Command::Remote(args) => cmd_remote(&cli, args),
+        Command::Fetch(args) => cmd_fetch(&cli, args),
+        Command::Pull(args) => cmd_pull(&cli, args),
+        Command::Push(args) => cmd_push(&cli, args),
         Command::Rebase(args) => cmd_rebase_cli(&cli, args),
         Command::CherryPick(args) => cmd_cherry_pick_cli(&cli, args),
         Command::Stash(args) => cmd_stash_cli(&cli, args),
@@ -1285,6 +1300,200 @@ fn cmd_log(cli: &Cli, args: &LogArgs) -> Result<()> {
             writeln!(out, "    {line}")?;
         }
         writeln!(out)?;
+    }
+    Ok(())
+}
+
+
+// --- remotes: clone / remote / fetch / pull / push ---------------------------
+
+#[derive(Args)]
+struct CloneArgs {
+    /// Remote URL (`https://host/org/repo.git`) or local repository path.
+    url: String,
+    /// Target directory (defaults to the repository name).
+    directory: Option<PathBuf>,
+    /// Create a bare repository (branches land in `refs/heads/*`).
+    #[arg(long)]
+    bare: bool,
+}
+
+#[derive(Args)]
+struct RemoteArgs {
+    #[command(subcommand)]
+    action: Option<RemoteAction>,
+}
+
+#[derive(Subcommand)]
+enum RemoteAction {
+    /// Add a remote.
+    Add { name: String, url: String },
+    /// Remove a remote.
+    Remove { name: String },
+    /// List remotes with their URLs.
+    List,
+}
+
+#[derive(Args)]
+struct FetchArgs {
+    /// Remote to fetch from.
+    #[arg(default_value = "origin")]
+    remote: String,
+}
+
+#[derive(Args)]
+struct PullArgs {
+    /// Remote to pull from.
+    #[arg(default_value = "origin")]
+    remote: String,
+}
+
+#[derive(Args)]
+struct PushArgs {
+    /// Remote to push to.
+    #[arg(default_value = "origin")]
+    remote: String,
+    /// `<src>[:<dst>]` (default: the current branch). `:<dst>` deletes `<dst>`.
+    refspec: Option<String>,
+    /// Allow a non-fast-forward update.
+    #[arg(short, long)]
+    force: bool,
+}
+
+/// Derive the default clone directory from a URL (`.../repo.git` -> `repo`).
+fn clone_dir_name(url: &str) -> PathBuf {
+    let trimmed = url.trim_end_matches('/');
+    let last = trimmed.rsplit(['/', ':']).next().unwrap_or("repo");
+    PathBuf::from(last.strip_suffix(".git").unwrap_or(last))
+}
+
+fn cmd_clone(args: &CloneArgs) -> Result<()> {
+    let directory = args.directory.clone().unwrap_or_else(|| clone_dir_name(&args.url));
+    println!("Cloning into '{}'...", directory.display());
+    let (_repo, report) = rit::remote::clone(&args.url, &directory, args.bare)?;
+    if report.updated.is_empty() {
+        println!("warning: You appear to have cloned an empty repository.");
+    } else {
+        println!(
+            "Received {} object(s); {} ref(s) created.",
+            report.objects,
+            report.updated.len()
+        );
+    }
+    Ok(())
+}
+
+fn cmd_remote(cli: &Cli, args: &RemoteArgs) -> Result<()> {
+    let repo = Repository::discover(&cli.repo)
+        .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
+    match &args.action {
+        Some(RemoteAction::Add { name, url }) => {
+            let remote = rit::remote::add_remote(&repo, name, url)?;
+            println!("added remote {} -> {}", remote.name, remote.url);
+        }
+        Some(RemoteAction::Remove { name }) => {
+            rit::remote::remove_remote(&repo, name)?;
+            println!("removed remote {name}");
+        }
+        Some(RemoteAction::List) | None => {
+            for remote in rit::remote::list_remotes(&repo)? {
+                println!("{}\t{}", remote.name, remote.url);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_fetch(remote: &str, report: &rit::remote::FetchReport) {
+    if report.updated.is_empty() {
+        println!("Already up to date with {remote}.");
+        return;
+    }
+    for r in &report.updated {
+        let old = r.old.map(|o| o.to_string()[..8].to_string()).unwrap_or_else(|| "(new)".into());
+        println!(" {old}..{} {}", &r.new.to_string()[..8], r.local);
+    }
+    println!("Received {} object(s).", report.objects);
+}
+
+fn cmd_fetch(cli: &Cli, args: &FetchArgs) -> Result<()> {
+    let repo = Repository::discover(&cli.repo)
+        .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
+    let report = rit::remote::fetch(&repo, &args.remote)?;
+    print_fetch(&args.remote, &report);
+    Ok(())
+}
+
+/// The current branch name (`refs/heads/<name>` -> `<name>`), if HEAD is attached.
+fn current_branch(repo: &Repository) -> Result<String> {
+    match repo.refs().read_head()? {
+        rit::RefTarget::Symbolic(r) => r
+            .strip_prefix("refs/heads/")
+            .map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("HEAD does not point at a branch")),
+        rit::RefTarget::Direct(_) => bail!("HEAD is detached; switch to a branch first"),
+    }
+}
+
+fn cmd_pull(cli: &Cli, args: &PullArgs) -> Result<()> {
+    let repo = Repository::discover(&cli.repo)
+        .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
+    let branch = current_branch(&repo)?;
+    let report = rit::remote::fetch(&repo, &args.remote)?;
+    print_fetch(&args.remote, &report);
+    let upstream = format!("refs/remotes/{}/{branch}", args.remote);
+    let theirs = repo
+        .refs()
+        .resolve(&upstream)
+        .with_context(|| format!("{} has no branch '{branch}'", args.remote))?;
+    let local_ref = format!("refs/heads/{branch}");
+    let ours = repo.refs().resolve(&local_ref).ok();
+    if ours == Some(theirs) {
+        println!("Already up to date.");
+        return Ok(());
+    }
+    if let Some(ours) = ours {
+        let ff = rit::is_ancestor(repo.odb(), ours, theirs, rit::ConnectivityLimits::default())?;
+        if !ff {
+            bail!(
+                "branches have diverged; run `rit merge {}/{branch}` to combine them",
+                args.remote
+            );
+        }
+        let dirty = repo.tracked_status()?;
+        if !dirty.is_empty() {
+            bail!("you have local changes; commit or stash them before pulling");
+        }
+    }
+    let tree = repo.commit(&theirs)?.tree;
+    repo.checkout_tree(tree)?;
+    repo.refs().compare_and_swap(&local_ref, ours, theirs)?;
+    println!("Fast-forward {branch} to {}", &theirs.to_string()[..8]);
+    Ok(())
+}
+
+fn cmd_push(cli: &Cli, args: &PushArgs) -> Result<()> {
+    let repo = Repository::discover(&cli.repo)
+        .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
+    let refspec = match &args.refspec {
+        Some(r) => r.clone(),
+        None => current_branch(&repo)?,
+    };
+    let report = rit::remote::push(&repo, &args.remote, &refspec, args.force)?;
+    if report.up_to_date {
+        println!("Everything up-to-date");
+    } else {
+        match (report.old, report.new) {
+            (_, None) => println!(" - [deleted] {}", report.remote_ref),
+            (None, Some(new)) => println!(" * [new] {} -> {}", &new.to_string()[..8], report.remote_ref),
+            (Some(old), Some(new)) => println!(
+                "   {}..{} -> {} ({} object(s))",
+                &old.to_string()[..8],
+                &new.to_string()[..8],
+                report.remote_ref,
+                report.objects
+            ),
+        }
     }
     Ok(())
 }

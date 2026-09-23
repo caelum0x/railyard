@@ -7,7 +7,8 @@ use axum::http::{header, HeaderMap, HeaderValue};
 use axum::response::Response;
 use axum::Json;
 use rithub_core::{
-    NewRelease, Release, ReleaseAsset, ReleaseAssetStore, ReleaseStore, Store,
+    DirectoryStore, NewRelease, Release, ReleaseAsset, ReleaseAssetStore, ReleaseStore, RepoRole,
+    Repository, User,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -15,46 +16,183 @@ use uuid::Uuid;
 use crate::error::AppError;
 use crate::state::AppState;
 
-/// `POST /api/orgs/{org}/repos/{repo}/releases`
-pub async fn create_release(
-    State(state): State<AppState>,
-    Path((org, repo)): Path<(String, String)>,
-    Json(input): Json<NewRelease>,
-) -> Result<Json<Release>, AppError> {
-    let meta = state.store.get_repo(&org, &repo).await?;
+/// Validate a release tag name (a single git ref component path).
+fn validate_tag(tag: &str) -> Result<&str, AppError> {
+    let t = tag.trim();
+    let bad = t.is_empty()
+        || t.len() > 128
+        || t.starts_with('-')
+        || t.starts_with('.')
+        || t.contains("..")
+        || t.chars().any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\/".contains(c));
+    if bad {
+        return Err(AppError::bad_request("invalid tag name"));
+    }
+    Ok(t)
+}
+
+/// Publish a release (shared with the web UI). Caller must hold Write.
+pub async fn publish_release(
+    state: &AppState,
+    org: &str,
+    repo: &str,
+    meta: &Repository,
+    author: &User,
+    input: &NewRelease,
+) -> Result<Release, AppError> {
+    let tag = validate_tag(&input.tag)?;
+    if input.name.trim().is_empty() {
+        return Err(AppError::bad_request("release title is required"));
+    }
     let commit = state
         .host
-        .resolve_commit(&org, &repo, &input.target)
+        .resolve_commit(org, repo, &input.target)
         .map_err(|_| AppError::bad_request("target revision not found"))?;
     let release = state
         .store
         .create_release(
             meta.id,
-            &input.tag,
-            &input.name,
-            input.body.as_deref(),
+            tag,
+            input.name.trim(),
+            input.body.as_deref().filter(|b| !b.trim().is_empty()),
             &commit.to_hex(),
-            None,
+            Some(author.id),
         )
         .await?;
-    Ok(Json(release))
+    let slug = format!("{org}/{repo}");
+    crate::collab_svc::enqueue_webhook(
+        state,
+        meta.id,
+        "release.published",
+        serde_json::json!({
+            "event": "release.published", "repo": slug, "sender": author.username,
+            "release": { "tag": release.tag, "name": release.name, "target_sha": release.target_sha },
+        }),
+    );
+    let r = crate::collab_svc::RepoRef { org, repo, meta };
+    crate::collab_svc::enqueue_notify(
+        state,
+        &r,
+        Some(author.id),
+        "release.published",
+        format!("Release {} published: {}", release.tag, release.name),
+        format!("/{slug}/releases"),
+    );
+    crate::audit::record(
+        state,
+        Some(meta.id),
+        Some(author.id),
+        &author.username,
+        "release.published",
+        Some(&release.tag),
+        None,
+    )
+    .await;
+    Ok(release)
+}
+
+/// Delete a release and its asset blobs (shared with the web UI; Write).
+pub async fn remove_release(
+    state: &AppState,
+    meta: &Repository,
+    actor: &User,
+    tag: &str,
+) -> Result<(), AppError> {
+    let release = state.store.get_release(meta.id, tag).await?;
+    let assets = state.store.list_assets(release.id).await.unwrap_or_default();
+    state.store.delete_release(meta.id, tag).await?;
+    for asset in assets {
+        let _ = tokio::fs::remove_file(&asset.storage_path).await;
+    }
+    let _ = tokio::fs::remove_dir(state.release_asset_dir(release.id)).await;
+    crate::audit::record(
+        state,
+        Some(meta.id),
+        Some(actor.id),
+        &actor.username,
+        "release.deleted",
+        Some(tag),
+        None,
+    )
+    .await;
+    Ok(())
+}
+
+/// `POST /api/orgs/{org}/repos/{repo}/releases` (Write)
+pub async fn create_release(
+    State(state): State<AppState>,
+    Path((org, repo)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(input): Json<NewRelease>,
+) -> Result<Json<Release>, AppError> {
+    let (meta, user) =
+        crate::authz::repo_for_role(&state, &headers, &org, &repo, RepoRole::Write).await?;
+    Ok(Json(publish_release(&state, &org, &repo, &meta, &user, &input).await?))
 }
 
 /// `GET /api/orgs/{org}/repos/{repo}/releases`
 pub async fn list_releases(
     State(state): State<AppState>,
     Path((org, repo)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Result<Json<Vec<Release>>, AppError> {
-    let meta = state.store.get_repo(&org, &repo).await?;
+    let (meta, _) = crate::authz::repo_for_read(&state, &headers, &org, &repo).await?;
     Ok(Json(state.store.list_releases(meta.id).await?))
+}
+
+/// Body for editing a release.
+#[derive(Debug, Deserialize)]
+pub struct EditRelease {
+    pub name: String,
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
+/// `PATCH /api/orgs/{org}/repos/{repo}/releases/{tag}` (Write)
+pub async fn update_release(
+    State(state): State<AppState>,
+    Path((org, repo, tag)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    Json(input): Json<EditRelease>,
+) -> Result<Json<Release>, AppError> {
+    let (meta, user) =
+        crate::authz::repo_for_role(&state, &headers, &org, &repo, RepoRole::Write).await?;
+    if input.name.trim().is_empty() {
+        return Err(AppError::bad_request("release title is required"));
+    }
+    let release = state
+        .store
+        .update_release(
+            meta.id,
+            &tag,
+            input.name.trim(),
+            input.body.as_deref().filter(|b| !b.trim().is_empty()),
+        )
+        .await?;
+    crate::audit::record(&state, Some(meta.id), Some(user.id), &user.username, "release.edited", Some(&tag), None)
+        .await;
+    Ok(Json(release))
+}
+
+/// `DELETE /api/orgs/{org}/repos/{repo}/releases/{tag}` (Write)
+pub async fn delete_release(
+    State(state): State<AppState>,
+    Path((org, repo, tag)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Result<axum::http::StatusCode, AppError> {
+    let (meta, user) =
+        crate::authz::repo_for_role(&state, &headers, &org, &repo, RepoRole::Write).await?;
+    remove_release(&state, &meta, &user, &tag).await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 /// `GET /api/orgs/{org}/repos/{repo}/releases/{tag}/archive` — tar.gz download.
 pub async fn download_archive(
     State(state): State<AppState>,
     Path((org, repo, tag)): Path<(String, String, String)>,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let meta = state.store.get_repo(&org, &repo).await?;
+    let (meta, _) = crate::authz::repo_for_read(&state, &headers, &org, &repo).await?;
     let release = state.store.get_release(meta.id, &tag).await?;
     let commit = state
         .host
@@ -120,7 +258,11 @@ pub async fn upload_asset(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<ReleaseAsset>, AppError> {
-    let meta = state.store.get_repo(&org, &repo).await?;
+    let (meta, user) =
+        crate::authz::repo_for_role(&state, &headers, &org, &repo, RepoRole::Write).await?;
+    if body.is_empty() {
+        return Err(AppError::bad_request("asset body is empty"));
+    }
     let release = state.store.get_release(meta.id, &tag).await?;
     let filename = sanitize_filename(&query.name)?;
 
@@ -161,8 +303,8 @@ pub async fn upload_asset(
     crate::audit::record(
         &state,
         Some(meta.id),
-        None,
-        "release",
+        Some(user.id),
+        &user.username,
         "asset.uploaded",
         Some(filename),
         Some(&format!("release={tag} bytes={size}")),
@@ -175,8 +317,9 @@ pub async fn upload_asset(
 pub async fn list_assets(
     State(state): State<AppState>,
     Path((org, repo, tag)): Path<(String, String, String)>,
+    headers: HeaderMap,
 ) -> Result<Json<Vec<ReleaseAsset>>, AppError> {
-    let meta = state.store.get_repo(&org, &repo).await?;
+    let (meta, _) = crate::authz::repo_for_read(&state, &headers, &org, &repo).await?;
     let release = state.store.get_release(meta.id, &tag).await?;
     Ok(Json(state.store.list_assets(release.id).await?))
 }
@@ -185,8 +328,9 @@ pub async fn list_assets(
 pub async fn download_asset(
     State(state): State<AppState>,
     Path((org, repo, tag, asset_id)): Path<(String, String, String, Uuid)>,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let meta = state.store.get_repo(&org, &repo).await?;
+    let (meta, _) = crate::authz::repo_for_read(&state, &headers, &org, &repo).await?;
     let release = state.store.get_release(meta.id, &tag).await?;
     let asset = state.store.get_asset(release.id, asset_id).await?;
 
@@ -198,8 +342,16 @@ pub async fn download_asset(
     if let Ok(ct) = HeaderValue::from_str(&asset.content_type) {
         response.headers_mut().insert(header::CONTENT_TYPE, ct);
     }
-    if let Ok(cd) =
-        HeaderValue::from_str(&format!("attachment; filename=\"{}\"", asset.filename))
+    let safe_name: String = asset
+        .filename
+        .chars()
+        .map(|c| if c == '"' || c.is_control() { '_' } else { c })
+        .collect();
+    response.headers_mut().insert(
+        header::HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    if let Ok(cd) = HeaderValue::from_str(&format!("attachment; filename=\"{safe_name}\""))
     {
         response.headers_mut().insert(header::CONTENT_DISPOSITION, cd);
     }
@@ -210,8 +362,10 @@ pub async fn download_asset(
 pub async fn delete_asset(
     State(state): State<AppState>,
     Path((org, repo, tag, asset_id)): Path<(String, String, String, Uuid)>,
+    headers: HeaderMap,
 ) -> Result<axum::http::StatusCode, AppError> {
-    let meta = state.store.get_repo(&org, &repo).await?;
+    let (meta, user) =
+        crate::authz::repo_for_role(&state, &headers, &org, &repo, RepoRole::Write).await?;
     let release = state.store.get_release(meta.id, &tag).await?;
     let asset = state.store.delete_asset(release.id, asset_id).await?;
     // Best-effort blob cleanup — the row is already gone, so a stale file only
@@ -220,8 +374,8 @@ pub async fn delete_asset(
     crate::audit::record(
         &state,
         Some(meta.id),
-        None,
-        "release",
+        Some(user.id),
+        &user.username,
         "asset.deleted",
         Some(&asset.filename),
         None,

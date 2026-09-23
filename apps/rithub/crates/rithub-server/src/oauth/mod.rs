@@ -33,10 +33,9 @@ use axum::routing::get;
 use axum::Router;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
-use rithub_core::{generate_token, hash_token, validate_name, CoreError, OauthStore, Store, User};
+use rithub_core::{validate_name, CoreError, OauthStore, Store, User};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use time::{Duration as TimeDuration, OffsetDateTime};
 use uuid::Uuid;
 
 use crate::state::AppState;
@@ -45,8 +44,6 @@ use provider::{provider_for, OauthError};
 
 /// Name of the transient cookie holding `provider:state:verifier`.
 const OAUTH_COOKIE: &str = "rithub_oauth";
-/// Lifetime of an OAuth session token (the browser session), in days.
-const SESSION_TOKEN_DAYS: i64 = 30;
 
 /// Register the OAuth login routes. Merged into the main router.
 pub fn routes() -> Router<AppState> {
@@ -190,27 +187,17 @@ async fn callback(
         }
     };
 
-    // Mint a session token (a short-lived, full-access PAT) and set the same
-    // session cookie the password login uses.
-    let session_token = generate_token();
-    let expires_at = OffsetDateTime::now_utc() + TimeDuration::days(SESSION_TOKEN_DAYS);
-    if let Err(e) = state
-        .store
-        .create_token(
-            user.id,
-            &format!("oauth-session:{provider}"),
-            &hash_token(&session_token),
-            &[],
-            Some(expires_at),
-        )
-        .await
-    {
-        tracing::error!(provider, error = %e, "minting oauth session token failed");
-        return clear_and_fail(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Could not start your session.",
-        );
-    }
+    // Open a server-side, revocable web session (never a full-access PAT).
+    let session_cookie = match web::start_session_cookie(&state, &user).await {
+        Ok(cookie) => cookie,
+        Err(_) => {
+            tracing::error!(provider, "starting oauth web session failed");
+            return clear_and_fail(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not start your session.",
+            );
+        }
+    };
 
     crate::audit::record(
         &state,
@@ -223,8 +210,6 @@ async fn callback(
     )
     .await;
 
-    let session_value = STANDARD.encode(format!("{}:{}", user.username, session_token));
-    let session_cookie = format!("rithub_session={session_value}; Path=/; HttpOnly; SameSite=Lax");
     let clear_oauth = format!("{OAUTH_COOKIE}=; Path=/; HttpOnly; Max-Age=0");
     (
         AppendHeaders([
@@ -309,7 +294,10 @@ async fn create_user_from_oauth(state: &AppState, info: &OauthUserInfo) -> Resul
             format!("{candidate}@oauth.local")
         };
         match state.store.create_user(&candidate, &email).await {
-            Ok(user) => return Ok(user),
+            Ok(user) => {
+                crate::api::ensure_personal_org(state, &user).await;
+                return Ok(user);
+            }
             // Username or email already taken — try the next candidate.
             Err(CoreError::Conflict { .. }) => continue,
             Err(other) => return Err(other),

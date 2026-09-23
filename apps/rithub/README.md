@@ -4,6 +4,47 @@ The self-hostable collaboration forge built **on top of `rit`** ([`../rit`](../r
 repositories, organizations, permissions, issues, pull requests, review, protected branches,
 webhooks, releases, audit logs. The `GitHub` equivalent.
 
+## Product identity
+
+`apps/rithub` (this Rust forge, on the `rit` engine) **is the shipped Rithub
+product**. `apps/rithub-forge` is a separate, optional Forgejo-based deployment
+kept for teams that need Forgejo-only features; it has its own database and is
+not connected to this server.
+
+## Security model (web + API)
+
+- **Accounts:** self-service sign-up at `/signup` (creates the user, a personal
+  organization, and a first access token shown once) unless
+  `RITHUB_OPEN_SIGNUP=false`; OAuth/SSO via GitHub/Google when configured.
+  Site admins are listed in `RITHUB_ADMIN_USERS`.
+- **Sessions:** the browser cookie holds a dedicated, revocable, 30-day session
+  token (never a PAT); sign-out revokes it server-side. Session tokens are
+  rejected by git transport and API bearer auth.
+- **API auth:** `Authorization: Bearer <pat>` / `token <pat>`, HTTP Basic
+  `user:pat`, or the web session. Authorship always comes from the
+  authenticated identity, never from request bodies.
+- **Authorization:** private repositories are invisible (404) without access on
+  every surface (web, API, git, GraphQL, search). Writes require the effective
+  repo role (org role + collaborator + team grants): Write for push/merge/
+  triage/releases, Admin for settings/webhooks/deploy keys/runners/protection;
+  org owners manage membership. PR approvals only count from writers.
+- **CSRF:** state-changing requests with a foreign `Origin` or
+  `Sec-Fetch-Site: cross-site` are refused; cookies are `SameSite=Lax`,
+  `HttpOnly`, and `Secure` behind HTTPS (`RITHUB_PUBLIC_URL=https://...`).
+- **Webhooks:** targets are validated against private/loopback networks at save
+  and delivery time (override with `RITHUB_WEBHOOK_ALLOW_PRIVATE=1`), no
+  redirects are followed.
+
+## Billing (Rago + Mint)
+
+`crates/rithub-server/src/billing.rs` uses the same Rago contract as the
+Forgejo bridge: one org = one Rago customer/subscription (`sub_<org>`). Creating
+or flipping a repo to private is refused with **402** when the org's
+`private_repos.max` entitlement is reached (fail-closed 503 if Rago is down),
+and private-repo, seat, and push usage events are posted to
+`RAGO_BASE_URL/api/v1/events`. Rago invoices settle through Mint on Rago's side.
+Without Rago, `RITHUB_FREE_PRIVATE_REPOS` applies a local cap (unset = unlimited).
+
 ## Status: Phase 7 — **fully self-contained git engine + richer collaboration**
 
 rithub is a **self-contained** git forge: the entire git plane — clone, fetch,

@@ -1,64 +1,65 @@
-//! Web pages for the audit log, global search, and in-app notifications.
+//! Web pages for global search, in-app notifications, and the audit log.
 //!
 //! ## HTMX live search
-//! `GET /search` renders the full search page (input + results). The search
-//! input carries `hx-get="/search/results"` so as the user types, HTMX sends a
-//! request to the `search_results` handler which returns just the `#search-results`
-//! `<div>` fragment — no page chrome. Without htmx the form submits normally
-//! and the full `/search` page renders with the results inline (graceful
-//! degradation).
+//! `GET /search` renders the full page; the input carries
+//! `hx-get="/search/results"` so typing swaps just the `#search-results`
+//! fragment. Without htmx the form submits normally (graceful degradation).
+//! Results are permission-scoped: private repositories appear only for users
+//! with access.
 
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use rithub_core::{AuditStore, NotifyStore, Store};
+use rithub_core::{AuditStore, DirectoryStore, NotifyStore, RepoRole};
 use serde::Deserialize;
+use uuid::Uuid;
 
-use super::{error_page, esc, page, session_user, short_date};
+use super::{esc, login_redirect, page, repo_header, session_user, short_date, web_repo_role};
 use crate::state::AppState;
 
 /// GET /notifications — the signed-in user's in-app notifications.
-pub async fn notifications(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Response {
+pub async fn notifications(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let session = session_user(&state, &headers).await;
     let Some(user) = &session else {
-        return error_page(
-            &session,
-            StatusCode::UNAUTHORIZED,
-            "sign in to view notifications",
-        );
+        return login_redirect("/notifications");
     };
-    let items = state
-        .store
-        .list_for_user(user.id, 100)
-        .await
-        .unwrap_or_default();
+    let items = state.store.list_for_user(user.id, 100).await.unwrap_or_default();
     let unread = state.store.unread_count(user.id).await.unwrap_or(0);
     let mut body = format!(
-        "<div class=\"card\">\
-         <h1>Notifications</h1>\
-         <p class=\"muted\">{unread} unread &nbsp;\
-         <a href=\"/notifications/read\">Mark all read</a></p>\
-         </div>\
-         <div class=\"card\">",
+        "<div class=\"card\"><div class=\"row\"><h1>Notifications</h1>\
+         <span class=\"muted\">{unread} unread</span><span class=\"spacer\"></span>\
+         <form method=\"post\" action=\"/notifications/read\" class=\"inline-form\">\
+         <button class=\"btn small\" type=\"submit\">Mark all as read</button></form></div></div>\
+         <div class=\"card\">"
     );
     if items.is_empty() {
         body.push_str(
             "<div class=\"empty-state\"><h3>No notifications</h3>\
-             <p>Activity on repos you watch will appear here.</p></div>",
+             <p>Activity on repositories you belong to will appear here.</p></div>",
         );
     }
     for n in items {
-        let dot = if n.read { "" } else { "&#x25CF; " };
-        let link = n.link.as_deref().unwrap_or("#");
+        let link = n
+            .link
+            .as_deref()
+            .filter(|l| l.starts_with('/') && !l.starts_with("//"))
+            .unwrap_or("/notifications");
+        let (marker, action) = if n.read {
+            (String::new(), String::new())
+        } else {
+            (
+                format!("<span class=\"bad\" title=\"unread\">{}</span> ", super::icon("dot")),
+                format!(
+                    "<form method=\"post\" action=\"/notifications/{id}/read\" class=\"inline-form\">\
+                     <button class=\"btn small\" type=\"submit\">Mark read</button></form>",
+                    id = n.id
+                ),
+            )
+        };
         body.push_str(&format!(
-            "<div style=\"padding:6px 0;border-bottom:1px solid var(--line)\">\
-             {dot}<span class=\"pill\">{kind}</span> \
-             <a href=\"{link}\">{title}</a> \
-             <span class=\"muted\">{date}</span>\
-             </div>",
+            "<div class=\"row\" style=\"padding:8px 0;border-bottom:1px solid var(--line)\">\
+             {marker}<span class=\"pill\">{kind}</span> <a href=\"{link}\">{title}</a>\
+             <span class=\"muted\">{date}</span><span class=\"spacer\"></span>{action}</div>",
             kind = esc(&n.kind),
             link = esc(link),
             title = esc(&n.title),
@@ -69,63 +70,60 @@ pub async fn notifications(
     page("Notifications", &session, &body).into_response()
 }
 
-/// GET /notifications/read — mark all read, then back to the list.
-pub async fn mark_read(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Response {
+/// POST /notifications/read — mark all read.
+pub async fn mark_read(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let session = session_user(&state, &headers).await;
-    if let Some(user) = &session {
-        let _ = state.store.mark_all_read(user.id).await;
+    let Some(user) = &session else {
+        return login_redirect("/notifications");
+    };
+    if let Err(e) = state.store.mark_all_read(user.id).await {
+        return super::app_error_page(&session, e.into());
     }
     Redirect::to("/notifications").into_response()
 }
 
-/// GET /{org}/{repo}/audit — the append-only audit log for a repo.
+/// POST /notifications/{id}/read — mark one read.
+pub async fn mark_one_read(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let Some(user) = &session else {
+        return login_redirect("/notifications");
+    };
+    if let Err(e) = state.store.mark_notification_read(user.id, id).await {
+        return super::app_error_page(&session, e.into());
+    }
+    Redirect::to("/notifications").into_response()
+}
+
+/// GET /{org}/{repo}/audit — the append-only audit log (repo admins only).
 pub async fn audit_log(
     State(state): State<AppState>,
     Path((org, repo)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
     let session = session_user(&state, &headers).await;
-    let meta = match state.store.get_repo(&org, &repo).await {
-        Ok(m) => m,
-        Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "repository not found"),
+    let next = format!("/{org}/{repo}/audit");
+    let (meta, _) = match web_repo_role(&state, &session, &org, &repo, RepoRole::Admin, &next).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
     };
-    let events = state
-        .store
-        .list_repo_events(meta.id, 200)
-        .await
-        .unwrap_or_default();
-    let mut body = format!(
-        "<div class=\"card\">\
-         <h1>{}/{}</h1>\
-         <h3>Audit log</h3>\
-         <p class=\"muted\">Append-only record of security-relevant events.</p>\
-         </div>",
-        esc(&org),
-        esc(&repo)
-    );
+    let events = state.store.list_repo_events(meta.id, 200).await.unwrap_or_default();
+    let mut body = repo_header(&org, &repo, &meta, "settings", Some(RepoRole::Admin));
     body.push_str(
-        "<div class=\"card\">\
-         <table>\
+        "<div class=\"card\"><h3>Audit log</h3>\
+         <p class=\"muted\">Append-only record of security-relevant events.</p><table>\
          <tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Detail</th></tr>",
     );
     if events.is_empty() {
-        body.push_str(
-            "<tr><td colspan=\"5\" class=\"muted\" style=\"padding:20px 8px\">\
-             No events yet.</td></tr>",
-        );
+        body.push_str("<tr><td colspan=\"5\" class=\"muted\" style=\"padding:20px 8px\">No events yet.</td></tr>");
     }
     for e in events {
         body.push_str(&format!(
-            "<tr>\
-             <td class=\"muted\">{when}</td>\
-             <td>{actor}</td>\
-             <td><code>{action}</code></td>\
-             <td>{target}</td>\
-             <td class=\"muted\">{detail}</td>\
-             </tr>",
+            "<tr><td class=\"muted\">{when}</td><td>{actor}</td><td><code>{action}</code></td>\
+             <td>{target}</td><td class=\"muted\">{detail}</td></tr>",
             when = short_date(e.created_at.unix_timestamp()),
             actor = esc(&e.actor_name),
             action = esc(&e.action),
@@ -144,17 +142,9 @@ pub struct SearchQuery {
 }
 
 /// Run the search query and return the results HTML fragment (no page chrome).
-/// Shared by both the full `search` page and the `search_results` HTMX partial.
-async fn run_search(
-    state: &AppState,
-    session: &Option<rithub_core::User>,
-    query: &str,
-    org: &str,
-    repo: &str,
-) -> String {
-    let _ = (org, repo); // reserved for scoped search in a future iteration
+async fn run_search(state: &AppState, session: &Option<rithub_core::User>, query: &str) -> String {
     if query.is_empty() {
-        return String::new();
+        return "<div id=\"search-results\"></div>".to_string();
     }
     let mut scope = forge_search::SearchScope::anonymous();
     if let Some(user) = session {
@@ -166,44 +156,52 @@ async fn run_search(
         .unwrap_or_default();
 
     let mut out = format!(
-        "<div id=\"search-results\" \
-              hx-target=\"this\" hx-swap=\"outerHTML\">\
-         <h3>{count} result(s) for \u{201c}{q}\u{201d}</h3>",
+        "<div id=\"search-results\"><h3>{count} result(s) for \u{201c}{q}\u{201d}</h3>",
         count = hits.len(),
         q = esc(query),
     );
     if hits.is_empty() {
         out.push_str("<p class=\"muted\">No matches found.</p>");
     }
+    // Resolve each repo's default branch once for blob links.
+    let mut default_branches: std::collections::HashMap<(String, String), String> =
+        std::collections::HashMap::new();
     for hit in &hits {
         let (org_e, repo_e) = (esc(&hit.org), esc(&hit.repo));
         let href = match hit.kind.as_str() {
             "issue" => format!("/{org_e}/{repo_e}/issues/{}", hit.number),
             "pull_request" => format!("/{org_e}/{repo_e}/pulls/{}", hit.number),
             "commit" => format!("/{org_e}/{repo_e}/commit/{}", esc(&hit.oid)),
+            _ if !hit.path.is_empty() => {
+                let key = (hit.org.clone(), hit.repo.clone());
+                let rev = default_branches
+                    .entry(key)
+                    .or_insert_with(|| {
+                        state
+                            .host
+                            .default_branch(&hit.org, &hit.repo)
+                            .unwrap_or_else(|_| "main".into())
+                    })
+                    .clone();
+                format!("/{org_e}/{repo_e}/blob/{}/{}", esc(&rev), esc(&hit.path))
+            }
             _ => format!("/{org_e}/{repo_e}"),
         };
         let label = if hit.number > 0 {
             format!("{org_e}/{repo_e} #{} &mdash; {}", hit.number, esc(&hit.title))
         } else if !hit.path.is_empty() {
-            format!("{org_e}/{repo_e} &mdash; {}", esc(&hit.path))
+            format!("{org_e}/{repo_e} &mdash; <span class=\"mono\">{}</span>", esc(&hit.path))
         } else {
             format!("{org_e}/{repo_e} &mdash; {}", esc(&hit.title))
         };
         let snippet = if hit.snippet.is_empty() {
             String::new()
         } else {
-            format!(
-                "<div class=\"muted\" style=\"font-size:12px;margin-top:2px\">{}</div>",
-                esc(&hit.snippet)
-            )
+            format!("<div class=\"muted\" style=\"font-size:12px;margin-top:2px\">{}</div>", esc(&hit.snippet))
         };
         out.push_str(&format!(
             "<div style=\"margin:10px 0;padding:8px 0;border-bottom:1px solid var(--line)\">\
-             <span class=\"pill\">{kind}</span> \
-             <a href=\"{href}\">{label}</a>\
-             {snippet}\
-             </div>",
+             <span class=\"pill\">{kind}</span> <a href=\"{href}\">{label}</a>{snippet}</div>",
             kind = esc(&hit.kind),
         ));
     }
@@ -212,8 +210,6 @@ async fn run_search(
 }
 
 /// GET /search?q=... — global search page.
-/// The search input carries HTMX attributes for live-as-you-type results that
-/// update `#search-results` in-place while the form falls back gracefully.
 pub async fn search(
     State(state): State<AppState>,
     Query(form): Query<SearchQuery>,
@@ -221,42 +217,22 @@ pub async fn search(
 ) -> Response {
     let session = session_user(&state, &headers).await;
     let query = form.q.trim().to_string();
-
-    // If this is an HTMX request on the search page (hx-boost navigation),
-    // still return the full page so the URL and title update correctly.
-    let results_html = run_search(&state, &session, &query, "", "").await;
-
-    let results_block = if results_html.is_empty() {
-        "<div id=\"search-results\"></div>".to_string()
-    } else {
-        results_html
-    };
-
+    let results_block = run_search(&state, &session, &query).await;
     let body = format!(
-        "<div class=\"card\">\
-         <h1>Search</h1>\
-         <form method=\"get\" action=\"/search\">\
-         <div class=\"row\">\
-         <input name=\"q\" value=\"{q}\" placeholder=\"Search repositories, issues, PRs, commits\u{2026}\" \
-                hx-get=\"/search/results\" \
-                hx-trigger=\"keyup changed delay:350ms, search\" \
-                hx-target=\"#search-results\" \
-                hx-swap=\"outerHTML\" \
-                hx-include=\"[name='q']\" \
-                style=\"flex:1\">\
-         <button class=\"btn primary\" type=\"submit\">Search</button>\
-         </div></form>\
-         </div>\
-         {results_block}",
+        "<div class=\"card\"><h1>Search</h1>\
+         <form method=\"get\" action=\"/search\"><div class=\"row\">\
+         <input name=\"q\" value=\"{q}\" aria-label=\"Search query\" \
+                placeholder=\"Search repositories, issues, pull requests, commits, code\u{2026}\" \
+                hx-get=\"/search/results\" hx-trigger=\"keyup changed delay:350ms, search\" \
+                hx-target=\"#search-results\" hx-swap=\"outerHTML\" style=\"flex:1\">\
+         <button class=\"btn primary\" type=\"submit\">Search</button></div></form></div>\
+         <div class=\"card\">{results_block}</div>",
         q = esc(&query),
     );
     page("Search", &session, &body).into_response()
 }
 
-/// GET /search/results?q=... — HTMX partial: results `<div>` fragment only.
-/// The response replaces `#search-results` in-place (see `hx-target` above).
-/// Falls back gracefully: without htmx the input has no hx-get so this
-/// endpoint is only ever called by htmx — but it is safe to call directly too.
+/// GET /search/results?q=... — HTMX partial: the `#search-results` fragment.
 pub async fn search_results(
     State(state): State<AppState>,
     Query(form): Query<SearchQuery>,
@@ -264,14 +240,5 @@ pub async fn search_results(
 ) -> Response {
     let session = session_user(&state, &headers).await;
     let query = form.q.trim().to_string();
-
-    let fragment = if query.is_empty() {
-        "<div id=\"search-results\"></div>".to_string()
-    } else {
-        run_search(&state, &session, &query, "", "").await
-    };
-
-    // Always return a bare fragment regardless of HX-Request so this endpoint
-    // can also be used by plain fetches (e.g. browser extensions, scripts).
-    Html(fragment).into_response()
+    Html(run_search(&state, &session, &query).await).into_response()
 }

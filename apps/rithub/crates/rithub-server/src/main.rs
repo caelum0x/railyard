@@ -21,12 +21,24 @@
 //! | `SMTP_USER` | SMTP username | *(required when SMTP_HOST is set)* |
 //! | `SMTP_PASS` | SMTP password | *(required when SMTP_HOST is set)* |
 //! | `SMTP_FROM` | From address | `rithub@<SMTP_HOST>` |
+//! | `RITHUB_ADMIN_USERS` | comma-separated site-admin usernames | *(none)* |
+//! | `RITHUB_OPEN_SIGNUP` | allow self-service sign-up (`false` = admins create accounts) | `true` |
+//! | `RITHUB_PUBLIC_URL` | external base URL (clone URLs, secure cookies) | *(from request)* |
+//! | `RITHUB_SSH_PUBLIC` | SSH clone host[:port] shown in the UI | *(from `RITHUB_SSH_BIND`)* |
+//! | `RITHUB_WEBHOOK_ALLOW_PRIVATE` | allow webhooks to private/loopback hosts | `false` |
+//! | `RAGO_BASE_URL` / `RAGO_API_KEY` | Rago plan enforcement + usage metering | *(billing off)* |
+//! | `RITHUB_FREE_PRIVATE_REPOS` | private-repo cap when Rago is not configured | *(unlimited)* |
 
+mod accounts_api;
 mod api;
 mod audit;
 mod auth;
+mod authz;
+mod billing;
 mod ci;
 mod collab_api;
+mod collab_svc;
+mod pulls_svc;
 mod error;
 mod git_http;
 mod governance_api;
@@ -46,7 +58,10 @@ mod webhooks;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use axum::extract::DefaultBodyLimit;
+use axum::extract::{DefaultBodyLimit, Request};
+use axum::http::{header, Method, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::Router;
 use rithub_core::PgStore;
@@ -188,13 +203,30 @@ fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/orgs/{org}/repos/{repo}",
-            get(api::get_repo).patch(api::update_repo),
+            get(api::get_repo)
+                .patch(api::update_repo)
+                .delete(api::delete_repo),
         )
         .route("/api/orgs/{org}/repos/{repo}/seed", post(api::seed_repo))
         .route("/api/orgs/{org}/repos/{repo}/forks", post(api::create_fork))
-        .route("/api/orgs/{org}/members", post(api::add_member))
+        .route(
+            "/api/orgs/{org}/members",
+            post(api::add_member).get(api::list_members),
+        )
+        .route(
+            "/api/orgs/{org}/members/{username}",
+            delete(api::delete_member),
+        )
         .route("/api/users", post(api::create_user))
-        .route("/api/users/{username}/keys", post(api::add_ssh_key))
+        .route("/api/user", get(api::current_user))
+        .route(
+            "/api/users/{username}/keys",
+            post(api::add_ssh_key).get(api::list_ssh_keys),
+        )
+        .route(
+            "/api/users/{username}/keys/{key_id}",
+            delete(api::delete_ssh_key),
+        )
         .route("/api/tokens", post(api::create_token))
         .route(
             "/api/users/{username}/tokens",
@@ -265,11 +297,15 @@ fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/orgs/{org}/repos/{repo}/pulls/{number}/comments",
-            post(collab_api::comment_pr),
+            post(collab_api::comment_pr).get(collab_api::list_pr_comments),
         )
         .route(
             "/api/orgs/{org}/repos/{repo}/pulls/{number}/close",
             post(collab_api::close_pr),
+        )
+        .route(
+            "/api/orgs/{org}/repos/{repo}/pulls/{number}/reopen",
+            post(collab_api::reopen_pr),
         )
         .route(
             "/api/orgs/{org}/repos/{repo}/pulls/{number}/merge",
@@ -289,6 +325,12 @@ fn build_router(state: AppState) -> Router {
             "/api/orgs/{org}/repos/{repo}/hooks",
             post(collab_api::create_hook).get(collab_api::list_hooks),
         )
+        .route(
+            "/api/orgs/{org}/repos/{repo}/hooks/{hook_id}",
+            get(collab_api::get_hook)
+                .patch(collab_api::update_hook)
+                .delete(collab_api::delete_hook),
+        )
         // --- milestones ---
         .route(
             "/api/orgs/{org}/repos/{repo}/milestones",
@@ -304,6 +346,11 @@ fn build_router(state: AppState) -> Router {
         .route(
             "/api/orgs/{org}/repos/{repo}/releases",
             post(releases_api::create_release).get(releases_api::list_releases),
+        )
+        .route(
+            "/api/orgs/{org}/repos/{repo}/releases/{tag}",
+            axum::routing::patch(releases_api::update_release)
+                .delete(releases_api::delete_release),
         )
         .route(
             "/api/orgs/{org}/repos/{repo}/releases/{tag}/archive",
@@ -364,12 +411,27 @@ fn build_router(state: AppState) -> Router {
             "/api/users/{username}/notifications",
             get(governance_api::list_notifications),
         )
+        .route(
+            "/api/users/{username}/notifications/read",
+            post(governance_api::mark_all_notifications_read),
+        )
+        .route(
+            "/api/users/{username}/notifications/{id}/read",
+            post(governance_api::mark_notification_read),
+        )
         // --- collaborators + teams (fine-grained RBAC) ---
         .route(
             "/api/orgs/{org}/repos/{repo}/collaborators",
-            post(governance_api::add_collaborator),
+            post(governance_api::add_collaborator).get(governance_api::list_collaborators),
         )
-        .route("/api/orgs/{org}/teams", post(governance_api::create_team))
+        .route(
+            "/api/orgs/{org}/repos/{repo}/collaborators/{username}",
+            delete(governance_api::remove_collaborator),
+        )
+        .route(
+            "/api/orgs/{org}/teams",
+            post(governance_api::create_team).get(governance_api::list_teams),
+        )
         .route(
             "/api/orgs/{org}/teams/{team}/members",
             post(governance_api::add_team_member),
@@ -402,8 +464,65 @@ fn build_router(state: AppState) -> Router {
         // Server-rendered web UI (landing, repo browse, issues, PRs, releases).
         .merge(web::routes())
         .layer(DefaultBodyLimit::max(MAX_GIT_BODY_BYTES))
+        .layer(middleware::from_fn(same_origin_guard))
+        .layer(middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+/// CSRF defense for every state-changing request: when a browser sends an
+/// `Origin` (all modern browsers do on cross-origin POST/PATCH/DELETE) it must
+/// match the request's `Host`, and `Sec-Fetch-Site: cross-site` is refused.
+/// Non-browser clients (git, curl, SDKs) send neither header and pass through;
+/// they authenticate with explicit credentials, not ambient cookies.
+async fn same_origin_guard(request: Request, next: Next) -> Response {
+    let safe = matches!(*request.method(), Method::GET | Method::HEAD | Method::OPTIONS);
+    if !safe {
+        let headers = request.headers();
+        if headers
+            .get("sec-fetch-site")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v == "cross-site")
+        {
+            return (StatusCode::FORBIDDEN, "cross-site request refused").into_response();
+        }
+        if let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+            let host = headers
+                .get("x-forwarded-host")
+                .or_else(|| headers.get(header::HOST))
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default();
+            let origin_host = origin
+                .split_once("://")
+                .map(|(_, rest)| rest)
+                .unwrap_or(origin)
+                .trim_end_matches('/');
+            let public_host = std::env::var("RITHUB_PUBLIC_URL")
+                .ok()
+                .and_then(|u| u.split_once("://").map(|(_, rest)| rest.trim_end_matches('/').to_string()))
+                .unwrap_or_default();
+            if origin == "null" || (origin_host != host && origin_host != public_host) {
+                return (StatusCode::FORBIDDEN, "cross-origin request refused").into_response();
+            }
+        }
+    }
+    next.run(request).await
+}
+
+/// Baseline security headers on every response.
+async fn security_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers
+        .entry(header::X_CONTENT_TYPE_OPTIONS)
+        .or_insert(header::HeaderValue::from_static("nosniff"));
+    headers
+        .entry(header::X_FRAME_OPTIONS)
+        .or_insert(header::HeaderValue::from_static("DENY"));
+    headers
+        .entry(header::REFERRER_POLICY)
+        .or_insert(header::HeaderValue::from_static("same-origin"));
+    response
 }
 
 async fn healthz() -> &'static str {

@@ -13,6 +13,7 @@ pub mod access;
 pub mod audit;
 pub mod ci;
 pub mod deploykeys;
+pub mod directory;
 pub mod domain;
 pub mod error;
 pub mod issues;
@@ -38,6 +39,7 @@ pub use ci::{
     CheckConclusion, CheckRun, CheckRunPatch, CheckRunStatus, CiStore, NewCheckRun, Runner,
 };
 pub use deploykeys::DeployKeyStore;
+pub use directory::{DirectoryStore, SshKeyRecord, WebhookDelivery, WebhookPatch};
 pub use domain::{
     DeployKey, Membership, NewOrganization, NewRepository, Organization, Repository, Role, Token,
     UpdateRepository, User, Visibility,

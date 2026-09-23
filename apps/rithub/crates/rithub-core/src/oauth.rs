@@ -36,6 +36,8 @@ pub struct OauthIdentity {
 /// login callback resolves them against.
 #[allow(async_fn_in_trait)]
 pub trait OauthStore {
+    /// Every external identity linked to a user, oldest first.
+    async fn list_oauth_identities(&self, user_id: Uuid) -> Result<Vec<OauthIdentity>>;
     /// Resolve a provider account `(provider, provider_user_id)` to its linked
     /// identity, or `None` if that account has never signed in here.
     async fn find_oauth_identity(
@@ -89,6 +91,17 @@ const IDENTITY_COLUMNS: &str = "id, user_id, provider, provider_user_id, email, 
 // --- PgStore impl -----------------------------------------------------------
 
 impl OauthStore for PgStore {
+    async fn list_oauth_identities(&self, user_id: Uuid) -> Result<Vec<OauthIdentity>> {
+        let rows = sqlx::query(&format!(
+            "SELECT {IDENTITY_COLUMNS} FROM oauth_identities WHERE user_id = $1 ORDER BY created_at",
+        ))
+        .bind(user_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| CoreError::from_sqlx("oauth_identity", "*", e))?;
+        Ok(rows.iter().map(identity_from_row).collect())
+    }
+
     async fn find_oauth_identity(
         &self,
         provider: &str,

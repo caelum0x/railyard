@@ -12,7 +12,7 @@ use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
 use forge_search::{DocKind, SearchScope};
-use rithub_core::{Store, User};
+use rithub_core::User;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -36,13 +36,10 @@ pub struct SearchParams {
 
 /// Identify the caller from a session cookie or HTTP Basic PAT, if any.
 async fn caller_user(state: &AppState, headers: &HeaderMap) -> Option<User> {
-    if let Some(user) = crate::web::session_user(state, headers).await {
-        return Some(user);
+    match crate::authz::api_caller(state, headers).await {
+        Ok(Some(caller)) if caller.has_scope("repo:read") => caller.user().cloned(),
+        _ => None,
     }
-    if let Ok(Some(caller)) = crate::auth::authenticate(state, headers).await {
-        return caller.user().cloned();
-    }
-    None
 }
 
 /// `GET /api/search?q=...&kind=...&repo=org/name&limit=...`
@@ -68,7 +65,7 @@ pub async fn search(
     // Optional single-repo filter (`org/name`).
     if let Some(spec) = params.repo.as_deref() {
         if let Some((org, repo)) = spec.split_once('/') {
-            if let Ok(meta) = state.store.get_repo(org, repo).await {
+            if let Ok((meta, _)) = crate::authz::repo_for_read(&state, &headers, org, repo).await {
                 scope.repo_id = Some(meta.id.to_string());
             } else {
                 // Unknown repo → no results rather than an error.
@@ -85,7 +82,11 @@ pub async fn search(
 }
 
 /// `POST /api/admin/search/reindex` — kick off a full rebuild in the background.
-pub async fn reindex(State(state): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
+pub async fn reindex(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    crate::authz::require_site_admin(&state, &headers).await?;
     tokio::spawn(async move {
         match search_index::reindex_all(&state).await {
             Ok(n) => tracing::info!(documents = n, "search reindex complete"),

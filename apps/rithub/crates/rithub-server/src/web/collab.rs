@@ -1,60 +1,60 @@
-//! Web pages for issues and pull requests, including the "new" forms, the PR
-//! diff + mergeability + reviews, and a merge button that posts to the same
-//! logic as the JSON API (protected-branch gate included).
+//! Issue, label, and milestone pages.
 //!
-//! ## HTMX interactions
-//! - Issue / PR comment forms use `hx-post` + `hx-target="#comments"` +
-//!   `hx-swap="beforeend"` so new comments appear without a full reload.
-//! - The comment POST handlers detect `HX-Request: true` (`is_htmx`) and
-//!   return a bare comment `<div>` fragment; otherwise they redirect as usual.
-//! - Label/milestone inline updates on issue detail via HTMX partials.
+//! Every mutation goes through [`crate::collab_svc`] (the same code the JSON API
+//! uses), so an issue opened, commented on, closed, or triaged in the browser
+//! fires the same webhooks, notifications, and search indexing as the API.
+//!
+//! ## Permissions
+//! - reading follows repository visibility;
+//! - opening and commenting need a signed-in reader;
+//! - closing/reopening needs the issue author or Write;
+//! - labels, assignees, milestones, and label/milestone management need Write.
+//!
+//! ## HTMX
+//! The comment form posts with `hx-post` and appends the rendered comment to
+//! `#issue-comments` (`hx-swap="beforeend"`); without JS it is a normal POST +
+//! redirect.
 
 use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use rithub_core::{
-    CiStore, IssueState, IssueStore, NewIssue, NewPullRequest, PrState, PullRequestStore,
-    Repository as RepoMeta, ReviewState, ReviewStore, StatusStore, Store, User,
+    DirectoryStore, IssueState, IssueStore, MilestoneStore, NewMilestone, RepoRole, UpdateMilestone,
 };
 use serde::Deserialize;
 
-use super::repo::render_diff_html;
-use super::{check_runs_html, error_page, esc, is_htmx, page, session_user, tabs};
+use super::{
+    app_error_page, error_page, esc, is_htmx, label_chip, markdown, notice_html, page, repo_header,
+    session_user, short_date, username_of, web_repo_participant, web_repo_read, web_repo_role,
+};
+use crate::collab_svc::{self as svc, IssuePatch, LabelSpec, RepoRef};
 use crate::state::AppState;
 
-async fn repo_or_404(
-    state: &AppState,
-    session: &Option<User>,
-    org: &str,
-    repo: &str,
-) -> Result<RepoMeta, Response> {
-    state
-        .store
-        .get_repo(org, repo)
-        .await
-        .map_err(|_| error_page(session, StatusCode::NOT_FOUND, "repository not found"))
-}
-
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct StateQuery {
     #[serde(default)]
     state: Option<String>,
+    #[serde(default)]
+    notice: Option<String>,
 }
 
-fn state_pill(open: bool, closed_label: &str) -> String {
+fn state_pill(open: bool) -> &'static str {
     if open {
-        "<span class=\"pill open\">open</span>".into()
+        "<span class=\"pill open\">Open</span>"
     } else {
-        format!("<span class=\"pill closed\">{closed_label}</span>")
+        "<span class=\"pill closed\">Closed</span>"
     }
 }
 
-/// Render a single comment `<div>` fragment (used both in full-page builds
-/// and as the HTMX partial returned by the comment POST handler).
-fn comment_div(body_md: &str) -> String {
+/// A rendered comment block (full page and HTMX partial share this).
+pub fn comment_div(author: &str, date: i64, body_md: &str) -> String {
     format!(
-        "<div class=\"card\" style=\"margin-bottom:8px\">{}</div>",
-        super::markdown(body_md)
+        "<div class=\"comment\"><div class=\"comment-h\"><strong>{a}</strong> \
+         <span class=\"muted\">commented on {d}</span></div>\
+         <div class=\"comment-b readme\">{b}</div></div>",
+        a = esc(author),
+        d = short_date(date),
+        b = markdown(body_md)
     )
 }
 
@@ -68,49 +68,50 @@ pub async fn issues_list(
     headers: HeaderMap,
 ) -> Response {
     let session = session_user(&state, &headers).await;
-    let meta = match repo_or_404(&state, &session, &org, &repo).await {
-        Ok(m) => m,
+    let (meta, role) = match web_repo_read(&state, &session, &org, &repo).await {
+        Ok(v) => v,
         Err(resp) => return resp,
     };
-    let filter = q.state.as_deref().map(IssueState::parse);
+    let active = q.state.as_deref().unwrap_or("open");
     let issues = state
         .store
-        .list_issues(meta.id, filter)
+        .list_issues(meta.id, Some(IssueState::parse(active)))
         .await
         .unwrap_or_default();
-
-    let active_state = q.state.as_deref().unwrap_or("open");
-    let mut body = format!(
-        "<div class=\"card\"><h1>{}/{}</h1>{}\
-         <div class=\"row\">\
-         <a href=\"/{org}/{repo}/issues?state=open\"{open_cls}>Open</a>\
-         <a href=\"/{org}/{repo}/issues?state=closed\"{closed_cls}>Closed</a>\
+    let (o, r) = (esc(&org), esc(&repo));
+    let bold = |k: &str| if k == active { " style=\"font-weight:700\"" } else { "" };
+    let mut body = repo_header(&org, &repo, &meta, "issues", role);
+    body.push_str(&format!(
+        "<div class=\"card\"><div class=\"row\">\
+         <a href=\"/{o}/{r}/issues?state=open\"{b1}>Open</a>\
+         <a href=\"/{o}/{r}/issues?state=closed\"{b2}>Closed</a>\
+         <a href=\"/{o}/{r}/labels\">Labels</a><a href=\"/{o}/{r}/milestones\">Milestones</a>\
          <span class=\"spacer\"></span>\
-         <a class=\"btn primary\" href=\"/{org}/{repo}/issues/new\">New issue</a>\
-         </div></div>",
-        esc(&org),
-        esc(&repo),
-        tabs(&org, &repo, "issues"),
-        open_cls = if active_state == "open" { " style=\"font-weight:700\"" } else { "" },
-        closed_cls = if active_state == "closed" { " style=\"font-weight:700\"" } else { "" },
-    );
-    body.push_str("<div class=\"card\"><table>");
+         <a class=\"btn primary\" href=\"/{o}/{r}/issues/new\">New issue</a></div><table>",
+        b1 = bold("open"),
+        b2 = bold("closed"),
+    ));
     if issues.is_empty() {
-        body.push_str(
-            "<tr><td class=\"muted\" style=\"padding:20px 8px\">\
-             No issues matching this filter.</td></tr>",
-        );
+        body.push_str("<tr><td class=\"muted\" style=\"padding:20px 8px\">No issues matching this filter.</td></tr>");
     }
     for issue in issues {
+        let labels: String = state
+            .store
+            .list_issue_labels(issue.id)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .map(|l| label_chip(&l.name, &l.color))
+            .collect::<Vec<_>>()
+            .join(" ");
         body.push_str(&format!(
-            "<tr><td>{pill} \
-             <a href=\"/{org}/{repo}/issues/{n}\">#{n} {title}</a>\
-             </td></tr>",
-            pill = state_pill(issue.state == IssueState::Open, "closed"),
-            org = esc(&org),
-            repo = esc(&repo),
+            "<tr><td>{pill} <a href=\"/{o}/{r}/issues/{n}\"><strong>{title}</strong></a> {labels}<br>\
+             <span class=\"muted\">#{n} opened {d} by {who}</span></td></tr>",
+            pill = state_pill(issue.state == IssueState::Open),
             n = issue.number,
-            title = esc(&issue.title)
+            title = esc(&issue.title),
+            d = short_date(issue.created_at.unix_timestamp()),
+            who = esc(&username_of(&state, issue.author_id).await),
         ));
     }
     body.push_str("</table></div>");
@@ -124,22 +125,24 @@ pub async fn issue_new_form(
     headers: HeaderMap,
 ) -> Response {
     let session = session_user(&state, &headers).await;
-    if let Err(resp) = repo_or_404(&state, &session, &org, &repo).await {
-        return resp;
-    }
-    let body = format!(
+    let next = format!("/{org}/{repo}/issues/new");
+    let (meta, _, role) = match web_repo_participant(&state, &session, &org, &repo, &next).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let mut body = repo_header(&org, &repo, &meta, "issues", role);
+    body.push_str(&format!(
         "<div class=\"card\"><h2>New issue</h2>\
-         <form method=\"post\" action=\"/{org}/{repo}/issues/create\">\
-         <label>Title</label>\
-         <input name=\"title\" required placeholder=\"Short description of the problem\">\
-         <label>Description</label>\
-         <textarea name=\"body\" rows=\"8\" placeholder=\"Provide details, steps to reproduce, expected behaviour\u{2026}\"></textarea>\
-         <p style=\"margin-top:12px\">\
-         <button class=\"btn primary\" type=\"submit\">Submit new issue</button>\
-         </p></form></div>",
-        org = esc(&org),
-        repo = esc(&repo)
-    );
+         <form method=\"post\" action=\"/{o}/{r}/issues/create\">\
+         <label for=\"i-title\">Title</label>\
+         <input id=\"i-title\" name=\"title\" required maxlength=\"256\" placeholder=\"Short description of the problem\">\
+         <label for=\"i-body\">Description</label>\
+         <textarea id=\"i-body\" name=\"body\" rows=\"8\" placeholder=\"Steps to reproduce, expected and actual behaviour. Markdown supported.\"></textarea>\
+         <p style=\"margin-top:12px\"><button class=\"btn primary\" type=\"submit\">Submit new issue</button></p>\
+         </form></div>",
+        o = esc(&org),
+        r = esc(&repo)
+    ));
     page("New issue", &session, &body).into_response()
 }
 
@@ -158,26 +161,15 @@ pub async fn issue_create(
     Form(form): Form<IssueForm>,
 ) -> Response {
     let session = session_user(&state, &headers).await;
-    let meta = match repo_or_404(&state, &session, &org, &repo).await {
-        Ok(m) => m,
+    let next = format!("/{org}/{repo}/issues/new");
+    let (meta, user, _) = match web_repo_participant(&state, &session, &org, &repo, &next).await {
+        Ok(v) => v,
         Err(resp) => return resp,
     };
-    let author = session.as_ref().map(|u| u.id);
-    let body = (!form.body.trim().is_empty()).then(|| form.body.clone());
-    match state
-        .store
-        .create_issue(
-            meta.id,
-            author,
-            &NewIssue { title: form.title, body },
-        )
-        .await
-    {
-        Ok(issue) => {
-            Redirect::to(&format!("/{org}/{repo}/issues/{}", issue.number))
-                .into_response()
-        }
-        Err(_) => error_page(&session, StatusCode::BAD_REQUEST, "could not create issue"),
+    let r = RepoRef { org: &org, repo: &repo, meta: &meta };
+    match svc::create_issue(&state, &r, &user, &form.title, Some(form.body)).await {
+        Ok(issue) => Redirect::to(&format!("/{org}/{repo}/issues/{}", issue.number)).into_response(),
+        Err(e) => app_error_page(&session, e),
     }
 }
 
@@ -185,99 +177,161 @@ pub async fn issue_create(
 pub async fn issue_detail(
     State(state): State<AppState>,
     Path((org, repo, number)): Path<(String, String, i32)>,
+    Query(q): Query<StateQuery>,
     headers: HeaderMap,
 ) -> Response {
     let session = session_user(&state, &headers).await;
-    let meta = match repo_or_404(&state, &session, &org, &repo).await {
-        Ok(m) => m,
+    let (meta, role) = match web_repo_read(&state, &session, &org, &repo).await {
+        Ok(v) => v,
         Err(resp) => return resp,
     };
     let issue = match state.store.get_issue(meta.id, number).await {
         Ok(i) => i,
         Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "issue not found"),
     };
-    let labels = state
-        .store
-        .list_issue_labels(issue.id)
-        .await
-        .unwrap_or_default();
-    let assignees = state
-        .store
-        .list_issue_assignees(issue.id)
-        .await
-        .unwrap_or_default();
-    let comments = state
-        .store
-        .list_issue_comments(issue.id)
-        .await
-        .unwrap_or_default();
+    let labels = state.store.list_issue_labels(issue.id).await.unwrap_or_default();
+    let assignees = state.store.list_issue_assignees(issue.id).await.unwrap_or_default();
+    let comments = state.store.list_issue_comments(issue.id).await.unwrap_or_default();
+    let can_write = role.is_some_and(|r| r.can_write());
+    let is_author = session.as_ref().is_some_and(|u| Some(u.id) == issue.author_id);
+    let (o, r) = (esc(&org), esc(&repo));
+    let open = issue.state == IssueState::Open;
 
-    let labels_html = labels
-        .iter()
-        .map(|l| format!("<span class=\"pill\">{}</span> ", esc(&l.name)))
-        .collect::<String>();
+    let milestone = match issue.milestone_id {
+        Some(mid) => state
+            .store
+            .list_milestones(meta.id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .find(|m| m.milestone.id == mid)
+            .map(|m| (m.milestone.number, m.milestone.title)),
+        None => None,
+    };
+
+    let mut body = notice_html(q.notice.as_deref());
+    body.push_str(&repo_header(&org, &repo, &meta, "issues", role));
+    body.push_str(&format!(
+        "<div class=\"card\"><h1>{title} <span class=\"muted\">#{n}</span></h1>\
+         <p>{pill} <span class=\"muted\">opened {d} by {who}</span></p></div>",
+        title = esc(&issue.title),
+        n = issue.number,
+        pill = state_pill(open),
+        d = short_date(issue.created_at.unix_timestamp()),
+        who = esc(&username_of(&state, issue.author_id).await),
+    ));
+
+    body.push_str("<div class=\"grid2\" style=\"grid-template-columns:3fr 1fr\"><div>");
+    body.push_str(&comment_div(
+        &username_of(&state, issue.author_id).await,
+        issue.created_at.unix_timestamp(),
+        issue.body.as_deref().unwrap_or("*No description provided.*"),
+    ));
+    body.push_str("<div id=\"issue-comments\">");
+    for c in &comments {
+        body.push_str(&comment_div(
+            &username_of(&state, c.author_id).await,
+            c.created_at.unix_timestamp(),
+            &c.body,
+        ));
+    }
+    body.push_str("</div>");
+
+    if session.is_some() {
+        let action = format!("/{o}/{r}/issues/{number}/comment");
+        body.push_str(&format!(
+            "<div class=\"card\"><form method=\"post\" action=\"{action}\" hx-post=\"{action}\" \
+             hx-target=\"#issue-comments\" hx-swap=\"beforeend\" hx-on::after-request=\"if(event.detail.successful)this.reset()\">\
+             <label for=\"c-body\">Add a comment</label>\
+             <textarea id=\"c-body\" name=\"body\" rows=\"4\" required placeholder=\"Markdown supported\"></textarea>\
+             <div class=\"row\" style=\"margin-top:8px\"><button class=\"btn primary\" type=\"submit\">Comment</button>\
+             </div></form>"
+        ));
+        if can_write || is_author {
+            let (label, target) = if open { ("Close issue", "closed") } else { ("Reopen issue", "open") };
+            body.push_str(&format!(
+                "<form method=\"post\" action=\"/{o}/{r}/issues/{number}/state\" style=\"margin-top:8px\">\
+                 <input type=\"hidden\" name=\"state\" value=\"{target}\">\
+                 <button class=\"btn\" type=\"submit\">{label}</button></form>"
+            ));
+        }
+        body.push_str("</div>");
+    } else {
+        body.push_str(&format!(
+            "<p class=\"muted\"><a href=\"/login?next=/{o}/{r}/issues/{number}\">Sign in</a> to comment.</p>"
+        ));
+    }
+    body.push_str("</div><div>");
+
+    // Sidebar: labels, assignees, milestone (editable by writers).
+    let labels_html = if labels.is_empty() {
+        "<span class=\"muted\">None yet</span>".to_string()
+    } else {
+        labels.iter().map(|l| label_chip(&l.name, &l.color)).collect::<Vec<_>>().join(" ")
+    };
     let assignees_html = if assignees.is_empty() {
-        "<span class=\"muted\">None</span>".into()
+        "<span class=\"muted\">No one assigned</span>".to_string()
     } else {
         assignees
             .iter()
-            .map(|u| esc(&u.username))
+            .map(|u| format!("<a href=\"/{u}\">{u}</a>", u = esc(&u.username)))
             .collect::<Vec<_>>()
             .join(", ")
     };
-
-    let mut body = format!(
-        "<div class=\"card\">\
-         <h1>{title} <span class=\"muted\">#{n}</span></h1>\
-         {pill} {labels}\
-         <p class=\"muted\">Assignees: {assignees}</p>\
-         <div class=\"readme\">{desc}</div>\
-         </div>",
-        title = esc(&issue.title),
-        n = issue.number,
-        pill = state_pill(issue.state == IssueState::Open, "closed"),
-        labels = labels_html,
-        assignees = assignees_html,
-        desc = super::markdown(issue.body.as_deref().unwrap_or(""))
-    );
-
-    // Comments list — `id="issue-comments"` is the HTMX swap target.
-    body.push_str("<div class=\"card\"><h3>Comments</h3>");
-    body.push_str("<div id=\"issue-comments\">");
-    if comments.is_empty() {
-        body.push_str("<p class=\"muted\">No comments yet.</p>");
-    }
-    for c in &comments {
-        body.push_str(&comment_div(&c.body));
-    }
-    body.push_str("</div>"); // #issue-comments
-
-    // Comment form with HTMX: appends the new comment without full reload.
-    // Falls back to a normal POST + redirect when htmx is absent.
-    let comment_action = format!("/{org}/{repo}/issues/{number}/comment");
-    if session.is_some() {
+    let milestone_html = milestone
+        .as_ref()
+        .map(|(_, t)| esc(t))
+        .unwrap_or_else(|| "<span class=\"muted\">No milestone</span>".into());
+    body.push_str(&format!(
+        "<div class=\"card\"><h3>Labels</h3><p>{labels_html}</p>\
+         <h3>Assignees</h3><p>{assignees_html}</p>\
+         <h3>Milestone</h3><p>{milestone_html}</p></div>"
+    ));
+    if can_write {
+        let all_labels = state.store.list_labels(meta.id).await.unwrap_or_default();
+        let milestones = state.store.list_milestones(meta.id).await.unwrap_or_default();
+        let label_boxes: String = all_labels
+            .iter()
+            .map(|l| {
+                let checked = if labels.iter().any(|x| x.id == l.id) { " checked" } else { "" };
+                format!(
+                    "<label class=\"check\"><input type=\"checkbox\" name=\"label\" value=\"{n}\"{checked}> {chip}</label>",
+                    n = esc(&l.name),
+                    chip = label_chip(&l.name, &l.color)
+                )
+            })
+            .collect();
+        let current_ms = milestone.as_ref().map(|(n, _)| *n).unwrap_or(0);
+        let ms_options: String = std::iter::once(format!(
+            "<option value=\"0\"{}>No milestone</option>",
+            if current_ms == 0 { " selected" } else { "" }
+        ))
+        .chain(milestones.iter().filter(|m| m.milestone.closed_at.is_none() || m.milestone.number == current_ms).map(|m| {
+            format!(
+                "<option value=\"{n}\"{sel}>{t}</option>",
+                n = m.milestone.number,
+                sel = if m.milestone.number == current_ms { " selected" } else { "" },
+                t = esc(&m.milestone.title)
+            )
+        }))
+        .collect();
+        let assignee_value = assignees.iter().map(|u| u.username.as_str()).collect::<Vec<_>>().join(", ");
         body.push_str(&format!(
-            "<form method=\"post\" action=\"{action}\" \
-                  hx-post=\"{action}\" \
-                  hx-target=\"#issue-comments\" \
-                  hx-swap=\"beforeend\" \
-                  hx-on::after-request=\"this.reset()\">\
-             <label>Add a comment</label>\
-             <textarea name=\"body\" rows=\"4\" required \
-                       placeholder=\"Leave a comment\u{2026}\"></textarea>\
-             <p style=\"margin-top:8px\">\
-             <button class=\"btn\" type=\"submit\">Comment</button>\
-             </p></form>",
-            action = comment_action,
-        ));
-    } else {
-        body.push_str(&format!(
-            "<p class=\"muted\"><a href=\"/login\">Sign in</a> to comment.</p>"
+            "<div class=\"card\"><h3>Triage</h3>\
+             <form method=\"post\" action=\"/{o}/{r}/issues/{number}/triage\">\
+             <label>Labels</label>{label_boxes}\
+             <input name=\"new_label\" placeholder=\"new label name\" aria-label=\"New label\" style=\"margin-top:4px\">\
+             <label for=\"t-assignees\">Assignees</label>\
+             <input id=\"t-assignees\" name=\"assignees\" value=\"{av}\" placeholder=\"alice, bob\">\
+             <label for=\"t-ms\">Milestone</label>\
+             <select id=\"t-ms\" name=\"milestone\">{ms_options}</select>\
+             <p style=\"margin-top:10px\"><button class=\"btn\" type=\"submit\">Save triage</button></p>\
+             </form></div>",
+            av = esc(&assignee_value),
         ));
     }
-    body.push_str("</div>"); // .card
-
-    page(&format!("#{number}"), &session, &body).into_response()
+    body.push_str("</div></div>");
+    page(&format!("#{number} {}", issue.title), &session, &body).into_response()
 }
 
 #[derive(Deserialize)]
@@ -285,8 +339,8 @@ pub struct CommentForm {
     body: String,
 }
 
-/// POST /{org}/{repo}/issues/{number}/comment
-/// Returns an HTML fragment when `HX-Request: true`; redirects otherwise.
+/// POST /{org}/{repo}/issues/{number}/comment — HTML fragment for htmx,
+/// redirect otherwise.
 pub async fn issue_comment(
     State(state): State<AppState>,
     Path((org, repo, number)): Path<(String, String, i32)>,
@@ -294,573 +348,401 @@ pub async fn issue_comment(
     Form(form): Form<CommentForm>,
 ) -> Response {
     let session = session_user(&state, &headers).await;
-    let meta = match repo_or_404(&state, &session, &org, &repo).await {
-        Ok(m) => m,
+    let next = format!("/{org}/{repo}/issues/{number}");
+    let (meta, user, _) = match web_repo_participant(&state, &session, &org, &repo, &next).await {
+        Ok(v) => v,
         Err(resp) => return resp,
     };
-    if let Ok(issue) = state.store.get_issue(meta.id, number).await {
-        let author = session.as_ref().map(|u| u.id);
-        let _ = state
-            .store
-            .add_issue_comment(issue.id, author, &form.body)
-            .await;
+    let r = RepoRef { org: &org, repo: &repo, meta: &meta };
+    match svc::comment_issue(&state, &r, number, &user, &form.body).await {
+        Ok(comment) if is_htmx(&headers) => Html(comment_div(
+            &user.username,
+            comment.created_at.unix_timestamp(),
+            &comment.body,
+        ))
+        .into_response(),
+        Ok(_) => Redirect::to(&next).into_response(),
+        Err(e) if is_htmx(&headers) => (
+            e.status(),
+            Html(format!("<div class=\"notice bad-notice\">{}</div>", esc(&e.client_message()))),
+        )
+            .into_response(),
+        Err(e) => app_error_page(&session, e),
     }
-
-    // HTMX partial: return just the new comment div for in-place append.
-    if is_htmx(&headers) {
-        return Html(comment_div(&form.body)).into_response();
-    }
-    Redirect::to(&format!("/{org}/{repo}/issues/{number}")).into_response()
 }
 
-// --- pull requests ----------------------------------------------------------
+#[derive(Deserialize)]
+pub struct StateForm {
+    state: String,
+}
 
-/// GET /{org}/{repo}/pulls
-pub async fn pulls_list(
+/// POST /{org}/{repo}/issues/{number}/state — close or reopen (author or Write).
+pub async fn issue_state(
+    State(state): State<AppState>,
+    Path((org, repo, number)): Path<(String, String, i32)>,
+    headers: HeaderMap,
+    Form(form): Form<StateForm>,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let next = format!("/{org}/{repo}/issues/{number}");
+    let (meta, user, _) = match web_repo_participant(&state, &session, &org, &repo, &next).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let issue = match state.store.get_issue(meta.id, number).await {
+        Ok(i) => i,
+        Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "issue not found"),
+    };
+    if !svc::is_author_or_role(&state, &user, &meta, issue.author_id, RepoRole::Write).await {
+        return error_page(&session, StatusCode::FORBIDDEN, "only the author or a writer can change this issue");
+    }
+    let r = RepoRef { org: &org, repo: &repo, meta: &meta };
+    match svc::set_issue_state(&state, &r, number, &user, IssueState::parse(&form.state)).await {
+        Ok(_) => Redirect::to(&next).into_response(),
+        Err(e) => app_error_page(&session, e),
+    }
+}
+
+/// POST /{org}/{repo}/issues/{number}/triage — labels/assignees/milestone
+/// (Write). The form posts repeated `label` fields, so decode manually.
+pub async fn issue_triage(
+    State(state): State<AppState>,
+    Path((org, repo, number)): Path<(String, String, i32)>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let next = format!("/{org}/{repo}/issues/{number}");
+    let (meta, user) = match web_repo_role(&state, &session, &org, &repo, RepoRole::Write, &next).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let pairs = parse_form_pairs(&body);
+    let existing = state.store.list_labels(meta.id).await.unwrap_or_default();
+    let mut labels: Vec<LabelSpec> = pairs
+        .iter()
+        .filter(|(k, _)| k == "label")
+        .filter_map(|(_, v)| existing.iter().find(|l| &l.name == v))
+        .map(|l| LabelSpec { name: l.name.clone(), color: Some(l.color.clone()) })
+        .collect();
+    if let Some((_, new_label)) = pairs.iter().find(|(k, v)| k == "new_label" && !v.trim().is_empty()) {
+        labels.push(LabelSpec { name: new_label.trim().to_string(), color: None });
+    }
+    let assignees: Vec<String> = pairs
+        .iter()
+        .find(|(k, _)| k == "assignees")
+        .map(|(_, v)| {
+            v.split(',')
+                .map(|s| s.trim().trim_start_matches('@').to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let milestone = pairs
+        .iter()
+        .find(|(k, _)| k == "milestone")
+        .and_then(|(_, v)| v.parse::<i32>().ok())
+        .unwrap_or(0);
+    let r = RepoRef { org: &org, repo: &repo, meta: &meta };
+    let patch = IssuePatch {
+        labels: Some(labels),
+        assignees: Some(assignees),
+        milestone: Some(milestone),
+        ..IssuePatch::default()
+    };
+    match svc::update_issue(&state, &r, number, &user, patch).await {
+        Ok(_) => Redirect::to(&format!("{next}?notice=saved")).into_response(),
+        Err(e) => app_error_page(&session, e),
+    }
+}
+
+/// Decode an `application/x-www-form-urlencoded` body into ordered pairs
+/// (supports repeated keys, which `Form<T>` cannot).
+pub fn parse_form_pairs(body: &[u8]) -> Vec<(String, String)> {
+    fn decode(s: &str) -> String {
+        let bytes = s.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'+' => out.push(b' '),
+                b'%' if i + 2 < bytes.len() => {
+                    match std::str::from_utf8(&bytes[i + 1..i + 3])
+                        .ok()
+                        .and_then(|h| u8::from_str_radix(h, 16).ok())
+                        .ok_or(())
+                    {
+                        Ok(b) => {
+                            out.push(b);
+                            i += 2;
+                        }
+                        Err(_) => out.push(b'%'),
+                    }
+                }
+                b => out.push(b),
+            }
+            i += 1;
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+    String::from_utf8_lossy(body)
+        .split('&')
+        .filter(|kv| !kv.is_empty())
+        .map(|kv| {
+            let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+            (decode(k), decode(v))
+        })
+        .collect()
+}
+
+// --- labels -----------------------------------------------------------------
+
+/// GET /{org}/{repo}/labels
+pub async fn labels_page(
     State(state): State<AppState>,
     Path((org, repo)): Path<(String, String)>,
     Query(q): Query<StateQuery>,
     headers: HeaderMap,
 ) -> Response {
     let session = session_user(&state, &headers).await;
-    let meta = match repo_or_404(&state, &session, &org, &repo).await {
-        Ok(m) => m,
+    let (meta, role) = match web_repo_read(&state, &session, &org, &repo).await {
+        Ok(v) => v,
         Err(resp) => return resp,
     };
-    let filter = q.state.as_deref().map(PrState::parse);
-    let prs = state
-        .store
-        .list_prs(meta.id, filter)
-        .await
-        .unwrap_or_default();
-
-    let active_state = q.state.as_deref().unwrap_or("open");
-    let mut body = format!(
-        "<div class=\"card\"><h1>{}/{}</h1>{}\
-         <div class=\"row\">\
-         <a href=\"/{org}/{repo}/pulls?state=open\"{open_cls}>Open</a>\
-         <a href=\"/{org}/{repo}/pulls?state=merged\"{merged_cls}>Merged</a>\
-         <a href=\"/{org}/{repo}/pulls?state=closed\"{closed_cls}>Closed</a>\
-         <span class=\"spacer\"></span>\
-         <a class=\"btn primary\" href=\"/{org}/{repo}/pulls/new\">New pull request</a>\
-         </div></div>",
-        esc(&org),
-        esc(&repo),
-        tabs(&org, &repo, "pulls"),
-        open_cls = if active_state == "open" { " style=\"font-weight:700\"" } else { "" },
-        merged_cls = if active_state == "merged" { " style=\"font-weight:700\"" } else { "" },
-        closed_cls = if active_state == "closed" { " style=\"font-weight:700\"" } else { "" },
-    );
-    body.push_str("<div class=\"card\"><table>");
-    if prs.is_empty() {
-        body.push_str(
-            "<tr><td class=\"muted\" style=\"padding:20px 8px\">\
-             No pull requests matching this filter.</td></tr>",
-        );
+    let labels = state.store.list_labels(meta.id).await.unwrap_or_default();
+    let mut body = notice_html(q.notice.as_deref());
+    body.push_str(&repo_header(&org, &repo, &meta, "issues", role));
+    body.push_str("<div class=\"card\"><h3>Labels</h3>");
+    if labels.is_empty() {
+        body.push_str("<p class=\"muted\">No labels yet.</p>");
+    } else {
+        body.push_str("<div class=\"row\">");
+        for l in &labels {
+            body.push_str(&label_chip(&l.name, &l.color));
+        }
+        body.push_str("</div>");
     }
-    for pr in prs {
-        let pill = match pr.state {
-            PrState::Open => "<span class=\"pill open\">open</span>",
-            PrState::Merged => "<span class=\"pill merged\">merged</span>",
-            PrState::Closed => "<span class=\"pill closed\">closed</span>",
-        };
+    if role.is_some_and(|r| r.can_write()) {
         body.push_str(&format!(
-            "<tr><td>{pill} \
-             <a href=\"/{org}/{repo}/pulls/{n}\">#{n} {title}</a> \
-             <span class=\"muted\">{head} &rarr; {base}</span>\
-             </td></tr>",
-            org = esc(&org),
-            repo = esc(&repo),
-            n = pr.number,
-            title = esc(&pr.title),
-            head = esc(&pr.head_branch),
-            base = esc(&pr.base_branch)
+            "<form method=\"post\" action=\"/{o}/{r}/labels\" class=\"row\" style=\"margin-top:12px\">\
+             <input name=\"name\" placeholder=\"label name\" required maxlength=\"50\" style=\"flex:2\" aria-label=\"Label name\">\
+             <input name=\"color\" type=\"color\" value=\"#0969da\" style=\"width:60px;padding:2px\" aria-label=\"Label color\">\
+             <button class=\"btn\" type=\"submit\">Create label</button></form>",
+            o = esc(&org),
+            r = esc(&repo)
         ));
     }
-    body.push_str("</table></div>");
-    page("Pull requests", &session, &body).into_response()
-}
-
-/// GET /{org}/{repo}/pulls/new
-pub async fn pr_new_form(
-    State(state): State<AppState>,
-    Path((org, repo)): Path<(String, String)>,
-    headers: HeaderMap,
-) -> Response {
-    let session = session_user(&state, &headers).await;
-    if let Err(resp) = repo_or_404(&state, &session, &org, &repo).await {
-        return resp;
-    }
-    let branches = state.host.branches(&org, &repo).unwrap_or_default();
-    let options = branches
-        .iter()
-        .map(|b| format!("<option>{}</option>", esc(b)))
-        .collect::<String>();
-    let body = format!(
-        "<div class=\"card\"><h2>New pull request</h2>\
-         <form method=\"post\" action=\"/{org}/{repo}/pulls/create\">\
-         <label>Title</label>\
-         <input name=\"title\" required placeholder=\"Describe the change\">\
-         <label>Description</label>\
-         <textarea name=\"body\" rows=\"5\" placeholder=\"What does this change do and why?\u{2026}\"></textarea>\
-         <label>Compare (head branch)</label>\
-         <select name=\"head\">{options}</select>\
-         <label>Base branch</label>\
-         <select name=\"base\">{options}</select>\
-         <p style=\"margin-top:12px\">\
-         <button class=\"btn primary\" type=\"submit\">Create pull request</button>\
-         </p></form></div>",
-        org = esc(&org),
-        repo = esc(&repo)
-    );
-    page("New pull request", &session, &body).into_response()
+    body.push_str("</div>");
+    page("Labels", &session, &body).into_response()
 }
 
 #[derive(Deserialize)]
-pub struct PrForm {
+pub struct LabelForm {
+    name: String,
+    #[serde(default)]
+    color: String,
+}
+
+/// POST /{org}/{repo}/labels (Write)
+pub async fn label_create(
+    State(state): State<AppState>,
+    Path((org, repo)): Path<(String, String)>,
+    headers: HeaderMap,
+    Form(form): Form<LabelForm>,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let next = format!("/{org}/{repo}/labels");
+    let (meta, _) = match web_repo_role(&state, &session, &org, &repo, RepoRole::Write, &next).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let name = form.name.trim();
+    if name.is_empty() || name.len() > 50 {
+        return error_page(&session, StatusCode::BAD_REQUEST, "label name must be 1-50 characters");
+    }
+    let color = form.color.trim().trim_start_matches('#');
+    if color.len() != 6 || !color.chars().all(|c| c.is_ascii_hexdigit()) {
+        return error_page(&session, StatusCode::BAD_REQUEST, "label color must be 6 hex digits");
+    }
+    match state.store.create_label(meta.id, name, &color.to_ascii_lowercase()).await {
+        Ok(_) => Redirect::to(&format!("{next}?notice=created")).into_response(),
+        Err(e) => app_error_page(&session, e.into()),
+    }
+}
+
+// --- milestones -------------------------------------------------------------
+
+/// GET /{org}/{repo}/milestones
+pub async fn milestones_page(
+    State(state): State<AppState>,
+    Path((org, repo)): Path<(String, String)>,
+    Query(q): Query<StateQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let (meta, role) = match web_repo_read(&state, &session, &org, &repo).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let can_write = role.is_some_and(|r| r.can_write());
+    let milestones = state.store.list_milestones(meta.id).await.unwrap_or_default();
+    let (o, r) = (esc(&org), esc(&repo));
+    let mut body = notice_html(q.notice.as_deref());
+    body.push_str(&repo_header(&org, &repo, &meta, "milestones", role));
+    body.push_str("<div class=\"card\"><h3>Milestones</h3>");
+    if milestones.is_empty() {
+        body.push_str("<p class=\"muted\">No milestones yet. Milestones group issues toward a goal or release.</p>");
+    }
+    for m in &milestones {
+        let total = m.open_issues + m.closed_issues;
+        let pct = if total > 0 { m.closed_issues * 100 / total } else { 0 };
+        let closed = m.milestone.closed_at.is_some();
+        let due = m
+            .milestone
+            .due_on
+            .map(|d| format!(" \u{00b7} due {}", short_date(d.unix_timestamp())))
+            .unwrap_or_default();
+        let controls = if can_write {
+            let (label, target) = if closed { ("Reopen", "open") } else { ("Close", "closed") };
+            format!(
+                "<form method=\"post\" action=\"/{o}/{r}/milestones/{n}/state\" class=\"inline-form\">\
+                 <input type=\"hidden\" name=\"state\" value=\"{target}\">\
+                 <button class=\"btn small\" type=\"submit\">{label}</button></form> \
+                 <form method=\"post\" action=\"/{o}/{r}/milestones/{n}/delete\" class=\"inline-form\">\
+                 <button class=\"btn small danger\" type=\"submit\">Delete</button></form>",
+                n = m.milestone.number
+            )
+        } else {
+            String::new()
+        };
+        body.push_str(&format!(
+            "<div class=\"comment\"><div class=\"comment-h row\"><strong>{t}</strong> {pill}\
+             <span class=\"muted\">{pct}% complete \u{00b7} {open} open \u{00b7} {cl} closed{due}</span>\
+             <span class=\"spacer\"></span>{controls}</div>\
+             <div class=\"comment-b\"><progress max=\"100\" value=\"{pct}\" style=\"width:100%\"></progress>{desc}</div></div>",
+            t = esc(&m.milestone.title),
+            pill = state_pill(!closed),
+            open = m.open_issues,
+            cl = m.closed_issues,
+            desc = m
+                .milestone
+                .description
+                .as_deref()
+                .map(|d| format!("<div class=\"readme\">{}</div>", markdown(d)))
+                .unwrap_or_default(),
+        ));
+    }
+    body.push_str("</div>");
+    if can_write {
+        body.push_str(&format!(
+            "<div class=\"card\"><h3>New milestone</h3>\
+             <form method=\"post\" action=\"/{o}/{r}/milestones\">\
+             <label for=\"m-title\">Title</label><input id=\"m-title\" name=\"title\" required maxlength=\"200\">\
+             <label for=\"m-due\">Due date <span class=\"muted\">(optional)</span></label>\
+             <input id=\"m-due\" name=\"due_on\" type=\"date\">\
+             <label for=\"m-desc\">Description</label><textarea id=\"m-desc\" name=\"description\" rows=\"3\"></textarea>\
+             <p style=\"margin-top:10px\"><button class=\"btn primary\" type=\"submit\">Create milestone</button></p>\
+             </form></div>"
+        ));
+    }
+    page("Milestones", &session, &body).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct MilestoneForm {
     title: String,
     #[serde(default)]
-    body: String,
-    head: String,
-    base: String,
+    description: String,
+    #[serde(default)]
+    due_on: String,
 }
 
-/// POST /{org}/{repo}/pulls/create
-pub async fn pr_create(
+fn parse_due(date: &str) -> Result<Option<time::OffsetDateTime>, String> {
+    let d = date.trim();
+    if d.is_empty() {
+        return Ok(None);
+    }
+    let err = || "due date must be YYYY-MM-DD".to_string();
+    let mut parts = d.splitn(3, '-');
+    let year: i32 = parts.next().and_then(|p| p.parse().ok()).ok_or_else(err)?;
+    let month: u8 = parts.next().and_then(|p| p.parse().ok()).ok_or_else(err)?;
+    let day: u8 = parts.next().and_then(|p| p.parse().ok()).ok_or_else(err)?;
+    let month = time::Month::try_from(month).map_err(|_| err())?;
+    let date = time::Date::from_calendar_date(year, month, day).map_err(|_| err())?;
+    let end_of_day = date.with_hms(23, 59, 59).map_err(|_| err())?;
+    Ok(Some(end_of_day.assume_utc()))
+}
+
+/// POST /{org}/{repo}/milestones (Write)
+pub async fn milestone_create(
     State(state): State<AppState>,
     Path((org, repo)): Path<(String, String)>,
     headers: HeaderMap,
-    Form(form): Form<PrForm>,
+    Form(form): Form<MilestoneForm>,
 ) -> Response {
     let session = session_user(&state, &headers).await;
-    let meta = match repo_or_404(&state, &session, &org, &repo).await {
-        Ok(m) => m,
+    let next = format!("/{org}/{repo}/milestones");
+    let (meta, _) = match web_repo_role(&state, &session, &org, &repo, RepoRole::Write, &next).await {
+        Ok(v) => v,
         Err(resp) => return resp,
     };
-    if form.head == form.base {
-        return error_page(
-            &session,
-            StatusCode::BAD_REQUEST,
-            "head and base are the same branch",
-        );
+    if form.title.trim().is_empty() {
+        return error_page(&session, StatusCode::BAD_REQUEST, "milestone title is required");
     }
-    let head_oid = state.host.resolve_branch(&org, &repo, &form.head);
-    let base_oid = state.host.resolve_branch(&org, &repo, &form.base);
-    let (Ok(head_oid), Ok(base_oid)) = (head_oid, base_oid) else {
-        return error_page(
-            &session,
-            StatusCode::BAD_REQUEST,
-            "head or base branch not found",
-        );
+    let due_on = match parse_due(&form.due_on) {
+        Ok(d) => d,
+        Err(msg) => return error_page(&session, StatusCode::BAD_REQUEST, &msg),
     };
-    let author = session.as_ref().map(|u| u.id);
-    let body = (!form.body.trim().is_empty()).then(|| form.body.clone());
-    match state
-        .store
-        .create_pr(
-            meta.id,
-            author,
-            &NewPullRequest {
-                title: form.title,
-                body,
-                head: form.head,
-                base: form.base,
-            },
-            Some(&base_oid.to_hex()),
-            Some(&head_oid.to_hex()),
-            None,
-        )
-        .await
-    {
-        Ok(pr) => {
-            Redirect::to(&format!("/{org}/{repo}/pulls/{}", pr.number)).into_response()
-        }
-        Err(_) => error_page(&session, StatusCode::BAD_REQUEST, "could not create PR"),
+    let input = NewMilestone {
+        title: form.title.trim().to_string(),
+        description: Some(form.description.trim().to_string()).filter(|d| !d.is_empty()),
+        due_on,
+    };
+    match state.store.create_milestone(meta.id, &input).await {
+        Ok(_) => Redirect::to(&format!("{next}?notice=created")).into_response(),
+        Err(e) => app_error_page(&session, e.into()),
     }
 }
 
-/// GET /{org}/{repo}/pulls/{number}
-pub async fn pr_detail(
+/// POST /{org}/{repo}/milestones/{number}/state (Write)
+pub async fn milestone_state(
+    State(state): State<AppState>,
+    Path((org, repo, number)): Path<(String, String, i32)>,
+    headers: HeaderMap,
+    Form(form): Form<StateForm>,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let next = format!("/{org}/{repo}/milestones");
+    let (meta, _) = match web_repo_role(&state, &session, &org, &repo, RepoRole::Write, &next).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let patch = UpdateMilestone {
+        title: None,
+        description: None,
+        due_on: None,
+        state: Some(if form.state == "closed" { "closed".into() } else { "open".into() }),
+    };
+    match state.store.update_milestone(meta.id, number, &patch).await {
+        Ok(_) => Redirect::to(&format!("{next}?notice=saved")).into_response(),
+        Err(e) => app_error_page(&session, e.into()),
+    }
+}
+
+/// POST /{org}/{repo}/milestones/{number}/delete (Write)
+pub async fn milestone_delete(
     State(state): State<AppState>,
     Path((org, repo, number)): Path<(String, String, i32)>,
     headers: HeaderMap,
 ) -> Response {
     let session = session_user(&state, &headers).await;
-    let meta = match repo_or_404(&state, &session, &org, &repo).await {
-        Ok(m) => m,
+    let next = format!("/{org}/{repo}/milestones");
+    let (meta, _) = match web_repo_role(&state, &session, &org, &repo, RepoRole::Write, &next).await {
+        Ok(v) => v,
         Err(resp) => return resp,
     };
-    let pr = match state.store.get_pr(meta.id, number).await {
-        Ok(p) => p,
-        Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "pull request not found"),
-    };
-
-    let pill = match pr.state {
-        PrState::Open => "<span class=\"pill open\">open</span>",
-        PrState::Merged => "<span class=\"pill merged\">merged</span>",
-        PrState::Closed => "<span class=\"pill closed\">closed</span>",
-    };
-    let mut body = format!(
-        "<div class=\"card\">\
-         <h1>{title} <span class=\"muted\">#{n}</span></h1>\
-         {pill} <span class=\"muted\">{head} &rarr; {base}</span>\
-         <div class=\"readme\">{desc}</div>\
-         </div>",
-        title = esc(&pr.title),
-        n = pr.number,
-        head = esc(&pr.head_branch),
-        base = esc(&pr.base_branch),
-        desc = super::markdown(pr.body.as_deref().unwrap_or(""))
-    );
-
-    // Check runs for the head SHA of this PR
-    if let Some(ref head_sha) = pr.head_sha {
-        let check_runs = state
-            .store
-            .latest_check_runs(meta.id, head_sha)
-            .await
-            .unwrap_or_default();
-        if !check_runs.is_empty() {
-            body.push_str("<div class=\"card\"><h3>Checks</h3>");
-            body.push_str(&check_runs_html(&check_runs));
-            body.push_str("</div>");
-        }
-    }
-
-    // Reviews + approvals
-    let reviews = state.store.list_reviews(pr.id).await.unwrap_or_default();
-    let approvals = state
-        .store
-        .count_current_approvals(pr.id, pr.author_id)
-        .await
-        .unwrap_or(0);
-    let protection = state
-        .store
-        .get_branch_protection(meta.id, &pr.base_branch)
-        .await
-        .ok()
-        .flatten();
-
-    body.push_str("<div class=\"card\"><h3>Reviews</h3>");
-    if reviews.is_empty() {
-        body.push_str("<p class=\"muted\">No reviews yet.</p>");
-    }
-    for r in &reviews {
-        let cls = match r.state {
-            ReviewState::Approved => "ok",
-            ReviewState::ChangesRequested => "bad",
-            ReviewState::Commented => "muted",
-        };
-        body.push_str(&format!(
-            "<div><span class=\"{cls}\">{}</span> {}</div>",
-            r.state.as_str(),
-            esc(r.body.as_deref().unwrap_or(""))
-        ));
-    }
-
-    // Review submission form with HTMX (inline refresh of review list).
-    let reviews_action = format!("/{org}/{repo}/pulls/{number}/review");
-    if session.is_some() {
-        body.push_str(&format!(
-            "<form method=\"post\" action=\"{action}\" \
-                  hx-post=\"{action}\" \
-                  hx-target=\"#pr-reviews\" \
-                  hx-swap=\"innerHTML\" \
-                  hx-on::after-request=\"this.reset()\" \
-                  style=\"margin-top:12px\">\
-             <label>Submit review</label>\
-             <div class=\"row\" style=\"flex-wrap:wrap;gap:8px\">\
-             <select name=\"state\" style=\"width:auto\">\
-             <option value=\"approved\">Approve</option>\
-             <option value=\"changes_requested\">Request changes</option>\
-             <option value=\"commented\">Comment</option>\
-             </select>\
-             <input name=\"body\" placeholder=\"Optional note\" style=\"flex:1\">\
-             <button class=\"btn\" type=\"submit\">Submit review</button>\
-             </div></form>",
-            action = reviews_action,
-        ));
-    } else {
-        body.push_str(
-            "<p class=\"muted\"><a href=\"/login\">Sign in</a> to review or merge.</p>",
-        );
-    }
-    body.push_str("</div>"); // reviews card
-
-    // Mergeability + merge button
-    if pr.state == PrState::Open {
-        match live_mergeability(&state, &org, &repo, &pr).await {
-            Some((status, mergeable)) => {
-                let required = protection
-                    .as_ref()
-                    .map(|p| p.required_approvals)
-                    .unwrap_or(0);
-                let gate_ok = approvals as i32 >= required;
-                body.push_str(&format!(
-                    "<div class=\"card\"><h3>Merge</h3>\
-                     <p>Status: <strong>{status}</strong> &nbsp; \
-                     Approvals: {approvals}{req}</p>",
-                    req = if required > 0 {
-                        format!(" / {required} required")
-                    } else {
-                        String::new()
-                    }
-                ));
-                if mergeable && gate_ok && session.is_some() {
-                    body.push_str(&format!(
-                        "<form method=\"post\" action=\"/{org}/{repo}/pulls/{n}/merge\">\
-                         <button class=\"btn primary\" type=\"submit\">\
-                         Merge pull request</button></form>",
-                        org = esc(&org),
-                        repo = esc(&repo),
-                        n = number
-                    ));
-                } else if !mergeable {
-                    body.push_str(
-                        "<p class=\"bad\">Not mergeable (conflicts or nothing to merge).</p>",
-                    );
-                } else if !gate_ok {
-                    body.push_str(&format!(
-                        "<p class=\"bad\">Blocked: needs {required} approval(s), \
-                         has {approvals}.</p>"
-                    ));
-                } else {
-                    body.push_str(
-                        "<p class=\"muted\"><a href=\"/login\">Sign in</a> to merge.</p>",
-                    );
-                }
-                body.push_str("</div>");
-            }
-            None => body.push_str(
-                "<div class=\"card\"><p class=\"bad\">\
-                 Could not compute mergeability.</p></div>",
-            ),
-        }
-    } else if let Some(sha) = &pr.merge_commit_sha {
-        let short = &sha[..sha.len().min(8)];
-        body.push_str(&format!(
-            "<div class=\"card\"><p class=\"ok\">\
-             Merged as <a href=\"/{org}/{repo}/commit/{sha}\">{short}</a></p></div>",
-            org = esc(&org),
-            repo = esc(&repo),
-            sha = esc(sha),
-            short = esc(short)
-        ));
-    }
-
-    // The diff
-    if let (Ok(base), Ok(head)) = (
-        state
-            .host
-            .resolve_branch(&org, &repo, &pr.base_branch),
-        state
-            .host
-            .resolve_branch(&org, &repo, &pr.head_branch),
-    ) {
-        if let Ok(diff) = state.host.pr_diff(&org, &repo, base, head) {
-            body.push_str("<h3>Diff</h3>");
-            body.push_str(&render_diff_html(&diff));
-        }
-    }
-
-    page(&format!("PR #{number}"), &session, &body).into_response()
-}
-
-async fn live_mergeability(
-    state: &AppState,
-    org: &str,
-    repo: &str,
-    pr: &rithub_core::PullRequest,
-) -> Option<(String, bool)> {
-    let base = state
-        .host
-        .resolve_branch(org, repo, &pr.base_branch)
-        .ok()?;
-    let head = state
-        .host
-        .resolve_branch(org, repo, &pr.head_branch)
-        .ok()?;
-    let analysis = state.host.mergeability(org, repo, base, head).ok()?;
-    Some((
-        analysis.status.as_str().to_string(),
-        analysis.status.mergeable(),
-    ))
-}
-
-#[derive(Deserialize)]
-pub struct ReviewForm {
-    state: String,
-    #[serde(default)]
-    body: String,
-}
-
-/// POST /{org}/{repo}/pulls/{number}/review
-pub async fn pr_review(
-    State(state): State<AppState>,
-    Path((org, repo, number)): Path<(String, String, i32)>,
-    headers: HeaderMap,
-    Form(form): Form<ReviewForm>,
-) -> Response {
-    let session = session_user(&state, &headers).await;
-    let meta = match repo_or_404(&state, &session, &org, &repo).await {
-        Ok(m) => m,
-        Err(resp) => return resp,
-    };
-    let Some(user) = session.as_ref() else {
-        return error_page(&session, StatusCode::UNAUTHORIZED, "sign in to review");
-    };
-    if let Ok(pr) = state.store.get_pr(meta.id, number).await {
-        if let Some(review_state) = ReviewState::parse(&form.state) {
-            let note = (!form.body.trim().is_empty()).then(|| form.body.clone());
-            let _ = state
-                .store
-                .create_review(pr.id, Some(user.id), review_state, note.as_deref(), &[])
-                .await;
-        }
-    }
-
-    // HTMX partial: re-render the reviews list.
-    if is_htmx(&headers) {
-        let reviews = state
-            .store
-            .get_pr(meta.id, number)
-            .await
-            .ok()
-            .and_then(|pr| {
-                // Can't await inside closure — caller must handle None gracefully.
-                let _ = pr;
-                None::<Vec<rithub_core::Review>>
-            })
-            .unwrap_or_default();
-        let _ = reviews; // reviews re-fetch not possible in sync closure; return empty ack
-        return Html(String::from(
-            "<p class=\"muted\" style=\"padding:4px 0\">Review submitted.</p>",
-        ))
-        .into_response();
-    }
-
-    Redirect::to(&format!("/{org}/{repo}/pulls/{number}")).into_response()
-}
-
-/// POST /{org}/{repo}/pulls/{number}/merge
-pub async fn pr_merge(
-    State(state): State<AppState>,
-    Path((org, repo, number)): Path<(String, String, i32)>,
-    headers: HeaderMap,
-) -> Response {
-    let session = session_user(&state, &headers).await;
-    let meta = match repo_or_404(&state, &session, &org, &repo).await {
-        Ok(m) => m,
-        Err(resp) => return resp,
-    };
-    let Some(user) = session.clone() else {
-        return error_page(&session, StatusCode::UNAUTHORIZED, "sign in to merge");
-    };
-    let pr = match state.store.get_pr(meta.id, number).await {
-        Ok(p) if p.state == PrState::Open => p,
-        Ok(_) => {
-            return error_page(
-                &session,
-                StatusCode::CONFLICT,
-                "pull request is not open",
-            )
-        }
-        Err(_) => {
-            return error_page(&session, StatusCode::NOT_FOUND, "pull request not found")
-        }
-    };
-
-    // Pin the head to a single oid (no TOCTOU window).
-    let head_oid = match state
-        .host
-        .resolve_branch(&org, &repo, &pr.head_branch)
-    {
-        Ok(oid) => oid,
-        Err(e) => {
-            return error_page(
-                &session,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &e.to_string(),
-            )
-        }
-    };
-
-    // Protected-branch gate (same as the JSON API).
-    if let Ok(Some(protection)) = state
-        .store
-        .get_branch_protection(meta.id, &pr.base_branch)
-        .await
-    {
-        let approvals = state
-            .store
-            .count_current_approvals(pr.id, pr.author_id)
-            .await
-            .unwrap_or(0);
-        if approvals < protection.required_approvals as i64 {
-            return error_page(
-                &session,
-                StatusCode::FORBIDDEN,
-                &format!(
-                    "branch '{}' requires {} approval(s); have {}",
-                    pr.base_branch, protection.required_approvals, approvals
-                ),
-            );
-        }
-        if !protection.required_checks.is_empty() {
-            let pass = state
-                .store
-                .required_checks_pass(
-                    meta.id,
-                    &head_oid.to_hex(),
-                    &protection.required_checks,
-                )
-                .await
-                .unwrap_or(false);
-            if !pass {
-                return error_page(
-                    &session,
-                    StatusCode::FORBIDDEN,
-                    &format!(
-                        "branch '{}' requires status checks: {}",
-                        pr.base_branch,
-                        protection.required_checks.join(", ")
-                    ),
-                );
-            }
-        }
-    }
-
-    let message = format!("Merge pull request #{number}: {}", pr.title);
-    match state.host.merge(
-        &org,
-        &repo,
-        &pr.base_branch,
-        head_oid,
-        rithub_git::MergeStrategy::Merge,
-        &user.username,
-        &user.email,
-        &message,
-    ) {
-        Ok(result) => {
-            let _ = state
-                .store
-                .mark_merged(meta.id, number, &result.merge_commit_sha, Some(user.id))
-                .await;
-            crate::audit::record(
-                &state,
-                Some(meta.id),
-                Some(user.id),
-                &user.username,
-                "pr.merged",
-                Some(&format!("#{number}")),
-                Some("via web"),
-            )
-            .await;
-            Redirect::to(&format!("/{org}/{repo}/pulls/{number}")).into_response()
-        }
-        Err(rithub_git::GitHostError::Invalid(m)) => {
-            error_page(&session, StatusCode::CONFLICT, &m)
-        }
-        Err(_) => error_page(&session, StatusCode::INTERNAL_SERVER_ERROR, "merge failed"),
+    match state.store.delete_milestone(meta.id, number).await {
+        Ok(()) => Redirect::to(&format!("{next}?notice=deleted")).into_response(),
+        Err(e) => app_error_page(&session, e.into()),
     }
 }

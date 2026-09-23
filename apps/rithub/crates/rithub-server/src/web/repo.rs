@@ -1,31 +1,66 @@
-//! Repository browse pages: home (file tree + README), tree navigation, blob
-//! view, commit history, and a single-commit diff. All content is read live
-//! from `rit` via `RepoHost`.
+//! Repository browse pages: home (file tree + README + clone URLs), tree
+//! navigation, blob view, raw download, commit history, a single-commit diff,
+//! a source-archive download for any revision, and the "Fork" action. All
+//! content is read live from `rit` via `RepoHost`; every page is gated by
+//! [`super::web_repo_read`] so private repositories are invisible without access.
 
-use axum::extract::{Path, State};
-use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
-use rithub_core::{CiStore, Repository as RepoMeta, Store};
+use axum::body::Body;
+use axum::extract::{Form, Path, State};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Redirect, Response};
+use rithub_core::{CiStore, DirectoryStore, Role, Store};
 use rithub_git::{DiffResult, RepoHost};
+use serde::Deserialize;
 
 use super::{
-    breadcrumbs, check_runs_html, error_page, esc, markdown, page, session_user, short_date,
-    tabs,
+    app_error_page, breadcrumbs, check_runs_html, error_page, esc, icon, login_redirect,
+    markdown, page, public_base, repo_header, session_user, short_date, web_repo_read,
 };
 use crate::state::AppState;
 
-/// Look up repo metadata or render a 404 page.
-async fn repo_or_404(
-    state: &AppState,
-    session: &Option<rithub_core::User>,
-    org: &str,
-    repo: &str,
-) -> Result<RepoMeta, Response> {
-    state
-        .store
-        .get_repo(org, repo)
-        .await
-        .map_err(|_| error_page(session, StatusCode::NOT_FOUND, "repository not found"))
+/// Max blob size rendered inline (larger files offer the raw download only).
+const MAX_INLINE_BLOB: usize = 1024 * 1024;
+
+/// The SSH clone host (`RITHUB_SSH_PUBLIC`, else derived from `RITHUB_SSH_BIND`).
+pub fn ssh_host() -> Option<String> {
+    if let Ok(public) = std::env::var("RITHUB_SSH_PUBLIC") {
+        if !public.trim().is_empty() {
+            return Some(public.trim().to_string());
+        }
+    }
+    let bind = std::env::var("RITHUB_SSH_BIND").ok()?;
+    let port = bind.rsplit_once(':').map(|(_, p)| p).unwrap_or("22");
+    let host = std::env::var("RITHUB_PUBLIC_URL")
+        .ok()
+        .and_then(|u| {
+            u.split_once("://")
+                .map(|(_, rest)| rest.split(['/', ':']).next().unwrap_or("").to_string())
+        })
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "localhost".to_string());
+    Some(if port == "22" { host } else { format!("{host}:{port}") })
+}
+
+/// The clone-URL card (HTTP(S) from the public base URL, plus SSH when enabled).
+fn clone_box(headers: &HeaderMap, org: &str, repo: &str) -> String {
+    let http = format!("{}/{org}/{repo}.git", public_base(headers));
+    let ssh = ssh_host()
+        .map(|h| {
+            format!(
+                "<label>SSH</label><pre>git clone ssh://git@{h}/{o}/{r}.git</pre>",
+                h = esc(&h),
+                o = esc(org),
+                r = esc(repo)
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "<div class=\"card\"><strong>Clone</strong>\
+         <label>HTTPS</label><pre>git clone {http}</pre>{ssh}\
+         <p class=\"hint\">Private repositories and pushes authenticate with your username and a \
+         <a href=\"/settings/tokens\">personal access token</a>, or an <a href=\"/settings/keys\">SSH key</a>.</p></div>",
+        http = esc(&http),
+    )
 }
 
 /// A branch selector that navigates the tree view on change.
@@ -37,26 +72,50 @@ fn branch_select(org: &str, repo: &str, branches: &[String], current: &str) -> S
     for b in branches {
         let sel = if b == current { " selected" } else { "" };
         opts.push_str(&format!(
-            "<option value=\"/{org}/{repo}/tree/{b}\"{sel}>{b}</option>",
+            "<option value=\"/{o}/{r}/tree/{b}\"{sel}>{b}</option>",
+            o = esc(org),
+            r = esc(repo),
             b = esc(b)
         ));
     }
     format!(
-        "<select style=\"width:auto\" onchange=\"location.href=this.value\">{opts}</select>"
+        "<select style=\"width:auto\" aria-label=\"Branch\" onchange=\"location.href=this.value\">{opts}</select>"
     )
 }
 
-/// The `git clone` URL box, using the request Host header for a real URL.
-fn clone_box(headers: &HeaderMap, org: &str, repo: &str) -> String {
-    let host = headers
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost");
+/// Fork form: shown to signed-in users who can create repos somewhere.
+async fn fork_control(state: &AppState, session: &Option<rithub_core::User>, org: &str, repo: &str) -> String {
+    let Some(user) = session else {
+        return String::new();
+    };
+    let targets: Vec<String> = if crate::authz::is_site_admin(user) {
+        state.store.list_orgs().await.unwrap_or_default().into_iter().map(|o| o.name).collect()
+    } else {
+        state
+            .store
+            .list_user_orgs(user.id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(o, r)| r.can_manage_repos() && o.name != org)
+            .map(|(o, _)| o.name)
+            .collect()
+    };
+    let targets: Vec<String> = targets.into_iter().filter(|o| o != org).collect();
+    if targets.is_empty() {
+        return String::new();
+    }
+    let options: String = targets
+        .iter()
+        .map(|o| format!("<option value=\"{o}\">{o}</option>", o = esc(o)))
+        .collect();
     format!(
-        "<div class=\"card\"><strong>Clone via HTTP</strong>\
-         <pre>git clone http://{host}/{org}/{repo}.git</pre></div>",
-        org = esc(org),
-        repo = esc(repo)
+        "<form method=\"post\" action=\"/{o}/{r}/fork\" class=\"row\" style=\"gap:4px\">\
+         <select name=\"org\" style=\"width:auto\" aria-label=\"Fork into\">{options}</select>\
+         <button class=\"btn\" type=\"submit\">{icon} Fork</button></form>",
+        o = esc(org),
+        r = esc(repo),
+        icon = icon("fork"),
     )
 }
 
@@ -67,59 +126,95 @@ pub async fn home(
     headers: HeaderMap,
 ) -> Response {
     let session = session_user(&state, &headers).await;
-    if let Err(resp) = repo_or_404(&state, &session, &org, &repo).await {
-        return resp;
-    }
+    let (meta, role) = match web_repo_read(&state, &session, &org, &repo).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
     let host = &state.host;
-    let default_branch =
-        host.default_branch(&org, &repo).unwrap_or_else(|_| "main".into());
+    let default_branch = host.default_branch(&org, &repo).unwrap_or_else(|_| "main".into());
 
-    let mut body = format!(
-        "<div class=\"card\"><h1>{}/{}</h1>{}",
-        esc(&org),
-        esc(&repo),
-        tabs(&org, &repo, "code")
-    );
+    let mut body = repo_header(&org, &repo, &meta, "code", role);
+    if let Ok(Some((po, pr))) = state.store.fork_parent(meta.id).await {
+        body.push_str(&format!(
+            "<p class=\"muted\">{icon} Forked from <a href=\"/{po}/{pr}\">{po}/{pr}</a></p>",
+            icon = icon("fork"),
+            po = esc(&po),
+            pr = esc(&pr)
+        ));
+    }
 
-    match host.is_empty_repo(&org, &repo) {
-        Ok(true) | Err(_) => {
-            body.push_str(
-                "<div class=\"empty-state\"><h3>Repository is empty</h3>\
-                 <p>Push a commit to get started.</p></div></div>",
-            );
-            body.push_str(&clone_box(&headers, &org, &repo));
-            return page(&format!("{org}/{repo}"), &session, &body).into_response();
-        }
-        Ok(false) => {}
+    if matches!(host.is_empty_repo(&org, &repo), Ok(true) | Err(_)) {
+        let push_hint = if role.is_some_and(|r| r.can_write()) {
+            format!(
+                "<pre>git remote add origin {base}/{o}/{r}.git\ngit push -u origin {b}</pre>",
+                base = esc(&public_base(&headers)),
+                o = esc(&org),
+                r = esc(&repo),
+                b = esc(&default_branch)
+            )
+        } else {
+            String::new()
+        };
+        body.push_str(&format!(
+            "<div class=\"card\"><div class=\"empty-state\"><h3>This repository is empty</h3>\
+             <p>Push a commit to get started.</p></div>{push_hint}</div>"
+        ));
+        body.push_str(&clone_box(&headers, &org, &repo));
+        return page(&format!("{org}/{repo}"), &session, &body).into_response();
     }
 
     let branches = host.branches(&org, &repo).unwrap_or_default();
+    let history = host
+        .resolve_commit(&org, &repo, &default_branch)
+        .ok()
+        .and_then(|c| host.history(&org, &repo, c, 1).ok())
+        .and_then(|h| h.into_iter().next());
+    let last = history
+        .map(|c| {
+            format!(
+                "<span class=\"muted\"><a href=\"/{o}/{r}/commit/{oid}\">{s}</a> \u{00b7} {who} \u{00b7} {d}</span>",
+                o = esc(&org),
+                r = esc(&repo),
+                oid = esc(&c.oid),
+                s = esc(&c.summary),
+                who = esc(&c.author_name),
+                d = short_date(c.time)
+            )
+        })
+        .unwrap_or_default();
     body.push_str(&format!(
-        "<div class=\"row\" style=\"margin-bottom:12px\">\
-         {sel}\
-         <a href=\"/{org}/{repo}/commits/{b}\" class=\"muted\">History</a>\
-         </div>",
+        "<div class=\"card\"><div class=\"row\">{sel}\
+         <a href=\"/{o}/{r}/commits/{b}\">History</a>\
+         <a href=\"/{o}/{r}/archive/{b}.tar.gz\" hx-boost=\"false\">Download tar.gz</a>\
+         <span class=\"spacer\"></span>{fork}</div><p>{last}</p></div>",
         sel = branch_select(&org, &repo, &branches, &default_branch),
+        o = esc(&org),
+        r = esc(&repo),
         b = esc(&default_branch),
+        fork = fork_control(&state, &session, &org, &repo).await,
     ));
-    body.push_str("</div>");
 
-    // File tree at HEAD of the default branch.
     let commit = match host.resolve_commit(&org, &repo, &default_branch) {
         Ok(c) => c,
         Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "branch not found"),
     };
     body.push_str(&render_tree(host, &org, &repo, &default_branch, "", commit));
 
-    // Rendered README, if present at root.
-    if let Ok(content) = host.read_blob_at(&org, &repo, commit, "README.md") {
-        if !content.binary {
-            let md = String::from_utf8_lossy(&content.bytes);
-            body.push_str(&format!(
-                "<div class=\"card\"><strong>README.md</strong>\
-                 <div class=\"readme\">{}</div></div>",
-                markdown(&md)
-            ));
+    for readme in ["README.md", "README", "readme.md", "README.txt"] {
+        if let Ok(content) = host.read_blob_at(&org, &repo, commit, readme) {
+            if !content.binary {
+                let text = String::from_utf8_lossy(&content.bytes);
+                let rendered = if readme.ends_with(".md") {
+                    markdown(&text)
+                } else {
+                    format!("<pre>{}</pre>", esc(&text))
+                };
+                body.push_str(&format!(
+                    "<div class=\"card\"><strong>{name}</strong><div class=\"readme\">{rendered}</div></div>",
+                    name = esc(readme)
+                ));
+            }
+            break;
         }
     }
 
@@ -128,67 +223,43 @@ pub async fn home(
 }
 
 /// Render a tree listing card for `path` at `rev`.
-/// File-tree rows carry HTMX attributes for in-page navigation (graceful
-/// degradation: without htmx the `href` still navigates normally).
-fn render_tree(
-    host: &RepoHost,
-    org: &str,
-    repo: &str,
-    rev: &str,
-    path: &str,
-    commit: rithub_git::ObjectId,
-) -> String {
+fn render_tree(host: &RepoHost, org: &str, repo: &str, rev: &str, path: &str, commit: rithub_git::ObjectId) -> String {
     let items = match host.list_tree(org, repo, commit, path) {
         Ok(items) => items,
-        Err(_) => {
-            return "<div class=\"card\"><p class=\"bad\">path not found</p></div>".into()
-        }
+        Err(_) => return "<div class=\"card\"><p class=\"bad\">Path not found at this revision.</p></div>".into(),
     };
-    let mut out = String::from(
-        "<div class=\"card\" id=\"file-tree\">\
-         <table>",
-    );
+    let (o, r, rv) = (esc(org), esc(repo), esc(rev));
+    let mut out = String::from("<div class=\"card\" id=\"file-tree\"><table>");
     if !path.is_empty() {
         let parent = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
         let href = if parent.is_empty() {
-            format!("/{org}/{repo}/tree/{rev}")
+            format!("/{o}/{r}/tree/{rv}")
         } else {
-            format!("/{org}/{repo}/tree/{rev}/{parent}")
+            format!("/{o}/{r}/tree/{rv}/{}", esc(parent))
         };
         out.push_str(&format!(
-            "<tr><td>\
-             <a href=\"{href}\" \
-                hx-get=\"{href}\" hx-target=\"#file-tree\" hx-swap=\"outerHTML\" hx-push-url=\"true\">\
-             ..</a></td></tr>"
+            "<tr><td><a href=\"{href}\" hx-get=\"{href}\" hx-target=\"#file-tree\" hx-select=\"#file-tree\" \
+             hx-swap=\"outerHTML\" hx-push-url=\"true\">..</a></td></tr>"
         ));
     }
-    for item in items {
-        let child = if path.is_empty() {
-            item.name.clone()
+    if items.is_empty() {
+        out.push_str("<tr><td class=\"muted\">Empty directory.</td></tr>");
+    }
+    let mut sorted = items;
+    sorted.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
+    for item in sorted {
+        let child = if path.is_empty() { item.name.clone() } else { format!("{path}/{}", item.name) };
+        let (glyph, href, htmx_attrs) = if item.is_dir {
+            let h = format!("/{o}/{r}/tree/{rv}/{}", esc(&child));
+            let attrs = format!(
+                " hx-get=\"{h}\" hx-target=\"#file-tree\" hx-select=\"#file-tree\" hx-swap=\"outerHTML\" hx-push-url=\"true\""
+            );
+            (icon("folder"), h, attrs)
         } else {
-            format!("{path}/{}", item.name)
-        };
-        let (kind, href) = if item.is_dir {
-            let h = format!("/{org}/{repo}/tree/{rev}/{}", esc(&child));
-            ("dir", h)
-        } else {
-            let h = format!("/{org}/{repo}/blob/{rev}/{}", esc(&child));
-            ("file", h)
-        };
-        // Directories use in-tree HTMX navigation; blobs navigate normally
-        // (blob page swaps the whole body via hx-boost).
-        let htmx_attrs = if kind == "dir" {
-            format!(
-                " hx-get=\"{href}\" hx-target=\"#file-tree\" hx-swap=\"outerHTML\" hx-push-url=\"true\""
-            )
-        } else {
-            String::new()
+            (icon("file"), format!("/{o}/{r}/blob/{rv}/{}", esc(&child)), String::new())
         };
         out.push_str(&format!(
-            "<tr><td>\
-             <a href=\"{href}\"{htmx_attrs}>{icon} {name}</a>\
-             </td></tr>",
-            icon = if kind == "dir" { "&#x1F4C1;" } else { "&#x1F4C4;" },
+            "<tr><td><a href=\"{href}\"{htmx_attrs}>{glyph} {name}</a></td></tr>",
             name = esc(&item.name),
         ));
     }
@@ -214,70 +285,46 @@ pub async fn tree_path(
     tree_common(state, headers, org, repo, rev, path).await
 }
 
-async fn tree_common(
-    state: AppState,
-    headers: HeaderMap,
-    org: String,
-    repo: String,
-    rev: String,
-    path: String,
-) -> Response {
-    let session = session_user(&state, &headers).await;
-    if let Err(resp) = repo_or_404(&state, &session, &org, &repo).await {
-        return resp;
+fn path_crumbs(org: &str, repo: &str, rev: &str, path: &str) -> String {
+    let home = format!("/{org}/{repo}");
+    let root = format!("/{org}/{repo}/tree/{rev}");
+    let mut hrefs: Vec<(String, Option<String>)> = vec![
+        (format!("{org}/{repo}"), Some(home)),
+        (rev.to_string(), Some(root)),
+    ];
+    let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let mut acc = String::new();
+    for (i, seg) in segs.iter().enumerate() {
+        if i > 0 {
+            acc.push('/');
+        }
+        acc.push_str(seg);
+        let href = (i + 1 < segs.len()).then(|| format!("/{org}/{repo}/tree/{rev}/{acc}"));
+        hrefs.push((seg.to_string(), href));
     }
+    let parts: Vec<(&str, Option<&str>)> =
+        hrefs.iter().map(|(l, h)| (l.as_str(), h.as_deref())).collect();
+    breadcrumbs(&parts)
+}
+
+async fn tree_common(state: AppState, headers: HeaderMap, org: String, repo: String, rev: String, path: String) -> Response {
+    let session = session_user(&state, &headers).await;
+    let (meta, role) = match web_repo_read(&state, &session, &org, &repo).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
     let commit = match state.host.resolve_commit(&org, &repo, &rev) {
         Ok(c) => c,
         Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "revision not found"),
     };
-
-    let mut path_breadcrumb = String::new();
-    path_breadcrumb.push_str(&breadcrumbs(&[
-        (&org, Some(&format!("/{org}/{repo}"))),
-        (&repo, Some(&format!("/{org}/{repo}"))),
-        (&rev, Some(&format!("/{org}/{repo}/tree/{rev}"))),
-    ]));
-    // Append path segments to breadcrumb
-    if !path.is_empty() {
-        path_breadcrumb.push_str("<nav class=\"breadcrumbs\" aria-label=\"path\">");
-        let mut acc = String::new();
-        let segs: Vec<&str> = path.split('/').collect();
-        for (i, seg) in segs.iter().enumerate() {
-            if i > 0 {
-                acc.push('/');
-            }
-            acc.push_str(seg);
-            if i + 1 < segs.len() {
-                let href = format!("/{org}/{repo}/tree/{rev}/{acc}");
-                path_breadcrumb.push_str(&format!(
-                    "<span class=\"bc-sep\">/</span><a href=\"{href}\">{}</a>",
-                    esc(seg)
-                ));
-            } else {
-                path_breadcrumb.push_str(&format!(
-                    "<span class=\"bc-sep\">/</span><span aria-current=\"page\">{}</span>",
-                    esc(seg)
-                ));
-            }
-        }
-        path_breadcrumb.push_str("</nav>");
-    }
-
-    let mut body = format!(
-        "{path_breadcrumb}\
-         <div class=\"card\"><h1>{}/{}</h1>{}</div>",
-        esc(&org),
-        esc(&repo),
-        tabs(&org, &repo, "code"),
-    );
-    body.push_str(&render_tree(
-        &state.host,
-        &org,
-        &repo,
-        &rev,
-        &path,
-        commit,
+    let branches = state.host.branches(&org, &repo).unwrap_or_default();
+    let mut body = repo_header(&org, &repo, &meta, "code", role);
+    body.push_str(&format!(
+        "<div class=\"row\" style=\"margin-bottom:8px\">{}{}</div>",
+        branch_select(&org, &repo, &branches, &rev),
+        path_crumbs(&org, &repo, &rev, &path)
     ));
+    body.push_str(&render_tree(&state.host, &org, &repo, &rev, &path, commit));
     page(&format!("{org}/{repo}"), &session, &body).into_response()
 }
 
@@ -288,7 +335,64 @@ pub async fn blob(
     headers: HeaderMap,
 ) -> Response {
     let session = session_user(&state, &headers).await;
-    if let Err(resp) = repo_or_404(&state, &session, &org, &repo).await {
+    let (meta, role) = match web_repo_read(&state, &session, &org, &repo).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let commit = match state.host.resolve_commit(&org, &repo, &rev) {
+        Ok(c) => c,
+        Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "revision not found"),
+    };
+    let content = match state.host.read_blob_at(&org, &repo, commit, &path) {
+        Ok(c) => c,
+        Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "file not found"),
+    };
+    let raw_href = format!("/{}/{}/raw/{}/{}", esc(&org), esc(&repo), esc(&rev), esc(&path));
+    let mut body = repo_header(&org, &repo, &meta, "code", role);
+    body.push_str(&path_crumbs(&org, &repo, &rev, &path));
+    body.push_str(&format!(
+        "<div class=\"card\"><div class=\"row\"><strong>{name}</strong>\
+         <span class=\"muted\">{size} bytes</span><span class=\"spacer\"></span>\
+         <a class=\"btn small\" href=\"{raw_href}\" hx-boost=\"false\">Raw</a>\
+         <a class=\"btn small\" href=\"{raw_href}?download=1\" hx-boost=\"false\">Download</a>\
+         <a class=\"btn small\" href=\"/{o}/{r}/commits/{rv}\">History</a></div></div>",
+        name = esc(path.rsplit('/').next().unwrap_or(&path)),
+        size = content.bytes.len(),
+        o = esc(&org),
+        r = esc(&repo),
+        rv = esc(&rev),
+    ));
+    if content.binary {
+        body.push_str("<div class=\"card\"><p class=\"muted\">Binary file not shown. Use Raw or Download.</p></div>");
+    } else if content.bytes.len() > MAX_INLINE_BLOB {
+        body.push_str("<div class=\"card\"><p class=\"muted\">File too large to display. Use Raw or Download.</p></div>");
+    } else {
+        let text = String::from_utf8_lossy(&content.bytes);
+        match forge_search::highlight::highlight_blob_html(&text, &path) {
+            Some(html) => body.push_str(&format!("<pre class=\"hlcode\">{html}</pre>")),
+            None => body.push_str(&format!("<pre>{}</pre>", esc(&text))),
+        }
+    }
+    page(&path, &session, &body).into_response()
+}
+
+#[derive(Deserialize, Default)]
+pub struct RawQuery {
+    #[serde(default)]
+    download: Option<String>,
+}
+
+/// GET /{org}/{repo}/raw/{rev}/{*path} — the file bytes, served as an inert
+/// `text/plain` or `application/octet-stream` (never HTML) so user content
+/// cannot execute in the forge origin.
+pub async fn raw(
+    State(state): State<AppState>,
+    Path((org, repo, rev, path)): Path<(String, String, String, String)>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<RawQuery>,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    if let Err(resp) = web_repo_read(&state, &session, &org, &repo).await {
         return resp;
     }
     let commit = match state.host.resolve_commit(&org, &repo, &rev) {
@@ -299,68 +403,67 @@ pub async fn blob(
         Ok(c) => c,
         Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "file not found"),
     };
-
-    // Breadcrumb: org / repo / rev / path segments
-    let tree_href = format!("/{org}/{repo}/tree/{rev}");
-    let mut bc = breadcrumbs(&[
-        (&org, Some(&format!("/{org}/{repo}"))),
-        (&repo, Some(&format!("/{org}/{repo}"))),
-        (&rev, Some(&tree_href)),
-    ]);
-    bc.push_str("<nav class=\"breadcrumbs\" aria-label=\"file path\">");
-    let mut acc = String::new();
-    let segs: Vec<&str> = path.split('/').collect();
-    for (i, seg) in segs.iter().enumerate() {
-        if i > 0 {
-            acc.push('/');
-        }
-        acc.push_str(seg);
-        if i + 1 < segs.len() {
-            let href = format!("/{org}/{repo}/tree/{rev}/{acc}");
-            bc.push_str(&format!(
-                "<span class=\"bc-sep\">/</span><a href=\"{href}\">{}</a>",
-                esc(seg)
-            ));
-        } else {
-            bc.push_str(&format!(
-                "<span class=\"bc-sep\">/</span><span aria-current=\"page\">{}</span>",
-                esc(seg)
-            ));
-        }
-    }
-    bc.push_str("</nav>");
-
-    let mut body = format!(
-        "{bc}\
-         <div class=\"card\">\
-         <h2>{path_display}</h2>\
-         <p class=\"muted\">{org} / {repo} @ {rev}</p>\
-         </div>",
-        bc = bc,
-        path_display = esc(&path),
-        org = esc(&org),
-        repo = esc(&repo),
-        rev = esc(&rev),
-    );
-
-    if content.binary {
-        body.push_str(&format!(
-            "<div class=\"card\"><p class=\"muted\">\
-             Binary file ({} bytes) not shown.</p></div>",
-            content.bytes.len()
-        ));
+    let ctype = if content.binary {
+        "application/octet-stream"
     } else {
-        let text = String::from_utf8_lossy(&content.bytes);
-        match forge_search::highlight::highlight_blob_html(&text, &path) {
-            Some(html) => {
-                body.push_str(&format!("<pre class=\"hlcode\">{html}</pre>"));
-            }
-            None => {
-                body.push_str(&format!("<pre>{}</pre>", esc(&text)));
-            }
-        }
+        "text/plain; charset=utf-8"
+    };
+    let filename: String = path
+        .rsplit('/')
+        .next()
+        .unwrap_or("file")
+        .chars()
+        .map(|c| if c == '"' || c.is_control() { '_' } else { c })
+        .collect();
+    let disposition = if q.download.is_some() || content.binary { "attachment" } else { "inline" };
+    let mut response = Response::new(Body::from(content.bytes));
+    let h = response.headers_mut();
+    h.insert(header::CONTENT_TYPE, HeaderValue::from_static(ctype));
+    h.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("default-src 'none'; sandbox"),
+    );
+    if let Ok(cd) = HeaderValue::from_str(&format!("{disposition}; filename=\"{filename}\"")) {
+        h.insert(header::CONTENT_DISPOSITION, cd);
     }
-    page(&esc(&path), &session, &body).into_response()
+    response
+}
+
+/// GET /{org}/{repo}/archive/{file} — `<rev>.tar.gz` source archive.
+pub async fn archive(
+    State(state): State<AppState>,
+    Path((org, repo, file)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    if let Err(resp) = web_repo_read(&state, &session, &org, &repo).await {
+        return resp;
+    }
+    let Some(rev) = file.strip_suffix(".tar.gz") else {
+        return error_page(&session, StatusCode::NOT_FOUND, "only .tar.gz archives are available");
+    };
+    let commit = match state.host.resolve_commit(&org, &repo, rev) {
+        Ok(c) => c,
+        Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "revision not found"),
+    };
+    let safe_rev: String = rev
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let prefix = format!("{repo}-{safe_rev}");
+    match state.host.archive_targz(&org, &repo, commit, &prefix) {
+        Ok(bytes) => {
+            let mut response = Response::new(Body::from(bytes));
+            response
+                .headers_mut()
+                .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/gzip"));
+            if let Ok(cd) = HeaderValue::from_str(&format!("attachment; filename=\"{prefix}.tar.gz\"")) {
+                response.headers_mut().insert(header::CONTENT_DISPOSITION, cd);
+            }
+            response
+        }
+        Err(_) => error_page(&session, StatusCode::INTERNAL_SERVER_ERROR, "archive failed"),
+    }
 }
 
 /// GET /{org}/{repo}/commits/{rev}
@@ -370,36 +473,27 @@ pub async fn commits(
     headers: HeaderMap,
 ) -> Response {
     let session = session_user(&state, &headers).await;
-    if let Err(resp) = repo_or_404(&state, &session, &org, &repo).await {
-        return resp;
-    }
+    let (meta, role) = match web_repo_read(&state, &session, &org, &repo).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
     let commit = match state.host.resolve_commit(&org, &repo, &rev) {
         Ok(c) => c,
         Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "revision not found"),
     };
-    let history = state
-        .host
-        .history(&org, &repo, commit, 100)
-        .unwrap_or_default();
-    let mut body = format!(
-        "<div class=\"card\"><h1>{}/{}</h1>{}<h3>Commits on {}</h3></div>",
-        esc(&org),
-        esc(&repo),
-        tabs(&org, &repo, "code"),
-        esc(&rev)
-    );
-    body.push_str("<div class=\"card\"><table>");
+    let history = state.host.history(&org, &repo, commit, 100).unwrap_or_default();
+    let mut body = repo_header(&org, &repo, &meta, "code", role);
+    body.push_str(&format!("<div class=\"card\"><h3>Commits on {}</h3><table>", esc(&rev)));
     if history.is_empty() {
         body.push_str("<tr><td class=\"muted\">No commits.</td></tr>");
     }
     for c in history {
         body.push_str(&format!(
-            "<tr><td>\
-             <a href=\"/{org}/{repo}/commit/{oid}\">{summary}</a><br>\
-             <span class=\"muted\">{short} &middot; {who} &middot; {date}</span>\
-             </td></tr>",
-            org = esc(&org),
-            repo = esc(&repo),
+            "<tr><td><a href=\"/{o}/{r}/commit/{oid}\">{summary}</a><br>\
+             <span class=\"muted\">{who} committed on {date}</span></td>\
+             <td class=\"mono\"><a href=\"/{o}/{r}/tree/{oid}\">{short}</a></td></tr>",
+            o = esc(&org),
+            r = esc(&repo),
             oid = esc(&c.oid),
             summary = esc(&c.summary),
             short = esc(&c.oid[..c.oid.len().min(8)]),
@@ -418,8 +512,8 @@ pub async fn commit_detail(
     headers: HeaderMap,
 ) -> Response {
     let session = session_user(&state, &headers).await;
-    let meta = match repo_or_404(&state, &session, &org, &repo).await {
-        Ok(m) => m,
+    let (meta, role) = match web_repo_read(&state, &session, &org, &repo).await {
+        Ok(v) => v,
         Err(resp) => return resp,
     };
     let commit = match state.host.resolve_commit(&org, &repo, &oid) {
@@ -428,42 +522,33 @@ pub async fn commit_detail(
     };
     let (info, diff) = match state.host.commit_detail(&org, &repo, commit) {
         Ok(v) => v,
-        Err(_) => {
-            return error_page(
-                &session,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "diff failed",
-            )
-        }
+        Err(_) => return error_page(&session, StatusCode::INTERNAL_SERVER_ERROR, "diff failed"),
     };
-
-    // Check runs for this commit's SHA
     let check_runs = state
         .store
-        .latest_check_runs(meta.id, &oid)
+        .latest_check_runs(meta.id, &commit.to_hex())
         .await
         .unwrap_or_default();
 
-    let mut body = format!(
-        "<div class=\"card\">\
-         <h2>{summary}</h2>\
-         <p class=\"muted\">{short} &middot; {who} &middot; {date}</p>\
-         <pre style=\"white-space:pre-wrap\">{message}</pre>\
-         </div>",
+    let mut body = repo_header(&org, &repo, &meta, "code", role);
+    body.push_str(&format!(
+        "<div class=\"card\"><h2>{summary}</h2>\
+         <p class=\"muted\">{who} committed on {date} \u{00b7} <span class=\"mono\">{full}</span> \u{00b7} \
+         <a href=\"/{o}/{r}/tree/{full}\">Browse files</a></p>\
+         <pre style=\"white-space:pre-wrap\">{message}</pre></div>",
         summary = esc(&info.summary),
-        short = esc(&info.oid[..info.oid.len().min(8)]),
+        full = esc(&info.oid),
         who = esc(&info.author_name),
         date = short_date(info.time),
-        message = esc(&info.message)
-    );
-
-    // Check-runs status for this commit
+        message = esc(&info.message),
+        o = esc(&org),
+        r = esc(&repo),
+    ));
     if !check_runs.is_empty() {
         body.push_str("<div class=\"card\"><h3>Checks</h3>");
-        body.push_str(&check_runs_html(&check_runs));
+        body.push_str(&check_runs_html(&org, &repo, &check_runs));
         body.push_str("</div>");
     }
-
     body.push_str(&render_diff_html(&diff));
     page("Commit", &session, &body).into_response()
 }
@@ -471,22 +556,17 @@ pub async fn commit_detail(
 /// Render a `DiffResult` as coloured unified-diff HTML.
 pub fn render_diff_html(diff: &DiffResult) -> String {
     let mut out = format!(
-        "<div class=\"card\">\
-         <strong>{n} file(s) changed</strong> \
-         <span class=\"ok\">+{add}</span> \
-         <span class=\"bad\">-{del}</span>\
-         </div>",
+        "<div class=\"card\"><strong>{n} file(s) changed</strong> \
+         <span class=\"ok\">+{add}</span> <span class=\"bad\">-{del}</span></div>",
         n = diff.files.len(),
         add = diff.additions,
         del = diff.deletions
     );
     for file in &diff.files {
         out.push_str(&format!(
-            "<div class=\"diff\">\
-             <div class=\"h\">{status} {path} \
-             <span class=\"ok\">+{add}</span> \
-             <span class=\"bad\">-{del}</span></div>",
-            status = file.status,
+            "<div class=\"diff\"><div class=\"h\">{status} {path} \
+             <span class=\"ok\">+{add}</span> <span class=\"bad\">-{del}</span></div>",
+            status = esc(&file.status.to_string()),
             path = esc(&file.path),
             add = file.additions,
             del = file.deletions
@@ -496,11 +576,48 @@ pub fn render_diff_html(diff: &DiffResult) -> String {
             continue;
         }
         out.push_str("<pre class=\"hlcode hldiff\">");
-        out.push_str(&forge_search::highlight::highlight_diff_html(
-            &file.path,
-            &file.patch,
-        ));
+        out.push_str(&forge_search::highlight::highlight_diff_html(&file.path, &file.patch));
         out.push_str("</pre></div>");
     }
     out
+}
+
+#[derive(Deserialize)]
+pub struct ForkForm {
+    org: String,
+    #[serde(default)]
+    name: Option<String>,
+}
+
+/// POST /{org}/{repo}/fork — fork into an org where the user can create repos.
+pub async fn fork(
+    State(state): State<AppState>,
+    Path((org, repo)): Path<(String, String)>,
+    headers: HeaderMap,
+    Form(form): Form<ForkForm>,
+) -> Response {
+    let session = session_user(&state, &headers).await;
+    let (meta, _) = match web_repo_read(&state, &session, &org, &repo).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let Some(user) = session.clone() else {
+        return login_redirect(&format!("/{org}/{repo}"));
+    };
+    let dst = match state.store.get_org(&form.org).await {
+        Ok(o) => o,
+        Err(_) => return error_page(&session, StatusCode::NOT_FOUND, "organization not found"),
+    };
+    match crate::authz::user_org_role(&state, &user, &dst).await {
+        Some(r) if r >= Role::Admin => {}
+        _ => return error_page(&session, StatusCode::FORBIDDEN, "you cannot create repositories in that organization"),
+    }
+    let name = form
+        .name
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| repo.clone());
+    match crate::api::fork_into(&state, &org, &meta, &dst, name.trim(), &user).await {
+        Ok(created) => Redirect::to(&format!("/{}/{}", dst.name, created.name)).into_response(),
+        Err(e) => app_error_page(&session, e),
+    }
 }

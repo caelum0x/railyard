@@ -216,6 +216,24 @@ async fn audit_push(
                 .ok();
         });
 
+        // Meter the accepted push against the org's Rago subscription (no-op
+        // when billing is not configured). Keyed by the updated refs + time so
+        // a retried delivery of the same event dedupes.
+        crate::billing::meter(
+            owner,
+            crate::billing::METRIC_CI_PUSH,
+            format!(
+                "push|{}|{}|{}",
+                meta.id,
+                outcome.ref_updates.join(","),
+                time::OffsetDateTime::now_utc().unix_timestamp()
+            ),
+            serde_json::json!({
+                "repo": format!("{owner}/{}", meta.name),
+                "refs": outcome.ref_updates.len(),
+            }),
+        );
+
         // Dispatch CI for each updated ref. The worker resolves the ref to a
         // head sha and seeds a queued check run (deleted refs simply fail to
         // resolve and are skipped there).

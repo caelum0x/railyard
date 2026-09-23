@@ -61,6 +61,24 @@ impl RepoHost {
         Ok(name)
     }
 
+    /// Point HEAD at `refs/heads/<branch>` (the repository's default branch).
+    /// The branch must be a valid ref component; it need not exist yet.
+    pub fn set_default_branch(&self, org: &str, repo: &str, branch: &str) -> Result<()> {
+        if branch.is_empty()
+            || branch.contains("..")
+            || branch.starts_with('/')
+            || branch.ends_with('/')
+            || branch
+                .chars()
+                .any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c))
+        {
+            return Err(GitHostError::Invalid(format!("invalid branch name: {branch}")));
+        }
+        let path = self.repo_path(org, repo)?.join("HEAD");
+        std::fs::write(&path, format!("ref: refs/heads/{branch}\n"))?;
+        Ok(())
+    }
+
     /// Whether the repository has no branches yet.
     pub fn is_empty_repo(&self, org: &str, repo: &str) -> Result<bool> {
         Ok(self.branches(org, repo)?.is_empty())

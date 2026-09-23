@@ -30,14 +30,34 @@ const MAX_ATTEMPTS: i32 = 3;
 /// `pub(crate)` — called by the jobs worker, not by HTTP handlers.
 pub(crate) async fn deliver(state: &AppState, hook: &Webhook, event: &str, body: &[u8]) {
     let signature = sign(&hook.secret, body);
-    let client = reqwest::Client::new();
 
     let mut attempts = 0;
     let mut last_status: Option<i32> = None;
     let mut last_error: Option<String> = None;
     let mut success = false;
 
-    while attempts < MAX_ATTEMPTS {
+    // Re-validate the target at delivery time (defeats DNS rebinding between
+    // registration and delivery) and never follow redirects to another host.
+    let client = match validate_target(&hook.url).await {
+        Ok(()) => match reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+        {
+            Ok(client) => Some(client),
+            Err(e) => {
+                last_error = Some(format!("http client unavailable: {e}"));
+                None
+            }
+        },
+        Err(reason) => {
+            last_error = Some(format!("blocked target: {reason}"));
+            attempts = MAX_ATTEMPTS;
+            None
+        }
+    };
+
+    while let Some(client) = client.as_ref().filter(|_| attempts < MAX_ATTEMPTS) {
         attempts += 1;
         let result = client
             .post(&hook.url)
@@ -78,6 +98,75 @@ pub(crate) async fn deliver(state: &AppState, hook: &Webhook, event: &str, body:
     {
         tracing::warn!(%error, "failed to record webhook delivery");
     }
+}
+
+/// Whether webhooks may target private/loopback networks
+/// (`RITHUB_WEBHOOK_ALLOW_PRIVATE=1`, for self-hosted/internal receivers).
+fn allow_private_targets() -> bool {
+    matches!(
+        std::env::var("RITHUB_WEBHOOK_ALLOW_PRIVATE").as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    )
+}
+
+/// Whether an address is loopback, private, link-local, or otherwise internal.
+fn is_internal(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.octets()[0] == 0
+                // 100.64.0.0/10 carrier-grade NAT
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
+        }
+        IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return is_internal(IpAddr::V4(mapped));
+            }
+            let seg0 = v6.segments()[0];
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || (seg0 & 0xfe00) == 0xfc00 // unique local
+                || (seg0 & 0xffc0) == 0xfe80 // link local
+        }
+    }
+}
+
+/// Validate a webhook target URL: `http`/`https` only, and (unless explicitly
+/// allowed) it must not resolve to an internal address — this is the SSRF guard
+/// applied both when a hook is saved and again before each delivery.
+pub(crate) async fn validate_target(raw: &str) -> Result<(), String> {
+    let url = reqwest::Url::parse(raw.trim()).map_err(|_| "not a valid URL".to_string())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("only http and https URLs are allowed".into());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("URLs with embedded credentials are not allowed".into());
+    }
+    let host = url.host_str().ok_or_else(|| "URL has no host".to_string())?;
+    if allow_private_targets() {
+        return Ok(());
+    }
+    let port = url.port_or_known_default().unwrap_or(80);
+    let host_for_lookup = host.trim_start_matches('[').trim_end_matches(']');
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host_for_lookup, port))
+        .await
+        .map_err(|_| format!("cannot resolve host '{host}'"))?
+        .collect();
+    if addrs.is_empty() {
+        return Err(format!("cannot resolve host '{host}'"));
+    }
+    if addrs.iter().any(|a| is_internal(a.ip())) {
+        return Err(format!(
+            "host '{host}' resolves to a private or loopback address"
+        ));
+    }
+    Ok(())
 }
 
 /// Lowercase-hex HMAC-SHA256 of `body` under `secret`.

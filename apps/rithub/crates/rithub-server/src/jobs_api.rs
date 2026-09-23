@@ -5,6 +5,7 @@
 //!   POST /api/admin/jobs/{id}/redeliver — reset a dead/failed job to pending
 
 use axum::extract::{Path, Query, State};
+use axum::http::HeaderMap;
 use axum::Json;
 use rithub_core::OutboxStore;
 use serde::Deserialize;
@@ -29,11 +30,13 @@ fn default_limit() -> i64 {
 /// `GET /api/admin/jobs`
 pub async fn list_jobs(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<JobsQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    crate::authz::require_site_admin(&state, &headers).await?;
     let jobs = state
         .store
-        .list_jobs(q.status.as_deref(), q.limit.min(500))
+        .list_jobs(q.status.as_deref(), q.limit.clamp(1, 500))
         .await?;
     Ok(Json(serde_json::json!({ "jobs": jobs
         .iter()
@@ -54,7 +57,9 @@ pub async fn list_jobs(
 pub async fn redeliver_job(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    crate::authz::require_site_admin(&state, &headers).await?;
     let job = state.store.redeliver_job(id).await?;
     Ok(Json(serde_json::json!({
         "id": job.id,

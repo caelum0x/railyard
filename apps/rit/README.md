@@ -41,9 +41,19 @@ It is byte-for-byte compatible with real Git where claimed (interop-tested again
   a bare repository through the process server and deletes loose refs. A client
   `--force` does not bypass the server's non-fast-forward policy; deleting a
   packed ref fails without exposing or changing its old value.
-- Stock `git clone/fetch --upload-pack='<rit> upload-pack'` works through the
-  explicit compatibility bridge. This fetch path requires Git at runtime and is
-  not misrepresented as Rit-native protocol implementation.
+- **Native upload-pack** (`rit::upload_pack`): protocol-v0 ref advertisement,
+  want/have negotiation, and rit-generated packfiles. This is what `rit
+  serve-http` and the rithub forge serve to stock `git clone`/`git fetch` over
+  smart HTTP and SSH. (The older `rit upload-pack` stdin/stdout subcommand is a
+  compatibility bridge to an installed Git and is only used for local process
+  transports.)
+- **Client transport** (`rit::remote`): `rit clone`, `rit remote add|remove|list`,
+  `rit fetch`, `rit pull` (fast-forward only), and `rit push [--force]` against
+  any rithub / smart-HTTP URL or a local repository path. Fetched packs pass
+  through the same quarantined, fsck'd receive transaction as server pushes.
+  HTTP(S) uses the system `curl`; credentials come from the URL or
+  `RIT_USERNAME` + `RIT_TOKEN` (a rithub personal access token) and are passed
+  to curl on stdin, never on the command line.
 
 The collaboration **forge** built on this core lives in [`../rithub`](../rithub) (the GitHub equivalent).
 
@@ -55,11 +65,8 @@ The protocol boundary follows Git's official
 [`gitprotocol-common`](https://git-scm.com/docs/gitprotocol-common),
 [`gitprotocol-v2`](https://git-scm.com/docs/gitprotocol-v2), and
 [`gitprotocol-pack`](https://git-scm.com/docs/gitprotocol-pack) specifications.
-Pkt-line, raw/thin pack ingestion, decoded receive safety, and the stateful
-receive-pack process contract are Rit-native. Clone/fetch is functional through
-the tested stock-Git upload-pack bridge. Smart-HTTP/SSH listener integration,
-native Rust upload-pack/fetch, multi-ref atomic updates (including mixed
-deletions), packed-refs rewrite/deletion, merge/rebase, interrupted-ingest
-recovery, and SHA-256 remain deferred. `rithub`
-stays blocked on those gates—it must not turn this safe receive core into a
-claim of a complete forge transport.
+Pkt-line, raw/thin pack ingestion, decoded receive safety, the receive-pack
+process contract, native upload-pack, and the clone/fetch/push client are
+Rit-native. Still deferred: protocol v2, side-band progress, shallow clones,
+packed-refs rewrite/deletion, interrupted-ingest recovery, and SHA-256
+repositories.

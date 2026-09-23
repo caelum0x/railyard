@@ -8,9 +8,9 @@
 //!   DELETE /{number}             → delete_milestone
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
-use rithub_core::{MilestoneStore, MilestoneWithProgress, NewMilestone, Store, UpdateMilestone};
+use rithub_core::{MilestoneStore, MilestoneWithProgress, NewMilestone, RepoRole, UpdateMilestone};
 use serde::Deserialize;
 
 use crate::error::AppError;
@@ -18,8 +18,27 @@ use crate::state::AppState;
 
 // --- helpers -----------------------------------------------------------------
 
-async fn repo_id(state: &AppState, org: &str, repo: &str) -> Result<uuid::Uuid, AppError> {
-    Ok(state.store.get_repo(org, repo).await?.id)
+/// Repo id the caller may read (listing/viewing milestones).
+async fn readable_repo_id(
+    state: &AppState,
+    headers: &HeaderMap,
+    org: &str,
+    repo: &str,
+) -> Result<uuid::Uuid, AppError> {
+    Ok(crate::authz::repo_for_read(state, headers, org, repo).await?.0.id)
+}
+
+/// Repo id the caller may manage milestones on (Write).
+async fn writable_repo_id(
+    state: &AppState,
+    headers: &HeaderMap,
+    org: &str,
+    repo: &str,
+) -> Result<uuid::Uuid, AppError> {
+    Ok(crate::authz::repo_for_role(state, headers, org, repo, RepoRole::Write)
+        .await?
+        .0
+        .id)
 }
 
 // --- request bodies ----------------------------------------------------------
@@ -40,9 +59,13 @@ pub struct CreateMilestoneInput {
 pub async fn create_milestone(
     State(state): State<AppState>,
     Path((org, repo)): Path<(String, String)>,
+    headers: HeaderMap,
     Json(input): Json<CreateMilestoneInput>,
 ) -> Result<Json<MilestoneWithProgress>, AppError> {
-    let rid = repo_id(&state, &org, &repo).await?;
+    let rid = writable_repo_id(&state, &headers, &org, &repo).await?;
+    if input.title.trim().is_empty() {
+        return Err(AppError::bad_request("milestone title is required"));
+    }
     let milestone = state
         .store
         .create_milestone(
@@ -62,25 +85,28 @@ pub async fn create_milestone(
 pub async fn list_milestones(
     State(state): State<AppState>,
     Path((org, repo)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Result<Json<Vec<MilestoneWithProgress>>, AppError> {
-    let rid = repo_id(&state, &org, &repo).await?;
+    let rid = readable_repo_id(&state, &headers, &org, &repo).await?;
     Ok(Json(state.store.list_milestones(rid).await?))
 }
 
 pub async fn get_milestone(
     State(state): State<AppState>,
     Path((org, repo, number)): Path<(String, String, i32)>,
+    headers: HeaderMap,
 ) -> Result<Json<MilestoneWithProgress>, AppError> {
-    let rid = repo_id(&state, &org, &repo).await?;
+    let rid = readable_repo_id(&state, &headers, &org, &repo).await?;
     Ok(Json(state.store.get_milestone(rid, number).await?))
 }
 
 pub async fn update_milestone(
     State(state): State<AppState>,
     Path((org, repo, number)): Path<(String, String, i32)>,
+    headers: HeaderMap,
     Json(input): Json<UpdateMilestone>,
 ) -> Result<Json<MilestoneWithProgress>, AppError> {
-    let rid = repo_id(&state, &org, &repo).await?;
+    let rid = writable_repo_id(&state, &headers, &org, &repo).await?;
     state.store.update_milestone(rid, number, &input).await?;
     // Return the updated milestone with fresh progress counts.
     Ok(Json(state.store.get_milestone(rid, number).await?))
@@ -89,8 +115,9 @@ pub async fn update_milestone(
 pub async fn delete_milestone(
     State(state): State<AppState>,
     Path((org, repo, number)): Path<(String, String, i32)>,
+    headers: HeaderMap,
 ) -> Result<StatusCode, AppError> {
-    let rid = repo_id(&state, &org, &repo).await?;
+    let rid = writable_repo_id(&state, &headers, &org, &repo).await?;
     state.store.delete_milestone(rid, number).await?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -40,6 +40,44 @@ impl AppError {
         }
     }
 
+    /// A 401 Unauthorized with a client-safe message.
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            message: message.into(),
+        }
+    }
+
+    /// A 402 Payment Required (plan quota exhausted) with a client-safe message.
+    pub fn payment_required(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::PAYMENT_REQUIRED,
+            message: message.into(),
+        }
+    }
+
+    /// A 503 Service Unavailable (a dependency such as billing is down).
+    pub fn service_unavailable(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: message.into(),
+        }
+    }
+
+    /// The HTTP status this error renders with.
+    pub fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    /// The client-safe message (server errors are genericized).
+    pub fn client_message(&self) -> String {
+        if self.status == StatusCode::INTERNAL_SERVER_ERROR {
+            "internal server error".to_string()
+        } else {
+            self.message.clone()
+        }
+    }
+
     /// A 404 Not Found with a client-safe message.
     pub fn not_found(message: impl Into<String>) -> Self {
         Self {
@@ -61,14 +99,21 @@ impl AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         // Server-error details are logged but never returned to the client.
-        let client_message = if self.status.is_server_error() {
+        let client_message = if self.status == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(status = %self.status, message = %self.message, "request failed");
             "internal server error".to_string()
         } else {
             tracing::debug!(status = %self.status, message = %self.message, "request rejected");
             self.message
         };
-        (self.status, Json(json!({ "error": client_message }))).into_response()
+        let mut response = (self.status, Json(json!({ "error": client_message }))).into_response();
+        if self.status == StatusCode::UNAUTHORIZED {
+            response.headers_mut().insert(
+                axum::http::header::WWW_AUTHENTICATE,
+                axum::http::HeaderValue::from_static("Basic realm=\"rithub\""),
+            );
+        }
+        response
     }
 }
 
