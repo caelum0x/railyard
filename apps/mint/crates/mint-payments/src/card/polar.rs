@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::card::{Checkout, CheckoutUrls};
 use crate::config::ProviderConfig;
-use crate::event::{DepositEvent, WebhookError};
+use crate::event::{DepositEvent, ReversalEvent, ReversalReason, WebhookError};
 use crate::http::{map_status, Headers, HttpTransport};
 use crate::money::cents_to_micros;
 use crate::provider::ProviderId;
@@ -129,21 +129,7 @@ pub fn verify_webhook<H: Headers>(
     headers: &H,
     raw: &[u8],
 ) -> Result<DepositEvent, WebhookError> {
-    let secret = cfg
-        .webhook_secret
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .ok_or(WebhookError::NotConfigured)?;
-    let id = headers
-        .get_header("webhook-id")
-        .ok_or(WebhookError::BadSignature)?;
-    let ts = headers
-        .get_header("webhook-timestamp")
-        .ok_or(WebhookError::BadSignature)?;
-    let sig = headers
-        .get_header("webhook-signature")
-        .ok_or(WebhookError::BadSignature)?;
-    standard_webhooks_verify(secret, id, ts, raw, sig)?;
+    verify_signature(cfg, headers, raw)?;
 
     let v: Value =
         serde_json::from_slice(raw).map_err(|e| WebhookError::Malformed(e.to_string()))?;
@@ -175,6 +161,76 @@ pub fn verify_webhook<H: Headers>(
         amount_micros,
         asset: Asset::Usd,
         account_id,
+    })
+}
+
+/// Verify the Standard Webhooks signature over the RAW body.
+fn verify_signature<H: Headers>(
+    cfg: &ProviderConfig,
+    headers: &H,
+    raw: &[u8],
+) -> Result<(), WebhookError> {
+    let secret = cfg
+        .webhook_secret
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or(WebhookError::NotConfigured)?;
+    let id = headers
+        .get_header("webhook-id")
+        .ok_or(WebhookError::BadSignature)?;
+    let ts = headers
+        .get_header("webhook-timestamp")
+        .ok_or(WebhookError::BadSignature)?;
+    let sig = headers
+        .get_header("webhook-signature")
+        .ok_or(WebhookError::BadSignature)?;
+    standard_webhooks_verify(secret, id, ts, raw, sig)
+}
+
+/// Verify a Polar delivery over RAW bytes and, when it is `order.refunded`,
+/// return the reversal of the ORIGINAL deposit.
+///
+/// Mint credits Polar under the order id (`order.paid`) or the checkout id
+/// (`checkout.updated`), so both are candidate references. Polar's
+/// `refunded_amount` on the order is already CUMULATIVE across partial
+/// refunds, which is exactly the [`ReversalEvent`] contract.
+pub fn verify_reversal_webhook<H: Headers>(
+    cfg: &ProviderConfig,
+    headers: &H,
+    raw: &[u8],
+) -> Result<ReversalEvent, WebhookError> {
+    verify_signature(cfg, headers, raw)?;
+    let v: Value =
+        serde_json::from_slice(raw).map_err(|e| WebhookError::Malformed(e.to_string()))?;
+    let event_type = v["type"].as_str().unwrap_or("");
+    if event_type != "order.refunded" {
+        return Err(WebhookError::Ignored(event_type.to_string()));
+    }
+    let data = &v["data"];
+    let deposit_ref = data["id"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| WebhookError::Malformed("missing data.id".into()))?
+        .to_string();
+    let alt_refs: Vec<String> = data["checkout_id"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|c| vec![c.to_string()])
+        .unwrap_or_default();
+    let cents = data["refunded_amount"]
+        .as_i64()
+        .ok_or_else(|| WebhookError::Malformed("missing refunded_amount".into()))?;
+    let amount_micros = cents_to_micros(cents.abs())
+        .ok_or_else(|| WebhookError::Malformed("amount overflow".into()))?;
+    if amount_micros <= 0 {
+        return Err(WebhookError::Ignored("order.refunded with zero amount".into()));
+    }
+    Ok(ReversalEvent {
+        provider: ProviderId::Polar,
+        deposit_ref,
+        alt_refs,
+        amount_micros: Some(amount_micros),
+        reason: ReversalReason::Refund,
     })
 }
 

@@ -135,8 +135,81 @@ export interface RedeemRequest {
         kind: "crypto";
         chain: string;
         address: string;
+    } | {
+        kind: "paypal";
+        email: string;
     };
     idem_key: string;
+}
+export type AccountStatus = "active" | "frozen" | "closed";
+export interface AccountSummary {
+    id: string;
+    account_id: string;
+    kind: string;
+    owner_ref: string | null;
+    status: AccountStatus;
+    created_ms: number | null;
+    available_micros: number;
+    held_micros: number;
+    updated_seq: number;
+}
+export interface Page<T> {
+    items: T[];
+    next_cursor?: string | null;
+}
+export type PayoutStatus = "pending" | "paid" | "failed" | "cancelled";
+export interface PayoutRecord {
+    payout_ref: string;
+    provider: string;
+    account_id: string;
+    amount_micros: number;
+    dest: Record<string, unknown>;
+    status: PayoutStatus;
+    provider_ref: string | null;
+    attempts: number;
+    last_error: string | null;
+    burn_seq: number;
+    created_ms: number;
+    updated_ms: number;
+}
+export type ApiScope = "read" | "accounts" | "spend" | "funding" | "payouts" | "admin";
+export interface ApiKey {
+    id: string;
+    name: string;
+    prefix: string;
+    scopes: ApiScope[];
+    accounts: string[] | null;
+    created_ms: number;
+    revoked_ms: number | null;
+    active: boolean;
+}
+export interface CreatedApiKey extends ApiKey {
+    /** The plaintext secret. Returned ONCE; store it in your secret manager. */
+    secret: string;
+}
+export interface ImportReportRequest {
+    provider: string;
+    content: string;
+    label?: string;
+    format?: "csv" | "json";
+    amount_unit?: "major" | "cents" | "micros";
+    reference_column?: string;
+}
+export type ReversalStatus = "clawed_back" | "shortfall" | "written_off";
+export interface DepositReversal {
+    deposit_ref: string;
+    provider: string;
+    account_id: string;
+    amount_micros: number;
+    clawed_micros: number;
+    outstanding_micros: number;
+    reason: "refund" | "dispute";
+    status: ReversalStatus;
+    attempts: number;
+    note: string | null;
+    created_ms: number;
+    updated_ms: number;
+    burned_now_micros?: number;
 }
 export interface VerificationKey {
     key_id: string;
@@ -148,6 +221,63 @@ export interface AitpSettlement {
     scheme: "transfer" | "hold";
     receipt: Record<string, unknown>;
     hold_id?: string;
+    /** Hold scheme only: when Mint auto-releases the hold if never captured (unix ms). */
+    hold_expires_at_ms?: number | null;
+    signed_receipt: Receipt;
+}
+export type HoldStatus = "Open" | "Captured" | "Released";
+export interface HoldPosition {
+    id: string;
+    account_id: string;
+    amount_micros: number;
+    captured_micros: number;
+    status: HoldStatus;
+    ref: string | null;
+    /** Auto-release deadline (unix ms); `null` when the hold never expires. */
+    expires_at_ms: number | null;
+}
+export interface StreamPosition {
+    id: string;
+    from_id: string;
+    to_id: string;
+    rate_micros: number;
+    unit: "Second" | "Unit";
+    cap_micros: number;
+    settled_micros: number;
+    last_seq: number;
+    status: "Open" | "Closed";
+    ref: string | null;
+    direction: "outgoing" | "incoming";
+}
+export interface AllowancePosition {
+    id: string;
+    granter: string;
+    to_key: string;
+    limit_micros: number;
+    spent_micros: number;
+    window: "PerCall" | {
+        Rolling: {
+            window_ms: number;
+        };
+    };
+    window_start_ms: number;
+    scope: Record<string, unknown> | null;
+    revoked: boolean;
+}
+export interface PayerKey {
+    payer: string;
+    pubkey_id: string;
+    public_key_hex: string;
+    label: string | null;
+    created_ms: number;
+    revoked_ms: number | null;
+    active: boolean;
+}
+/** The hold-settlement response of `aitpCapture` / `aitpRelease`. */
+export interface AitpHoldSettlement extends Record<string, unknown> {
+    hold_id: string;
+    status: string;
+    attestation?: Record<string, unknown>;
     signed_receipt: Receipt;
 }
 export interface TransferReceipt {
@@ -233,6 +363,129 @@ export declare class MintClient {
     reserve(): Promise<ReserveProof>;
     mint(input: MintRequest): Promise<Record<string, unknown>>;
     redeem(input: RedeemRequest): Promise<Record<string, unknown>>;
+    /** Operator listing of accounts with live balances (keyset paginated). */
+    listAccounts(params?: {
+        after?: string;
+        limit?: number;
+    }): Promise<Page<AccountSummary>>;
+    /** Period statement: opening balance, entries, totals, closing balance. */
+    statement(accountId: string, params?: {
+        from_ms?: number;
+        to_ms?: number;
+    }): Promise<Record<string, unknown>>;
+    kycStatus(accountId: string): Promise<Record<string, unknown>>;
+    startKycSession(accountId: string): Promise<{
+        provider: string;
+        url: string;
+    } & Record<string, unknown>>;
+    /** Block outgoing movement from an account (operator key). */
+    freezeAccount(accountId: string): Promise<AccountSummary>;
+    unfreezeAccount(accountId: string): Promise<AccountSummary>;
+    /** Permanently close a zero-balance account (operator key). */
+    closeAccount(accountId: string): Promise<AccountSummary>;
+    listPayouts(params?: {
+        status?: PayoutStatus;
+        account_id?: string;
+        limit?: number;
+        cursor?: string;
+    }): Promise<Page<PayoutRecord>>;
+    /** One payout; a pending payout is refreshed from the provider first. */
+    payout(payoutRef: string): Promise<PayoutRecord>;
+    retryPayout(payoutRef: string): Promise<PayoutRecord>;
+    /** Abandon a failed payout and re-credit the burned amount (operator key). */
+    cancelPayout(payoutRef: string, note?: string): Promise<PayoutRecord>;
+    /** Record an out-of-band settlement of a payout (operator key). */
+    markPayoutPaid(payoutRef: string, providerRef?: string): Promise<PayoutRecord>;
+    reconciliation(): Promise<Record<string, unknown>>;
+    /** Import a provider settlement report and get its match results. */
+    importProviderReport(input: ImportReportRequest): Promise<Record<string, unknown>>;
+    providerReports(): Promise<{
+        items: Record<string, unknown>[];
+    }>;
+    providerReport(reportId: string): Promise<Record<string, unknown>>;
+    deleteProviderReport(reportId: string): Promise<{
+        deleted: string;
+    }>;
+    /** Record a refund / chargeback and claw it back (operator key). */
+    recordReversal(input: {
+        deposit_ref: string;
+        amount_micros?: number;
+        reason?: "refund" | "dispute";
+        note?: string;
+    }): Promise<DepositReversal>;
+    reversals(params?: {
+        status?: ReversalStatus;
+        limit?: number;
+    }): Promise<{
+        items: DepositReversal[];
+    }>;
+    retryReversal(depositRef: string): Promise<DepositReversal>;
+    writeOffReversal(depositRef: string, note?: string): Promise<DepositReversal>;
+    /** DB-backed API keys (operator key). */
+    apiKeys(): Promise<{
+        items: ApiKey[];
+        env_keys: Record<string, unknown>[];
+    }>;
+    createApiKey(input: {
+        name: string;
+        scopes: ApiScope[];
+        accounts?: string[];
+    }): Promise<CreatedApiKey>;
+    revokeApiKey(keyId: string): Promise<ApiKey>;
+    /** An account's holds with their auto-release deadlines (newest first). */
+    accountHolds(accountId: string, params?: {
+        status?: "open" | "captured" | "released";
+        limit?: number;
+    }): Promise<{
+        account_id: string;
+        items: HoldPosition[];
+        open_held_micros: number;
+    }>;
+    /** Streams the account pays or receives (newest first). */
+    accountStreams(accountId: string, params?: {
+        status?: "open" | "closed";
+        limit?: number;
+    }): Promise<{
+        account_id: string;
+        items: StreamPosition[];
+    }>;
+    /** Allowances the account granted (`status: "all"` includes revoked ones). */
+    accountAllowances(accountId: string, params?: {
+        status?: "active" | "all";
+        limit?: number;
+    }): Promise<{
+        account_id: string;
+        items: AllowancePosition[];
+    }>;
+    /** AITP-402 payer verifying keys (operator key). */
+    payerKeys(params?: {
+        payer?: string;
+    }): Promise<{
+        items: PayerKey[];
+        active_count: number;
+    }>;
+    /** Register an agent's Ed25519 public key so its AITP authorizations verify. */
+    registerPayerKey(input: {
+        payer: string;
+        pubkey_id: string;
+        public_key_hex: string;
+        label?: string;
+    }): Promise<PayerKey>;
+    /** Revoke a payer key; authorizations signed with it are refused immediately. */
+    revokePayerKey(payer: string, pubkeyId: string): Promise<PayerKey>;
+    /** Capture (part of) an AITP-402 hold settlement to the payee (merchant success path). */
+    aitpCapture(input: {
+        hold_id: string;
+        amount_micros: number;
+        to: string;
+        idem_key: string;
+    }): Promise<AitpHoldSettlement>;
+    /** Release an AITP-402 hold settlement back to the payer (merchant failure path). */
+    aitpRelease(input: {
+        hold_id: string;
+        idem_key: string;
+    }): Promise<AitpHoldSettlement>;
+    private holdSettlement;
     verificationKeys(): Promise<{
         keys: VerificationKey[];
     }>;

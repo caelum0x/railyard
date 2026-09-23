@@ -373,6 +373,65 @@ export interface AitpSettlement {
   scheme: "transfer" | "hold";
   receipt: Record<string, unknown>;
   hold_id?: string;
+  /** Hold scheme only: when Mint auto-releases the hold if never captured (unix ms). */
+  hold_expires_at_ms?: number | null;
+  signed_receipt: Receipt;
+}
+
+export type HoldStatus = "Open" | "Captured" | "Released";
+
+export interface HoldPosition {
+  id: string;
+  account_id: string;
+  amount_micros: number;
+  captured_micros: number;
+  status: HoldStatus;
+  ref: string | null;
+  /** Auto-release deadline (unix ms); `null` when the hold never expires. */
+  expires_at_ms: number | null;
+}
+
+export interface StreamPosition {
+  id: string;
+  from_id: string;
+  to_id: string;
+  rate_micros: number;
+  unit: "Second" | "Unit";
+  cap_micros: number;
+  settled_micros: number;
+  last_seq: number;
+  status: "Open" | "Closed";
+  ref: string | null;
+  direction: "outgoing" | "incoming";
+}
+
+export interface AllowancePosition {
+  id: string;
+  granter: string;
+  to_key: string;
+  limit_micros: number;
+  spent_micros: number;
+  window: "PerCall" | { Rolling: { window_ms: number } };
+  window_start_ms: number;
+  scope: Record<string, unknown> | null;
+  revoked: boolean;
+}
+
+export interface PayerKey {
+  payer: string;
+  pubkey_id: string;
+  public_key_hex: string;
+  label: string | null;
+  created_ms: number;
+  revoked_ms: number | null;
+  active: boolean;
+}
+
+/** The hold-settlement response of `aitpCapture` / `aitpRelease`. */
+export interface AitpHoldSettlement extends Record<string, unknown> {
+  hold_id: string;
+  status: string;
+  attestation?: Record<string, unknown>;
   signed_receipt: Receipt;
 }
 
@@ -703,6 +762,86 @@ export class MintClient {
 
   revokeApiKey(keyId: string): Promise<ApiKey> {
     return this.request("POST", `v1/keys/${segment(keyId)}/revoke`, {});
+  }
+
+  /** An account's holds with their auto-release deadlines (newest first). */
+  accountHolds(
+    accountId: string,
+    params: { status?: "open" | "captured" | "released"; limit?: number } = {},
+  ): Promise<{ account_id: string; items: HoldPosition[]; open_held_micros: number }> {
+    return this.request("GET", `v1/accounts/${segment(accountId)}/holds${query(params)}`);
+  }
+
+  /** Streams the account pays or receives (newest first). */
+  accountStreams(
+    accountId: string,
+    params: { status?: "open" | "closed"; limit?: number } = {},
+  ): Promise<{ account_id: string; items: StreamPosition[] }> {
+    return this.request("GET", `v1/accounts/${segment(accountId)}/streams${query(params)}`);
+  }
+
+  /** Allowances the account granted (`status: "all"` includes revoked ones). */
+  accountAllowances(
+    accountId: string,
+    params: { status?: "active" | "all"; limit?: number } = {},
+  ): Promise<{ account_id: string; items: AllowancePosition[] }> {
+    return this.request("GET", `v1/accounts/${segment(accountId)}/allowances${query(params)}`);
+  }
+
+  /** AITP-402 payer verifying keys (operator key). */
+  payerKeys(params: { payer?: string } = {}): Promise<{ items: PayerKey[]; active_count: number }> {
+    return this.request("GET", `v1/payer-keys${query(params)}`);
+  }
+
+  /** Register an agent's Ed25519 public key so its AITP authorizations verify. */
+  registerPayerKey(input: {
+    payer: string;
+    pubkey_id: string;
+    public_key_hex: string;
+    label?: string;
+  }): Promise<PayerKey> {
+    if (!/^[0-9a-fA-F]{64}$/.test(input.public_key_hex)) {
+      throw new Error("public_key_hex must be 64 hex characters (a 32-byte Ed25519 key)");
+    }
+    return this.request("POST", "v1/payer-keys", input);
+  }
+
+  /** Revoke a payer key; authorizations signed with it are refused immediately. */
+  revokePayerKey(payer: string, pubkeyId: string): Promise<PayerKey> {
+    return this.request(
+      "POST",
+      `v1/payer-keys/${segment(payer)}/${segment(pubkeyId)}/revoke`,
+      {},
+    );
+  }
+
+  /** Capture (part of) an AITP-402 hold settlement to the payee (merchant success path). */
+  async aitpCapture(input: {
+    hold_id: string;
+    amount_micros: number;
+    to: string;
+    idem_key: string;
+  }): Promise<AitpHoldSettlement> {
+    validatePositiveMoney("capture amount_micros", input.amount_micros);
+    return this.holdSettlement("v1/aitp/capture", input);
+  }
+
+  /** Release an AITP-402 hold settlement back to the payer (merchant failure path). */
+  async aitpRelease(input: { hold_id: string; idem_key: string }): Promise<AitpHoldSettlement> {
+    return this.holdSettlement("v1/aitp/release", input);
+  }
+
+  private async holdSettlement(path: string, body: object): Promise<AitpHoldSettlement> {
+    const { data, headers } = await this.requestWithHeaders<Omit<AitpHoldSettlement, "signed_receipt">>(
+      "POST",
+      path,
+      body,
+    );
+    const encoded = headers.get(HEADER_RECEIPT);
+    if (!encoded) {
+      throw new MintApiError(200, "invalid_response", data, "Mint hold settlement receipt is missing");
+    }
+    return { ...data, signed_receipt: decodeReceipt(encoded) } as AitpHoldSettlement;
   }
 
   verificationKeys(): Promise<{ keys: VerificationKey[] }> {

@@ -29,8 +29,8 @@ use mint_store::{
 };
 use mint_store::{AccountSummary, PayoutQuery, PayoutRecord, ReceiptQuery, ReserveMovementTotal};
 use mint_store::{
-    AccountStatus, ApiKeyRecord, DepositReversal, ProviderReport, ProviderReportLine,
-    ReserveMovement, ReversalStatus,
+    AccountStatus, ApiKeyRecord, DepositReversal, HoldStatus, PayerKeyRecord, ProviderReport,
+    ProviderReportLine, ReserveMovement, ReversalStatus, StreamStatus,
 };
 
 /// An `Arc`-shared [`LedgerStore`]. Every facade holds a clone; all point at one
@@ -49,29 +49,11 @@ impl<S: LedgerStore> SharedStore<S> {
         SharedStore(Arc::new(store))
     }
 
-    /// The raw inner store, bypassing the account-lifecycle guard. Used ONLY
-    /// by operator corrections that must work on frozen accounts (a refund /
-    /// chargeback claw-back burn).
+    /// The raw inner store. Used by operator corrections (a refund /
+    /// chargeback claw-back burn); the lifecycle guard itself lives in the
+    /// store and is skipped only via `RedeemCommit::bypass_lifecycle`.
     pub fn inner(&self) -> &S {
         &self.0
-    }
-
-    /// Refuse an OUTGOING movement from a frozen or closed account.
-    async fn ensure_can_send(&self, id: &AccountId) -> Result<(), MintError> {
-        match self.0.get_account(id).await?.status {
-            AccountStatus::Active => Ok(()),
-            AccountStatus::Frozen => Err(MintError::AccountFrozen),
-            AccountStatus::Closed => Err(MintError::AccountClosed),
-        }
-    }
-
-    /// Refuse an INCOMING credit to a closed account (a frozen account still
-    /// receives, so a customer's deposit is never bounced).
-    async fn ensure_can_receive(&self, id: &AccountId) -> Result<(), MintError> {
-        match self.0.get_account(id).await?.status {
-            AccountStatus::Closed => Err(MintError::AccountClosed),
-            AccountStatus::Active | AccountStatus::Frozen => Ok(()),
-        }
     }
 }
 
@@ -94,26 +76,21 @@ impl<S: LedgerStore> LedgerStore for SharedStore<S> {
     async fn lookup_address(&self, addr: &Address) -> Result<AccountId, MintError> {
         self.0.lookup_address(addr).await
     }
-    // Account lifecycle guard: every money path below checks the parties'
-    // freeze / close state BEFORE delegating, so the ledger, streams, reserve
-    // and AITP facades (which all share this wrapper) honour an operator
-    // freeze uniformly.
+    // Account lifecycle guard: every store (`PgStore`, `InMemoryStore`) reads
+    // the parties' freeze / close state INSIDE the same transaction / critical
+    // section as the money write, so an operator freeze can never race an
+    // in-flight payment. The claw-back burn opts out explicitly via
+    // `RedeemCommit::bypass_lifecycle`.
     async fn commit_transfer(&self, commit: TransferCommit) -> Result<CommitOutcome, MintError> {
-        self.ensure_can_send(&commit.from).await?;
-        self.ensure_can_receive(&commit.to).await?;
         self.0.commit_transfer(commit).await
     }
     async fn commit_hold_create(&self, commit: HoldCreateCommit) -> Result<HoldOutcome, MintError> {
-        self.ensure_can_send(&commit.from).await?;
         self.0.commit_hold_create(commit).await
     }
     async fn commit_hold_capture(
         &self,
         commit: HoldCaptureCommit,
     ) -> Result<HoldOutcome, MintError> {
-        let hold = self.0.get_hold(&commit.hold_id).await?;
-        self.ensure_can_send(&hold.account_id).await?;
-        self.ensure_can_receive(&commit.to).await?;
         self.0.commit_hold_capture(commit).await
     }
     async fn commit_hold_release(
@@ -126,16 +103,12 @@ impl<S: LedgerStore> LedgerStore for SharedStore<S> {
         &self,
         commit: AllowanceGrantCommit,
     ) -> Result<AllowanceGrantOutcome, MintError> {
-        self.ensure_can_send(&commit.granter).await?;
         self.0.commit_allowance_grant(commit).await
     }
     async fn commit_allowance_spend(
         &self,
         commit: AllowanceSpendCommit,
     ) -> Result<AllowanceSpendOutcome, MintError> {
-        let allowance = self.0.get_allowance(&commit.allowance_id).await?;
-        self.ensure_can_send(&allowance.granter).await?;
-        self.ensure_can_receive(&commit.to).await?;
         self.0.commit_allowance_spend(commit).await
     }
     async fn commit_allowance_revoke(
@@ -151,30 +124,18 @@ impl<S: LedgerStore> LedgerStore for SharedStore<S> {
         &self,
         commit: StreamOpenCommit,
     ) -> Result<StreamOpenOutcome, MintError> {
-        self.ensure_can_send(&commit.from).await?;
-        self.ensure_can_receive(&commit.to).await?;
         self.0.commit_stream_open(commit).await
     }
     async fn commit_stream_tick(
         &self,
         commit: StreamTickCommit,
     ) -> Result<StreamTickOutcome, MintError> {
-        let stream = self.0.get_stream(&commit.stream_id).await?;
-        self.ensure_can_send(&stream.from_id).await?;
-        self.ensure_can_receive(&stream.to_id).await?;
         self.0.commit_stream_tick(commit).await
     }
     async fn commit_stream_close(
         &self,
         commit: StreamCloseCommit,
     ) -> Result<StreamCloseOutcome, MintError> {
-        // A zero-unit close only releases the payer's own remainder, which is
-        // allowed on a frozen account; a final tick is a payment.
-        if commit.units > 0 {
-            let stream = self.0.get_stream(&commit.stream_id).await?;
-            self.ensure_can_send(&stream.from_id).await?;
-            self.ensure_can_receive(&stream.to_id).await?;
-        }
         self.0.commit_stream_close(commit).await
     }
     async fn get_stream(&self, id: &StreamId) -> Result<StreamRecord, MintError> {
@@ -184,11 +145,9 @@ impl<S: LedgerStore> LedgerStore for SharedStore<S> {
         self.0.rebuild_streams().await
     }
     async fn commit_mint(&self, commit: MintCommit) -> Result<MintOutcome, MintError> {
-        self.ensure_can_receive(&commit.to).await?;
         self.0.commit_mint(commit).await
     }
     async fn commit_redeem(&self, commit: RedeemCommit) -> Result<RedeemOutcome, MintError> {
-        self.ensure_can_send(&commit.from).await?;
         self.0.commit_redeem(commit).await
     }
     async fn reserve_micros(&self) -> Micros {
@@ -290,6 +249,54 @@ impl<S: LedgerStore> LedgerStore for SharedStore<S> {
     }
     async fn get_hold(&self, id: &HoldId) -> Result<HoldRecord, MintError> {
         self.0.get_hold(id).await
+    }
+    async fn list_account_holds(
+        &self,
+        account_id: &AccountId,
+        status: Option<HoldStatus>,
+        limit: usize,
+    ) -> Result<Vec<(HoldRecord, Option<i64>)>, MintError> {
+        self.0.list_account_holds(account_id, status, limit).await
+    }
+    async fn list_account_streams(
+        &self,
+        account_id: &AccountId,
+        status: Option<StreamStatus>,
+        limit: usize,
+    ) -> Result<Vec<StreamRecord>, MintError> {
+        self.0.list_account_streams(account_id, status, limit).await
+    }
+    async fn list_account_allowances(
+        &self,
+        account_id: &AccountId,
+        include_revoked: bool,
+        limit: usize,
+    ) -> Result<Vec<AllowanceRecord>, MintError> {
+        self.0
+            .list_account_allowances(account_id, include_revoked, limit)
+            .await
+    }
+    async fn set_hold_expiry(&self, hold_id: &HoldId, expires_at_ms: i64) -> Result<(), MintError> {
+        self.0.set_hold_expiry(hold_id, expires_at_ms).await
+    }
+    async fn hold_expiry(&self, hold_id: &HoldId) -> Result<Option<i64>, MintError> {
+        self.0.hold_expiry(hold_id).await
+    }
+    async fn list_expired_holds(&self, now_ms: i64, limit: usize) -> Result<Vec<HoldId>, MintError> {
+        self.0.list_expired_holds(now_ms, limit).await
+    }
+    async fn insert_payer_key(&self, record: PayerKeyRecord) -> Result<PayerKeyRecord, MintError> {
+        self.0.insert_payer_key(record).await
+    }
+    async fn list_payer_keys(&self, payer: Option<&str>) -> Result<Vec<PayerKeyRecord>, MintError> {
+        self.0.list_payer_keys(payer).await
+    }
+    async fn revoke_payer_key(
+        &self,
+        payer: &str,
+        pubkey_id: &str,
+    ) -> Result<Option<PayerKeyRecord>, MintError> {
+        self.0.revoke_payer_key(payer, pubkey_id).await
     }
     async fn insert_api_key(&self, record: ApiKeyRecord) -> Result<ApiKeyRecord, MintError> {
         self.0.insert_api_key(record).await

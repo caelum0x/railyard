@@ -77,6 +77,25 @@ pub struct ApiKeyRecord {
     pub revoked_ms: Option<i64>,
 }
 
+/// A registered AITP-402 payer verifying key (Ed25519). Agents sign
+/// `AITP-Authorization`s with the matching private key; Mint only ever stores
+/// the public half.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PayerKeyRecord {
+    /// The paying account (`acct_…`) the key authorizes spend for.
+    pub payer: String,
+    /// Caller-chosen key id echoed in `Authorization.pubkey_id`.
+    pub pubkey_id: String,
+    /// Lowercase hex of the 32-byte Ed25519 public key.
+    pub public_key_hex: String,
+    /// Operator-facing label.
+    pub label: Option<String>,
+    /// Registration time (unix ms).
+    pub created_ms: i64,
+    /// Revocation time (unix ms); a revoked key never verifies.
+    pub revoked_ms: Option<i64>,
+}
+
 /// Header of one imported provider report (a Stripe balance-transaction
 /// export, PayPal settlement report, on-chain transfer list …).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

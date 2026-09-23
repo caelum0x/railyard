@@ -13,6 +13,7 @@ use mint_reserve::{KycGate, Ramp, ReserveLedger};
 use mint_store::{Clock, LedgerStore};
 use mint_stream::StreamLedger;
 
+use crate::payer_registry::PayerKeyRegistry;
 use crate::shared::{DynKyc, DynPayerKeys, DynRamp, SharedStore};
 
 /// Public-facing URLs Mint needs to hand buyers to providers and back.
@@ -79,6 +80,10 @@ pub struct AppState<S: LedgerStore> {
     /// The live KYC provider used to start verifications and report status.
     /// `None` ⇒ no provider configured (redemptions stay denied).
     pub kyc_onboarding: Option<Arc<dyn KycOnboarding>>,
+    /// AITP-402 payer keys: the DB-backed mirror (managed via
+    /// `/v1/payer-keys`) layered over the static bootstrap set. The AITP
+    /// verifier resolves keys through this registry.
+    pub payer_keys: Arc<PayerKeyRegistry>,
 }
 
 impl<S: LedgerStore> Clone for AppState<S> {
@@ -95,6 +100,7 @@ impl<S: LedgerStore> Clone for AppState<S> {
             receipt_signer: self.receipt_signer.clone(),
             public: self.public.clone(),
             kyc_onboarding: self.kyc_onboarding.clone(),
+            payer_keys: self.payer_keys.clone(),
         }
     }
 }
@@ -122,10 +128,11 @@ impl<S: LedgerStore + 'static> AppState<S> {
             DynRamp(ramp),
             DynKyc(kyc),
         ));
+        let payer_registry = Arc::new(PayerKeyRegistry::new(payer_keys));
         let aitp = Arc::new(Aitp402::new(
             Ledger::new(shared.clone()),
             clock,
-            DynPayerKeys(payer_keys),
+            DynPayerKeys(payer_registry.clone()),
         ));
 
         AppState {
@@ -140,6 +147,7 @@ impl<S: LedgerStore + 'static> AppState<S> {
             receipt_signer,
             public: Arc::new(PublicConfig::default()),
             kyc_onboarding: None,
+            payer_keys: payer_registry,
         }
     }
 

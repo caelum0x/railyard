@@ -20,7 +20,7 @@ use serde_json::Value;
 
 use crate::card::{is_whole_cents, Checkout, CheckoutUrls};
 use crate::config::{Mode, ProviderConfig};
-use crate::event::{DepositEvent, WebhookError};
+use crate::event::{DepositEvent, ReversalEvent, ReversalReason, VerifiedEvent, WebhookError};
 use crate::http::{map_status, Headers, HttpTransport};
 use crate::money::decimal_to_micros;
 use crate::provider::ProviderId;
@@ -173,13 +173,14 @@ impl PayPalRamp {
         serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)
     }
 
-    /// Verify a PayPal webhook by echoing it back to PayPal's
-    /// `verify-webhook-signature` endpoint (async, transport-backed).
-    pub async fn verify_webhook<H: Headers>(
+    /// Authenticate a PayPal webhook by echoing it back to PayPal's
+    /// `verify-webhook-signature` endpoint (async, transport-backed) and return
+    /// the parsed event. Runs exactly ONCE per delivery.
+    async fn verify_signature<H: Headers>(
         &self,
         headers: &H,
         raw: &[u8],
-    ) -> Result<DepositEvent, WebhookError> {
+    ) -> Result<Value, WebhookError> {
         let webhook_id = self
             .cfg
             .webhook_secret
@@ -217,37 +218,185 @@ impl PayPalRamp {
         if vr["verification_status"].as_str() != Some("SUCCESS") {
             return Err(WebhookError::BadSignature);
         }
-
-        let event_type = event["event_type"].as_str().unwrap_or("");
-        if event_type != "PAYMENT.CAPTURE.COMPLETED" {
-            return Err(WebhookError::Ignored(event_type.to_string()));
-        }
-        let resource = &event["resource"];
-        // Mint under the ORDER id (not the capture id) so the webhook, the
-        // capture-return endpoint and the checkout response share one key.
-        let deposit_ref = resource["supplementary_data"]["related_ids"]["order_id"]
-            .as_str()
-            .ok_or_else(|| {
-                WebhookError::Malformed("missing supplementary_data.related_ids.order_id".into())
-            })?
-            .to_string();
-        let value = resource["amount"]["value"]
-            .as_str()
-            .ok_or_else(|| WebhookError::Malformed("missing amount.value".into()))?;
-        let amount_micros =
-            decimal_to_micros(value).ok_or_else(|| WebhookError::Malformed("bad amount".into()))?;
-        let account_id = resource["custom_id"]
-            .as_str()
-            .ok_or_else(|| WebhookError::Malformed("missing custom_id".into()))?
-            .to_string();
-        Ok(DepositEvent {
-            provider: ProviderId::PayPal,
-            deposit_ref,
-            amount_micros,
-            asset: Asset::Usd,
-            account_id,
-        })
+        Ok(event)
     }
+
+    /// Verify a PayPal webhook, returning the confirmed deposit
+    /// (`PAYMENT.CAPTURE.COMPLETED`); any other verified event is `Ignored`.
+    pub async fn verify_webhook<H: Headers>(
+        &self,
+        headers: &H,
+        raw: &[u8],
+    ) -> Result<DepositEvent, WebhookError> {
+        let event = self.verify_signature(headers, raw).await?;
+        parse_capture_completed(&event)
+    }
+
+    /// Verify a PayPal webhook ONCE and classify it: a completed capture is a
+    /// deposit; a refund, a reversal or a newly opened dispute of a capture is
+    /// a [`ReversalEvent`] against the ORIGINAL order id Mint credited.
+    ///
+    /// - `PAYMENT.CAPTURE.REFUNDED` / `PAYMENT.CAPTURE.REVERSED` → the
+    ///   CUMULATIVE `seller_payable_breakdown.total_refunded_amount` (falling
+    ///   back to this refund's `amount`);
+    /// - `CUSTOMER.DISPUTE.CREATED` → the `dispute_amount` of the disputed
+    ///   capture.
+    ///
+    /// The order id is read from the resource when PayPal includes it, and
+    /// otherwise resolved from the capture via the authenticated
+    /// `GET /v2/payments/captures/{id}`.
+    pub async fn verify_event<H: Headers>(
+        &self,
+        headers: &H,
+        raw: &[u8],
+    ) -> Result<VerifiedEvent, WebhookError> {
+        let event = self.verify_signature(headers, raw).await?;
+        let event_type = event["event_type"].as_str().unwrap_or("");
+        let resource = &event["resource"];
+        match event_type {
+            "PAYMENT.CAPTURE.COMPLETED" => parse_capture_completed(&event).map(VerifiedEvent::Deposit),
+            "PAYMENT.CAPTURE.REFUNDED" | "PAYMENT.CAPTURE.REVERSED" => {
+                let reason = if event_type == "PAYMENT.CAPTURE.REVERSED" {
+                    ReversalReason::Dispute
+                } else {
+                    ReversalReason::Refund
+                };
+                let value = resource["seller_payable_breakdown"]["total_refunded_amount"]["value"]
+                    .as_str()
+                    .or_else(|| resource["amount"]["value"].as_str())
+                    .ok_or_else(|| WebhookError::Malformed("missing refund amount".into()))?;
+                let amount_micros = positive_micros(value, event_type)?;
+                let order_id = match related_order_id(resource) {
+                    Some(id) => id,
+                    None => {
+                        let capture_id = link_target(resource, "/v2/payments/captures/")
+                            .ok_or_else(|| {
+                                WebhookError::Ignored(format!("{event_type} without a capture link"))
+                            })?;
+                        self.order_of_capture(&capture_id).await?
+                    }
+                };
+                Ok(VerifiedEvent::Reversal(ReversalEvent {
+                    provider: ProviderId::PayPal,
+                    deposit_ref: order_id,
+                    alt_refs: Vec::new(),
+                    amount_micros: Some(amount_micros),
+                    reason,
+                }))
+            }
+            "CUSTOMER.DISPUTE.CREATED" => {
+                let capture_id = resource["disputed_transactions"][0]["seller_transaction_id"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        WebhookError::Ignored("dispute without a seller transaction".into())
+                    })?
+                    .to_string();
+                let value = resource["dispute_amount"]["value"]
+                    .as_str()
+                    .ok_or_else(|| WebhookError::Malformed("missing dispute_amount".into()))?;
+                let amount_micros = positive_micros(value, event_type)?;
+                let order_id = self.order_of_capture(&capture_id).await?;
+                Ok(VerifiedEvent::Reversal(ReversalEvent {
+                    provider: ProviderId::PayPal,
+                    deposit_ref: order_id,
+                    alt_refs: Vec::new(),
+                    amount_micros: Some(amount_micros),
+                    reason: ReversalReason::Dispute,
+                }))
+            }
+            other => Err(WebhookError::Ignored(other.to_string())),
+        }
+    }
+
+    /// Resolve the ORDER id a capture belongs to (Mint credits PayPal under
+    /// the order id). A transport failure is surfaced as `Malformed` so the
+    /// route answers non-2xx and PayPal redelivers the event later.
+    async fn order_of_capture(&self, capture_id: &str) -> Result<String, WebhookError> {
+        if !capture_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(WebhookError::Malformed("bad capture id".into()));
+        }
+        let token = self
+            .access_token()
+            .await
+            .map_err(|_| WebhookError::Malformed("paypal token unavailable".into()))?;
+        let url = format!("{}/v2/payments/captures/{capture_id}", self.base());
+        let resp = map_status(self.transport.get(&url, &Self::bearer(&token)).await)
+            .map_err(|_| WebhookError::Malformed("paypal capture lookup unavailable".into()))?;
+        let v: Value = serde_json::from_slice(&resp.body)
+            .map_err(|e| WebhookError::Malformed(e.to_string()))?;
+        related_order_id(&v)
+            .or_else(|| link_target(&v, "/v2/checkout/orders/"))
+            .ok_or_else(|| {
+                WebhookError::Ignored(format!("capture {capture_id} is not tied to an order"))
+            })
+    }
+}
+
+/// Parse a verified `PAYMENT.CAPTURE.COMPLETED` event into a deposit.
+fn parse_capture_completed(event: &Value) -> Result<DepositEvent, WebhookError> {
+    let event_type = event["event_type"].as_str().unwrap_or("");
+    if event_type != "PAYMENT.CAPTURE.COMPLETED" {
+        return Err(WebhookError::Ignored(event_type.to_string()));
+    }
+    let resource = &event["resource"];
+    // Mint under the ORDER id (not the capture id) so the webhook, the
+    // capture-return endpoint and the checkout response share one key.
+    let deposit_ref = related_order_id(resource).ok_or_else(|| {
+        WebhookError::Malformed("missing supplementary_data.related_ids.order_id".into())
+    })?;
+    let value = resource["amount"]["value"]
+        .as_str()
+        .ok_or_else(|| WebhookError::Malformed("missing amount.value".into()))?;
+    let amount_micros =
+        decimal_to_micros(value).ok_or_else(|| WebhookError::Malformed("bad amount".into()))?;
+    let account_id = resource["custom_id"]
+        .as_str()
+        .ok_or_else(|| WebhookError::Malformed("missing custom_id".into()))?
+        .to_string();
+    Ok(DepositEvent {
+        provider: ProviderId::PayPal,
+        deposit_ref,
+        amount_micros,
+        asset: Asset::Usd,
+        account_id,
+    })
+}
+
+/// `supplementary_data.related_ids.order_id` of a capture / refund resource.
+fn related_order_id(resource: &Value) -> Option<String> {
+    resource["supplementary_data"]["related_ids"]["order_id"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// The id at the end of the first HATEOAS link whose href contains `segment`
+/// (e.g. a refund's `up` link to `/v2/payments/captures/{id}`).
+fn link_target(resource: &Value, segment: &str) -> Option<String> {
+    resource["links"].as_array()?.iter().find_map(|l| {
+        let href = l["href"].as_str()?;
+        let idx = href.find(segment)?;
+        let rest = &href[idx + segment.len()..];
+        let id = rest.split(['/', '?']).next()?;
+        (!id.is_empty()).then(|| id.to_string())
+    })
+}
+
+/// A PayPal decimal amount as strictly-positive microdollars (a reversal may
+/// be reported with a negative sign).
+fn positive_micros(value: &str, event_type: &str) -> Result<i64, WebhookError> {
+    let micros = decimal_to_micros(value)
+        .ok_or_else(|| WebhookError::Malformed("bad amount".into()))?
+        .checked_abs()
+        .ok_or_else(|| WebhookError::Malformed("amount overflow".into()))?;
+    if micros == 0 {
+        return Err(WebhookError::Ignored(format!("{event_type} with zero amount")));
+    }
+    Ok(micros)
 }
 
 #[async_trait]

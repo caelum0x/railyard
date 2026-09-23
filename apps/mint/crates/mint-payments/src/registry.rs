@@ -19,7 +19,7 @@ use crate::card::{CreemRamp, PayPalRamp, PolarRamp, StripeRamp};
 use crate::composite::CompositeRamp;
 use crate::config::{PaymentsConfig, ProviderConfig};
 use crate::crypto_tr::{IyzicoRamp, UsdcRamp};
-use crate::event::{DepositEvent, WebhookError};
+use crate::event::{DepositEvent, ReversalEvent, VerifiedEvent, WebhookError};
 use crate::http::{Headers, HttpTransport};
 use crate::iap::{AdaptyRamp, RevenueCatRamp};
 use crate::provider::ProviderId;
@@ -194,27 +194,44 @@ impl PaymentRegistry {
         }
     }
 
-    /// Verify a webhook as a deposit REVERSAL (refund / chargeback). Called
-    /// after [`PaymentRegistry::verify_webhook`] reported the event as
-    /// `Ignored`. Providers whose webhooks cannot be tied back to the original
-    /// deposit reference return `Ignored` (operators record those reversals
-    /// from the console / a provider-report import).
-    pub fn verify_reversal<H: Headers>(
+    /// Verify a provider webhook ONCE and classify it as a deposit to mint or
+    /// a reversal (refund / chargeback) of a deposit Mint already minted.
+    ///
+    /// Reversal mappings: Stripe (`charge.refunded`, `charge.dispute.*`),
+    /// PayPal (`PAYMENT.CAPTURE.REFUNDED|REVERSED`, `CUSTOMER.DISPUTE.CREATED`),
+    /// Creem (`refund.created`, `dispute.created`), Polar (`order.refunded`),
+    /// RevenueCat (`CANCELLATION` with `CUSTOMER_SUPPORT`) and Adapty
+    /// (`subscription_refunded`, `non_subscription_purchase_refunded`). USDC
+    /// transfers are final (no reversal), and Iyzico refunds arrive through
+    /// the settlement report import. Any other verified event is `Ignored`.
+    pub async fn verify_event<H: Headers>(
         &self,
         provider: ProviderId,
         headers: &H,
         raw: &[u8],
-    ) -> Result<crate::event::ReversalEvent, WebhookError> {
+    ) -> Result<VerifiedEvent, WebhookError> {
         let cfg = self
             .webhook_secrets
             .get(&provider)
             .ok_or(WebhookError::NotConfigured)?;
-        match provider {
-            ProviderId::Stripe => crate::card::stripe::verify_reversal_webhook(cfg, headers, raw),
-            other => Err(WebhookError::Ignored(format!(
-                "{} reversals are recorded by operators",
-                other.tag()
-            ))),
+        if provider == ProviderId::PayPal {
+            // Transport-backed verification: authenticate exactly once, then
+            // classify from the verified payload.
+            return PayPalRamp::new(self.transport.clone(), cfg.clone())
+                .verify_event(headers, raw)
+                .await;
+        }
+        match self.verify_webhook(provider, headers, raw).await {
+            Ok(ev) => Ok(VerifiedEvent::Deposit(ev)),
+            Err(WebhookError::Ignored(kind)) => {
+                match verify_reversal_sync(provider, cfg, headers, raw) {
+                    Ok(rev) => Ok(VerifiedEvent::Reversal(rev)),
+                    // Not a reversal either: report the original event kind.
+                    Err(WebhookError::Ignored(_)) => Err(WebhookError::Ignored(kind)),
+                    Err(e) => Err(e),
+                }
+            }
+            Err(e) => Err(e),
         }
     }
 
@@ -239,6 +256,33 @@ impl PaymentRegistry {
     /// The count of active adapters (for diagnostics / logging).
     pub fn active_count(&self) -> usize {
         self.ramps.len()
+    }
+}
+
+/// Classify an already-`Ignored` (non-deposit) delivery of a locally-verified
+/// provider as a reversal. Each adapter re-checks its (cheap, local) signature.
+fn verify_reversal_sync<H: Headers>(
+    provider: ProviderId,
+    cfg: &ProviderConfig,
+    headers: &H,
+    raw: &[u8],
+) -> Result<ReversalEvent, WebhookError> {
+    match provider {
+        ProviderId::Stripe => crate::card::stripe::verify_reversal_webhook(cfg, headers, raw),
+        ProviderId::Creem => crate::card::creem::verify_reversal_webhook(cfg, headers, raw),
+        ProviderId::Polar => crate::card::polar::verify_reversal_webhook(cfg, headers, raw),
+        ProviderId::RevenueCat => {
+            crate::iap::revenuecat::verify_reversal_webhook(cfg, headers, raw)
+        }
+        ProviderId::Adapty => crate::iap::adapty::verify_reversal_webhook(cfg, headers, raw),
+        ProviderId::Usdc => Err(WebhookError::Ignored(
+            "usdc transfers are final and cannot be reversed".into(),
+        )),
+        ProviderId::Iyzico => Err(WebhookError::Ignored(
+            "iyzico refunds are reconciled from the settlement report import".into(),
+        )),
+        // Handled asynchronously in `verify_event` (single transport verify).
+        ProviderId::PayPal => Err(WebhookError::Ignored("paypal".into())),
     }
 }
 

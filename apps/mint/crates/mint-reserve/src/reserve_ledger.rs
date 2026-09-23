@@ -163,6 +163,7 @@ impl<S: LedgerStore, R: Ramp, K: KycGate> ReserveLedger<S, R, K> {
                 payout_ref: req.payout_ref.clone(),
                 idem_key,
                 op_hash: hash,
+                bypass_lifecycle: false,
             })
             .await?;
 

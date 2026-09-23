@@ -25,8 +25,8 @@ pub use clock::{Clock, FixedClock, SystemClock};
 pub use journal::{Bucket, JournalEntry, OpKind};
 pub use memory::{ait_to_micros, InMemoryStore};
 pub use operator::{
-    AccountStatus, ApiKeyRecord, DepositReversal, ProviderReport, ProviderReportLine,
-    ReportLineKind, ReserveMovement, ReversalStatus,
+    AccountStatus, ApiKeyRecord, DepositReversal, PayerKeyRecord, ProviderReport,
+    ProviderReportLine, ReportLineKind, ReserveMovement, ReversalStatus,
 };
 pub use reporting::{
     provider_tag_of, AccountSummary, PayoutQuery, PayoutRecord, PayoutRecordStatus, ReceiptQuery,

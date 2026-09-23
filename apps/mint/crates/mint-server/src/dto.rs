@@ -43,6 +43,11 @@ pub struct HoldCreateReq {
     pub idem_key: String,
     #[serde(default, rename = "ref")]
     pub ref_: Option<String>,
+    /// Optional auto-release window: an OPEN hold still uncaptured this many
+    /// milliseconds after creation is released back to `from` by the
+    /// background sweeper (max 30 days).
+    #[serde(default)]
+    pub expires_in_ms: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

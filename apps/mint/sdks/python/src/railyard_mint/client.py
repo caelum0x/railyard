@@ -368,6 +368,82 @@ class MintClient:
     def verification_keys(self) -> dict[str, Any]:
         return self._request("GET", ".well-known/mint-verification-keys.json")
 
+    # ---- open positions ---------------------------------------------------
+
+    def account_holds(
+        self, account_id: str, *, status: str | None = None, limit: int | None = None
+    ) -> dict[str, Any]:
+        """An account's holds (``open`` / ``captured`` / ``released``) with their
+        auto-release deadline ``expires_at_ms``."""
+        return self._request(
+            "GET", f"v1/accounts/{_segment(account_id)}/holds{_query(status=status, limit=limit)}"
+        )
+
+    def account_streams(
+        self, account_id: str, *, status: str | None = None, limit: int | None = None
+    ) -> dict[str, Any]:
+        """Streams the account pays or receives (``open`` / ``closed``)."""
+        return self._request(
+            "GET", f"v1/accounts/{_segment(account_id)}/streams{_query(status=status, limit=limit)}"
+        )
+
+    def account_allowances(
+        self, account_id: str, *, status: str | None = None, limit: int | None = None
+    ) -> dict[str, Any]:
+        """Allowances the account granted (``active`` default, or ``all``)."""
+        return self._request(
+            "GET",
+            f"v1/accounts/{_segment(account_id)}/allowances{_query(status=status, limit=limit)}",
+        )
+
+    # ---- AITP-402 payer keys (operator key) -------------------------------
+
+    def payer_keys(self, *, payer: str | None = None) -> dict[str, Any]:
+        return self._request("GET", f"v1/payer-keys{_query(payer=payer)}")
+
+    def register_payer_key(
+        self, payer: str, pubkey_id: str, public_key_hex: str, *, label: str | None = None
+    ) -> dict[str, Any]:
+        """Register an agent's Ed25519 public key so its AITP authorizations verify."""
+        key = public_key_hex.strip()
+        if len(key) != 64 or any(c not in "0123456789abcdefABCDEF" for c in key):
+            raise ValueError("public_key_hex must be 64 hex characters (a 32-byte Ed25519 key)")
+        return self._request(
+            "POST",
+            "v1/payer-keys",
+            {"payer": payer, "pubkey_id": pubkey_id, "public_key_hex": key, "label": label},
+        )
+
+    def revoke_payer_key(self, payer: str, pubkey_id: str) -> dict[str, Any]:
+        return self._request(
+            "POST", f"v1/payer-keys/{_segment(payer)}/{_segment(pubkey_id)}/revoke", {}
+        )
+
+    # ---- AITP-402 hold settlement ------------------------------------------
+
+    def aitp_capture(
+        self, hold_id: str, amount_micros: int, to: str, idem_key: str
+    ) -> dict[str, Any]:
+        """Capture (part of) an AITP-402 hold settlement to the payee."""
+        _validate_positive_money("capture amount_micros", amount_micros)
+        return self._hold_settlement(
+            "v1/aitp/capture",
+            {"hold_id": hold_id, "amount_micros": amount_micros, "to": to, "idem_key": idem_key},
+        )
+
+    def aitp_release(self, hold_id: str, idem_key: str) -> dict[str, Any]:
+        """Release an AITP-402 hold settlement back to the payer."""
+        return self._hold_settlement("v1/aitp/release", {"hold_id": hold_id, "idem_key": idem_key})
+
+    def _hold_settlement(self, path: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        from .aitp import HEADER_RECEIPT, decode_receipt
+
+        data, headers = self._request_with_headers("POST", path, body)
+        encoded = _header(headers, HEADER_RECEIPT)
+        if encoded is None:
+            raise MintApiError(200, "invalid_response", "Mint hold settlement receipt is missing", data)
+        return {**data, "signed_receipt": asdict(decode_receipt(encoded))}
+
     def issue_aitp_challenge(self, request: Mapping[str, Any]):
         """Issue and cross-check the JSON and header copies of a 402 challenge."""
         from .aitp import HEADER_CHALLENGE, PaymentChallenge, decode_challenge

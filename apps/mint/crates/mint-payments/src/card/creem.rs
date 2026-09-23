@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::card::{Checkout, CheckoutUrls};
 use crate::config::ProviderConfig;
-use crate::event::{DepositEvent, WebhookError};
+use crate::event::{DepositEvent, ReversalEvent, ReversalReason, WebhookError};
 use crate::http::{map_status, Headers, HttpTransport};
 use crate::money::cents_to_micros;
 use crate::provider::ProviderId;
@@ -148,22 +148,11 @@ pub fn verify_webhook<H: Headers>(
     headers: &H,
     raw: &[u8],
 ) -> Result<DepositEvent, WebhookError> {
-    let secret = cfg
-        .webhook_secret
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .ok_or(WebhookError::NotConfigured)?;
-    let sig = headers
-        .get_header("creem-signature")
-        .ok_or(WebhookError::BadSignature)?;
-    hmac_sha256_hex_verify(secret.as_bytes(), raw, sig)?;
+    verify_signature(cfg, headers, raw)?;
 
     let v: Value =
         serde_json::from_slice(raw).map_err(|e| WebhookError::Malformed(e.to_string()))?;
-    let event_type = v["eventType"]
-        .as_str()
-        .or_else(|| v["type"].as_str())
-        .unwrap_or("");
+    let event_type = event_type_of(&v);
     if !matches!(event_type, "checkout.completed" | "subscription.paid") {
         return Err(WebhookError::Ignored(event_type.to_string()));
     }
@@ -187,6 +176,97 @@ pub fn verify_webhook<H: Headers>(
         amount_micros,
         asset: Asset::Usd,
         account_id,
+    })
+}
+
+/// Verify the `creem-signature` HMAC-SHA256 (hex) over the RAW body.
+fn verify_signature<H: Headers>(
+    cfg: &ProviderConfig,
+    headers: &H,
+    raw: &[u8],
+) -> Result<(), WebhookError> {
+    let secret = cfg
+        .webhook_secret
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or(WebhookError::NotConfigured)?;
+    let sig = headers
+        .get_header("creem-signature")
+        .ok_or(WebhookError::BadSignature)?;
+    hmac_sha256_hex_verify(secret.as_bytes(), raw, sig)
+}
+
+/// Creem names the event at `eventType` (current) or `type` (legacy).
+fn event_type_of(v: &Value) -> &str {
+    v["eventType"]
+        .as_str()
+        .or_else(|| v["type"].as_str())
+        .unwrap_or("")
+}
+
+/// The id of a nested Creem reference that is either expanded (`{"id": ..}`)
+/// or a bare id string.
+fn ref_id(v: &Value) -> Option<String> {
+    v["id"]
+        .as_str()
+        .or_else(|| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// Verify a Creem webhook over RAW bytes and, when it is a refund or a
+/// dispute, return the reversal of the ORIGINAL deposit.
+///
+/// Mint credits Creem under the checkout id (`checkout.completed`) or the
+/// subscription id (`subscription.paid`), so both are offered as candidate
+/// references. The amount is CUMULATIVE: `transaction.refunded_amount` when
+/// Creem expands the transaction, else this refund's `refund_amount` (a
+/// single full or first partial refund).
+///
+/// - `refund.created` → [`ReversalReason::Refund`];
+/// - `dispute.created` → [`ReversalReason::Dispute`] for the disputed amount.
+pub fn verify_reversal_webhook<H: Headers>(
+    cfg: &ProviderConfig,
+    headers: &H,
+    raw: &[u8],
+) -> Result<ReversalEvent, WebhookError> {
+    verify_signature(cfg, headers, raw)?;
+    let v: Value =
+        serde_json::from_slice(raw).map_err(|e| WebhookError::Malformed(e.to_string()))?;
+    let event_type = event_type_of(&v);
+    let obj = &v["object"];
+    let (reason, cents) = match event_type {
+        "refund.created" => (
+            ReversalReason::Refund,
+            obj["transaction"]["refunded_amount"]
+                .as_i64()
+                .or_else(|| obj["refund_amount"].as_i64()),
+        ),
+        "dispute.created" => (ReversalReason::Dispute, obj["amount"].as_i64()),
+        other => return Err(WebhookError::Ignored(other.to_string())),
+    };
+    let mut refs: Vec<String> = [&obj["checkout"], &obj["subscription"]]
+        .into_iter()
+        .filter_map(ref_id)
+        .collect();
+    if refs.is_empty() {
+        return Err(WebhookError::Ignored(format!(
+            "{event_type} without a checkout or subscription reference"
+        )));
+    }
+    let deposit_ref = refs.remove(0);
+    let cents = cents.ok_or_else(|| WebhookError::Malformed("missing amount".into()))?;
+    let amount_micros = cents_to_micros(cents.abs())
+        .ok_or_else(|| WebhookError::Malformed("amount overflow".into()))?;
+    if amount_micros <= 0 {
+        return Err(WebhookError::Ignored(format!("{event_type} with zero amount")));
+    }
+    Ok(ReversalEvent {
+        provider: ProviderId::Creem,
+        deposit_ref,
+        alt_refs: refs,
+        amount_micros: Some(amount_micros),
+        reason,
     })
 }
 

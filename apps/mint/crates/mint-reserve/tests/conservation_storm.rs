@@ -135,6 +135,7 @@ proptest! {
                                 payout_ref: format!("p{step}"),
                                 idem_key: format!("r{step}"),
                                 op_hash: oh("redeem"),
+                                bypass_lifecycle: false,
                             })
                             .await;
                         expect_ok_or_benign(res);

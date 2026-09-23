@@ -11,7 +11,7 @@ use mint_reserve::{Asset, Deposit, Payout, PayoutDest, Ramp, RampError};
 use serde_json::Value;
 
 use crate::config::ProviderConfig;
-use crate::event::{DepositEvent, WebhookError};
+use crate::event::{DepositEvent, ReversalEvent, ReversalReason, WebhookError};
 use crate::http::{map_status, Headers, HttpTransport};
 use crate::money::json_dollars_to_micros;
 use crate::provider::ProviderId;
@@ -104,17 +104,7 @@ pub fn verify_webhook<H: Headers>(
     headers: &H,
     raw: &[u8],
 ) -> Result<DepositEvent, WebhookError> {
-    let secret = cfg
-        .webhook_secret
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .ok_or(WebhookError::NotConfigured)?;
-    let presented = headers
-        .get_header("authorization")
-        .ok_or(WebhookError::BadSignature)?;
-    if !const_eq_secret(secret.as_bytes(), presented.as_bytes()) {
-        return Err(WebhookError::BadSignature);
-    }
+    verify_authorization(cfg, headers)?;
 
     let v: Value =
         serde_json::from_slice(raw).map_err(|e| WebhookError::Malformed(e.to_string()))?;
@@ -143,6 +133,64 @@ pub fn verify_webhook<H: Headers>(
         amount_micros,
         asset: Asset::Usd,
         account_id,
+    })
+}
+
+/// Constant-time `Authorization` equality over the configured shared secret.
+fn verify_authorization<H: Headers>(cfg: &ProviderConfig, headers: &H) -> Result<(), WebhookError> {
+    let secret = cfg
+        .webhook_secret
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or(WebhookError::NotConfigured)?;
+    let presented = headers
+        .get_header("authorization")
+        .ok_or(WebhookError::BadSignature)?;
+    if !const_eq_secret(secret.as_bytes(), presented.as_bytes()) {
+        return Err(WebhookError::BadSignature);
+    }
+    Ok(())
+}
+
+/// Verify an Adapty webhook and, when it reports a refund, return the
+/// reversal of the ORIGINAL purchase (Mint credits Adapty under the store
+/// `transaction_id`, which the refund event repeats).
+///
+/// Events `subscription_refunded` / `non_subscription_purchase_refunded`.
+/// Store refunds are for the whole transaction; the refunded `price_usd` is
+/// used when present, otherwise the whole minted deposit is clawed back.
+pub fn verify_reversal_webhook<H: Headers>(
+    cfg: &ProviderConfig,
+    headers: &H,
+    raw: &[u8],
+) -> Result<ReversalEvent, WebhookError> {
+    verify_authorization(cfg, headers)?;
+    let v: Value =
+        serde_json::from_slice(raw).map_err(|e| WebhookError::Malformed(e.to_string()))?;
+    let event_type = v["event_type"].as_str().unwrap_or("");
+    if !matches!(
+        event_type,
+        "subscription_refunded" | "non_subscription_purchase_refunded"
+    ) {
+        return Err(WebhookError::Ignored(event_type.to_string()));
+    }
+    let props = &v["event_properties"];
+    let deposit_ref = props["transaction_id"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| WebhookError::Ignored(format!("{event_type} without a transaction_id")))?
+        .to_string();
+    let amount_micros = json_dollars_to_micros(&props["price_usd"])
+        .map(i64::abs)
+        .filter(|&m| m > 0);
+    Ok(ReversalEvent {
+        provider: ProviderId::Adapty,
+        deposit_ref,
+        // Only the refunded transaction itself: a refunded renewal Mint never
+        // credited must not claw back the original purchase.
+        alt_refs: Vec::new(),
+        amount_micros,
+        reason: ReversalReason::Refund,
     })
 }
 

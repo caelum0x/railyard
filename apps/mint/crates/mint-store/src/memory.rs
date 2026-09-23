@@ -26,8 +26,8 @@ use crate::balance::Balance;
 use crate::clock::{Clock, SystemClock};
 use crate::journal::{Bucket, JournalEntry, OpKind};
 use crate::operator::{
-    AccountStatus, ApiKeyRecord, DepositReversal, ProviderReport, ProviderReportLine,
-    ReserveMovement, ReversalStatus,
+    AccountStatus, ApiKeyRecord, DepositReversal, PayerKeyRecord, ProviderReport,
+    ProviderReportLine, ReserveMovement, ReversalStatus,
 };
 use crate::reporting::{
     provider_tag_of, AccountSummary, PayoutQuery, PayoutRecord, ReserveMovementTotal,
@@ -100,6 +100,10 @@ struct State {
     account_status: HashMap<AccountId, AccountStatus>,
     /// DB-backed API keys (hashed secrets only).
     api_keys: Vec<ApiKeyRecord>,
+    /// Auto-release deadlines (unix ms) for holds that carry one.
+    hold_expiries: HashMap<HoldId, i64>,
+    /// Registered AITP-402 payer verifying keys.
+    payer_keys: Vec<PayerKeyRecord>,
     /// Imported provider settlement reports with their parsed lines.
     provider_reports: Vec<(ProviderReport, Vec<ProviderReportLine>)>,
     /// Deposit reversals (refund / chargeback claw-backs), keyed by deposit ref.
@@ -112,6 +116,26 @@ struct State {
 }
 
 impl State {
+    /// Refuse an OUTGOING movement from a frozen or closed account. Read inside
+    /// the store's single critical section, so an operator freeze can never
+    /// interleave between the check and the money write.
+    fn ensure_can_send_locked(&self, id: &AccountId) -> Result<(), MintError> {
+        match self.account_status.get(id).copied().unwrap_or_default() {
+            AccountStatus::Active => Ok(()),
+            AccountStatus::Frozen => Err(MintError::AccountFrozen),
+            AccountStatus::Closed => Err(MintError::AccountClosed),
+        }
+    }
+
+    /// Refuse an INCOMING credit to a closed account (a frozen account still
+    /// receives, so a customer's deposit is never bounced).
+    fn ensure_can_receive_locked(&self, id: &AccountId) -> Result<(), MintError> {
+        match self.account_status.get(id).copied().unwrap_or_default() {
+            AccountStatus::Closed => Err(MintError::AccountClosed),
+            AccountStatus::Active | AccountStatus::Frozen => Ok(()),
+        }
+    }
+
     /// The transfer WRITE path — validation + two journal rows + projection +
     /// two receipts — factored out so BOTH `commit_transfer` and an allowance
     /// auto-settlement drive the identical atomic double-entry apply (keeping
@@ -733,6 +757,11 @@ impl LedgerStore for InMemoryStore {
             }
         }
 
+        // Account lifecycle guard, inside the critical section (a freeze cannot
+        // interleave between this check and the write below).
+        st.ensure_can_send_locked(&commit.from)?;
+        st.ensure_can_receive_locked(&commit.to)?;
+
         // 2-5. Validate + append two rows + project + emit two receipts through
         //       the shared atomic double-entry path.
         let outcome = st.settle_transfer_locked(
@@ -777,6 +806,10 @@ impl LedgerStore for InMemoryStore {
                 _ => Err(MintError::IdempotencyConflict),
             };
         }
+
+        // Account lifecycle guard, inside the critical section (a freeze cannot
+        // interleave between this check and the write below).
+        st.ensure_can_send_locked(&commit.from)?;
 
         // 2-6. Reserve available→held, mint the hold, append both legs, open the
         //       record, emit one receipt — through the shared atomic path.
@@ -835,6 +868,10 @@ impl LedgerStore for InMemoryStore {
             return Err(MintError::HoldNotFound);
         }
         let holder = hold.account_id.clone();
+        // Account lifecycle guard, inside the critical section (a freeze cannot
+        // interleave between this check and the write below).
+        st.ensure_can_send_locked(&holder)?;
+        st.ensure_can_receive_locked(&commit.to)?;
 
         // 3. Capture must settle to a DIFFERENT account (self-alias guard).
         if commit.to == holder {
@@ -1164,6 +1201,10 @@ impl LedgerStore for InMemoryStore {
             };
         }
 
+        // Account lifecycle guard, inside the critical section (a freeze cannot
+        // interleave between this check and the write below).
+        st.ensure_can_send_locked(&commit.granter)?;
+
         // 2. Granter must exist (a grant delegates the granter's funds).
         if !st.accounts.contains_key(&commit.granter) {
             return Err(MintError::AccountNotFound);
@@ -1229,6 +1270,10 @@ impl LedgerStore for InMemoryStore {
             .get(&commit.allowance_id)
             .cloned()
             .ok_or(MintError::AllowanceNotFound)?;
+        // Account lifecycle guard, inside the critical section (a freeze cannot
+        // interleave between this check and the write below).
+        st.ensure_can_send_locked(&record.granter)?;
+        st.ensure_can_receive_locked(&commit.to)?;
 
         // 3. A revoked allowance can never spend again.
         if record.revoked {
@@ -1373,6 +1418,11 @@ impl LedgerStore for InMemoryStore {
             };
         }
 
+        // Account lifecycle guard, inside the critical section (a freeze cannot
+        // interleave between this check and the write below).
+        st.ensure_can_send_locked(&commit.from)?;
+        st.ensure_can_receive_locked(&commit.to)?;
+
         // 2. Reserve the whole cap available→held, mint the stream, open record.
         let outcome = st.settle_stream_open_locked(
             self.signer.as_ref(),
@@ -1429,6 +1479,10 @@ impl LedgerStore for InMemoryStore {
         if stream.status != StreamStatus::Open {
             return Err(MintError::StreamClosed);
         }
+        // Account lifecycle guard, inside the critical section (a freeze cannot
+        // interleave between this check and the write below).
+        st.ensure_can_send_locked(&stream.from_id)?;
+        st.ensure_can_receive_locked(&stream.to_id)?;
 
         // 3. Monotonic seq (strictly increasing).
         if commit.units == 0 {
@@ -1604,6 +1658,12 @@ impl LedgerStore for InMemoryStore {
         }
         let from = stream.from_id.clone();
         let to = stream.to_id.clone();
+        // A zero-unit close only releases the payer's own remainder (allowed on
+        // a frozen account); a final tick is a payment and is guarded.
+        if commit.units > 0 {
+            st.ensure_can_send_locked(&from)?;
+            st.ensure_can_receive_locked(&to)?;
+        }
 
         // 3. Optional final tick (same guards as a tick when units > 0).
         let amount = if commit.units > 0 {
@@ -1860,6 +1920,10 @@ impl LedgerStore for InMemoryStore {
             };
         }
 
+        // Account lifecycle guard, inside the critical section (a freeze cannot
+        // interleave between this check and the write below).
+        st.ensure_can_receive_locked(&commit.to)?;
+
         // 2. The credited account must exist.
         let to_bal = st
             .balances
@@ -1947,6 +2011,12 @@ impl LedgerStore for InMemoryStore {
                 }
                 _ => Err(MintError::IdempotencyConflict),
             };
+        }
+
+        // Account lifecycle guard, inside the critical section. An operator
+        // claw-back burn (refund / chargeback) bypasses it by design.
+        if !commit.bypass_lifecycle {
+            st.ensure_can_send_locked(&commit.from)?;
         }
 
         // 2. The debited account must exist and hold enough available.
@@ -2697,6 +2767,150 @@ impl LedgerStore for InMemoryStore {
             .api_keys
             .iter()
             .find(|k| k.key_hash == key_hash && k.revoked_ms.is_none())
+            .cloned())
+    }
+
+    async fn list_account_holds(
+        &self,
+        account_id: &AccountId,
+        status: Option<HoldStatus>,
+        limit: usize,
+    ) -> Result<Vec<(HoldRecord, Option<i64>)>, MintError> {
+        let st = self.lock();
+        if !st.accounts.contains_key(account_id) {
+            return Err(MintError::AccountNotFound);
+        }
+        let mut out: Vec<(HoldRecord, Option<i64>)> = st
+            .holds
+            .values()
+            .filter(|h| &h.account_id == account_id)
+            .filter(|h| status.map_or(true, |s| h.status == s))
+            .map(|h| (h.clone(), st.hold_expiries.get(&h.id).copied()))
+            .collect();
+        // Ids are ULIDs: descending id == newest first.
+        out.sort_by(|a, b| b.0.id.as_str().cmp(a.0.id.as_str()));
+        out.truncate(limit);
+        Ok(out)
+    }
+
+    async fn list_account_streams(
+        &self,
+        account_id: &AccountId,
+        status: Option<StreamStatus>,
+        limit: usize,
+    ) -> Result<Vec<StreamRecord>, MintError> {
+        let st = self.lock();
+        if !st.accounts.contains_key(account_id) {
+            return Err(MintError::AccountNotFound);
+        }
+        let mut out: Vec<StreamRecord> = st
+            .streams
+            .values()
+            .filter(|s| &s.from_id == account_id || &s.to_id == account_id)
+            .filter(|s| status.map_or(true, |want| s.status == want))
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| b.id.as_str().cmp(a.id.as_str()));
+        out.truncate(limit);
+        Ok(out)
+    }
+
+    async fn list_account_allowances(
+        &self,
+        account_id: &AccountId,
+        include_revoked: bool,
+        limit: usize,
+    ) -> Result<Vec<AllowanceRecord>, MintError> {
+        let st = self.lock();
+        if !st.accounts.contains_key(account_id) {
+            return Err(MintError::AccountNotFound);
+        }
+        let mut out: Vec<AllowanceRecord> = st
+            .allowances
+            .values()
+            .filter(|a| &a.granter == account_id)
+            .filter(|a| include_revoked || !a.revoked)
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| b.id.as_str().cmp(a.id.as_str()));
+        out.truncate(limit);
+        Ok(out)
+    }
+
+    async fn set_hold_expiry(&self, hold_id: &HoldId, expires_at_ms: i64) -> Result<(), MintError> {
+        let mut st = self.lock();
+        if !st.holds.contains_key(hold_id) {
+            return Err(MintError::HoldNotFound);
+        }
+        st.hold_expiries.insert(hold_id.clone(), expires_at_ms);
+        Ok(())
+    }
+
+    async fn hold_expiry(&self, hold_id: &HoldId) -> Result<Option<i64>, MintError> {
+        Ok(self.lock().hold_expiries.get(hold_id).copied())
+    }
+
+    async fn list_expired_holds(&self, now_ms: i64, limit: usize) -> Result<Vec<HoldId>, MintError> {
+        let st = self.lock();
+        let mut due: Vec<(i64, HoldId)> = st
+            .hold_expiries
+            .iter()
+            .filter(|(_, &at)| at <= now_ms)
+            .filter(|(id, _)| {
+                st.holds
+                    .get(*id)
+                    .map_or(false, |h| h.status == HoldStatus::Open)
+            })
+            .map(|(id, &at)| (at, id.clone()))
+            .collect();
+        due.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.as_str().cmp(b.1.as_str())));
+        Ok(due.into_iter().take(limit).map(|(_, id)| id).collect())
+    }
+
+    async fn insert_payer_key(&self, record: PayerKeyRecord) -> Result<PayerKeyRecord, MintError> {
+        let mut st = self.lock();
+        let clash = st.payer_keys.iter().any(|k| {
+            k.payer == record.payer && k.pubkey_id == record.pubkey_id && k.revoked_ms.is_none()
+        });
+        if clash {
+            return Err(MintError::IdempotencyConflict);
+        }
+        st.payer_keys.push(record.clone());
+        Ok(record)
+    }
+
+    async fn list_payer_keys(&self, payer: Option<&str>) -> Result<Vec<PayerKeyRecord>, MintError> {
+        let st = self.lock();
+        let mut out: Vec<PayerKeyRecord> = st
+            .payer_keys
+            .iter()
+            .filter(|k| payer.map_or(true, |p| k.payer == p))
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| b.created_ms.cmp(&a.created_ms));
+        Ok(out)
+    }
+
+    async fn revoke_payer_key(
+        &self,
+        payer: &str,
+        pubkey_id: &str,
+    ) -> Result<Option<PayerKeyRecord>, MintError> {
+        let now = self.clock.now();
+        let mut st = self.lock();
+        if let Some(k) = st
+            .payer_keys
+            .iter_mut()
+            .find(|k| k.payer == payer && k.pubkey_id == pubkey_id && k.revoked_ms.is_none())
+        {
+            k.revoked_ms = Some(now);
+            return Ok(Some(k.clone()));
+        }
+        Ok(st
+            .payer_keys
+            .iter()
+            .rev()
+            .find(|k| k.payer == payer && k.pubkey_id == pubkey_id)
             .cloned())
     }
 

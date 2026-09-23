@@ -281,6 +281,139 @@ export class MintClient {
         validatePositiveMoney("redeem amount_micros", input.amount_micros);
         return this.request("POST", "v1/redeem", input);
     }
+    /** Operator listing of accounts with live balances (keyset paginated). */
+    listAccounts(params = {}) {
+        return this.request("GET", `v1/accounts${query(params)}`);
+    }
+    /** Period statement: opening balance, entries, totals, closing balance. */
+    statement(accountId, params = {}) {
+        return this.request("GET", `v1/accounts/${segment(accountId)}/statement${query(params)}`);
+    }
+    kycStatus(accountId) {
+        return this.request("GET", `v1/accounts/${segment(accountId)}/kyc`);
+    }
+    startKycSession(accountId) {
+        return this.request("POST", `v1/accounts/${segment(accountId)}/kyc/session`, {});
+    }
+    /** Block outgoing movement from an account (operator key). */
+    freezeAccount(accountId) {
+        return this.request("POST", `v1/accounts/${segment(accountId)}/freeze`, {});
+    }
+    unfreezeAccount(accountId) {
+        return this.request("POST", `v1/accounts/${segment(accountId)}/unfreeze`, {});
+    }
+    /** Permanently close a zero-balance account (operator key). */
+    closeAccount(accountId) {
+        return this.request("POST", `v1/accounts/${segment(accountId)}/close`, {});
+    }
+    listPayouts(params = {}) {
+        return this.request("GET", `v1/payouts${query(params)}`);
+    }
+    /** One payout; a pending payout is refreshed from the provider first. */
+    payout(payoutRef) {
+        return this.request("GET", `v1/payouts/${segment(payoutRef)}`);
+    }
+    retryPayout(payoutRef) {
+        return this.request("POST", `v1/payouts/${segment(payoutRef)}/retry`, {});
+    }
+    /** Abandon a failed payout and re-credit the burned amount (operator key). */
+    cancelPayout(payoutRef, note) {
+        return this.request("POST", `v1/payouts/${segment(payoutRef)}/cancel`, { note: note ?? null });
+    }
+    /** Record an out-of-band settlement of a payout (operator key). */
+    markPayoutPaid(payoutRef, providerRef) {
+        return this.request("POST", `v1/payouts/${segment(payoutRef)}/mark-paid`, {
+            provider_ref: providerRef ?? null,
+        });
+    }
+    reconciliation() {
+        return this.request("GET", "v1/reconciliation");
+    }
+    /** Import a provider settlement report and get its match results. */
+    importProviderReport(input) {
+        if (!input.content)
+            throw new Error("report content cannot be empty");
+        return this.request("POST", "v1/reconciliation/reports", input);
+    }
+    providerReports() {
+        return this.request("GET", "v1/reconciliation/reports");
+    }
+    providerReport(reportId) {
+        return this.request("GET", `v1/reconciliation/reports/${segment(reportId)}`);
+    }
+    deleteProviderReport(reportId) {
+        return this.request("DELETE", `v1/reconciliation/reports/${segment(reportId)}`);
+    }
+    /** Record a refund / chargeback and claw it back (operator key). */
+    recordReversal(input) {
+        if (input.amount_micros !== undefined) {
+            validatePositiveMoney("reversal amount_micros", input.amount_micros);
+        }
+        return this.request("POST", "v1/reversals", input);
+    }
+    reversals(params = {}) {
+        return this.request("GET", `v1/reversals${query(params)}`);
+    }
+    retryReversal(depositRef) {
+        return this.request("POST", `v1/reversals/${segment(depositRef)}/retry`, {});
+    }
+    writeOffReversal(depositRef, note) {
+        return this.request("POST", `v1/reversals/${segment(depositRef)}/write-off`, { note: note ?? null });
+    }
+    /** DB-backed API keys (operator key). */
+    apiKeys() {
+        return this.request("GET", "v1/keys");
+    }
+    createApiKey(input) {
+        return this.request("POST", "v1/keys", input);
+    }
+    revokeApiKey(keyId) {
+        return this.request("POST", `v1/keys/${segment(keyId)}/revoke`, {});
+    }
+    /** An account's holds with their auto-release deadlines (newest first). */
+    accountHolds(accountId, params = {}) {
+        return this.request("GET", `v1/accounts/${segment(accountId)}/holds${query(params)}`);
+    }
+    /** Streams the account pays or receives (newest first). */
+    accountStreams(accountId, params = {}) {
+        return this.request("GET", `v1/accounts/${segment(accountId)}/streams${query(params)}`);
+    }
+    /** Allowances the account granted (`status: "all"` includes revoked ones). */
+    accountAllowances(accountId, params = {}) {
+        return this.request("GET", `v1/accounts/${segment(accountId)}/allowances${query(params)}`);
+    }
+    /** AITP-402 payer verifying keys (operator key). */
+    payerKeys(params = {}) {
+        return this.request("GET", `v1/payer-keys${query(params)}`);
+    }
+    /** Register an agent's Ed25519 public key so its AITP authorizations verify. */
+    registerPayerKey(input) {
+        if (!/^[0-9a-fA-F]{64}$/.test(input.public_key_hex)) {
+            throw new Error("public_key_hex must be 64 hex characters (a 32-byte Ed25519 key)");
+        }
+        return this.request("POST", "v1/payer-keys", input);
+    }
+    /** Revoke a payer key; authorizations signed with it are refused immediately. */
+    revokePayerKey(payer, pubkeyId) {
+        return this.request("POST", `v1/payer-keys/${segment(payer)}/${segment(pubkeyId)}/revoke`, {});
+    }
+    /** Capture (part of) an AITP-402 hold settlement to the payee (merchant success path). */
+    async aitpCapture(input) {
+        validatePositiveMoney("capture amount_micros", input.amount_micros);
+        return this.holdSettlement("v1/aitp/capture", input);
+    }
+    /** Release an AITP-402 hold settlement back to the payer (merchant failure path). */
+    async aitpRelease(input) {
+        return this.holdSettlement("v1/aitp/release", input);
+    }
+    async holdSettlement(path, body) {
+        const { data, headers } = await this.requestWithHeaders("POST", path, body);
+        const encoded = headers.get(HEADER_RECEIPT);
+        if (!encoded) {
+            throw new MintApiError(200, "invalid_response", data, "Mint hold settlement receipt is missing");
+        }
+        return { ...data, signed_receipt: decodeReceipt(encoded) };
+    }
     verificationKeys() {
         return this.request("GET", ".well-known/mint-verification-keys.json");
     }
@@ -343,6 +476,15 @@ export class MintClient {
         }
         return { data: data, headers: response.headers };
     }
+}
+function query(params) {
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== null && value !== "")
+            qs.set(key, String(value));
+    }
+    const text = qs.toString();
+    return text ? `?${text}` : "";
 }
 function apiError(status, payload) {
     const detail = isRecord(payload) && isRecord(payload.error) ? payload.error : null;

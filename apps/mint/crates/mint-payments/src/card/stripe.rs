@@ -220,7 +220,8 @@ pub fn verify_reversal_webhook<H: Headers>(
     Ok(ReversalEvent {
         provider: ProviderId::Stripe,
         deposit_ref,
-        amount_micros,
+        alt_refs: Vec::new(),
+        amount_micros: Some(amount_micros),
         reason,
     })
 }

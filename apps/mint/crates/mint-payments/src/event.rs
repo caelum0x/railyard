@@ -63,8 +63,15 @@ pub struct ReversalEvent {
     /// The ORIGINAL deposit's raw reference (e.g. the PaymentIntent id),
     /// WITHOUT the `<provider>:` prefix.
     pub deposit_ref: String,
-    /// The CUMULATIVE amount reversed so far, in microdollars.
-    pub amount_micros: i64,
+    /// Further raw references the original deposit may have been minted under
+    /// (e.g. a Polar order paid via `checkout.updated` mints under the checkout
+    /// id). Tried in order after `deposit_ref`; the first one Mint actually
+    /// minted wins.
+    pub alt_refs: Vec<String>,
+    /// The CUMULATIVE amount reversed so far, in microdollars. `None` means
+    /// the provider reversed the whole payment (IAP refunds are always full),
+    /// so the whole minted deposit is clawed back.
+    pub amount_micros: Option<i64>,
     /// Refund or dispute.
     pub reason: ReversalReason,
 }
@@ -74,6 +81,31 @@ impl ReversalEvent {
     pub fn namespaced_ref(&self) -> String {
         self.provider.namespaced(&self.deposit_ref)
     }
+
+    /// Every candidate `<provider>:<ref>` key, primary first, de-duplicated.
+    pub fn namespaced_refs(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::with_capacity(1 + self.alt_refs.len());
+        for raw in std::iter::once(&self.deposit_ref).chain(self.alt_refs.iter()) {
+            if raw.trim().is_empty() {
+                continue;
+            }
+            let key = self.provider.namespaced(raw);
+            if !out.contains(&key) {
+                out.push(key);
+            }
+        }
+        out
+    }
+}
+
+/// A verified provider webhook, classified: a deposit to mint, or a reversal
+/// (refund / chargeback) of a deposit Mint already minted.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum VerifiedEvent {
+    /// A confirmed on-ramp deposit.
+    Deposit(DepositEvent),
+    /// A refund or dispute of an earlier deposit.
+    Reversal(ReversalEvent),
 }
 
 /// The outcome of verifying a provider webhook. The handler maps:

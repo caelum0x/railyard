@@ -11,7 +11,7 @@
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
-use mint_payments::{ProviderId, WebhookError};
+use mint_payments::{ProviderId, ReversalEvent, VerifiedEvent, WebhookError};
 use mint_reserve::MintRequest;
 use mint_store::LedgerStore;
 use serde_json::json;
@@ -49,45 +49,20 @@ pub async fn provider_webhook<S: LedgerStore + 'static>(
         .as_ref()
         .ok_or_else(|| ApiError::Internal("provider not configured".into()))?;
 
-    // Verify the RAW body against the provider signature scheme, then branch on
-    // the outcome taxonomy: a verified deposit mints; an `Ignored` (well-formed
-    // but non-crediting) event is acknowledged 200 so the provider stops
-    // retrying; every other outcome maps to an error status.
+    // Verify the RAW body against the provider signature scheme ONCE, then
+    // branch on the outcome taxonomy: a verified deposit mints; a verified
+    // refund / chargeback claws the minted credit back; an `Ignored`
+    // (well-formed but non-crediting) event is acknowledged 200 so the
+    // provider stops retrying; every other outcome maps to an error status.
     let event = match registry
-        .verify_webhook(provider, &AxumHeaders(&headers), &body)
+        .verify_event(provider, &AxumHeaders(&headers), &body)
         .await
     {
-        Ok(ev) => ev,
-        Err(WebhookError::Ignored(kind)) => {
-            // Not a deposit: it may be a refund / chargeback of one we already
-            // minted, which must be clawed back so supply stays backed.
-            return match registry.verify_reversal(provider, &AxumHeaders(&headers), &body) {
-                Ok(rev) => {
-                    let out = reversals::apply_reversal(
-                        &st,
-                        &rev.namespaced_ref(),
-                        Some(rev.amount_micros),
-                        rev.reason.as_str(),
-                        Some(format!("{} webhook", provider.tag())),
-                    )
-                    .await;
-                    match out {
-                        Ok(o) => Ok(ok(json!({
-                            "reversal": reversals::reversal_view(&o.record),
-                            "burned_now_micros": o.burned_now_micros,
-                        }))),
-                        // A reversal of a deposit Mint never minted (e.g. a
-                        // payment for something else on the same account) is
-                        // acknowledged so the provider stops retrying.
-                        Err(ApiError::NotFound(m)) => Ok(ok(json!({ "ignored": m }))),
-                        Err(e) => Err(e),
-                    }
-                }
-                Err(WebhookError::BadSignature) => Err(ApiError::Unauthorized),
-                Err(WebhookError::Malformed(m)) => Err(ApiError::BadRequest(m)),
-                Err(_) => Ok(ok(json!({ "ignored": kind }))),
-            };
+        Ok(VerifiedEvent::Deposit(ev)) => ev,
+        Ok(VerifiedEvent::Reversal(rev)) => {
+            return apply_webhook_reversal(&st, provider, &rev).await;
         }
+        Err(WebhookError::Ignored(kind)) => return Ok(ok(json!({ "ignored": kind }))),
         Err(WebhookError::BadSignature) => return Err(ApiError::Unauthorized),
         Err(WebhookError::NotConfigured) => {
             return Err(ApiError::Internal("provider not configured".into()))
@@ -110,4 +85,45 @@ pub async fn provider_webhook<S: LedgerStore + 'static>(
         })
         .await?;
     Ok(ok(views::mint_receipt(&receipt)))
+}
+
+/// Claw back a verified provider refund / chargeback. The original deposit is
+/// looked up under each candidate `<provider>:<ref>` key in turn (providers
+/// can credit one payment under a checkout OR an order / subscription id);
+/// the first one Mint actually minted is reversed. A reversal of a payment
+/// Mint never minted (e.g. a charge for something else) is acknowledged so
+/// the provider stops retrying.
+async fn apply_webhook_reversal<S: LedgerStore + 'static>(
+    st: &AppState<S>,
+    provider: ProviderId,
+    rev: &ReversalEvent,
+) -> ApiResult {
+    let candidates = rev.namespaced_refs();
+    for deposit_ref in &candidates {
+        let out = reversals::apply_reversal(
+            st,
+            deposit_ref,
+            rev.amount_micros,
+            rev.reason.as_str(),
+            Some(format!("{} webhook", provider.tag())),
+        )
+        .await;
+        match out {
+            Ok(o) => {
+                return Ok(ok(json!({
+                    "reversal": reversals::reversal_view(&o.record),
+                    "burned_now_micros": o.burned_now_micros,
+                })))
+            }
+            Err(ApiError::NotFound(_)) => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(ok(json!({
+        "ignored": format!(
+            "no minted deposit for {} reversal of {}",
+            provider.tag(),
+            candidates.join(", ")
+        ),
+    })))
 }

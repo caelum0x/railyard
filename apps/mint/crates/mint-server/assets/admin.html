@@ -96,6 +96,7 @@
     <button data-tab="reconcile">Reconciliation</button>
     <button data-tab="reversals">Reversals</button>
     <button data-tab="keys">API keys</button>
+    <button data-tab="payerkeys">Payer keys</button>
   </nav>
   <div class="spacer"></div>
   <input id="key" type="password" placeholder="X-API-Key (MINT_API_KEY)" autocomplete="off" style="min-width:240px" />
@@ -189,6 +190,21 @@
           <div class="result" id="rd-result"></div>
         </div>
       </div>
+      <div class="section-title">Open positions (what keeps the held balance up)</div>
+      <div class="toolbar">
+        <select id="pos-scope">
+          <option value="open">Open only</option>
+          <option value="all">Include settled / closed / revoked</option>
+        </select>
+        <button id="pos-refresh">Refresh positions</button>
+        <span class="result" id="pos-summary"></span>
+      </div>
+      <div class="section-title">Holds</div>
+      <div class="card" id="pos-holds"></div>
+      <div class="section-title">Streams</div>
+      <div class="card" id="pos-streams"></div>
+      <div class="section-title">Allowances granted</div>
+      <div class="card" id="pos-allowances"></div>
       <div class="toolbar">
         <label>From <input id="stmt-from" type="date" /></label>
         <label>To <input id="stmt-to" type="date" /></label>
@@ -339,6 +355,26 @@
     <div class="card" id="keys"></div>
     <div class="section-title">Environment keys (MINT_API_KEYS_JSON, read-only)</div>
     <div class="card" id="env-keys"></div>
+  </section>
+
+  <!-- AITP-402 payer keys -->
+  <section id="tab-payerkeys" class="hidden">
+    <div class="panel">
+      <h3>Register an AITP payer key</h3>
+      <div class="form">
+        <label for="pk-payer">Payer account</label><input id="pk-payer" placeholder="acct_..." />
+        <label for="pk-id">Key id</label><input id="pk-id" placeholder="agent-2026-09 (echoed as pubkey_id)" />
+        <label for="pk-hex">Ed25519 public key (hex)</label><input id="pk-hex" placeholder="64 hex characters" />
+        <label for="pk-label">Label (optional)</label><input id="pk-label" placeholder="research agent, prod" />
+        <span></span><button id="pk-create" class="primary">Register key</button>
+      </div>
+      <div class="result" id="pk-result"></div>
+    </div>
+    <div class="toolbar">
+      <input id="pk-filter" placeholder="Filter by payer acct_..." style="min-width:280px" />
+      <button id="pk-load">Apply</button>
+    </div>
+    <div class="card" id="payer-keys"></div>
   </section>
 </main>
 
@@ -518,7 +554,7 @@
       $("tr-send").disabled = acct.status !== "active";
       $("rd-send").disabled = acct.status !== "active";
       $("acct-address").disabled = acct.status === "closed";
-      await loadStatement();
+      await Promise.all([loadStatement(), loadPositions()]);
     } catch (e) { placeholder(tiles, "error", "Could not open account: " + e.message); }
   }
 
@@ -673,6 +709,144 @@
       const s = await api("POST", "/v1/accounts/" + encodeURIComponent(currentAccount) + "/kyc/session", {});
       out.replaceChildren("Verification link (" + s.provider + "): ", el("a", { href: s.url, target: "_blank", rel: "noopener noreferrer" }, s.url));
     } catch (e) { out.textContent = "Could not start verification: " + e.message; }
+  }
+
+  // ---- open positions --------------------------------------------------
+  async function loadPositions() {
+    if (!currentAccount) return;
+    const acct = currentAccount;
+    const all = $("pos-scope").value === "all";
+    ["pos-holds", "pos-streams", "pos-allowances"].forEach((k) => placeholder($(k), "loading", "Loading..."));
+    $("pos-summary").textContent = "";
+    const base = "/v1/accounts/" + enc(acct);
+    const [holds, streams, allowances] = await Promise.allSettled([
+      api("GET", base + "/holds?limit=200" + (all ? "" : "&status=open")),
+      api("GET", base + "/streams?limit=200" + (all ? "" : "&status=open")),
+      api("GET", base + "/allowances?limit=200&status=" + (all ? "all" : "active")),
+    ]);
+    if (acct !== currentAccount) return;
+    if (holds.status === "fulfilled") {
+      const h = holds.value;
+      $("pos-summary").textContent = "Open holds reserve " + usd(h.open_held_micros) + ".";
+      if (!h.items.length) placeholder($("pos-holds"), "empty", all ? "No holds on this account." : "No open holds.");
+      else $("pos-holds").replaceChildren(table(["Hold", "Amount", "Captured", "Status", "Auto-release", "Reference", ""], h.items.map(holdRow)));
+    } else placeholder($("pos-holds"), "error", "Could not load holds: " + holds.reason.message);
+    if (streams.status === "fulfilled") {
+      const list = streams.value.items;
+      if (!list.length) placeholder($("pos-streams"), "empty", all ? "No streams on this account." : "No open streams.");
+      else $("pos-streams").replaceChildren(table(["Stream", "Direction", "Counterparty", "Rate", "Cap", "Settled", "Status", ""], list.map(streamRow)));
+    } else placeholder($("pos-streams"), "error", "Could not load streams: " + streams.reason.message);
+    if (allowances.status === "fulfilled") {
+      const list = allowances.value.items;
+      if (!list.length) placeholder($("pos-allowances"), "empty", all ? "This account never granted an allowance." : "No active allowances.");
+      else $("pos-allowances").replaceChildren(table(["Allowance", "Delegate key", "Limit", "Spent", "Window", "Status", ""], list.map(allowanceRow)));
+    } else placeholder($("pos-allowances"), "error", "Could not load allowances: " + allowances.reason.message);
+  }
+
+  // A confirm-then-POST row action that refreshes the account afterwards.
+  function positionAction(label, question, path, body, cls) {
+    const b = el("button", { class: "small" + (cls ? " " + cls : "") }, label);
+    b.onclick = async () => {
+      if (!window.confirm(question)) return;
+      b.disabled = true;
+      try {
+        await api("POST", path, body);
+        setStatus(label + " done", "ok");
+        await openAccount(currentAccount);
+      } catch (e) { setStatus(e.message, "err"); b.disabled = false; }
+    };
+    return b;
+  }
+
+  function holdRow(h) {
+    const action = el("td");
+    if (h.status === "Open") {
+      action.append(positionAction("Release", "Release hold " + h.id + " and return " + usd(h.amount_micros) + " to the account's available balance?",
+        "/v1/holds/" + enc(h.id) + "/release", { idem_key: idem("console-release"), ref: "operator release" }, "danger"));
+    }
+    const expiry = h.expires_at_ms ? (h.expires_at_ms <= Date.now() && h.status === "Open" ? "due " : "") + when(h.expires_at_ms) : "never";
+    return el("tr", null,
+      el("td", { class: "mono" }, h.id), el("td", { class: "num" }, usd(h.amount_micros)), el("td", { class: "num" }, usd(h.captured_micros)),
+      el("td", null, badge(h.status === "Open" ? "pending" : h.status === "Captured" ? "paid" : "closed")), el("td", null, expiry),
+      el("td", { class: "mono" }, h.ref), action);
+  }
+
+  function streamRow(s) {
+    const action = el("td");
+    if (s.status === "Open" && s.direction === "outgoing") {
+      action.append(positionAction("Close", "Close stream " + s.id + "? Nothing more is settled; the unused " + usd(s.cap_micros - s.settled_micros) + " returns to the payer.",
+        "/v1/streams/" + enc(s.id) + "/close", { units: 0, seq: 0, idem_key: idem("console-stream-close"), ref: "operator close" }, "danger"));
+    }
+    return el("tr", null,
+      el("td", { class: "mono" }, s.id), el("td", null, s.direction),
+      el("td", { class: "mono" }, s.direction === "outgoing" ? s.to_id : s.from_id),
+      el("td", { class: "num" }, usd(s.rate_micros) + " / " + String(s.unit).toLowerCase()), el("td", { class: "num" }, usd(s.cap_micros)),
+      el("td", { class: "num" }, usd(s.settled_micros)), el("td", null, badge(s.status === "Open" ? "active" : "closed")), action);
+  }
+
+  function windowText(w) {
+    if (!w) return "-";
+    if (w === "PerCall") return "lifetime cap";
+    if (typeof w === "string") return w.toLowerCase();
+    if (w.Rolling || w.rolling) { const ms = (w.Rolling || w.rolling).window_ms; return "rolling " + Math.round(ms / 3600000 * 10) / 10 + " h"; }
+    return JSON.stringify(w);
+  }
+
+  function allowanceRow(a) {
+    const action = el("td");
+    if (!a.revoked) {
+      action.append(positionAction("Revoke", "Revoke allowance " + a.id + "? The delegate " + a.to_key + " can no longer spend from this account.",
+        "/v1/allowances/" + enc(a.id) + "/revoke", { idem_key: idem("console-revoke") }, "danger"));
+    }
+    return el("tr", null,
+      el("td", { class: "mono" }, a.id), el("td", { class: "mono" }, a.to_key), el("td", { class: "num" }, usd(a.limit_micros)),
+      el("td", { class: "num" }, usd(a.spent_micros)), el("td", null, windowText(a.window)),
+      el("td", null, badge(a.revoked ? "revoked" : "active")), action);
+  }
+
+  // ---- AITP payer keys -------------------------------------------------
+  async function loadPayerKeys() {
+    const box = $("payer-keys");
+    placeholder(box, "loading", "Loading payer keys...");
+    const payer = $("pk-filter").value.trim();
+    try {
+      const r = await api("GET", "/v1/payer-keys" + (payer ? "?payer=" + enc(payer) : ""));
+      if (!r.items.length) { placeholder(box, "empty", payer ? "No keys registered for this payer." : "No payer keys registered. Agents cannot pay over AITP-402 until their public key is registered here."); return; }
+      box.replaceChildren(table(["Payer", "Key id", "Public key", "Label", "Registered", "Status", ""], r.items.map(payerKeyRow)));
+    } catch (e) { placeholder(box, "error", "Could not load payer keys: " + e.message); }
+  }
+
+  function payerKeyRow(k) {
+    const action = el("td");
+    if (k.active) {
+      const b = el("button", { class: "small danger" }, "Revoke");
+      b.onclick = async () => {
+        if (!window.confirm("Revoke key " + k.pubkey_id + " for " + k.payer + "? AITP authorizations signed with it are refused immediately.")) return;
+        b.disabled = true;
+        try { const u = await api("POST", "/v1/payer-keys/" + enc(k.payer) + "/" + enc(k.pubkey_id) + "/revoke", {}); tr.replaceWith(payerKeyRow(u)); setStatus("Payer key revoked", "ok"); }
+        catch (e) { setStatus(e.message, "err"); b.disabled = false; }
+      };
+      action.append(b);
+    }
+    const tr = el("tr", null,
+      el("td", { class: "mono" }, k.payer), el("td", { class: "mono" }, k.pubkey_id),
+      el("td", { class: "mono" }, k.public_key_hex.slice(0, 16) + "..."), el("td", null, k.label),
+      el("td", null, when(k.created_ms)), el("td", null, badge(k.active ? "active" : "revoked")), action);
+    return tr;
+  }
+
+  async function createPayerKey() {
+    const out = $("pk-result");
+    const payer = $("pk-payer").value.trim();
+    const pubkey_id = $("pk-id").value.trim();
+    const public_key_hex = $("pk-hex").value.trim();
+    if (!payer || !pubkey_id || !/^[0-9a-fA-F]{64}$/.test(public_key_hex)) { out.textContent = "Enter the payer account, a key id and a 64-character hex Ed25519 public key."; return; }
+    await run($("pk-create"), out, "Registering key...", async () => {
+      const k = await api("POST", "/v1/payer-keys", { payer, pubkey_id, public_key_hex, label: $("pk-label").value.trim() || null });
+      out.textContent = "Registered " + k.pubkey_id + " for " + k.payer + ". It verifies AITP authorizations immediately.";
+      $("pk-id").value = ""; $("pk-hex").value = ""; $("pk-label").value = "";
+      await loadPayerKeys();
+    });
   }
 
   // ---- payouts ---------------------------------------------------------
@@ -856,10 +1030,17 @@
           if (l.status === "reversal_unrecorded" && l.mint) {
             const b = el("button", { class: "small" }, "Claw back");
             b.onclick = async () => {
-              if (!window.confirm("Record a " + l.kind + " of " + usd(l.amount_micros) + " against " + l.mint.reference + " and burn it from " + l.mint.account_id + "?")) return;
+              // Reversal amounts are CUMULATIVE per deposit: sum every refund /
+              // dispute line the report holds for this deposit (partial refunds
+              // arrive as separate lines), capped at the minted amount.
+              const reversedTotal = res.lines
+                .filter((x) => x.mint && x.mint.reference === l.mint.reference && (x.kind === "refund" || x.kind === "dispute"))
+                .reduce((sum, x) => sum + Math.abs(Number(x.amount_micros) || 0), 0);
+              const cumulative = Math.min(reversedTotal || Math.abs(l.amount_micros), l.mint.amount_micros);
+              if (!window.confirm("Record " + usd(cumulative) + " reversed in total against " + l.mint.reference + " and burn the outstanding part from " + l.mint.account_id + "?")) return;
               b.disabled = true;
               try {
-                const r = await api("POST", "/v1/reversals", { deposit_ref: l.mint.reference, amount_micros: Math.min(l.amount_micros, l.mint.amount_micros), reason: l.kind === "dispute" ? "dispute" : "refund", note: "from report " + res.report.id });
+                const r = await api("POST", "/v1/reversals", { deposit_ref: l.mint.reference, amount_micros: cumulative, reason: l.kind === "dispute" ? "dispute" : "refund", note: "from report " + res.report.id });
                 setStatus("Reversal " + r.status.replace(/_/g, " ") + ": burned " + usd(r.burned_now_micros), "ok");
                 openReport(res.report.id);
               } catch (e) { setStatus(e.message, "err"); b.disabled = false; }
@@ -1010,13 +1191,14 @@
   // ---- shell -----------------------------------------------------------
   function showTab(name) {
     document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
-    ["overview", "accounts", "payouts", "funding", "reconcile", "reversals", "keys"].forEach((t) => $("tab-" + t).classList.toggle("hidden", t !== name));
+    ["overview", "accounts", "payouts", "funding", "reconcile", "reversals", "keys", "payerkeys"].forEach((t) => $("tab-" + t).classList.toggle("hidden", t !== name));
     if (name === "overview") loadOverview();
     if (name === "accounts") loadAccounts(false);
     if (name === "payouts") loadPayouts(false);
     if (name === "reconcile") loadReports();
     if (name === "reversals") loadReversals();
     if (name === "keys") loadKeys();
+    if (name === "payerkeys") loadPayerKeys();
   }
 
   function logout() {
@@ -1078,6 +1260,11 @@
   $("rv-load").onclick = loadReversals;
   $("rv-create").onclick = createReversal;
   $("ky-create").onclick = createKey;
+  $("pos-refresh").onclick = loadPositions;
+  $("pos-scope").onchange = loadPositions;
+  $("pk-create").onclick = createPayerKey;
+  $("pk-load").onclick = loadPayerKeys;
+  $("pk-filter").addEventListener("keydown", (e) => { if (e.key === "Enter") loadPayerKeys(); });
   if (apiKey) connect();
 })();
 </script>

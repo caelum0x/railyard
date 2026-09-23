@@ -14,6 +14,7 @@ use serde_json::json;
 use crate::attestation::HoldSettlementOperation;
 use crate::dto::{parse_account, AitpCaptureReq, AitpChallengeReq, AitpReleaseReq};
 use crate::error::{ApiError, ApiResult};
+use crate::jobs::{aitp_hold_ttl_ms, now_ms};
 use crate::state::AppState;
 use crate::views;
 
@@ -63,6 +64,25 @@ pub async fn verify<S: LedgerStore + 'static>(
     Json(auth): Json<Authorization>,
 ) -> ApiResult {
     let settlement = st.aitp.verify_and_settle(&auth).await?;
+    // A hold settlement stays open for the merchant to capture / release; give
+    // it a deadline (challenge expiry + the AITP settle window) so an abandoned
+    // hold is auto-released instead of locking the payer's funds forever. An
+    // idempotent replay keeps the first deadline.
+    let mut hold_expires_at_ms: Option<i64> = None;
+    if let Settlement::Hold { hold_id, .. } = &settlement {
+        let store = st.ledger.store();
+        hold_expires_at_ms = match store.hold_expiry(hold_id).await? {
+            Some(at) => Some(at),
+            None => {
+                let at = auth
+                    .expiry
+                    .max(now_ms())
+                    .saturating_add(aitp_hold_ttl_ms());
+                store.set_hold_expiry(hold_id, at).await?;
+                Some(at)
+            }
+        };
+    }
     let (body, aitp_receipt) = match &settlement {
         Settlement::Transfer {
             receipt,
@@ -82,6 +102,7 @@ pub async fn verify<S: LedgerStore + 'static>(
             json!({
                 "scheme": "hold",
                 "hold_id": hold_id.as_str(),
+                "hold_expires_at_ms": hold_expires_at_ms,
                 "receipt": views::hold_receipt(receipt),
             }),
             aitp_receipt,

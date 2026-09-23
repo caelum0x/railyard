@@ -26,7 +26,8 @@ use mint_store::{
     SystemClock, TransferCommit,
 };
 use mint_store::{
-    AccountStatus, AccountSummary, ApiKeyRecord, DepositReversal, PayoutQuery, PayoutRecord,
+    AccountStatus, AccountSummary, ApiKeyRecord, DepositReversal, PayerKeyRecord, PayoutQuery,
+    PayoutRecord,
     PayoutRecordStatus, ProviderReport, ProviderReportLine, ReceiptQuery, ReportLineKind,
     ReserveMovement, ReserveMovementTotal, ReversalStatus,
 };
@@ -37,8 +38,8 @@ use ulid::Ulid;
 use crate::rebuild;
 use crate::rows;
 use crate::tx::{
-    account_exists, append_journal, append_receipt, check_idem, db_err, lock_balance,
-    read_balance_row, record_idem, write_balance, IdemCheck,
+    account_exists, append_journal, append_receipt, check_idem, db_err, ensure_can_receive,
+    ensure_can_send, lock_balance, read_balance_row, record_idem, write_balance, IdemCheck,
 };
 
 /// Optional pool tuning for [`PgStore::connect_with`].
@@ -174,6 +175,68 @@ impl PgStore {
             accounts,
             created_ms: r.get("created_ms"),
             revoked_ms: r.get("revoked_ms"),
+        })
+    }
+
+    const PAYER_KEY_COLS: &'static str =
+        "payer, pubkey_id, public_key_hex, label, created_ms, revoked_ms";
+
+    fn payer_key_from_row(r: &PgRow) -> PayerKeyRecord {
+        PayerKeyRecord {
+            payer: r.get("payer"),
+            pubkey_id: r.get("pubkey_id"),
+            public_key_hex: r.get("public_key_hex"),
+            label: r.get("label"),
+            created_ms: r.get("created_ms"),
+            revoked_ms: r.get("revoked_ms"),
+        }
+    }
+
+    fn hold_from_row(r: &PgRow) -> Result<HoldRecord, MintError> {
+        Ok(HoldRecord {
+            id: HoldId::parse(&r.get::<String, _>("id"))?,
+            account_id: AccountId::parse(&r.get::<String, _>("account_id"))?,
+            amount_micros: Micros::new(r.get::<i64, _>("amount_micros")),
+            captured_micros: Micros::new(r.get::<i64, _>("captured_micros")),
+            status: rows::hold_status_from_i16(r.get::<i16, _>("status")),
+            ref_: r.get("ref"),
+        })
+    }
+
+    fn stream_from_row(r: &PgRow) -> Result<StreamRecord, MintError> {
+        Ok(StreamRecord {
+            id: StreamId::parse(&r.get::<String, _>("id"))?,
+            from_id: AccountId::parse(&r.get::<String, _>("from_id"))?,
+            to_id: AccountId::parse(&r.get::<String, _>("to_id"))?,
+            rate_micros: Micros::new(r.get::<i64, _>("rate_micros")),
+            unit: rows::stream_unit_from_i16(r.get::<i16, _>("unit")),
+            cap_micros: Micros::new(r.get::<i64, _>("cap_micros")),
+            settled_micros: Micros::new(r.get::<i64, _>("settled_micros")),
+            last_seq: r.get::<i64, _>("last_seq") as u64,
+            status: rows::stream_status_from_i16(r.get::<i16, _>("status")),
+            ref_: r.get("ref"),
+        })
+    }
+
+    fn allowance_from_row(r: &PgRow) -> Result<AllowanceRecord, MintError> {
+        let scope: Option<serde_json::Value> = r.get("scope");
+        let scope = match scope {
+            Some(v) => serde_json::from_value::<AllowanceScope>(v).ok(),
+            None => None,
+        };
+        Ok(AllowanceRecord {
+            id: AllowanceId::parse(&r.get::<String, _>("id"))?,
+            granter: AccountId::parse(&r.get::<String, _>("account_id"))?,
+            to_key: r.get("key_id"),
+            limit_micros: Micros::new(r.get::<i64, _>("limit_micros")),
+            spent_micros: Micros::new(r.get::<i64, _>("spent_micros")),
+            window: rows::window_from_cols(
+                r.get::<i16, _>("window_kind"),
+                r.get::<i64, _>("window_ms"),
+            ),
+            window_start_ms: r.get::<i64, _>("window_start"),
+            scope,
+            revoked: r.get::<Option<i64>, _>("revoked_at").is_some(),
         })
     }
 
@@ -763,6 +826,10 @@ impl LedgerStore for PgStore {
             }
             IdemCheck::Fresh => {}
         }
+        // Account lifecycle guard, read inside this transaction after the
+        // balance rows are locked (see `tx::account_status`): no freeze race.
+        ensure_can_send(&mut tx, &commit.from).await?;
+        ensure_can_receive(&mut tx, &commit.to).await?;
 
         let outcome = self
             .settle_transfer(
@@ -821,6 +888,9 @@ impl LedgerStore for PgStore {
             }
             IdemCheck::Fresh => {}
         }
+        // Account lifecycle guard, read inside this transaction after the
+        // balance rows are locked (see `tx::account_status`): no freeze race.
+        ensure_can_send(&mut tx, &commit.from).await?;
 
         let outcome = self
             .settle_hold_create(
@@ -892,6 +962,10 @@ impl LedgerStore for PgStore {
             }
             IdemCheck::Fresh => {}
         }
+        // Account lifecycle guard, read inside this transaction after the
+        // balance rows are locked (see `tx::account_status`): no freeze race.
+        ensure_can_send(&mut tx, &holder).await?;
+        ensure_can_receive(&mut tx, &commit.to).await?;
 
         if hold.status != HoldStatus::Open {
             return Err(MintError::HoldNotFound);
@@ -1196,6 +1270,10 @@ impl LedgerStore for PgStore {
             }
             IdemCheck::Fresh => {}
         }
+        // Account lifecycle guard, read inside this transaction after the
+        // balance rows are locked (see `tx::account_status`): no freeze race.
+        let _ = lock_balance(&mut tx, &commit.granter).await?;
+        ensure_can_send(&mut tx, &commit.granter).await?;
 
         if !account_exists(&mut tx, &commit.granter).await? {
             return Err(MintError::AccountNotFound);
@@ -1291,6 +1369,12 @@ impl LedgerStore for PgStore {
         if record.revoked {
             return Err(MintError::AllowanceExceeded);
         }
+        // Account lifecycle guard: lock the granter + payee balance rows
+        // (sorted, re-entrant for the settle below) and read both statuses
+        // inside this transaction, so a freeze cannot race the spend.
+        let _ = self.lock_pair(&mut tx, &record.granter, &commit.to).await?;
+        ensure_can_send(&mut tx, &record.granter).await?;
+        ensure_can_receive(&mut tx, &commit.to).await?;
         if let AllowanceWindow::Rolling { window_ms } = record.window {
             if ts.saturating_sub(record.window_start_ms) >= window_ms {
                 record.spent_micros = Micros::zero();
@@ -1436,6 +1520,10 @@ impl LedgerStore for PgStore {
             }
             IdemCheck::Fresh => {}
         }
+        // Account lifecycle guard, read inside this transaction after the
+        // balance rows are locked (see `tx::account_status`): no freeze race.
+        ensure_can_send(&mut tx, &commit.from).await?;
+        ensure_can_receive(&mut tx, &commit.to).await?;
 
         if commit.from == commit.to {
             return Err(MintError::BadAccountId);
@@ -1592,6 +1680,10 @@ impl LedgerStore for PgStore {
             }
             IdemCheck::Fresh => {}
         }
+        // Account lifecycle guard, read inside this transaction after the
+        // balance rows are locked (see `tx::account_status`): no freeze race.
+        ensure_can_send(&mut tx, &from).await?;
+        ensure_can_receive(&mut tx, &to).await?;
 
         if stream.status != StreamStatus::Open {
             return Err(MintError::StreamClosed);
@@ -1759,6 +1851,13 @@ impl LedgerStore for PgStore {
                 });
             }
             IdemCheck::Fresh => {}
+        }
+        // A zero-unit close only releases the payer's own remainder (allowed on
+        // a frozen account); a final tick is a payment and is guarded here,
+        // inside the transaction, after both balance rows are locked.
+        if commit.units > 0 {
+            ensure_can_send(&mut tx, &from).await?;
+            ensure_can_receive(&mut tx, &to).await?;
         }
 
         if stream.status != StreamStatus::Open {
@@ -1955,6 +2054,9 @@ impl LedgerStore for PgStore {
             }
             IdemCheck::Fresh => {}
         }
+        // Account lifecycle guard, read inside this transaction after the
+        // balance rows are locked (see `tx::account_status`): no freeze race.
+        ensure_can_receive(&mut tx, &commit.to).await?;
 
         let to_bal = read_balance_row(&mut tx, &commit.to).await?;
         let amount = commit.amount.micros();
@@ -2058,6 +2160,11 @@ impl LedgerStore for PgStore {
                 });
             }
             IdemCheck::Fresh => {}
+        }
+        // Account lifecycle guard, read inside this transaction after the
+        // balance row is locked. An operator claw-back burn bypasses it.
+        if !commit.bypass_lifecycle {
+            ensure_can_send(&mut tx, &commit.from).await?;
         }
 
         let from_bal = read_balance_row(&mut tx, &commit.from).await?;
@@ -2525,6 +2632,205 @@ impl LedgerStore for PgStore {
     async fn get_hold(&self, id: &HoldId) -> Result<HoldRecord, MintError> {
         let mut conn = self.pool.acquire().await.map_err(db_err)?;
         PgStore::get_hold(self, &mut conn, id, false).await
+    }
+
+    async fn list_account_holds(
+        &self,
+        account_id: &AccountId,
+        status: Option<HoldStatus>,
+        limit: usize,
+    ) -> Result<Vec<(HoldRecord, Option<i64>)>, MintError> {
+        let mut conn = self.pool.acquire().await.map_err(db_err)?;
+        if !account_exists(&mut conn, account_id).await? {
+            return Err(MintError::AccountNotFound);
+        }
+        let rows = sqlx::query(
+            "SELECT h.id, h.account_id, h.amount_micros, h.captured_micros, h.status, h.ref, \
+                    e.expires_at \
+             FROM holds h LEFT JOIN hold_expiries e ON e.hold_id = h.id \
+             WHERE h.account_id = $1 AND ($2::smallint IS NULL OR h.status = $2) \
+             ORDER BY h.created_at DESC, h.id DESC LIMIT $3",
+        )
+        .bind(account_id.as_str())
+        .bind(status.map(rows::hold_status_to_i16))
+        .bind(limit as i64)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(db_err)?;
+        rows.iter()
+            .map(|r| Ok((Self::hold_from_row(r)?, r.get::<Option<i64>, _>("expires_at"))))
+            .collect()
+    }
+
+    async fn list_account_streams(
+        &self,
+        account_id: &AccountId,
+        status: Option<StreamStatus>,
+        limit: usize,
+    ) -> Result<Vec<StreamRecord>, MintError> {
+        let mut conn = self.pool.acquire().await.map_err(db_err)?;
+        if !account_exists(&mut conn, account_id).await? {
+            return Err(MintError::AccountNotFound);
+        }
+        let rows = sqlx::query(
+            "SELECT id, from_id, to_id, rate_micros, unit, cap_micros, settled_micros, last_seq, \
+                    status, ref \
+             FROM streams \
+             WHERE (from_id = $1 OR to_id = $1) AND ($2::smallint IS NULL OR status = $2) \
+             ORDER BY created_at DESC, id DESC LIMIT $3",
+        )
+        .bind(account_id.as_str())
+        .bind(status.map(rows::stream_status_to_i16))
+        .bind(limit as i64)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(db_err)?;
+        rows.iter().map(Self::stream_from_row).collect()
+    }
+
+    async fn list_account_allowances(
+        &self,
+        account_id: &AccountId,
+        include_revoked: bool,
+        limit: usize,
+    ) -> Result<Vec<AllowanceRecord>, MintError> {
+        let mut conn = self.pool.acquire().await.map_err(db_err)?;
+        if !account_exists(&mut conn, account_id).await? {
+            return Err(MintError::AccountNotFound);
+        }
+        let rows = sqlx::query(
+            "SELECT id, account_id, key_id, limit_micros, spent_micros, window_kind, window_ms, \
+                    window_start, scope, revoked_at \
+             FROM allowances \
+             WHERE account_id = $1 AND ($2 OR revoked_at IS NULL) \
+             ORDER BY id DESC LIMIT $3",
+        )
+        .bind(account_id.as_str())
+        .bind(include_revoked)
+        .bind(limit as i64)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(db_err)?;
+        rows.iter().map(Self::allowance_from_row).collect()
+    }
+
+    async fn set_hold_expiry(&self, hold_id: &HoldId, expires_at_ms: i64) -> Result<(), MintError> {
+        let res = sqlx::query(
+            "INSERT INTO hold_expiries (hold_id, expires_at) \
+             SELECT id, $2 FROM holds WHERE id = $1 \
+             ON CONFLICT (hold_id) DO UPDATE SET expires_at = EXCLUDED.expires_at",
+        )
+        .bind(hold_id.as_str())
+        .bind(expires_at_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        if res.rows_affected() == 0 {
+            return Err(MintError::HoldNotFound);
+        }
+        Ok(())
+    }
+
+    async fn hold_expiry(&self, hold_id: &HoldId) -> Result<Option<i64>, MintError> {
+        let row = sqlx::query("SELECT expires_at FROM hold_expiries WHERE hold_id = $1")
+            .bind(hold_id.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(row.map(|r| r.get::<i64, _>("expires_at")))
+    }
+
+    async fn list_expired_holds(&self, now_ms: i64, limit: usize) -> Result<Vec<HoldId>, MintError> {
+        let rows = sqlx::query(
+            "SELECT e.hold_id FROM hold_expiries e JOIN holds h ON h.id = e.hold_id \
+             WHERE e.expires_at <= $1 AND h.status = $2 \
+             ORDER BY e.expires_at ASC, e.hold_id ASC LIMIT $3",
+        )
+        .bind(now_ms)
+        .bind(rows::hold_status_to_i16(HoldStatus::Open))
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        rows.iter()
+            .map(|r| HoldId::parse(&r.get::<String, _>("hold_id")))
+            .collect()
+    }
+
+    async fn insert_payer_key(&self, record: PayerKeyRecord) -> Result<PayerKeyRecord, MintError> {
+        let mut conn = self.pool.acquire().await.map_err(db_err)?;
+        let payer = AccountId::parse(&record.payer)?;
+        if !account_exists(&mut conn, &payer).await? {
+            return Err(MintError::AccountNotFound);
+        }
+        let res = sqlx::query(
+            "INSERT INTO payer_keys (payer, pubkey_id, public_key_hex, label, created_ms, revoked_ms) \
+             VALUES ($1, $2, $3, $4, $5, NULL) ON CONFLICT DO NOTHING",
+        )
+        .bind(&record.payer)
+        .bind(&record.pubkey_id)
+        .bind(&record.public_key_hex)
+        .bind(&record.label)
+        .bind(record.created_ms)
+        .execute(&mut *conn)
+        .await
+        .map_err(db_err)?;
+        if res.rows_affected() == 0 {
+            return Err(MintError::IdempotencyConflict);
+        }
+        Ok(PayerKeyRecord {
+            revoked_ms: None,
+            ..record
+        })
+    }
+
+    async fn list_payer_keys(&self, payer: Option<&str>) -> Result<Vec<PayerKeyRecord>, MintError> {
+        let sql = format!(
+            "SELECT {} FROM payer_keys WHERE ($1::text IS NULL OR payer = $1) \
+             ORDER BY created_ms DESC, payer, pubkey_id",
+            Self::PAYER_KEY_COLS
+        );
+        let rows = sqlx::query(&sql)
+            .bind(payer)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(rows.iter().map(Self::payer_key_from_row).collect())
+    }
+
+    async fn revoke_payer_key(
+        &self,
+        payer: &str,
+        pubkey_id: &str,
+    ) -> Result<Option<PayerKeyRecord>, MintError> {
+        let sql = format!(
+            "UPDATE payer_keys SET revoked_ms = $3 \
+             WHERE payer = $1 AND pubkey_id = $2 AND revoked_ms IS NULL RETURNING {}",
+            Self::PAYER_KEY_COLS
+        );
+        let row = sqlx::query(&sql)
+            .bind(payer)
+            .bind(pubkey_id)
+            .bind(self.clock.now())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?;
+        if let Some(r) = row {
+            return Ok(Some(Self::payer_key_from_row(&r)));
+        }
+        // Already revoked (idempotent): return the latest record, if any.
+        let sql = format!(
+            "SELECT {} FROM payer_keys WHERE payer = $1 AND pubkey_id = $2 \
+             ORDER BY created_ms DESC LIMIT 1",
+            Self::PAYER_KEY_COLS
+        );
+        let row = sqlx::query(&sql)
+            .bind(payer)
+            .bind(pubkey_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(row.as_ref().map(Self::payer_key_from_row))
     }
 
     async fn insert_api_key(&self, record: ApiKeyRecord) -> Result<ApiKeyRecord, MintError> {

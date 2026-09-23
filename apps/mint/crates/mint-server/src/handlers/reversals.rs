@@ -142,6 +142,7 @@ pub async fn apply_reversal<S: LedgerStore + 'static>(
                     payout_ref,
                     idem_key: format!("reversal:{deposit_ref}#{attempts}"),
                     op_hash: hash,
+                    bypass_lifecycle: true,
                 })
                 .await;
             match out {

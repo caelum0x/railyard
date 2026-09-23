@@ -16,12 +16,25 @@ curl http://127.0.0.1:8080/healthz
 
 Production requires `DATABASE_URL`, `MINT_API_KEY`, and a unique 32-byte
 `MINT_SIGNING_KEY` encoded as hex. The server refuses to use its deterministic
-development signer when Postgres is configured. AITP-402 also needs the payer
-verification-key registry, supplied as a JSON array:
+development signer when Postgres is configured. AITP-402 payers need their
+Ed25519 verifying key registered: `POST /v1/payer-keys`
+`{"payer":"acct_customer","pubkey_id":"key_1","public_key_hex":"<64 hex chars>"}`
+(admin), listed with `GET /v1/payer-keys?payer=` and revoked with
+`POST /v1/payer-keys/{payer}/{pubkey_id}/revoke`, or from the console's
+Payer keys tab. No restart is needed; other instances pick changes up within one
+background sweep. An optional static bootstrap set can still be supplied, and a
+key revoked in the DB is refused even if it is listed there:
 
 ```bash
 export MINT_PAYER_KEYS_JSON='[{"payer":"acct_customer","pubkey_id":"key_1","public_key_hex":"<64 hex chars>"}]'
 ```
+
+Background sweeps (every `MINT_SWEEP_INTERVAL_MS`, default 60000; disable with
+`MINT_SWEEP_DISABLED=1`) refresh every `pending` payout from its provider,
+release OPEN holds past their deadline, and reload the payer-key registry.
+AITP-402 hold settlements expire at the challenge expiry plus
+`MINT_AITP_HOLD_TTL_MS` (default 15 minutes) unless the merchant captures or
+releases them first; `POST /v1/holds` accepts an optional `expires_in_ms`.
 
 The server runs migrations at startup. Payment on-ramp adapters are activated by
 their provider environment variables; with none configured, deposit confirmation
@@ -109,9 +122,20 @@ movements inside the report period that the report lacks are listed as
 ### Refunds and chargebacks
 
 A refund or dispute of a deposit Mint already minted must be clawed back or the
-supply stops being backed. Stripe `charge.refunded` and
-`charge.dispute.created` webhooks (same `/v1/deposits/stripe/webhook` route) do
-this automatically; other providers are recorded by operators:
+supply stops being backed. The provider webhooks on the same
+`/v1/deposits/{provider}/webhook` route do this automatically:
+
+| Provider | Events | Amount |
+|---|---|---|
+| Stripe | `charge.refunded`, `charge.dispute.created`, `charge.dispute.funds_withdrawn` | cumulative `amount_refunded` / disputed amount |
+| PayPal | `PAYMENT.CAPTURE.REFUNDED`, `PAYMENT.CAPTURE.REVERSED`, `CUSTOMER.DISPUTE.CREATED` | cumulative `total_refunded_amount` / `dispute_amount`; the order id is resolved from the capture |
+| Creem | `refund.created`, `dispute.created` | `transaction.refunded_amount` (else `refund_amount`) / disputed amount |
+| Polar | `order.refunded` | cumulative `refunded_amount` |
+| RevenueCat | `CANCELLATION` with `cancel_reason=CUSTOMER_SUPPORT` | the refunded price, else the whole purchase |
+| Adapty | `subscription_refunded`, `non_subscription_purchase_refunded` | `price_usd`, else the whole purchase |
+
+USDC transfers are final. Iyzico refunds, and anything a webhook missed, are
+recorded by operators (or from an imported provider report):
 
 - `POST /v1/reversals` `{"deposit_ref":"stripe:pi_…","amount_micros":…,"reason":"refund|dispute"}`
   (admin) — burns what the account still holds (even when frozen), up to the
@@ -139,17 +163,22 @@ this automatically; other providers are recorded by operators:
 - `GET /v1/accounts/{id}/statement?from_ms=&to_ms=` — opening balance, every
   entry with its signed delta, credit/debit totals and closing balance;
 - `GET /v1/accounts/{id}/receipts?after_seq=&limit=&from_ms=&to_ms=` — a page of
-  the hash-linked receipt chain.
+  the hash-linked receipt chain;
+- `GET /v1/accounts/{id}/holds?status=open|captured|released` (with each hold's
+  `expires_at_ms`), `/streams?status=open|closed` and
+  `/allowances?status=active|all` — what keeps the held balance up and blocks a
+  close.
 
 ## Operator console
 
 `GET /admin` serves the operator console: reserve and solvency, Merkle audit
 root, reconciliation; accounts (create, freeze / unfreeze / close, receive
 addresses, operator transfers, redeem, statements, signed receipt chain,
-hold / stream / allowance lookup, KYC); payouts (retry, cancel and re-credit,
+per-account open holds / streams / allowances with release / close / revoke,
+KYC); payouts (retry, cancel and re-credit,
 mark paid); funding (hosted checkouts, manual deposit-gated mint); provider
 report import with discrepancy review and one-click claw-back; refunds and
-chargebacks; API key management. It holds no data itself; every panel calls the API with the
+chargebacks; API key and AITP payer-key management. It holds no data itself; every panel calls the API with the
 operator's `X-API-Key`.
 
 ## API keys

@@ -15,6 +15,8 @@ pub mod auth;
 pub mod dto;
 pub mod error;
 pub mod handlers;
+pub mod jobs;
+pub mod payer_registry;
 pub mod router;
 pub mod shared;
 pub mod state;

@@ -11,8 +11,8 @@ use tower_http::trace::TraceLayer;
 use crate::auth;
 use crate::handlers::{
     accounts, addresses, admin, aitp, allowances, checkouts, deposits, health, holds, keys, kyc,
-    mint_redeem, payouts, provider_reports, receipts, reserve, reversals, statements, streams,
-    transfers, verification_keys,
+    mint_redeem, payer_keys, payouts, positions, provider_reports, receipts, reserve, reversals,
+    statements, streams, transfers, verification_keys,
 };
 use crate::state::AppState;
 
@@ -39,6 +39,10 @@ pub fn build_router<S: LedgerStore + 'static>(state: AppState<S>) -> Router {
             "/v1/accounts/:id/statement",
             get(statements::statement::<S>),
         )
+        // open positions (what keeps `held` up / blocks a close)
+        .route("/v1/accounts/:id/holds", get(positions::holds::<S>))
+        .route("/v1/accounts/:id/streams", get(positions::streams::<S>))
+        .route("/v1/accounts/:id/allowances", get(positions::allowances::<S>))
         .route("/v1/accounts/:id/kyc", get(kyc::status::<S>))
         .route("/v1/accounts/:id/kyc/session", post(kyc::start_session::<S>))
         .route("/v1/addresses/:address", get(addresses::lookup::<S>))
@@ -96,6 +100,15 @@ pub fn build_router<S: LedgerStore + 'static>(state: AppState<S>) -> Router {
         .route(
             "/v1/reversals/:deposit_ref/write-off",
             post(reversals::write_off::<S>),
+        )
+        // AITP-402 payer verifying keys (operator-only)
+        .route(
+            "/v1/payer-keys",
+            get(payer_keys::list::<S>).post(payer_keys::create::<S>),
+        )
+        .route(
+            "/v1/payer-keys/:payer/:pubkey_id/revoke",
+            post(payer_keys::revoke::<S>),
         )
         // DB-backed API keys (operator-only)
         .route("/v1/keys", get(keys::list::<S>).post(keys::create::<S>))

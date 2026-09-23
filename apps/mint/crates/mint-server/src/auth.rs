@@ -143,6 +143,10 @@ pub fn required_scope(method: &Method, path: &str) -> Scope {
     if p == "/v1/keys" || p.starts_with("/v1/keys/") {
         return Scope::Admin;
     }
+    // AITP payer-key registration authorizes spend: operator-only too.
+    if p == "/v1/payer-keys" || p.starts_with("/v1/payer-keys/") {
+        return Scope::Admin;
+    }
     if *method == Method::GET {
         return Scope::Read;
     }

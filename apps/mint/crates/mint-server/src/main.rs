@@ -168,6 +168,13 @@ async fn serve<S: LedgerStore + 'static>(
     state: AppState<S>,
     bind: SocketAddr,
 ) -> anyhow::Result<()> {
+    // Mirror the DB-backed AITP payer keys before serving, then keep payouts,
+    // hold expiries and the key mirror reconciled in the background.
+    match state.payer_keys.reload(state.ledger.store()).await {
+        Ok(n) => tracing::info!(active_db_payer_keys = n, "AITP payer keys loaded"),
+        Err(e) => tracing::error!(error = %e, "loading AITP payer keys from the store failed"),
+    }
+    mint_server::jobs::spawn_background_jobs(state.clone());
     let app = build_router(state);
     let listener = tokio::net::TcpListener::bind(bind)
         .await
@@ -462,17 +469,18 @@ struct PayerKeyConfig {
     public_key_hex: String,
 }
 
-/// Load the public keys that authorize AITP-402 spend. Keeping this registry in
-/// config makes the standalone server usable without adding a public key-admin
-/// endpoint; production deployments should source the JSON from a secret/config
-/// manager and restart on key rotation.
+/// Load the optional BOOTSTRAP public keys that authorize AITP-402 spend. The
+/// primary registry is DB-backed (`/v1/payer-keys` + the operator console,
+/// no restart needed); this env set is a static fallback layered underneath
+/// it, and a key revoked in the DB is refused even if it is still listed here.
 fn load_payer_keys() -> anyhow::Result<InMemoryPayerKeys> {
     let Some(raw) = std::env::var("MINT_PAYER_KEYS_JSON")
         .ok()
         .filter(|value| !value.trim().is_empty())
     else {
-        tracing::warn!(
-            "MINT_PAYER_KEYS_JSON unset — AITP-402 authorizations will reject unknown payer keys"
+        tracing::info!(
+            "MINT_PAYER_KEYS_JSON unset — AITP-402 payer keys come from the DB registry \
+             (/v1/payer-keys) only"
         );
         return Ok(InMemoryPayerKeys::new());
     };

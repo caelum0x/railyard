@@ -7,7 +7,7 @@
 
 use mint_core::{AccountId, Micros, MintError, OpHash};
 use mint_receipts::{ReceiptDraft, ReceiptHash, Signer};
-use mint_store::{Balance, Bucket, OpKind};
+use mint_store::{AccountStatus, Balance, Bucket, OpKind};
 use sqlx::{PgConnection, Row};
 
 use crate::rows;
@@ -106,6 +106,48 @@ pub async fn account_exists(conn: &mut PgConnection, id: &AccountId) -> Result<b
         .await
         .map_err(db_err)?;
     Ok(row.is_some())
+}
+
+/// Read an account's lifecycle status INSIDE the caller's money transaction.
+///
+/// Must be called AFTER the account's balance row is locked `FOR UPDATE`:
+/// `set_account_status` locks that same balance row before it flips the status
+/// and commits both together, so once the caller holds the balance lock any
+/// freeze/close is either already committed (and visible to this fresh
+/// READ COMMITTED statement) or blocked until the caller commits. That makes
+/// the check and the money write one atomic step with no race window, without
+/// taking a second row lock (which could invert lock order against
+/// `set_account_status`).
+pub async fn account_status(
+    conn: &mut PgConnection,
+    id: &AccountId,
+) -> Result<AccountStatus, MintError> {
+    let row = sqlx::query("SELECT status FROM accounts WHERE id = $1")
+        .bind(id.as_str())
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(db_err)?
+        .ok_or(MintError::AccountNotFound)?;
+    Ok(AccountStatus::from_i16(row.get::<i16, _>("status")))
+}
+
+/// Refuse an OUTGOING movement from a frozen or closed account (see
+/// [`account_status`] for the locking contract).
+pub async fn ensure_can_send(conn: &mut PgConnection, id: &AccountId) -> Result<(), MintError> {
+    match account_status(conn, id).await? {
+        AccountStatus::Active => Ok(()),
+        AccountStatus::Frozen => Err(MintError::AccountFrozen),
+        AccountStatus::Closed => Err(MintError::AccountClosed),
+    }
+}
+
+/// Refuse an INCOMING credit to a closed account; a frozen account still
+/// receives so a customer's deposit is never bounced.
+pub async fn ensure_can_receive(conn: &mut PgConnection, id: &AccountId) -> Result<(), MintError> {
+    match account_status(conn, id).await? {
+        AccountStatus::Closed => Err(MintError::AccountClosed),
+        AccountStatus::Active | AccountStatus::Frozen => Ok(()),
+    }
 }
 
 /// Lock and read an account's balance row (`SELECT ... FOR UPDATE`). Returns the

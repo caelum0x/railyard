@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::balance::Balance;
 use crate::operator::{
-    AccountStatus, ApiKeyRecord, DepositReversal, ProviderReport, ProviderReportLine,
-    ReserveMovement, ReversalStatus,
+    AccountStatus, ApiKeyRecord, DepositReversal, PayerKeyRecord, ProviderReport,
+    ProviderReportLine, ReserveMovement, ReversalStatus,
 };
 use crate::reporting::{AccountSummary, PayoutQuery, PayoutRecord, ReceiptQuery, ReserveMovementTotal};
 
@@ -483,6 +483,11 @@ pub struct RedeemCommit {
     pub idem_key: String,
     /// Canonical op hash.
     pub op_hash: OpHash,
+    /// `true` ONLY for an operator correction (a refund / chargeback
+    /// claw-back burn) that must succeed on a frozen account. Every customer
+    /// redeem leaves this `false`, so the store refuses it from a frozen or
+    /// closed account inside the same transaction as the burn.
+    pub bypass_lifecycle: bool,
 }
 
 /// The result of a committed (or replayed) `mint`.
@@ -806,6 +811,62 @@ pub trait LedgerStore: Send + Sync {
             .remove(id)
             .ok_or(MintError::HoldNotFound)
     }
+
+    // ---- operator listings + hold expiry ------------------------------------
+
+    /// An account's holds, newest first, optionally filtered by status, each
+    /// paired with its auto-release deadline (unix ms) when one is set.
+    async fn list_account_holds(
+        &self,
+        account_id: &AccountId,
+        status: Option<HoldStatus>,
+        limit: usize,
+    ) -> Result<Vec<(HoldRecord, Option<i64>)>, MintError>;
+
+    /// Streams the account pays (`from`) or receives (`to`), newest first,
+    /// optionally filtered by status.
+    async fn list_account_streams(
+        &self,
+        account_id: &AccountId,
+        status: Option<StreamStatus>,
+        limit: usize,
+    ) -> Result<Vec<StreamRecord>, MintError>;
+
+    /// Allowances the account granted, newest first (revoked ones only when
+    /// `include_revoked`).
+    async fn list_account_allowances(
+        &self,
+        account_id: &AccountId,
+        include_revoked: bool,
+        limit: usize,
+    ) -> Result<Vec<AllowanceRecord>, MintError>;
+
+    /// Set (or move) a hold's auto-release deadline. [`MintError::HoldNotFound`]
+    /// when the hold does not exist.
+    async fn set_hold_expiry(&self, hold_id: &HoldId, expires_at_ms: i64) -> Result<(), MintError>;
+
+    /// A hold's auto-release deadline, if one was set.
+    async fn hold_expiry(&self, hold_id: &HoldId) -> Result<Option<i64>, MintError>;
+
+    /// OPEN holds whose deadline is at or before `now_ms`, oldest deadline
+    /// first (the auto-release sweeper's worklist).
+    async fn list_expired_holds(&self, now_ms: i64, limit: usize) -> Result<Vec<HoldId>, MintError>;
+
+    // ---- AITP-402 payer keys --------------------------------------------------
+
+    /// Register a payer verifying key. [`MintError::IdempotencyConflict`] when
+    /// an ACTIVE key with the same `(payer, pubkey_id)` already exists.
+    async fn insert_payer_key(&self, record: PayerKeyRecord) -> Result<PayerKeyRecord, MintError>;
+
+    /// Payer keys (active and revoked), newest first, optionally for one payer.
+    async fn list_payer_keys(&self, payer: Option<&str>) -> Result<Vec<PayerKeyRecord>, MintError>;
+
+    /// Revoke a payer key (idempotent). `None` when no such key exists.
+    async fn revoke_payer_key(
+        &self,
+        payer: &str,
+        pubkey_id: &str,
+    ) -> Result<Option<PayerKeyRecord>, MintError>;
 
     // ---- DB-backed API keys -----------------------------------------------
 

@@ -12,7 +12,7 @@ use mint_reserve::{Asset, Deposit, Payout, PayoutDest, Ramp, RampError};
 use serde_json::Value;
 
 use crate::config::ProviderConfig;
-use crate::event::{DepositEvent, WebhookError};
+use crate::event::{DepositEvent, ReversalEvent, ReversalReason, WebhookError};
 use crate::http::{map_status, Headers, HttpTransport};
 use crate::money::json_dollars_to_micros;
 use crate::provider::ProviderId;
@@ -105,17 +105,7 @@ pub fn verify_webhook<H: Headers>(
     headers: &H,
     raw: &[u8],
 ) -> Result<DepositEvent, WebhookError> {
-    let secret = cfg
-        .webhook_secret
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .ok_or(WebhookError::NotConfigured)?;
-    let presented = headers
-        .get_header("authorization")
-        .ok_or(WebhookError::BadSignature)?;
-    if !const_eq_secret(secret.as_bytes(), presented.as_bytes()) {
-        return Err(WebhookError::BadSignature);
-    }
+    verify_authorization(cfg, headers)?;
 
     let v: Value =
         serde_json::from_slice(raw).map_err(|e| WebhookError::Malformed(e.to_string()))?;
@@ -127,9 +117,13 @@ pub fn verify_webhook<H: Headers>(
     ) {
         return Err(WebhookError::Ignored(event_type.to_string()));
     }
-    let deposit_ref = event["id"]
+    // Credit under the store TRANSACTION id (stable per purchase and repeated
+    // on the later refund event), falling back to the event id only when the
+    // store did not report one, so a refund can be tied back to its deposit.
+    let deposit_ref = event["transaction_id"]
         .as_str()
-        .or_else(|| event["transaction_id"].as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| event["id"].as_str())
         .ok_or_else(|| WebhookError::Malformed("missing event id".into()))?
         .to_string();
     let amount_micros = json_dollars_to_micros(&event["price_in_purchased_currency"])
@@ -144,6 +138,63 @@ pub fn verify_webhook<H: Headers>(
         amount_micros,
         asset: Asset::Usd,
         account_id,
+    })
+}
+
+/// Constant-time `Authorization` equality over the configured shared secret.
+fn verify_authorization<H: Headers>(cfg: &ProviderConfig, headers: &H) -> Result<(), WebhookError> {
+    let secret = cfg
+        .webhook_secret
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or(WebhookError::NotConfigured)?;
+    let presented = headers
+        .get_header("authorization")
+        .ok_or(WebhookError::BadSignature)?;
+    if !const_eq_secret(secret.as_bytes(), presented.as_bytes()) {
+        return Err(WebhookError::BadSignature);
+    }
+    Ok(())
+}
+
+/// Verify a RevenueCat webhook and, when it reports a refund, return the
+/// reversal of the ORIGINAL purchase.
+///
+/// RevenueCat signals a store refund as a `CANCELLATION` with
+/// `cancel_reason = CUSTOMER_SUPPORT`, carrying the refunded purchase's
+/// `transaction_id` and a NEGATIVE price. App Store / Play refunds are always
+/// for the whole transaction, so a missing or zero price claws back the whole
+/// minted deposit.
+pub fn verify_reversal_webhook<H: Headers>(
+    cfg: &ProviderConfig,
+    headers: &H,
+    raw: &[u8],
+) -> Result<ReversalEvent, WebhookError> {
+    verify_authorization(cfg, headers)?;
+    let v: Value =
+        serde_json::from_slice(raw).map_err(|e| WebhookError::Malformed(e.to_string()))?;
+    let event = &v["event"];
+    let event_type = event["type"].as_str().unwrap_or("");
+    let is_refund = event_type == "CANCELLATION"
+        && event["cancel_reason"].as_str() == Some("CUSTOMER_SUPPORT");
+    if !is_refund {
+        return Err(WebhookError::Ignored(event_type.to_string()));
+    }
+    let deposit_ref = event["transaction_id"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| WebhookError::Ignored("refund without a transaction_id".into()))?
+        .to_string();
+    let amount_micros = json_dollars_to_micros(&event["price_in_purchased_currency"])
+        .or_else(|| json_dollars_to_micros(&event["price"]))
+        .map(i64::abs)
+        .filter(|&m| m > 0);
+    Ok(ReversalEvent {
+        provider: ProviderId::RevenueCat,
+        deposit_ref,
+        alt_refs: Vec::new(),
+        amount_micros,
+        reason: ReversalReason::Refund,
     })
 }
 

@@ -13,6 +13,7 @@ use mint_store::LedgerStore;
 use crate::attestation::{build_hold_settlement_attestation, HoldSettlementOperation};
 use crate::dto::{parse_account, HoldCaptureReq, HoldCreateReq, HoldReleaseReq, HoldView};
 use crate::error::{ok, ok_status, ApiError, ApiResult};
+use crate::jobs::{now_ms, MAX_HOLD_TTL_MS};
 use crate::state::AppState;
 use crate::views;
 
@@ -22,6 +23,13 @@ pub async fn create<S: LedgerStore + 'static>(
     Json(body): Json<HoldCreateReq>,
 ) -> ApiResult {
     let from = parse_account(&body.from).map_err(ApiError::from)?;
+    if let Some(ttl) = body.expires_in_ms {
+        if ttl <= 0 || ttl > MAX_HOLD_TTL_MS {
+            return Err(ApiError::BadRequest(format!(
+                "expires_in_ms must be between 1 and {MAX_HOLD_TTL_MS}"
+            )));
+        }
+    }
     let receipt = st
         .ledger
         .create_hold(HoldCreateRequest {
@@ -31,6 +39,15 @@ pub async fn create<S: LedgerStore + 'static>(
             ref_: body.ref_,
         })
         .await?;
+    if let Some(ttl) = body.expires_in_ms {
+        // An idempotent replay keeps the deadline set by the first request.
+        let store = st.ledger.store();
+        if store.hold_expiry(&receipt.hold_id).await?.is_none() {
+            store
+                .set_hold_expiry(&receipt.hold_id, now_ms().saturating_add(ttl))
+                .await?;
+        }
+    }
     signed_hold_response(&st, StatusCode::CREATED, &receipt).await
 }
 
@@ -99,18 +116,20 @@ pub async fn release<S: LedgerStore + 'static>(
     .await
 }
 
-/// `GET /v1/holds/:id` → `store.rebuild_holds` lookup (a rebuild == live gate).
+/// `GET /v1/holds/:id` → point read of the live hold plus its auto-release
+/// deadline (`expires_at_ms`, `null` when none).
 pub async fn get<S: LedgerStore + 'static>(
     State(st): State<AppState<S>>,
     Path(id): Path<String>,
 ) -> ApiResult {
     let hold_id = HoldId::parse(&id).map_err(ApiError::from)?;
-    let holds = st.ledger.store().rebuild_holds().await?;
-    let record = holds
-        .get(&hold_id)
-        .cloned()
-        .ok_or(ApiError::Mint(mint_core::MintError::HoldNotFound))?;
-    Ok(ok(HoldView::from(record)))
+    let store = st.ledger.store();
+    let record = store.get_hold(&hold_id).await?;
+    let expires_at_ms = store.hold_expiry(&hold_id).await?;
+    let mut view = serde_json::to_value(HoldView::from(record))
+        .map_err(|e| ApiError::Internal(format!("hold encode: {e}")))?;
+    view["expires_at_ms"] = serde_json::json!(expires_at_ms);
+    Ok(ok(view))
 }
 
 /// Return the ordinary hold view plus the exact signed, hash-linked receipt
