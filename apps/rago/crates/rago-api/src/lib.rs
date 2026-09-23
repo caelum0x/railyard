@@ -176,6 +176,7 @@ pub fn router(state: AppState) -> Router {
 
     Router::new()
         .route("/health", get(health))
+        .route("/admin", get(admin_page))
         .route("/metrics", get(observability::metrics_handler))
         .route(
             "/graphql",
@@ -194,6 +195,16 @@ pub fn router(state: AppState) -> Router {
 
 async fn health() -> Json<Value> {
     Json(json!({ "status": "ok", "service": "rago-api" }))
+}
+
+/// `GET /admin` — a self-contained operator console (static HTML + vanilla JS,
+/// no build step). The page is served unauthenticated, but every data request
+/// it makes carries the operator's `Authorization: Bearer <api-key>` against the
+/// same authenticated `/api/v1` endpoints — there is no server-side data bypass.
+/// It only surfaces what those real endpoints return: customers, subscriptions,
+/// invoices, plans, and registered webhook endpoints.
+async fn admin_page() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("../assets/admin.html"))
 }
 
 // --- fees/estimate: drives the billing engine without persistence -----------

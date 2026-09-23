@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Rago Admin</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #181b24; --border: #262b38; --fg: #e6e8ee;
+    --muted: #8b91a1; --accent: #6ea8fe; --danger: #f2668b; --ok: #55c98a;
+    --row: #1e222d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+  header .spacer { flex: 1; }
+  input, button, select {
+    font: inherit; color: var(--fg); background: var(--row);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
+  }
+  input { min-width: 280px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #0b1020; border-color: var(--accent); font-weight: 600; }
+  button:hover { filter: brightness(1.08); }
+  #status { font-size: 12px; color: var(--muted); }
+  #status.err { color: var(--danger); }
+  #status.ok { color: var(--ok); }
+  nav {
+    display: flex; gap: 4px; padding: 12px 20px 0; flex-wrap: wrap;
+  }
+  nav button {
+    background: transparent; border: 1px solid transparent; border-bottom: none;
+    border-radius: 6px 6px 0 0; color: var(--muted); padding: 8px 14px;
+  }
+  nav button.active { color: var(--fg); background: var(--panel); border-color: var(--border); }
+  main { padding: 0 20px 40px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 0 8px 8px 8px;
+    overflow: auto;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td {
+    text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--border);
+    white-space: nowrap; font-variant-numeric: tabular-nums;
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  tbody tr:hover { background: var(--row); }
+  td.mono, th.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 12px;
+    background: var(--row); border: 1px solid var(--border);
+  }
+  .empty, .loading { padding: 28px; color: var(--muted); text-align: center; }
+  .gate { max-width: 460px; margin: 80px auto; text-align: center; }
+  .gate p { color: var(--muted); }
+  .toolbar { display: flex; align-items: center; gap: 10px; padding: 12px 0; }
+  .count { color: var(--muted); font-size: 12px; }
+  code { background: var(--row); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Rago Admin</h1>
+  <input id="key" type="password" placeholder="Bearer API key" autocomplete="off" />
+  <button id="connect" class="primary">Connect</button>
+  <button id="logout" style="display:none">Sign out</button>
+  <div class="spacer"></div>
+  <span id="status">Not connected</span>
+</header>
+
+<div id="gate" class="gate">
+  <p>Enter an organization API key to load live billing data.<br />
+  Requests use <code>Authorization: Bearer &lt;key&gt;</code> against the same Rago API that serves this page.</p>
+</div>
+
+<div id="app" style="display:none">
+  <nav id="tabs"></nav>
+  <main>
+    <div class="toolbar">
+      <button id="refresh">Refresh</button>
+      <span id="count" class="count"></span>
+    </div>
+    <div id="view" class="card"><div class="loading">Loading…</div></div>
+  </main>
+</div>
+
+<script>
+"use strict";
+(function () {
+  const KEY_STORE = "rago_admin_key";
+  const el = (id) => document.getElementById(id);
+  const statusEl = el("status");
+
+  function setStatus(msg, kind) {
+    statusEl.textContent = msg;
+    statusEl.className = kind || "";
+  }
+
+  function getKey() { return sessionStorage.getItem(KEY_STORE) || ""; }
+  function setKey(k) {
+    if (k) sessionStorage.setItem(KEY_STORE, k);
+    else sessionStorage.removeItem(KEY_STORE);
+  }
+
+  // Escape everything user/data-derived before it touches innerHTML.
+  function esc(v) {
+    if (v === null || v === undefined) return "";
+    return String(v).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function money(cents, currency) {
+    if (cents === null || cents === undefined) return "";
+    const n = Number(cents) / 100;
+    if (Number.isNaN(n)) return esc(cents);
+    return (currency ? esc(currency) + " " : "") + n.toFixed(2);
+  }
+
+  function badge(text) {
+    return '<span class="badge">' + esc(text) + "</span>";
+  }
+
+  async function api(path) {
+    const res = await fetch(path, {
+      headers: { "Authorization": "Bearer " + getKey(), "Accept": "application/json" },
+    });
+    if (res.status === 401) throw new Error("Unauthorized — check the API key.");
+    if (!res.ok) throw new Error("HTTP " + res.status + " on " + path);
+    return res.json();
+  }
+
+  // Each tab: label, the REST endpoint, the JSON root array, columns.
+  const TABS = [
+    {
+      id: "customers", label: "Customers",
+      path: "/api/v1/customers?per_page=50", root: "customers",
+      cols: [
+        { h: "External ID", f: (r) => esc(r.external_id), mono: true },
+        { h: "Name", f: (r) => esc(r.name) },
+        { h: "Email", f: (r) => esc(r.email) },
+        { h: "Currency", f: (r) => badge(r.currency || "—") },
+        { h: "Lago ID", f: (r) => esc(r.lago_id), mono: true },
+      ],
+    },
+    {
+      id: "subscriptions", label: "Subscriptions",
+      path: "/api/v1/subscriptions?per_page=50", root: "subscriptions",
+      cols: [
+        { h: "External ID", f: (r) => esc(r.external_id), mono: true },
+        { h: "Customer", f: (r) => esc(r.external_customer_id), mono: true },
+        { h: "Plan", f: (r) => esc(r.plan_code) },
+        { h: "Amount", f: (r) => money(r.plan_amount_cents, r.plan_amount_currency) },
+        { h: "Status", f: (r) => badge(r.status) },
+        { h: "Started", f: (r) => esc((r.started_at || "").slice(0, 10)) },
+      ],
+    },
+    {
+      id: "invoices", label: "Invoices",
+      path: "/api/v1/invoices?per_page=50", root: "invoices",
+      cols: [
+        { h: "Number", f: (r) => esc(r.number), mono: true },
+        { h: "Total", f: (r) => money(r.total_amount_cents, r.currency) },
+        { h: "Status", f: (r) => badge(r.status) },
+        { h: "Payment", f: (r) => badge(r.payment_status) },
+        { h: "Lago ID", f: (r) => esc(r.lago_id), mono: true },
+      ],
+    },
+    {
+      id: "plans", label: "Plans",
+      path: "/api/v1/plans?per_page=50", root: "plans",
+      cols: [
+        { h: "Code", f: (r) => esc(r.code), mono: true },
+        { h: "Name", f: (r) => esc(r.name) },
+        { h: "Interval", f: (r) => badge(r.interval || "—") },
+        { h: "Amount", f: (r) => money(r.amount_cents, r.amount_currency) },
+        { h: "Trial (days)", f: (r) => esc(r.trial_period) },
+      ],
+    },
+    {
+      id: "webhook_endpoints", label: "Webhook Endpoints",
+      path: "/api/v1/webhook_endpoints", root: "webhook_endpoints",
+      cols: [
+        { h: "URL", f: (r) => esc(r.webhook_url), mono: true },
+        { h: "Signature", f: (r) => badge(r.signature_algo) },
+        { h: "Lago ID", f: (r) => esc(r.lago_id), mono: true },
+      ],
+    },
+  ];
+
+  let active = TABS[0];
+
+  function renderTabs() {
+    const nav = el("tabs");
+    nav.innerHTML = "";
+    TABS.forEach((t) => {
+      const b = document.createElement("button");
+      b.textContent = t.label;
+      b.className = t.id === active.id ? "active" : "";
+      b.onclick = () => { active = t; renderTabs(); load(); };
+      nav.appendChild(b);
+    });
+  }
+
+  function renderRows(rows) {
+    const view = el("view");
+    if (!Array.isArray(rows) || rows.length === 0) {
+      view.innerHTML = '<div class="empty">No ' + esc(active.label.toLowerCase()) + " found.</div>";
+      el("count").textContent = "0 rows";
+      return;
+    }
+    const head = active.cols.map((c) =>
+      '<th' + (c.mono ? ' class="mono"' : "") + ">" + esc(c.h) + "</th>").join("");
+    const body = rows.map((r) =>
+      "<tr>" + active.cols.map((c) =>
+        "<td" + (c.mono ? ' class="mono"' : "") + ">" + c.f(r) + "</td>").join("") + "</tr>").join("");
+    view.innerHTML = "<table><thead><tr>" + head + "</tr></thead><tbody>" + body + "</tbody></table>";
+    el("count").textContent = rows.length + " row" + (rows.length === 1 ? "" : "s");
+  }
+
+  async function load() {
+    el("view").innerHTML = '<div class="loading">Loading…</div>';
+    el("count").textContent = "";
+    try {
+      const data = await api(active.path);
+      renderRows(data[active.root]);
+      const meta = data.meta;
+      setStatus(meta && meta.total_count != null
+        ? "Connected · " + meta.total_count + " total" : "Connected", "ok");
+    } catch (e) {
+      el("view").innerHTML = '<div class="empty">' + esc(e.message) + "</div>";
+      setStatus(e.message, "err");
+      if (/Unauthorized/.test(e.message)) showGate();
+    }
+  }
+
+  function showApp() {
+    el("gate").style.display = "none";
+    el("app").style.display = "";
+    el("logout").style.display = "";
+    renderTabs();
+    load();
+  }
+
+  function showGate() {
+    el("app").style.display = "none";
+    el("gate").style.display = "";
+    el("logout").style.display = "none";
+    el("key").value = "";
+  }
+
+  el("connect").onclick = () => {
+    const k = el("key").value.trim();
+    if (!k) { setStatus("Enter an API key.", "err"); return; }
+    setKey(k);
+    setStatus("Connecting…");
+    showApp();
+  };
+  el("key").addEventListener("keydown", (e) => { if (e.key === "Enter") el("connect").click(); });
+  el("logout").onclick = () => { setKey(""); setStatus("Not connected"); showGate(); };
+  el("refresh").onclick = load;
+
+  if (getKey()) showApp(); else showGate();
+})();
+</script>
+</body>
+</html>
