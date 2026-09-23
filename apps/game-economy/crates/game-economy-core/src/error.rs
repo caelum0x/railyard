@@ -12,6 +12,26 @@ pub enum GameError {
     #[error("unknown product: {0}")]
     UnknownProduct(String),
 
+    /// The SKU exists but has been archived by the operator: owned copies keep
+    /// working, but it can no longer be bought.
+    #[error("product unavailable: {0}")]
+    ProductArchived(String),
+
+    /// A catalog edit (or a pack open against the live catalog) failed
+    /// validation.
+    #[error("invalid catalog: {0}")]
+    InvalidCatalog(String),
+
+    /// A catalog save was based on a stale revision (another operator or
+    /// instance edited first). Reload the catalog and retry the edit.
+    #[error("catalog changed concurrently (expected revision {expected}, found {actual})")]
+    CatalogConflict {
+        /// Revision the edit was based on.
+        expected: u64,
+        /// Revision currently stored.
+        actual: u64,
+    },
+
     /// The player's available balance could not cover the hold (Mint `402`).
     #[error("insufficient funds")]
     InsufficientFunds,

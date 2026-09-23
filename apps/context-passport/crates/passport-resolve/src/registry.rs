@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use passport_core::{PassportError, PassportVersion};
+use passport_core::{ArtifactKind, PassportAssets, PassportError, PassportVersion, TrainedArtifact};
 
 use crate::adapter::ProviderAdapter;
 use crate::adapters::{ImageAdapter, TextAdapter, VideoAdapter, VoiceAdapter};
@@ -74,21 +74,41 @@ impl ProviderRegistry {
         provider: &str,
         modality: Modality,
     ) -> Result<ConditioningPayload, PassportError> {
+        self.resolve_with_artifacts(version, provider, modality, &[])
+    }
+
+    /// Resolve like [`Self::resolve`], additionally conditioning on the ready
+    /// [`TrainedArtifact`]s registered for this version and provider. A
+    /// registered artifact is provider-specific, so it takes precedence over a
+    /// generic id carried inline in the assets. Only when neither exists does a
+    /// Family-B provider fail with `needs_artifact`.
+    pub fn resolve_with_artifacts(
+        &self,
+        version: &PassportVersion,
+        provider: &str,
+        modality: Modality,
+        artifacts: &[TrainedArtifact],
+    ) -> Result<ConditioningPayload, PassportError> {
         if !version.is_locked() {
             return Err(PassportError::VersionNotLocked);
         }
 
         let cap = capability(provider, modality);
-        if cap.mechanism == IdentityMechanism::Unsupported {
+        let kind_has_no_path = matches!(
+            (&version.assets, modality),
+            (PassportAssets::Voice(_), Modality::Image) | (PassportAssets::Style(_), Modality::Voice)
+        );
+        if cap.mechanism == IdentityMechanism::Unsupported || kind_has_no_path {
             return Err(PassportError::ResolveUnavailable {
                 provider: provider.to_string(),
                 modality: modality.as_str().to_string(),
             });
         }
 
-        let payload = self
+        let mut payload = self
             .adapter(provider, modality)
             .build(version, provider, modality);
+        apply_artifacts(&mut payload, version.version, provider, modality, artifacts);
 
         // Family-B providers need their minted artifact present in the payload.
         if cap.requires_artifact() {
@@ -113,6 +133,42 @@ impl ProviderRegistry {
             });
         }
         Ok(payload)
+    }
+}
+
+/// Overlay the ready artifacts for `(version, provider)` onto the payload.
+fn apply_artifacts(
+    payload: &mut ConditioningPayload,
+    version: i64,
+    provider: &str,
+    modality: Modality,
+    artifacts: &[TrainedArtifact],
+) {
+    for artifact in artifacts.iter().filter(|a| a.is_ready_for(provider, version)) {
+        let Some(reference) = artifact.artifact_ref.clone() else {
+            continue;
+        };
+        let applied = match (artifact.kind, modality) {
+            (ArtifactKind::VoiceClone, Modality::Voice | Modality::Video) => {
+                payload.voice_id = Some(reference);
+                true
+            }
+            (ArtifactKind::Avatar, Modality::Video) => {
+                payload.avatar_ref = Some(reference);
+                true
+            }
+            (ArtifactKind::Lora, Modality::Image | Modality::Video) => {
+                payload.lora_ref = Some(reference);
+                true
+            }
+            _ => false,
+        };
+        if applied {
+            payload.extra.insert(
+                format!("artifact.{}", artifact.kind.as_str()),
+                artifact.id.clone(),
+            );
+        }
     }
 }
 
@@ -341,5 +397,71 @@ mod tests {
             .resolve(&locked_character(full()), "runway", Modality::Video)
             .unwrap();
         assert!(d.text_directives.is_empty());
+    }
+
+    fn artifact(kind: passport_core::ArtifactKind, provider: &str, reference: &str) -> TrainedArtifact {
+        let now = Utc::now();
+        TrainedArtifact {
+            id: "art_1".into(),
+            passport_id: "psp_1".into(),
+            version: 1,
+            source_digest: None,
+            provider: provider.into(),
+            kind,
+            artifact_ref: Some(reference.into()),
+            provider_model: None,
+            status: passport_core::ArtifactStatus::Ready,
+            failure_reason: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn registered_voice_clone_satisfies_needs_artifact_for_its_provider_only() {
+        let assets = PassportAssets::Voice(passport_core::VoiceAssets {
+            sample_refs: vec!["r2://voice/sample-1.wav".into()],
+            language: Some("en-US".into()),
+            ..Default::default()
+        });
+        let v = locked_version(assets);
+        let r = ProviderRegistry::default();
+        assert!(matches!(
+            r.resolve(&v, "elevenlabs", Modality::Voice),
+            Err(PassportError::NeedsArtifact { .. })
+        ));
+        let arts = [artifact(passport_core::ArtifactKind::VoiceClone, "elevenlabs", "el_voice_9")];
+        let p = r
+            .resolve_with_artifacts(&v, "ElevenLabs", Modality::Voice, &arts)
+            .unwrap();
+        assert_eq!(p.voice_id.as_deref(), Some("el_voice_9"));
+        assert_eq!(p.reference_audio, vec!["r2://voice/sample-1.wav"]);
+        // Another vendor's clone is not portable.
+        assert!(matches!(
+            r.resolve_with_artifacts(&v, "cartesia", Modality::Voice, &arts),
+            Err(PassportError::NeedsArtifact { .. })
+        ));
+    }
+
+    #[test]
+    fn style_image_maps_refs_prompt_and_negative() {
+        let assets = PassportAssets::Style(passport_core::StyleAssets {
+            style_refs: vec!["ref_a".into()],
+            descriptor: Some("moody neon".into()),
+            medium: Some("35mm film".into()),
+            negative_prompt: Some("blurry".into()),
+            palette: vec!["#111".into()],
+            ..Default::default()
+        });
+        let p = ProviderRegistry::default()
+            .resolve(&locked_version(assets.clone()), "runway", Modality::Image)
+            .unwrap();
+        assert_eq!(p.reference_images, vec!["ref_a"]);
+        assert_eq!(p.style_prompt.as_deref(), Some("moody neon, 35mm film"));
+        assert_eq!(p.negative_prompt.as_deref(), Some("blurry"));
+        assert!(matches!(
+            ProviderRegistry::default().resolve(&locked_version(assets), "elevenlabs", Modality::Voice),
+            Err(PassportError::ResolveUnavailable { .. })
+        ));
     }
 }

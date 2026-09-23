@@ -42,6 +42,10 @@ impl ProviderAdapter for VideoAdapter {
                 }
                 p.style_prompt = join([persona.audience.as_deref()]);
             }
+            PassportAssets::Style(s) => super::apply_style(&mut p, s),
+            // Narration / dubbing track: the clone itself comes from a trained
+            // artifact; the samples let instant-clone hosts work without one.
+            PassportAssets::Voice(v) => super::apply_voice(&mut p, v),
         }
         p
     }

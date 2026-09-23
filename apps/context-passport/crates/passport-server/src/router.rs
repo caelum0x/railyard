@@ -48,6 +48,16 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/v1/passports/:id/attest", post(handlers::generate::attest))
         .route(
+            "/v1/passports/:id/artifacts",
+            post(handlers::artifacts::register).get(handlers::artifacts::list),
+        )
+        .route(
+            "/v1/passports/:id/artifacts/:artifact_id",
+            get(handlers::artifacts::get)
+                .patch(handlers::artifacts::update)
+                .delete(handlers::artifacts::revoke),
+        )
+        .route(
             "/v1/passports/:id/generations",
             get(handlers::generate::list_generations),
         )

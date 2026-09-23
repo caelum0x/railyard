@@ -6,7 +6,8 @@ use std::sync::RwLock;
 use async_trait::async_trait;
 
 use passport_core::{
-    CreateOutcome, Passport, PassportError, PassportFilter, PassportStore, PassportVersion,
+    ArtifactStatus, ArtifactStore, CreateOutcome, Passport, PassportError, PassportFilter,
+    PassportStore, PassportVersion, TrainedArtifact,
 };
 use passport_provenance::{GenerationRecord, ProvenanceLog};
 
@@ -16,6 +17,7 @@ struct State {
     versions: HashMap<(String, i64), PassportVersion>,
     idempotency: HashMap<String, String>,
     generations: Vec<GenerationRecord>,
+    artifacts: Vec<TrainedArtifact>,
 }
 
 /// Lightweight, thread-safe in-memory store.
@@ -212,5 +214,64 @@ impl ProvenanceLog for MemoryStore {
             .iter()
             .find(|r| r.id == id)
             .cloned())
+    }
+}
+
+#[async_trait]
+impl ArtifactStore for MemoryStore {
+    async fn insert_artifact(&self, artifact: &TrainedArtifact) -> Result<(), PassportError> {
+        let mut state = self.write()?;
+        if state.artifacts.iter().any(|a| a.id == artifact.id) {
+            return Err(PassportError::IdempotencyConflict);
+        }
+        if artifact.status.is_active() {
+            for other in state.artifacts.iter_mut().filter(|a| {
+                a.passport_id == artifact.passport_id
+                    && a.version == artifact.version
+                    && a.provider == artifact.provider
+                    && a.kind == artifact.kind
+                    && a.status.is_active()
+            }) {
+                other.status = ArtifactStatus::Revoked;
+                other.failure_reason = Some(format!("superseded by {}", artifact.id));
+                other.updated_at = artifact.created_at;
+            }
+        }
+        state.artifacts.push(artifact.clone());
+        Ok(())
+    }
+
+    async fn get_artifact(&self, id: &str) -> Result<Option<TrainedArtifact>, PassportError> {
+        Ok(self.read()?.artifacts.iter().find(|a| a.id == id).cloned())
+    }
+
+    async fn list_artifacts(
+        &self,
+        passport_id: &str,
+    ) -> Result<Vec<TrainedArtifact>, PassportError> {
+        let mut out: Vec<_> = self
+            .read()?
+            .artifacts
+            .iter()
+            .filter(|a| a.passport_id == passport_id)
+            .cloned()
+            .collect();
+        out.sort_by_key(|a| std::cmp::Reverse(a.created_at));
+        Ok(out)
+    }
+
+    async fn update_artifact(
+        &self,
+        artifact: &TrainedArtifact,
+    ) -> Result<Option<TrainedArtifact>, PassportError> {
+        let mut state = self.write()?;
+        Ok(state
+            .artifacts
+            .iter_mut()
+            .find(|a| a.id == artifact.id)
+            .map(|slot| {
+                *slot = artifact.clone();
+                slot.clone()
+            }))
     }
 }

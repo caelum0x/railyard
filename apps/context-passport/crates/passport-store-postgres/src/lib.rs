@@ -8,8 +8,8 @@ use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::Row;
 
 use passport_core::{
-    CreateOutcome, Passport, PassportError, PassportFilter, PassportKind, PassportStore,
-    PassportVersion, VersionStatus,
+    ArtifactKind, ArtifactStatus, ArtifactStore, CreateOutcome, Passport, PassportError,
+    PassportFilter, PassportKind, PassportStore, PassportVersion, TrainedArtifact, VersionStatus,
 };
 use passport_provenance::{GenerationRecord, ProvenanceLog};
 
@@ -379,4 +379,124 @@ fn row_to_generation(row: &PgRow) -> Result<GenerationRecord, PassportError> {
     let snapshot: serde_json::Value = row.try_get("snapshot").map_err(storage_error)?;
     serde_json::from_value(snapshot)
         .map_err(|e| PassportError::Storage(format!("generation deserialize: {e}")))
+}
+
+// ---------------------------------------------------------------------------
+// Trained artifacts (migrations/0003_voice_style_artifacts.sql)
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl ArtifactStore for PostgresStore {
+    async fn insert_artifact(&self, artifact: &TrainedArtifact) -> Result<(), PassportError> {
+        let mut tx = self.pool.begin().await.map_err(storage_error)?;
+        if artifact.status.is_active() {
+            // The partial unique index allows one active artifact per
+            // (passport, version, provider, kind): supersede the previous one.
+            sqlx::query(
+                "UPDATE passport_artifacts SET status = 'revoked', failure_reason = $5, updated_at = $6 \
+                 WHERE passport_id = $1 AND version = $2 AND provider = $3 AND kind = $4 \
+                   AND status IN ('pending', 'ready')",
+            )
+            .bind(&artifact.passport_id)
+            .bind(artifact.version)
+            .bind(&artifact.provider)
+            .bind(artifact.kind.as_str())
+            .bind(format!("superseded by {}", artifact.id))
+            .bind(artifact.created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage_error)?;
+        }
+        sqlx::query(
+            "INSERT INTO passport_artifacts \
+               (id, passport_id, version, source_digest, provider, kind, artifact_ref, provider_model, \
+                status, failure_reason, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+        )
+        .bind(&artifact.id)
+        .bind(&artifact.passport_id)
+        .bind(artifact.version)
+        .bind(artifact.source_digest.as_ref().map(|d| d.as_str().to_string()))
+        .bind(&artifact.provider)
+        .bind(artifact.kind.as_str())
+        .bind(&artifact.artifact_ref)
+        .bind(&artifact.provider_model)
+        .bind(artifact.status.as_str())
+        .bind(&artifact.failure_reason)
+        .bind(artifact.created_at)
+        .bind(artifact.updated_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(storage_error)?;
+        tx.commit().await.map_err(storage_error)
+    }
+
+    async fn get_artifact(&self, id: &str) -> Result<Option<TrainedArtifact>, PassportError> {
+        let row = sqlx::query("SELECT * FROM passport_artifacts WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(storage_error)?;
+        row.as_ref().map(row_to_artifact).transpose()
+    }
+
+    async fn list_artifacts(
+        &self,
+        passport_id: &str,
+    ) -> Result<Vec<TrainedArtifact>, PassportError> {
+        let rows = sqlx::query(
+            "SELECT * FROM passport_artifacts WHERE passport_id = $1 ORDER BY created_at DESC, id DESC",
+        )
+        .bind(passport_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(storage_error)?;
+        rows.iter().map(row_to_artifact).collect()
+    }
+
+    async fn update_artifact(
+        &self,
+        artifact: &TrainedArtifact,
+    ) -> Result<Option<TrainedArtifact>, PassportError> {
+        let row = sqlx::query(
+            "UPDATE passport_artifacts SET artifact_ref = $2, provider_model = $3, status = $4, \
+               failure_reason = $5, updated_at = $6 \
+             WHERE id = $1 RETURNING *",
+        )
+        .bind(&artifact.id)
+        .bind(&artifact.artifact_ref)
+        .bind(&artifact.provider_model)
+        .bind(artifact.status.as_str())
+        .bind(&artifact.failure_reason)
+        .bind(artifact.updated_at)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage_error)?;
+        row.as_ref().map(row_to_artifact).transpose()
+    }
+}
+
+fn row_to_artifact(row: &PgRow) -> Result<TrainedArtifact, PassportError> {
+    let kind: String = row.try_get("kind").map_err(storage_error)?;
+    let status: String = row.try_get("status").map_err(storage_error)?;
+    let digest: Option<String> = row.try_get("source_digest").map_err(storage_error)?;
+    Ok(TrainedArtifact {
+        id: row.try_get("id").map_err(storage_error)?,
+        passport_id: row.try_get("passport_id").map_err(storage_error)?,
+        version: row.try_get("version").map_err(storage_error)?,
+        source_digest: digest
+            .map(|d| serde_json::from_value(serde_json::Value::String(d)))
+            .transpose()
+            .map_err(|e| PassportError::Storage(format!("decoding artifact digest: {e}")))?,
+        provider: row.try_get("provider").map_err(storage_error)?,
+        kind: ArtifactKind::parse(&kind)
+            .map_err(|_| PassportError::Storage(format!("unknown artifact kind {kind}")))?,
+        artifact_ref: row.try_get("artifact_ref").map_err(storage_error)?,
+        provider_model: row.try_get("provider_model").map_err(storage_error)?,
+        status: ArtifactStatus::parse(&status)
+            .map_err(|_| PassportError::Storage(format!("unknown artifact status {status}")))?,
+        failure_reason: row.try_get("failure_reason").map_err(storage_error)?,
+        created_at: row.try_get("created_at").map_err(storage_error)?,
+        updated_at: row.try_get("updated_at").map_err(storage_error)?,
+    })
 }

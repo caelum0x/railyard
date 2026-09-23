@@ -20,7 +20,7 @@
 //! - `POST /v1/tokens`               — issue an expiring player token (game-server key).
 //! - `POST /v1/entitlements/revoke`  — chargeback revocation, no money moved (game-server key).
 //! - `POST /v1/refunds`              — refund through Mint + revoke (game-server key).
-//! - `GET  /admin`, `/v1/admin/*`    — operator console (GAME_ADMIN_TOKEN).
+//! - `GET  /admin`, `/v1/admin/*`    — operator console (GAME_ADMIN_TOKEN), incl. live catalog editing (`/v1/admin/catalog*`).
 //!
 //! Configuration (fail-fast; nothing hardcoded):
 //! - `RAILYARD_MINT_URL`       — base URL of the live mint-server (required).
@@ -31,7 +31,10 @@
 //! - `GAME_SERVER_SECRET`      — game-backend credential (`X-Game-Server-Key`) for the server-to-server routes (optional; those routes answer 503 until set).
 //! - `GAME_ALLOW_LEGACY_TOKENS`— `true` to keep accepting non-expiring legacy tokens (default false).
 //! - `GAME_TOKEN_TTL_SECS`     — default lifetime of issued tokens (default 86400).
-//! - `GAME_CATALOG_PATH`       — JSON catalog definition (SKUs, prices, drop tables, seasons). Required unless `GAME_CATALOG=demo`.
+//! - `GAME_CATALOG_PATH`       — JSON catalog definition (SKUs, prices, drop tables, seasons) that SEEDS the persisted catalog on first boot. Required unless `GAME_CATALOG=demo` or a catalog is already persisted. After seeding, the operator console (`/admin` → Catalog) is the source of truth.
+//! - `GAME_CATALOG_RESEED`     — `true` to overwrite the persisted catalog from `GAME_CATALOG_PATH` at boot (archived SKUs still resolve only if the file keeps them).
+//! - `GAME_CATALOG_STATE_PATH` — JSON file the edited catalog persists to when no database is configured (default `./game-economy-catalog.json`).
+//! - `GAME_CATALOG_REFRESH_SECS` — how often each instance reloads catalog edits saved by other instances (default 15).
 //! - `GAME_FULFILLMENT_URL`    — game-backend delivery webhook; when set, capture happens only after it returns 2xx.
 //! - `GAME_FULFILLMENT_SECRET` — MAC key for the delivery webhook (required with the URL).
 //! - `GAME_FULFILLMENT_TIMEOUT_MS` — delivery webhook timeout (default 5000).
@@ -46,11 +49,11 @@ use std::sync::Arc;
 
 use anyhow::Context;
 
-use game_economy_core::{Catalog, GameStateRepository, GameStore};
+use game_economy_core::{Catalog, CatalogRepository, GameStateRepository, GameStore};
 use game_economy_server::fulfill::{ServerFulfiller, WebhookFulfiller};
 use game_economy_mint_client::HttpMintTransport;
 use game_economy_server::{auth, build_router, AppState};
-use game_economy_store::JsonFileGameState;
+use game_economy_store::{JsonFileCatalog, JsonFileGameState};
 use game_economy_store_postgres::PostgresGameState;
 
 #[tokio::main]
@@ -71,19 +74,28 @@ async fn main() -> anyhow::Result<()> {
     let mint = HttpMintTransport::from_env()
         .map_err(|e| anyhow::anyhow!("configuring Mint transport: {e}"))?;
 
-    let (game_state, state_backend) = load_game_state().await?;
+    let (game_state, state_backend, catalog_repo) = load_game_state().await?;
 
-    let catalog = load_catalog()?;
+    let (catalog, catalog_revision) = {
+        let repo = Arc::clone(&catalog_repo);
+        tokio::task::spawn_blocking(move || resolve_catalog(repo.as_ref()))
+            .await
+            .context("catalog loader task panicked")??
+    };
     let fulfiller = load_fulfiller()?;
-    let store = GameStore::with_state(
-        mint,
-        fulfiller,
-        catalog,
-        revenue_account.clone(),
-        game_state,
+    let store = Arc::new(
+        GameStore::with_state(
+            mint,
+            fulfiller,
+            catalog,
+            revenue_account.clone(),
+            game_state,
+        )
+        .with_catalog_repository(catalog_repo, catalog_revision),
     );
+    spawn_catalog_refresh(Arc::clone(&store))?;
 
-    let mut state = AppState::new(Arc::new(store), auth_key)
+    let mut state = AppState::new(store, auth_key)
         .with_legacy_tokens(env_flag("GAME_ALLOW_LEGACY_TOKENS"));
     if let Ok(ttl) = std::env::var("GAME_TOKEN_TTL_SECS") {
         let secs: u64 = ttl
@@ -125,7 +137,11 @@ async fn main() -> anyhow::Result<()> {
 /// Pick the durable state backend: Postgres when `GAME_DATABASE_URL` /
 /// `DATABASE_URL` is set (required for more than one instance), otherwise the
 /// single-instance JSON file at `GAME_STATE_PATH`.
-async fn load_game_state() -> anyhow::Result<(Arc<dyn GameStateRepository>, String)> {
+async fn load_game_state() -> anyhow::Result<(
+    Arc<dyn GameStateRepository>,
+    String,
+    Arc<dyn CatalogRepository>,
+)> {
     let database_url = std::env::var("GAME_DATABASE_URL")
         .or_else(|_| std::env::var("DATABASE_URL"))
         .ok()
@@ -144,7 +160,9 @@ async fn load_game_state() -> anyhow::Result<(Arc<dyn GameStateRepository>, Stri
             .await
             .map_err(|e| anyhow::anyhow!("migrating game state database: {e}"))?;
         tracing::info!("game state: postgres (multi-instance safe)");
-        return Ok((Arc::new(pg), "postgres".to_string()));
+        let pg = Arc::new(pg);
+        let catalog_repo: Arc<dyn CatalogRepository> = pg.clone();
+        return Ok((pg, "postgres".to_string(), catalog_repo));
     }
     let state_path = std::env::var("GAME_STATE_PATH")
         .unwrap_or_else(|_| "./game-economy-state.json".to_string());
@@ -154,13 +172,82 @@ async fn load_game_state() -> anyhow::Result<(Arc<dyn GameStateRepository>, Stri
         state_path,
         "game state: single-instance JSON file; set GAME_DATABASE_URL before running more than one instance"
     );
-    Ok((Arc::new(json), format!("json:{state_path}")))
+    let catalog_path = std::env::var("GAME_CATALOG_STATE_PATH")
+        .unwrap_or_else(|_| "./game-economy-catalog.json".to_string());
+    let catalog_repo = JsonFileCatalog::open(&catalog_path)
+        .map_err(|e| anyhow::anyhow!("opening catalog store {catalog_path}: {e}"))?;
+    Ok((
+        Arc::new(json),
+        format!("json:{state_path}"),
+        Arc::new(catalog_repo),
+    ))
+}
+
+/// The catalog the store boots with, and its persisted revision.
+///
+/// The persisted catalog wins once it exists (operators edit it live). The
+/// seed file (`GAME_CATALOG_PATH` / `GAME_CATALOG=demo`) is used on first boot,
+/// or when `GAME_CATALOG_RESEED=true` explicitly overwrites the stored one.
+fn resolve_catalog(repo: &dyn CatalogRepository) -> anyhow::Result<(Catalog, u64)> {
+    let stored = repo
+        .load_catalog()
+        .map_err(|e| anyhow::anyhow!("loading persisted catalog: {e}"))?;
+    let reseed = env_flag("GAME_CATALOG_RESEED");
+    if let Some(stored) = &stored {
+        if !reseed {
+            let catalog = Catalog::from_file(stored.file.clone())
+                .map_err(|e| anyhow::anyhow!("persisted catalog is invalid: {e}"))?;
+            tracing::info!(
+                revision = stored.revision,
+                products = catalog.len(),
+                "catalog loaded from store (edit it in the operator console)"
+            );
+            return Ok((catalog, stored.revision));
+        }
+    }
+    let seed = load_seed_catalog()?;
+    let expected = stored.as_ref().map(|s| s.revision).unwrap_or(0);
+    let revision = repo
+        .save_catalog(&seed.to_file(), expected)
+        .map_err(|e| anyhow::anyhow!("persisting seed catalog: {e}"))?;
+    tracing::info!(revision, products = seed.len(), reseed, "catalog seeded");
+    Ok((seed, revision))
+}
+
+/// Periodically pick up catalog edits saved by other server instances.
+fn spawn_catalog_refresh<M, F>(store: Arc<GameStore<M, F>>) -> anyhow::Result<()>
+where
+    M: game_economy_core::MintTransport + 'static,
+    F: game_economy_core::Fulfiller + 'static,
+{
+    let secs: u64 = std::env::var("GAME_CATALOG_REFRESH_SECS")
+        .ok()
+        .map(|v| v.trim().parse())
+        .transpose()
+        .context("GAME_CATALOG_REFRESH_SECS must be a positive integer")?
+        .unwrap_or(15)
+        .max(1);
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(secs));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            let store = Arc::clone(&store);
+            match tokio::task::spawn_blocking(move || store.refresh_catalog()).await {
+                Ok(Ok(true)) => tracing::info!("catalog reloaded (edited on another instance)"),
+                Ok(Ok(false)) => {}
+                Ok(Err(err)) => tracing::warn!(error = %err, "catalog refresh failed"),
+                Err(err) => tracing::warn!(error = %err, "catalog refresh task panicked"),
+            }
+        }
+    });
+    Ok(())
 }
 
 /// Load the operator's catalog. A real deployment points `GAME_CATALOG_PATH`
 /// at its JSON definition; the built-in sample catalog is only used when
 /// explicitly requested with `GAME_CATALOG=demo`.
-fn load_catalog() -> anyhow::Result<Catalog> {
+fn load_seed_catalog() -> anyhow::Result<Catalog> {
     if let Ok(path) = std::env::var("GAME_CATALOG_PATH") {
         let raw = std::fs::read_to_string(&path)
             .with_context(|| format!("reading GAME_CATALOG_PATH {path}"))?;

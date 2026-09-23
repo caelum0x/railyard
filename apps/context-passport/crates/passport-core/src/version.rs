@@ -87,6 +87,7 @@ impl PassportVersion {
     /// Returns a NEW locked version (never mutates the receiver).
     pub fn locked(&self, now: DateTime<Utc>) -> Result<Self, PassportError> {
         self.rights.validate_for_lock()?;
+        self.assets.validate_for_lock()?;
         let mut next = self.clone();
         next.status = VersionStatus::Locked;
         next.content_digest = Some(self.compute_digest());

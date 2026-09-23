@@ -32,7 +32,7 @@ async fn pack_opening_is_deterministic_per_receipt_and_seed() {
             game_economy_core::Product::CardPack(t) => t,
             _ => unreachable!(),
         },
-        store.catalog(),
+        &store.catalog(),
         &out.receipt_id,
         7,
     );
@@ -70,12 +70,13 @@ async fn different_seed_changes_drops() {
     let store = GameStore::new(mint, Catalog::demo(), REVENUE);
     let out = store.purchase(PLAYER, "pack.mega", "buy-1").await.unwrap();
 
-    let tier = match store.catalog().get("pack.mega").unwrap() {
+    let catalog = store.catalog();
+    let tier = match catalog.get("pack.mega").unwrap() {
         game_economy_core::Product::CardPack(t) => t,
         _ => unreachable!(),
     };
-    let a = game_economy_core::derive_pack_contents(tier, store.catalog(), &out.receipt_id, 1);
-    let b = game_economy_core::derive_pack_contents(tier, store.catalog(), &out.receipt_id, 2);
+    let a = game_economy_core::derive_pack_contents(tier, &catalog, &out.receipt_id, 1);
+    let b = game_economy_core::derive_pack_contents(tier, &catalog, &out.receipt_id, 2);
     assert_ne!(a, b);
 }
 

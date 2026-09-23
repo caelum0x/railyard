@@ -52,6 +52,21 @@ refunded). Purchase history shows `status` (`completed` / `refunded` /
 | `GET /admin` | page | Operator console: revenue/refund totals, purchases, player lookup, refund/revoke, pass tiers |
 | `GET /v1/admin/summary`, `GET /v1/admin/purchases`, `GET /v1/admin/players/:player` | admin token | Console data |
 | `POST /v1/admin/refunds`, `POST /v1/admin/revoke`, `POST /v1/admin/pass/advance` | admin token | Console actions |
+| `GET /v1/admin/catalog` | admin token | Full catalog incl. archived SKUs + revision (console Catalog tab) |
+| `PUT /v1/admin/catalog/products/:sku` | admin token | Create or update a product (`{"product":{"CardPack":{...}},"expected_revision":N}`) |
+| `POST /v1/admin/catalog/products/:sku/archive` | admin token | Archive / restore a SKU (`{"archived":true}`); archived SKUs leave the storefront but owned copies keep working |
+| `PUT /v1/admin/catalog/pools/:rarity` | admin token | Replace a rarity's item pool (`{"items":[...]}`) |
+
+The catalog is editable live. `GAME_CATALOG_PATH` only seeds the persisted
+catalog on first boot (Postgres tables `game_catalog_*`, or
+`GAME_CATALOG_STATE_PATH` JSON for a single instance); afterwards the console
+is the source of truth (`GAME_CATALOG_RESEED=true` overwrites it from the file).
+Every edit is re-validated as a whole catalog and saved with an optimistic
+revision check; other instances pick edits up within `GAME_CATALOG_REFRESH_SECS`.
+Products are archived, never deleted. Each purchased pack snapshots the odds it
+was sold under, a cosmetic's name and rarity (its item identity) are locked, and
+a battle pass can gain but never lose tiers. A catalog where a pack can roll a
+rarity with an empty item pool is rejected.
 
 Server-to-server routes require `X-Game-Server-Key: <GAME_SERVER_SECRET>`; a
 player token is never accepted there, so players cannot advance their own pass.

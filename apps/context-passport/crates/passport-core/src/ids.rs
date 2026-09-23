@@ -27,6 +27,11 @@ pub fn new_generation_id() -> String {
     format!("gen_{}", unique_suffix())
 }
 
+/// Fresh trained-artifact id, e.g. `art_18f2c...`.
+pub fn new_artifact_id() -> String {
+    format!("art_{}", unique_suffix())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

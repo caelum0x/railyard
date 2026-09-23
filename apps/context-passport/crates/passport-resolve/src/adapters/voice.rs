@@ -36,6 +36,9 @@ impl ProviderAdapter for VoiceAdapter {
                     p.extra.insert("language".into(), lang.clone());
                 }
             }
+            PassportAssets::Voice(v) => super::apply_voice(&mut p, v),
+            // A visual style carries no voice identity.
+            PassportAssets::Style(_) => {}
         }
         p
     }

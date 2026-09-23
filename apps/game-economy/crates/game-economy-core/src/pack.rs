@@ -66,26 +66,49 @@ fn pick_rarity(weights: &[(Rarity, u32)], draw: u64) -> Rarity {
     weights.last().map(|(r, _)| *r).unwrap_or(Rarity::Common)
 }
 
+/// `true` when every rarity `tier` can roll has at least one item in the
+/// catalog's pools. The store refuses to open a pack otherwise, so a player is
+/// never granted a placeholder item.
+pub fn pack_is_openable(tier: &CardPackTier, catalog: &Catalog) -> bool {
+    tier.rarity_weights
+        .iter()
+        .any(|(rarity, weight)| *weight > 0 && !catalog.pool(*rarity).is_empty())
+}
+
 /// Derive a pack's full contents deterministically from the receipt id + seed.
 ///
-/// For each slot: roll a rarity against the tier's weighted table, then pick a
-/// named item from that rarity's catalog pool. Reproducible and auditable — the
-/// same inputs always yield byte-identical output.
+/// For each slot: roll a rarity against the tier's weighted table (restricted
+/// to rarities that have a non-empty item pool, so the roll can only land on a
+/// real item), then pick a named item from that rarity's catalog pool.
+/// Reproducible and auditable — the same inputs always yield byte-identical
+/// output.
 pub fn derive_pack_contents(
     tier: &CardPackTier,
     catalog: &Catalog,
     receipt_id: &str,
     seed: u64,
 ) -> Vec<GrantedItem> {
+    let rollable: Vec<(Rarity, u32)> = tier
+        .rarity_weights
+        .iter()
+        .copied()
+        .filter(|(rarity, weight)| *weight > 0 && !catalog.pool(*rarity).is_empty())
+        .collect();
+    let weights: &[(Rarity, u32)] = if rollable.is_empty() {
+        &tier.rarity_weights
+    } else {
+        &rollable
+    };
     let mut items = Vec::with_capacity(tier.cards_per_pack as usize);
     for slot in 0..tier.cards_per_pack {
         let rarity_draw = draw_u64(receipt_id, seed, &format!("slot:{slot}:rarity"));
-        let rarity = pick_rarity(&tier.rarity_weights, rarity_draw);
+        let rarity = pick_rarity(weights, rarity_draw);
 
         let pool = catalog.pool(rarity);
         let (name, item_id) = if pool.is_empty() {
-            // No pool for this rarity: synthesize a stable placeholder identity so
-            // the drop is still content-addressed and reproducible.
+            // Only reachable when NO rolled rarity has a pool; callers gate on
+            // `pack_is_openable` and catalog validation rejects such tables, so
+            // this stays a total, reproducible fallback rather than a panic.
             let synth = format!("{}-{}", rarity.tag(), slot);
             let id = content_item_id(rarity, &synth);
             (synth, id)

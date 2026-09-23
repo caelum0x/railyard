@@ -30,6 +30,10 @@ pub enum PassportError {
     Unauthorized,
     #[error("passport is archived; unarchive it to edit, lock, branch or generate")]
     Archived,
+    #[error("trained artifact not found")]
+    ArtifactNotFound,
+    #[error("artifact transition not allowed: {0}")]
+    ArtifactState(String),
 }
 
 impl PassportError {
@@ -50,6 +54,8 @@ impl PassportError {
             Self::Storage(_) => "storage_unavailable",
             Self::Unauthorized => "unauthorized",
             Self::Archived => "passport_archived",
+            Self::ArtifactNotFound => "artifact_not_found",
+            Self::ArtifactState(_) => "artifact_state_conflict",
         }
     }
 }

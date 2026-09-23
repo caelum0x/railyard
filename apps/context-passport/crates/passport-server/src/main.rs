@@ -153,7 +153,7 @@ async fn main() -> anyhow::Result<()> {
                 .context("running Passport migrations")?;
             let store = Arc::new(store);
             tracing::info!("passport store: postgres (durable)");
-            PassportService::new(store.clone(), store, relay)
+            PassportService::new(store.clone(), store.clone(), relay).with_artifact_store(store)
         }
         StoreMode::Memory => {
             let store = Arc::new(MemoryStore::default());
@@ -165,7 +165,7 @@ async fn main() -> anyhow::Result<()> {
                     "relay: unconfigured — `generate` will return 502 until RELAY_BASE/RELAY_API_KEY are set"
                 );
             }
-            PassportService::new(store.clone(), store, relay)
+            PassportService::new(store.clone(), store.clone(), relay).with_artifact_store(store)
         }
     };
 

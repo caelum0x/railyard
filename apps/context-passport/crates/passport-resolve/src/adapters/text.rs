@@ -42,6 +42,22 @@ impl ProviderAdapter for TextAdapter {
                     p.text_directives.push(format!("hook: {hook}"));
                 }
             }
+            PassportAssets::Voice(v) => {
+                if let Some(delivery) = &v.delivery {
+                    p.text_directives.push(format!("delivery: {delivery}"));
+                }
+                if let Some(lang) = &v.language {
+                    p.extra.insert("language".into(), lang.clone());
+                }
+            }
+            PassportAssets::Style(s) => {
+                if let Some(descriptor) = &s.descriptor {
+                    p.text_directives.push(format!("style: {descriptor}"));
+                }
+                if let Some(medium) = &s.medium {
+                    p.text_directives.push(format!("medium: {medium}"));
+                }
+            }
         }
         p
     }

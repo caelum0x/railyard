@@ -14,6 +14,7 @@
 //! - [`entitlement`] — the per-player inventory of what was granted.
 
 pub mod catalog;
+pub mod catalog_repo;
 pub mod entitlement;
 pub mod error;
 pub mod money;
@@ -22,10 +23,13 @@ pub mod state;
 pub mod store;
 pub mod transport;
 
-pub use catalog::{BattlePass, CardPackTier, Catalog, CatalogError, Cosmetic, Product, Rarity};
+pub use catalog::{
+    BattlePass, CardPackTier, Catalog, CatalogError, CatalogFile, Cosmetic, Product, Rarity,
+};
 pub use entitlement::{BattlePassState, EntitlementId, Inventory, OwnedPack};
 pub use error::GameError;
-pub use pack::{content_item_id, derive_pack_contents, GrantedItem};
+pub use pack::{content_item_id, derive_pack_contents, pack_is_openable, GrantedItem};
+pub use catalog_repo::{CatalogRepository, MemoryCatalog, StoredCatalog};
 pub use state::{
     completed_for, recent_of, reverse_in, summarize, CompletedPurchase, GameStateRepository, MemoryGameState,
     PurchaseRecord, PurchaseReversal, PurchaseSummary, ReversalKind, ReverseOutcome,

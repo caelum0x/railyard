@@ -28,14 +28,15 @@
 //! though Mint already captured the money — pushing the caller toward a fresh key
 //! and a genuine double charge.
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 
-use crate::catalog::{Catalog, Product};
+use crate::catalog::{Catalog, CatalogError, Product};
+use crate::catalog_repo::CatalogRepository;
 use crate::entitlement::{EntitlementId, Inventory, OwnedPack};
 use crate::error::GameError;
-use crate::pack::{content_item_id, derive_pack_contents, GrantedItem};
+use crate::pack::{content_item_id, derive_pack_contents, pack_is_openable, GrantedItem};
 use crate::state::{
     CompletedPurchase, GameStateRepository, MemoryGameState, PurchaseRecord, PurchaseReversal,
     ReversalKind, ReverseOutcome,
@@ -92,12 +93,35 @@ pub struct RefundOutcome {
     pub idempotent_replay: bool,
 }
 
+/// The current catalog snapshot and the persisted revision it came from.
+struct LiveCatalog {
+    catalog: Arc<Catalog>,
+    revision: u64,
+}
+
+impl LiveCatalog {
+    fn new(catalog: Catalog) -> RwLock<Self> {
+        RwLock::new(LiveCatalog {
+            catalog: Arc::new(catalog),
+            revision: 0,
+        })
+    }
+}
+
 /// A storefront bound to one Mint account rail. Generic over the transport `M`
 /// and the fulfiller `F` so tests inject a FakeMint / a failing fulfiller.
 pub struct GameStore<M: MintTransport, F: Fulfiller = AlwaysFulfill> {
     mint: M,
     fulfiller: F,
-    catalog: Catalog,
+    /// The live catalog snapshot. Readers clone the `Arc` (cheap) and work on
+    /// an immutable snapshot; operator edits build a new validated catalog and
+    /// swap it in atomically.
+    catalog: RwLock<LiveCatalog>,
+    /// Where catalog edits are persisted. `None` keeps edits in memory only.
+    catalog_repo: Option<Arc<dyn CatalogRepository>>,
+    /// Serializes catalog edits within this process (the repository's revision
+    /// check serializes them across instances).
+    catalog_edit_lock: std::sync::Mutex<()>,
     /// The revenue account captures settle to.
     revenue_account: String,
     /// Durable purchase + entitlement projection. A pending intent is written
@@ -128,7 +152,9 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         GameStore {
             mint,
             fulfiller,
-            catalog,
+            catalog: LiveCatalog::new(catalog),
+            catalog_repo: None,
+            catalog_edit_lock: std::sync::Mutex::new(()),
             revenue_account: revenue_account.into(),
             state: Arc::new(MemoryGameState::default()),
             inventory_lock: std::sync::Mutex::new(()),
@@ -147,16 +173,114 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         Self {
             mint,
             fulfiller,
-            catalog,
+            catalog: LiveCatalog::new(catalog),
+            catalog_repo: None,
+            catalog_edit_lock: std::sync::Mutex::new(()),
             revenue_account: revenue_account.into(),
             state,
             inventory_lock: std::sync::Mutex::new(()),
         }
     }
 
-    /// Borrow the catalog.
-    pub fn catalog(&self) -> &Catalog {
-        &self.catalog
+    /// Persist catalog edits through `repo`. `revision` is the revision the
+    /// store's current catalog was loaded at (`0` if it has never been saved).
+    pub fn with_catalog_repository(
+        mut self,
+        repo: Arc<dyn CatalogRepository>,
+        revision: u64,
+    ) -> Self {
+        self.catalog_repo = Some(repo);
+        if let Ok(live) = self.catalog.get_mut() {
+            live.revision = revision;
+        }
+        self
+    }
+
+    /// The current catalog snapshot. Cheap (an `Arc` clone); the snapshot never
+    /// changes under the caller even if an operator edits the catalog.
+    pub fn catalog(&self) -> Arc<Catalog> {
+        match self.catalog.read() {
+            Ok(live) => Arc::clone(&live.catalog),
+            Err(poisoned) => Arc::clone(&poisoned.into_inner().catalog),
+        }
+    }
+
+    /// The persisted revision of the current catalog snapshot.
+    pub fn catalog_revision(&self) -> u64 {
+        match self.catalog.read() {
+            Ok(live) => live.revision,
+            Err(poisoned) => poisoned.into_inner().revision,
+        }
+    }
+
+    /// Apply an operator edit to the catalog.
+    ///
+    /// `edit` receives the current snapshot and returns the next one (the
+    /// `Catalog::with_*` methods, which re-validate the whole catalog). The new
+    /// catalog is persisted with an optimistic revision check and only then
+    /// swapped in, so a failed save never leaves the storefront serving an
+    /// unsaved catalog. If `expected_revision` is given and does not match the
+    /// live revision the edit is rejected as a conflict (the operator was looking
+    /// at a stale catalog).
+    pub fn edit_catalog(
+        &self,
+        expected_revision: Option<u64>,
+        edit: impl FnOnce(&Catalog) -> Result<Catalog, CatalogError>,
+    ) -> Result<(Arc<Catalog>, u64), GameError> {
+        let _edit = self
+            .catalog_edit_lock
+            .lock()
+            .map_err(|_| GameError::Storage("catalog edit lock poisoned".into()))?;
+        // Pick up edits made by other instances before building on the catalog.
+        self.refresh_catalog()?;
+        let (current, revision) = (self.catalog(), self.catalog_revision());
+        if let Some(expected) = expected_revision {
+            if expected != revision {
+                return Err(GameError::CatalogConflict {
+                    expected,
+                    actual: revision,
+                });
+            }
+        }
+        let next = edit(&current).map_err(|e| GameError::InvalidCatalog(e.0))?;
+        let new_revision = match &self.catalog_repo {
+            Some(repo) => repo.save_catalog(&next.to_file(), revision)?,
+            None => revision + 1,
+        };
+        let next = Arc::new(next);
+        let mut live = self
+            .catalog
+            .write()
+            .map_err(|_| GameError::Storage("catalog lock poisoned".into()))?;
+        live.catalog = Arc::clone(&next);
+        live.revision = new_revision;
+        Ok((next, new_revision))
+    }
+
+    /// Reload the catalog from the repository when another instance saved a
+    /// newer revision. Returns `true` when the live catalog changed.
+    pub fn refresh_catalog(&self) -> Result<bool, GameError> {
+        let Some(repo) = &self.catalog_repo else {
+            return Ok(false);
+        };
+        let Some(stored) = repo.load_catalog()? else {
+            return Ok(false);
+        };
+        if stored.revision <= self.catalog_revision() {
+            return Ok(false);
+        }
+        let catalog =
+            Catalog::from_file(stored.file).map_err(|e| GameError::InvalidCatalog(e.0))?;
+        let mut live = self
+            .catalog
+            .write()
+            .map_err(|_| GameError::Storage("catalog lock poisoned".into()))?;
+        if stored.revision > live.revision {
+            live.catalog = Arc::new(catalog);
+            live.revision = stored.revision;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// The Mint account captures settle to (and refunds are paid from).
@@ -223,8 +347,8 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         product_sku: &str,
         idem_key: &str,
     ) -> Result<PurchaseOutcome, GameError> {
-        let product = self
-            .catalog
+        let catalog = self.catalog();
+        let product = catalog
             .get(product_sku)
             .cloned()
             .ok_or_else(|| GameError::UnknownProduct(product_sku.to_string()))?;
@@ -258,6 +382,12 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
                     // the recovery protocol.
                 }
             }
+        }
+
+        // Archived products stay resolvable for owned entitlements (and for the
+        // replay above) but can no longer be bought.
+        if catalog.is_archived(product_sku) {
+            return Err(GameError::ProductArchived(product_sku.to_string()));
         }
 
         // Persist intent before reserving money. The state adapter enforces
@@ -385,6 +515,7 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         entitlement_id: &str,
         seed: u64,
     ) -> Result<Vec<GrantedItem>, GameError> {
+        let catalog = self.catalog();
         let _guard = self.lock_inventory()?;
         let mut opened: Vec<GrantedItem> = Vec::new();
         self.state.update_inventory(player, &mut |inv: &mut Inventory| {
@@ -396,11 +527,21 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             if pack.is_opened() {
                 return Err(GameError::PackAlreadyOpened(entitlement_id.to_string()));
             }
-            let tier = match self.catalog.get(&pack.pack_sku) {
-                Some(Product::CardPack(t)) => t.clone(),
+            // Packs bought after runtime catalog editing carry a snapshot of the
+            // tier they were sold under, so an operator changing the odds later
+            // never changes what an already-paid-for pack can roll.
+            let tier = match (&pack.tier, catalog.get(&pack.pack_sku)) {
+                (Some(snapshot), _) => snapshot.clone(),
+                (None, Some(Product::CardPack(t))) => t.clone(),
                 _ => return Err(GameError::UnknownProduct(pack.pack_sku.clone())),
             };
-            let contents = derive_pack_contents(&tier, &self.catalog, &pack.receipt_id, seed);
+            if !pack_is_openable(&tier, &catalog) {
+                return Err(GameError::InvalidCatalog(format!(
+                    "pack `{}` has no item pool for any rarity it can roll",
+                    pack.pack_sku
+                )));
+            }
+            let contents = derive_pack_contents(&tier, &catalog, &pack.receipt_id, seed);
             // Materialize + unlock each drop's cosmetic (idempotent).
             if let Some(p) = inv.packs.get_mut(entitlement_id) {
                 p.contents = Some(contents.clone());
@@ -429,7 +570,7 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         pass_sku: &str,
         target: u32,
     ) -> Result<u32, GameError> {
-        let max_tiers = match self.catalog.get(pass_sku) {
+        let max_tiers = match self.catalog().get(pass_sku) {
             Some(Product::BattlePass(b)) => b.tiers,
             Some(_) => return Err(GameError::UnknownProduct(pass_sku.to_string())),
             None => return Err(GameError::UnknownProduct(pass_sku.to_string())),
@@ -538,7 +679,7 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             reason: reason.map(str::to_string),
         };
         let _guard = self.lock_inventory()?;
-        let ownership_key = single_owner_key_for_sku(&self.catalog, &purchase.outcome.product_sku);
+        let ownership_key = single_owner_key_for_sku(&self.catalog(), &purchase.outcome.product_sku);
         match self.state.reverse_purchase(
             player,
             receipt_id,
@@ -570,12 +711,12 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
     ) -> Result<Option<String>, GameError> {
         Ok(self
             .receipt(player, receipt_id)?
-            .and_then(|p| single_owner_key_for_sku(&self.catalog, &p.outcome.product_sku)))
+            .and_then(|p| single_owner_key_for_sku(&self.catalog(), &p.outcome.product_sku)))
     }
 
     /// Remove what `purchase` granted from `inv`.
     fn remove_grant(&self, purchase: &CompletedPurchase, inv: &mut Inventory) {
-        match self.catalog.get(&purchase.outcome.product_sku) {
+        match self.catalog().get(&purchase.outcome.product_sku) {
             Some(Product::CardPack(_)) | None => {
                 if let Some(pack) = inv.packs.remove(&purchase.outcome.entitlement_id) {
                     for item in pack.contents.unwrap_or_default() {
@@ -633,6 +774,7 @@ fn grant_into(
             settlement_seq,
             receipt_id: receipt_id.to_string(),
             contents: None,
+            tier: Some(t.clone()),
         }),
         Product::Cosmetic(c) => {
             let item_id = content_item_id(c.rarity, &c.name);

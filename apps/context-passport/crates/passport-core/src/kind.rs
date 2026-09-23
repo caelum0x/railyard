@@ -10,6 +10,10 @@ pub enum PassportKind {
     Character,
     Brand,
     Persona,
+    /// A cloneable voice: reference recordings + consent evidence.
+    Voice,
+    /// A visual house style: references, palette, descriptors, LoRA/embedding.
+    Style,
 }
 
 impl PassportKind {
@@ -18,6 +22,8 @@ impl PassportKind {
             Self::Character => "character",
             Self::Brand => "brand",
             Self::Persona => "persona",
+            Self::Voice => "voice",
+            Self::Style => "style",
         }
     }
 
@@ -26,6 +32,8 @@ impl PassportKind {
             "character" => Ok(Self::Character),
             "brand" => Ok(Self::Brand),
             "persona" => Ok(Self::Persona),
+            "voice" => Ok(Self::Voice),
+            "style" => Ok(Self::Style),
             other => Err(PassportError::Storage(format!(
                 "unknown passport kind {other}"
             ))),

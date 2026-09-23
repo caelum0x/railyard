@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::catalog::CardPackTier;
 use crate::pack::GrantedItem;
 
 /// A deterministic entitlement id (`ent_…`), derived from `(player, idem_key)`.
@@ -27,6 +28,12 @@ pub struct OwnedPack {
     pub receipt_id: String,
     /// Materialized drops once opened; `None` while sealed.
     pub contents: Option<Vec<GrantedItem>>,
+    /// The pack tier (odds + card count) this pack was sold under. Snapshotted
+    /// at purchase so live catalog edits never change what a paid-for pack can
+    /// roll. `None` on packs granted before snapshots existed (they open
+    /// against the live catalog tier).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<CardPackTier>,
 }
 
 impl OwnedPack {

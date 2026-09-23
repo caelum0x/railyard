@@ -52,6 +52,13 @@
   .drops { display: flex; flex-wrap: wrap; gap: 6px; }
   .bar { height: 8px; background: var(--row); border-radius: 4px; overflow: hidden; }
   .bar > div { height: 100%; background: var(--accent); }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 20; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 20px; width: min(640px, 94vw); max-height: 90vh; overflow: auto; }
+  .modal h3 { margin-top: 0; }
+  dl.kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; margin: 0; }
+  dl.kv dt { color: var(--muted); font-size: 12px; }
+  dl.kv dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; }
+  .row { display: flex; justify-content: flex-end; margin-top: 14px; }
   .st-completed { color: var(--ok); } .st-refunded { color: var(--accent); } .st-revoked { color: var(--danger); }
 </style>
 </head>
@@ -217,16 +224,57 @@
     main.innerHTML = '<div class="loading">Loading purchases...</div>';
     api("GET", "/v1/purchases/" + encodeURIComponent(state.player)).then(function (d) {
       if (!d.purchases.length) { main.innerHTML = '<div class="empty">No purchases yet.</div>'; return; }
-      main.innerHTML = '<div class="card" style="margin-top:16px"><table><thead><tr><th>Item</th><th>Charged</th><th>Status</th><th>Settlement</th><th>Receipt</th></tr></thead><tbody>' +
+      main.innerHTML = '<div class="card" style="margin-top:16px"><table><thead><tr><th>Item</th><th>Charged</th><th>Status</th><th>Settlement</th><th>Receipt</th><th></th></tr></thead><tbody>' +
         d.purchases.map(function (p) {
           var st = p.status || "completed", rv = p.reversal;
           var stHtml = '<span class="badge st-' + esc(st) + '">' + esc(st) + "</span>";
           if (rv && rv.kind === "refunded") stHtml += '<div class="muted">' + money(rv.refunded_micros) + " returned to your balance</div>";
           if (rv && rv.kind === "revoked") stHtml += '<div class="muted">Item removed after a payment reversal</div>';
           return "<tr><td>" + esc(p.product_sku) + "</td><td>" + money(p.charged_micros) + "</td><td>" + stHtml + "</td><td>#" + esc(p.settlement_seq) +
-            '</td><td class="mono">' + esc(p.receipt_id) + "</td></tr>";
+            '</td><td class="mono">' + esc(p.receipt_id) + '</td><td><button data-receipt="' + esc(p.receipt_id) + '">View receipt</button></td></tr>';
         }).join("") + "</tbody></table></div>";
+      main.querySelectorAll("button[data-receipt]").forEach(function (b) {
+        b.onclick = function () { showReceipt(b.dataset.receipt, b); };
+      });
     }).catch(function (e) { main.innerHTML = '<div class="empty">Could not load purchases: ' + esc(e.message) + "</div>"; });
+  }
+
+  // Receipt detail: GET /v1/purchases/:player/:receipt_id, plus the pack's
+  // drops from the inventory when the purchase was a card pack.
+  function showReceipt(receiptId, btn) {
+    btn.disabled = true; setStatus("Loading receipt...");
+    Promise.all([
+      api("GET", "/v1/purchases/" + encodeURIComponent(state.player) + "/" + encodeURIComponent(receiptId)),
+      api("GET", "/v1/inventory/" + encodeURIComponent(state.player)).catch(function () { return null; })
+    ]).then(function (res) {
+      btn.disabled = false; setStatus("Ready");
+      var p = res[0], inv = res[1], proof = p.settlement_proof || {};
+      var rows = [["Item", p.product_sku], ["Charged", money(p.charged_micros)], ["Status", p.status || "completed"],
+        ["Receipt", p.receipt_id], ["Entitlement", p.entitlement_id], ["Settlement", "#" + p.settlement_seq]];
+      Object.keys(proof).forEach(function (k) {
+        var v = proof[k];
+        if (v !== null && typeof v !== "object") rows.push([k.replace(/_/g, " "), v]);
+      });
+      if (p.reversal) {
+        rows.push(["Reversal", p.reversal.kind + (p.reversal.at_unix ? " on " + new Date(p.reversal.at_unix * 1000).toLocaleString() : "")]);
+        if (p.reversal.kind === "refunded") rows.push(["Refunded", money(p.reversal.refunded_micros)]);
+      }
+      var html = '<dl class="kv">' + rows.map(function (r) { return "<dt>" + esc(r[0]) + "</dt><dd>" + esc(r[1]) + "</dd>"; }).join("") + "</dl>";
+      var pack = inv && inv.packs ? inv.packs[p.entitlement_id] : null;
+      if (pack) {
+        html += "<h3 style=\"margin-top:18px\">Pack contents</h3>" + (pack.contents
+          ? '<div class="drops">' + pack.contents.map(function (it) {
+              return '<span class="badge r-' + esc(it.rarity) + '">' + esc(it.name) + "</span>";
+            }).join("") + "</div>"
+          : '<p class="muted">This pack is still sealed. Open it from your inventory.</p>');
+      }
+      var bg = document.createElement("div");
+      bg.className = "modal-bg";
+      bg.innerHTML = '<div class="modal"><h3>Receipt</h3>' + html + '<div class="row"><button id="rclose">Close</button></div></div>';
+      document.body.appendChild(bg);
+      bg.querySelector("#rclose").onclick = function () { bg.remove(); };
+      bg.onclick = function (e) { if (e.target === bg) bg.remove(); };
+    }).catch(function (e) { btn.disabled = false; setStatus(e.message, "err"); });
   }
 
   function render() {

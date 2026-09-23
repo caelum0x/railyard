@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::error::PassportError;
+use crate::artifact::TrainedArtifact;
 use crate::passport::{Passport, PassportFilter};
 use crate::version::PassportVersion;
 
@@ -65,6 +66,29 @@ pub trait PassportStore: Send + Sync {
     ) -> Result<Option<Passport>, PassportError>;
 
     async fn ready(&self) -> Result<(), PassportError>;
+}
+
+/// Persistence port for provider-minted [`TrainedArtifact`]s. Implemented by
+/// the in-memory and Postgres stores.
+#[async_trait]
+pub trait ArtifactStore: Send + Sync {
+    /// Insert `artifact`. When it is active (pending/ready), any other ACTIVE
+    /// artifact for the same `(passport_id, version, provider, kind)` is revoked
+    /// in the same atomic step (the newest registration supersedes).
+    async fn insert_artifact(&self, artifact: &TrainedArtifact) -> Result<(), PassportError>;
+
+    async fn get_artifact(&self, id: &str) -> Result<Option<TrainedArtifact>, PassportError>;
+
+    /// Every artifact of a passport, newest first.
+    async fn list_artifacts(&self, passport_id: &str)
+        -> Result<Vec<TrainedArtifact>, PassportError>;
+
+    /// Persist a status transition (and ref / failure reason) for an existing
+    /// artifact. Returns the stored artifact, or `None` if it does not exist.
+    async fn update_artifact(
+        &self,
+        artifact: &TrainedArtifact,
+    ) -> Result<Option<TrainedArtifact>, PassportError>;
 }
 
 /// A resolved conditioning request handed to Relay for actual generation.

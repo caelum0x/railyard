@@ -48,6 +48,10 @@
   .empty { padding:20px; color:var(--muted); text-align:center; }
   pre { background:var(--row); padding:10px; border-radius:6px; overflow:auto; max-height:360px; font-size:12px; white-space:pre-wrap; }
   .output { background:var(--row); border-left:3px solid var(--accent); padding:10px 12px; border-radius:4px; white-space:pre-wrap; }
+  .output.err { border-color:var(--danger); }
+  .badge.ready { color:var(--ok); border-color:var(--ok); } .badge.pending { color:var(--warn); border-color:var(--warn); }
+  .badge.failed, .badge.revoked { color:var(--danger); border-color:var(--danger); }
+  .actions { display:flex; gap:6px; flex-wrap:wrap; }
 </style>
 </head>
 <body>
@@ -63,13 +67,13 @@
     <div class="panel">
       <h2>New passport</h2>
       <div class="field"><label>Kind</label>
-        <select id="new-kind"><option value="character">Character</option><option value="brand">Brand</option><option value="persona">Persona</option></select></div>
+        <select id="new-kind"><option value="character">Character</option><option value="brand">Brand</option><option value="persona">Persona</option><option value="voice">Voice</option><option value="style">Style</option></select></div>
       <div class="field"><label>Owner account</label><input id="new-owner" placeholder="acct_studio (blank = your key's owner)" /></div>
       <button id="create" class="primary">Create draft</button>
     </div>
     <div class="panel" style="margin-top:16px">
       <h2>Passports</h2>
-      <div class="row"><select id="filter-kind"><option value="">All kinds</option><option value="character">Character</option><option value="brand">Brand</option><option value="persona">Persona</option></select>
+      <div class="row"><select id="filter-kind"><option value="">All kinds</option><option value="character">Character</option><option value="brand">Brand</option><option value="persona">Persona</option><option value="voice">Voice</option><option value="style">Style</option></select>
         <select id="filter-archive"><option value="active">Active</option><option value="archived">Archived</option><option value="all">All</option></select>
         <button id="refresh">Refresh</button></div>
       <div id="list"><div class="empty">Not connected.</div></div>
@@ -85,8 +89,12 @@
   var FIELDS = {
     character: [["style","text"],["personality","text"],["wardrobe","text"],["voice_id","text"],["avatar_ref","text"],["lora_ref","text"],["embedding_ref","text"],["face_refs","list"]],
     brand: [["voice_tone","text"],["typography","text"],["logo_ref","text"],["watermark_ref","text"],["palette","list"]],
-    persona: [["audience","text"],["language","text"],["platform","text"],["hooks","list"]]
+    persona: [["audience","text"],["language","text"],["platform","text"],["hooks","list"]],
+    voice: [["language","text"],["accent","text"],["delivery","text"],["consent_evidence_ref","text"],["sample_refs","list"]],
+    style: [["descriptor","text"],["medium","text"],["negative_prompt","text"],["lora_ref","text"],["embedding_ref","text"],["style_refs","list"],["palette","list"]]
   };
+  var ARTIFACT_KINDS = { voice_clone: "Voice clone", avatar: "Avatar", lora: "LoRA / trained model" };
+  var DEFAULT_PROVIDER = { text: "openai", image: "openai", voice: "elevenlabs", video: "runway" };
   var statusEl = document.getElementById("status");
   function setStatus(m, k) { statusEl.textContent = m; statusEl.className = k || ""; }
   function esc(v) { var d = document.createElement("div"); d.textContent = v == null ? "" : String(v); return d.innerHTML; }
@@ -96,7 +104,11 @@
     return fetch(path, opts).then(function (r) {
       return r.text().then(function (t) {
         var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) {}
-        if (!r.ok) throw new Error(j && j.error ? j.error.message : (t || "HTTP " + r.status));
+        if (!r.ok) {
+          var err = new Error(j && j.error ? j.error.message : (t || "HTTP " + r.status));
+          err.code = j && j.error ? j.error.code : "";
+          throw err;
+        }
         return j ? j.data : null;
       });
     });
@@ -158,8 +170,11 @@
   function loadDetail() {
     var el = document.getElementById("detail"), id = st.selected;
     el.innerHTML = '<div class="empty">Loading...</div>';
-    Promise.all([api("GET", "/v1/passports/" + id), api("GET", "/v1/passports/" + id + "/versions"), api("GET", "/v1/passports/" + id + "/generations")])
-      .then(function (r) { renderDetail(r[0], r[1], r[2]); })
+    Promise.all([
+      api("GET", "/v1/passports/" + id), api("GET", "/v1/passports/" + id + "/versions"), api("GET", "/v1/passports/" + id + "/generations"),
+      api("GET", "/v1/passports/" + id + "/artifacts").catch(function (e) { return { error: e.message }; })
+    ])
+      .then(function (r) { renderDetail(r[0], r[1], r[2], r[3]); })
       .catch(function (e) { el.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
   }
 
@@ -167,7 +182,43 @@
     return '<option value="text">Text</option><option value="image">Image</option><option value="voice">Voice</option><option value="video">Video</option>';
   }
 
-  function renderDetail(view, versions, gens) {
+  function artifactKindFor(modality) {
+    return modality === "voice" ? "voice_clone" : modality === "video" ? "avatar" : "lora";
+  }
+
+  function artifactSection(arts, lockedVersions, archived) {
+    var html = '<div class="section" id="artifacts"><h2 class="muted">Trained artifacts</h2>' +
+      '<div class="muted" style="margin-bottom:8px">Provider-minted voice clones, avatars and LoRAs derived from a locked version. ' +
+      "Voice providers, HeyGen/Hedra and LoRA hosts need one per provider before this passport can resolve for them.</div>";
+    if (arts && arts.error) return html + '<div class="output err">' + esc(arts.error) + "</div></div>";
+    html += arts.length ? '<table><thead><tr><th>Provider</th><th>Type</th><th>Version</th><th>Status</th><th>Artifact</th><th></th></tr></thead><tbody>' +
+      arts.map(function (a, i) {
+        var acts = "";
+        if (!archived && a.status === "pending") acts += '<button data-art-ready="' + i + '">Mark ready</button><button data-art-fail="' + i + '">Mark failed</button>';
+        if (!archived && a.status === "ready") acts += '<button data-art-ready="' + i + '">Replace ref</button>';
+        if (a.status === "pending" || a.status === "ready") acts += '<button class="danger" data-art-revoke="' + i + '">Revoke</button>';
+        return "<tr><td>" + esc(a.provider) + "</td><td>" + esc(ARTIFACT_KINDS[a.kind] || a.kind) + "</td><td>v" + a.version + "</td>" +
+          '<td><span class="badge ' + esc(a.status) + '">' + esc(a.status) + "</span>" + (a.failure_reason ? '<div class="muted">' + esc(a.failure_reason) + "</div>" : "") + "</td>" +
+          '<td class="mono">' + esc(a.artifact_ref || "-") + (a.provider_model ? '<div class="muted">' + esc(a.provider_model) + "</div>" : "") + "</td>" +
+          '<td><div class="actions">' + acts + "</div></td></tr>";
+      }).join("") + "</tbody></table>" : '<div class="empty">No trained artifacts registered.</div>';
+    if (archived) return html + '<div class="muted">Unarchive the passport to register artifacts. Existing artifacts can still be revoked.</div></div>';
+    if (!lockedVersions.length) return html + '<div class="muted">Lock a version before registering artifacts derived from it.</div></div>';
+    html += '<details class="box" id="art-form"><summary>Register an artifact</summary>' +
+      '<div class="grid2" style="margin-top:10px">' +
+      '<div class="field"><label>Provider</label><input id="art-provider" placeholder="elevenlabs, heygen, replicate-lora" /></div>' +
+      '<div class="field"><label>Type</label><select id="art-kind">' + Object.keys(ARTIFACT_KINDS).map(function (k) {
+        return '<option value="' + k + '">' + esc(ARTIFACT_KINDS[k]) + "</option>"; }).join("") + "</select></div>" +
+      '<div class="field"><label>From version</label><select id="art-version">' + lockedVersions.map(function (n, i) {
+        return '<option value="' + n + '">v' + n + (i === 0 ? " (latest locked)" : "") + "</option>"; }).join("") + "</select></div>" +
+      '<div class="field"><label>Provider model (optional)</label><input id="art-model" placeholder="eleven_multilingual_v2" /></div>' +
+      "</div>" +
+      '<div class="field"><label>Provider artifact id (leave blank while training is still running)</label><input id="art-ref" placeholder="voice id / avatar id / model id" /></div>' +
+      '<div class="row"><button id="art-register" class="primary">Register</button></div><div id="art-out"></div></details>';
+    return html + "</div>";
+  }
+
+  function renderDetail(view, versions, gens, arts) {
     var el = document.getElementById("detail"), archived = !!view.archived_at;
     var locked = view.head.status === "locked" || archived;
     var rights = view.head.rights || {};
@@ -194,7 +245,9 @@
       '<div class="section"><h2 class="muted">Generate as this passport</h2>' +
       (!lockedVersions.length ? '<div class="muted">Lock a version before generating or previewing conditioning.</div>' :
         '<div class="row"><select id="gen-modality">' + modalityOptions() + "</select>" +
-        '<input id="gen-provider" value="openai" placeholder="provider" />' + versionSelect("gen-version") + "</div>" +
+        '<input id="gen-provider" value="openai" placeholder="provider" list="provider-hints" />' + versionSelect("gen-version") + "</div>" +
+        '<datalist id="provider-hints"><option value="openai"><option value="anthropic"><option value="runway"><option value="elevenlabs"><option value="cartesia">' +
+        '<option value="heygen"><option value="hedra"><option value="replicate-lora"></datalist>' +
         (archived ? "" : '<textarea id="gen-prompt" placeholder="What should this identity produce?"></textarea>') +
         '<div class="row">' + (archived ? "" : '<button id="gen" class="primary">Generate</button>') +
         '<button id="resolve">Preview conditioning</button></div><div id="gen-out"></div>' +
@@ -206,6 +259,7 @@
         '<div class="field"><label>Settled at (unix ms)</label><input id="att-settled" placeholder="' + Date.now() + '" /></div>' +
         '<div class="field"><label>Payment evidence (JSON: request_id, payer_account, receipt)</label><textarea id="att-evidence" placeholder=\'{"request_id":"...","payer_account":"acct_...","receipt":{"sequence":1,"operation":"hold.capture","operation_hash":"...","amount_micros":1000,"receipt_hash":"...","signature":"..."}}\'></textarea></div>' +
         '<div class="row"><button id="attest" class="primary">Attest generation</button></div><div id="att-out"></div></details>')) + "</div>" +
+      artifactSection(arts, lockedVersions, archived) +
       '<div class="section"><h2 class="muted">Versions</h2><table><thead><tr><th>Version</th><th>Status</th><th>Locked</th><th>Digest</th><th></th></tr></thead><tbody>' +
       versions.slice().reverse().map(function (v) {
         return "<tr><td>v" + v.version + '</td><td><span class="badge ' + esc(v.status) + '">' + esc(v.status) + "</span></td><td>" + esc(v.locked_at ? new Date(v.locked_at).toLocaleString() : "-") +
@@ -260,6 +314,82 @@
         version: v ? Number(v) : null
       };
     }
+    var modalitySel = document.getElementById("gen-modality");
+    if (modalitySel) modalitySel.onchange = function () {
+      var prov = document.getElementById("gen-provider");
+      var known = Object.keys(DEFAULT_PROVIDER).map(function (k) { return DEFAULT_PROVIDER[k]; });
+      if (!prov.value.trim() || known.indexOf(prov.value.trim()) >= 0) prov.value = DEFAULT_PROVIDER[modalitySel.value] || prov.value;
+    };
+    function showGenError(out, e, t) {
+      out.innerHTML = '<div class="output err">' + esc(e.message) + "</div>";
+      if (e.code !== "needs_artifact" || archived || !document.getElementById("art-form")) return;
+      var kind = artifactKindFor(t.modality);
+      out.innerHTML += '<div class="row"><button id="fix-artifact" class="primary">Register a ' + esc(ARTIFACT_KINDS[kind].toLowerCase()) +
+        " for " + esc(t.provider) + "</button></div>";
+      document.getElementById("fix-artifact").onclick = function () {
+        var form = document.getElementById("art-form");
+        form.open = true;
+        document.getElementById("art-provider").value = t.provider;
+        document.getElementById("art-kind").value = kind;
+        if (t.version) document.getElementById("art-version").value = String(t.version);
+        form.scrollIntoView({ behavior: "smooth" });
+        document.getElementById("art-ref").focus();
+      };
+    }
+    var artList = arts && !arts.error ? arts : [];
+    var artRegister = document.getElementById("art-register");
+    if (artRegister) artRegister.onclick = function () {
+      var out = document.getElementById("art-out");
+      var provider = document.getElementById("art-provider").value.trim();
+      if (!/^[A-Za-z0-9._-]{1,64}$/.test(provider)) { out.innerHTML = '<div class="output err">Provider must be 1-64 letters, digits, dots, dashes or underscores.</div>'; return; }
+      var body = {
+        provider: provider,
+        kind: document.getElementById("art-kind").value,
+        version: Number(document.getElementById("art-version").value)
+      };
+      var ref = document.getElementById("art-ref").value.trim(), model = document.getElementById("art-model").value.trim();
+      if (ref) body.artifact_ref = ref;
+      if (model) body.provider_model = model;
+      artRegister.disabled = true; out.innerHTML = '<div class="muted">Registering...</div>';
+      api("POST", "/v1/passports/" + id + "/artifacts", body)
+        .then(function (a) { setStatus("Artifact " + a.id + " registered (" + a.status + ")", "ok"); loadDetail(); })
+        .catch(function (e) { out.innerHTML = '<div class="output err">' + esc(e.message) + "</div>"; artRegister.disabled = false; });
+    };
+    el.querySelectorAll("button[data-art-ready]").forEach(function (b) {
+      b.onclick = function () {
+        var a = artList[Number(b.dataset.artReady)];
+        var ref = prompt("Provider artifact id for " + a.provider + " (" + (ARTIFACT_KINDS[a.kind] || a.kind) + ")", a.artifact_ref || "");
+        if (ref === null) return;
+        ref = ref.trim();
+        if (!ref) { setStatus("An artifact id is required to mark it ready", "err"); return; }
+        b.disabled = true;
+        api("PATCH", "/v1/passports/" + id + "/artifacts/" + encodeURIComponent(a.id), { status: "ready", artifact_ref: ref })
+          .then(function () { setStatus("Artifact ready", "ok"); loadDetail(); })
+          .catch(function (e) { b.disabled = false; setStatus(e.message, "err"); });
+      };
+    });
+    el.querySelectorAll("button[data-art-fail]").forEach(function (b) {
+      b.onclick = function () {
+        var a = artList[Number(b.dataset.artFail)];
+        var reason = prompt("What did the provider report?", "");
+        if (reason === null) return;
+        b.disabled = true;
+        api("PATCH", "/v1/passports/" + id + "/artifacts/" + encodeURIComponent(a.id), { status: "failed", failure_reason: reason.trim() || null })
+          .then(function () { setStatus("Artifact marked failed", "ok"); loadDetail(); })
+          .catch(function (e) { b.disabled = false; setStatus(e.message, "err"); });
+      };
+    });
+    el.querySelectorAll("button[data-art-revoke]").forEach(function (b) {
+      b.onclick = function () {
+        var a = artList[Number(b.dataset.artRevoke)];
+        var reason = prompt("Revoke the " + a.provider + " artifact? Resolve will stop using it. Reason (optional):", "");
+        if (reason === null) return;
+        b.disabled = true;
+        api("DELETE", "/v1/passports/" + id + "/artifacts/" + encodeURIComponent(a.id), { reason: reason.trim() || null })
+          .then(function () { setStatus("Artifact revoked", "ok"); loadDetail(); })
+          .catch(function (e) { b.disabled = false; setStatus(e.message, "err"); });
+      };
+    });
     var resolveBtn = document.getElementById("resolve");
     if (resolveBtn) resolveBtn.onclick = function () {
       var out = document.getElementById("gen-out"), t = genTarget();
@@ -267,7 +397,7 @@
       resolveBtn.disabled = true; out.innerHTML = '<div class="muted">Resolving...</div>';
       api("POST", "/v1/passports/" + id + "/resolve", t)
         .then(function (payload) { out.innerHTML = '<div class="muted">Conditioning sent to ' + esc(t.provider) + " for " + esc(t.modality) + "</div><pre>" + esc(JSON.stringify(payload, null, 2)) + "</pre>"; })
-        .catch(function (e) { out.innerHTML = '<div class="output" style="border-color:var(--danger)">' + esc(e.message) + "</div>"; })
+        .catch(function (e) { showGenError(out, e, t); })
         .then(function () { resolveBtn.disabled = false; });
     };
     var attestBtn = document.getElementById("attest");
@@ -313,7 +443,7 @@
         out.innerHTML = (g.output_text ? '<div class="output">' + esc(g.output_text) + "</div>" : '<div class="mono">' + esc(g.output_ref) + "</div>") +
           '<div class="muted">receipt ' + esc(g.mint_receipt_ref || "-") + "</div>";
         setStatus("Generated", "ok"); loadDetail();
-      }).catch(function (e) { out.innerHTML = '<div class="output" style="border-color:var(--danger)">' + esc(e.message) + "</div>"; })
+      }).catch(function (e) { showGenError(out, e, t); })
         .then(function () { gen.disabled = false; });
     };
     el.querySelectorAll("button[data-manifest]").forEach(function (b) {

@@ -7,7 +7,8 @@ use std::sync::Arc;
 use chrono::Utc;
 
 use passport_core::{
-    AssetsPatch, CreateOutcome, CreatePassport, Passport, PassportAssets, PassportError,
+    normalize_provider, validate_artifact_ref, ArtifactKind, ArtifactStatus, ArtifactStore,
+    TrainedArtifact, AssetsPatch, CreateOutcome, CreatePassport, Passport, PassportAssets, PassportError,
     PassportFilter, PassportStore, PassportVersion, PassportView, RelayConditioningSink,
     RelayGenerationRequest, VersionStatus,
 };
@@ -36,6 +37,29 @@ pub struct PassportService {
     /// Trusted Mint receipt keys. Required for `attest`; when present, Relay
     /// evidence on `generate` is verified too.
     receipt_verifier: Option<Arc<ReceiptVerifier>>,
+    /// Provider-minted trained artifacts (voice clones, avatars, LoRAs).
+    artifacts: Option<Arc<dyn ArtifactStore>>,
+}
+
+/// Register a provider artifact minted from a locked version.
+pub struct RegisterArtifact {
+    pub provider: String,
+    pub kind: ArtifactKind,
+    /// Explicit locked version; defaults to the latest locked version.
+    pub version: Option<i64>,
+    pub artifact_ref: Option<String>,
+    pub provider_model: Option<String>,
+    /// `pending` (training submitted) or `ready` (usable now). Defaults to
+    /// `ready` when an `artifact_ref` is given, `pending` otherwise.
+    pub status: Option<ArtifactStatus>,
+}
+
+/// Complete or fail a pending artifact (or update a ready one's ref).
+pub struct UpdateArtifact {
+    pub status: ArtifactStatus,
+    pub artifact_ref: Option<String>,
+    pub provider_model: Option<String>,
+    pub failure_reason: Option<String>,
 }
 
 impl PassportService {
@@ -50,7 +74,15 @@ impl PassportService {
             relay,
             registry: Arc::new(ProviderRegistry::default()),
             receipt_verifier: None,
+            artifacts: None,
         }
+    }
+
+    /// Persist trained artifacts in `store` (returns a new service). Without
+    /// it the artifact routes answer `503 storage_unavailable`.
+    pub fn with_artifact_store(mut self, store: Arc<dyn ArtifactStore>) -> Self {
+        self.artifacts = Some(store);
+        self
     }
 
     /// Verify Mint receipt signatures with `verifier` (returns a new service).
@@ -286,7 +318,9 @@ impl PassportService {
         version: Option<i64>,
     ) -> Result<ConditioningPayload, PassportError> {
         let target = self.locked_target(id, version).await?;
-        self.registry.resolve(&target, provider, modality)
+        let artifacts = self.ready_artifacts(&target).await?;
+        self.registry
+            .resolve_with_artifacts(&target, provider, modality, &artifacts)
     }
 
     /// Generate AS this passport: resolve conditioning → Relay generation →
@@ -313,7 +347,10 @@ impl PassportService {
         }
         let principal = self.require_active(id).await?.owner;
         let target = self.locked_target(id, version).await?;
-        let payload = self.registry.resolve(&target, provider, modality)?;
+        let artifacts = self.ready_artifacts(&target).await?;
+        let payload = self
+            .registry
+            .resolve_with_artifacts(&target, provider, modality, &artifacts)?;
 
         let request = RelayGenerationRequest {
             principal: principal.clone(),
@@ -385,7 +422,9 @@ impl PassportService {
         // Prove this exact locked version has a real conditioning path for the
         // selected provider/modality. An unsupported combination cannot be
         // stamped as identity-conditioned after the fact.
-        self.registry.resolve(&target, provider, modality)?;
+        let artifacts = self.ready_artifacts(&target).await?;
+        self.registry
+            .resolve_with_artifacts(&target, provider, modality, &artifacts)?;
         let owner = self.require_passport(id).await?.owner;
         validate_external_attestation(&owner, &output_ref, &evidence)?;
         // The signature must be a real Mint Ed25519 signature over the receipt
@@ -445,6 +484,192 @@ impl PassportService {
             .filter(|record| record.passport_id == id)
             .ok_or(PassportError::NotFound)?;
         Ok(to_c2pa_manifest(&record))
+    }
+
+    // ---- trained artifacts ----------------------------------------------
+
+    fn artifact_store(&self) -> Result<&Arc<dyn ArtifactStore>, PassportError> {
+        self.artifacts.as_ref().ok_or_else(|| {
+            PassportError::Storage("trained-artifact storage is not configured".into())
+        })
+    }
+
+    /// Ready artifacts for exactly this locked version (empty without a store).
+    async fn ready_artifacts(
+        &self,
+        target: &PassportVersion,
+    ) -> Result<Vec<TrainedArtifact>, PassportError> {
+        let Some(store) = &self.artifacts else {
+            return Ok(Vec::new());
+        };
+        Ok(store
+            .list_artifacts(&target.passport_id)
+            .await?
+            .into_iter()
+            .filter(|a| a.version == target.version && a.status == ArtifactStatus::Ready)
+            .collect())
+    }
+
+    /// Register a provider artifact for a LOCKED version. Artifacts are derived
+    /// data, so this never touches the version itself; a newer registration for
+    /// the same `(version, provider, kind)` supersedes the previous one.
+    pub async fn register_artifact(
+        &self,
+        id: &str,
+        request: RegisterArtifact,
+    ) -> Result<TrainedArtifact, PassportError> {
+        let store = self.artifact_store()?;
+        self.require_active(id).await?;
+        let target = self.locked_target(id, request.version).await?;
+        let provider = normalize_provider(&request.provider)?;
+        let artifact_ref = validate_artifact_ref(request.artifact_ref.as_deref())?;
+        let provider_model = validate_artifact_ref(request.provider_model.as_deref())?;
+        let status = request.status.unwrap_or(if artifact_ref.is_some() {
+            ArtifactStatus::Ready
+        } else {
+            ArtifactStatus::Pending
+        });
+        match status {
+            ArtifactStatus::Ready if artifact_ref.is_none() => {
+                return Err(PassportError::Invalid(
+                    "a ready artifact needs the provider's artifact_ref".into(),
+                ))
+            }
+            ArtifactStatus::Failed | ArtifactStatus::Revoked => {
+                return Err(PassportError::Invalid(
+                    "new artifacts start as pending or ready".into(),
+                ))
+            }
+            _ => {}
+        }
+        let now = Utc::now();
+        let artifact = TrainedArtifact {
+            id: passport_core::new_artifact_id(),
+            passport_id: target.passport_id.clone(),
+            version: target.version,
+            source_digest: target
+                .content_digest
+                .clone()
+                .or_else(|| Some(target.compute_digest())),
+            provider,
+            kind: request.kind,
+            artifact_ref,
+            provider_model,
+            status,
+            failure_reason: None,
+            created_at: now,
+            updated_at: now,
+        };
+        store.insert_artifact(&artifact).await?;
+        Ok(artifact)
+    }
+
+    pub async fn artifacts(&self, id: &str) -> Result<Vec<TrainedArtifact>, PassportError> {
+        let store = self.artifact_store()?;
+        self.require_passport(id).await?;
+        store.list_artifacts(id).await
+    }
+
+    pub async fn artifact(
+        &self,
+        id: &str,
+        artifact_id: &str,
+    ) -> Result<TrainedArtifact, PassportError> {
+        let store = self.artifact_store()?;
+        self.require_passport(id).await?;
+        store
+            .get_artifact(artifact_id)
+            .await?
+            .filter(|a| a.passport_id == id)
+            .ok_or(PassportError::ArtifactNotFound)
+    }
+
+    /// Move an artifact through its lifecycle:
+    /// pending -> ready | failed; ready -> ready (ref rotation). Revocation is
+    /// [`Self::revoke_artifact`]; revoked and failed artifacts are terminal.
+    pub async fn update_artifact(
+        &self,
+        id: &str,
+        artifact_id: &str,
+        update: UpdateArtifact,
+    ) -> Result<TrainedArtifact, PassportError> {
+        let store = self.artifact_store()?;
+        self.require_active(id).await?;
+        let current = self.artifact(id, artifact_id).await?;
+        let allowed = matches!(
+            (current.status, update.status),
+            (ArtifactStatus::Pending, ArtifactStatus::Ready)
+                | (ArtifactStatus::Pending, ArtifactStatus::Failed)
+                | (ArtifactStatus::Ready, ArtifactStatus::Ready)
+        );
+        if !allowed {
+            return Err(PassportError::ArtifactState(format!(
+                "cannot move a {} artifact to {}",
+                current.status.as_str(),
+                update.status.as_str()
+            )));
+        }
+        let mut next = current.clone();
+        if let Some(reference) = validate_artifact_ref(update.artifact_ref.as_deref())? {
+            next.artifact_ref = Some(reference);
+        }
+        if let Some(model) = validate_artifact_ref(update.provider_model.as_deref())? {
+            next.provider_model = Some(model);
+        }
+        next.status = update.status;
+        next.failure_reason = match update.status {
+            ArtifactStatus::Failed => {
+                let reason = update
+                    .failure_reason
+                    .map(|r| r.trim().to_string())
+                    .filter(|r| !r.is_empty())
+                    .unwrap_or_else(|| "provider reported a failure".to_string());
+                if reason.len() > passport_core::artifact::MAX_FAILURE_REASON_LEN {
+                    return Err(PassportError::Invalid(
+                        "failure_reason must be at most 1000 characters".into(),
+                    ));
+                }
+                Some(reason)
+            }
+            _ => None,
+        };
+        if next.status == ArtifactStatus::Ready && next.artifact_ref.is_none() {
+            return Err(PassportError::Invalid(
+                "a ready artifact needs the provider's artifact_ref".into(),
+            ));
+        }
+        next.updated_at = Utc::now();
+        store
+            .update_artifact(&next)
+            .await?
+            .ok_or(PassportError::ArtifactNotFound)
+    }
+
+    /// Revoke an artifact (consent withdrawn, clone deleted at the provider).
+    /// Allowed on archived passports so consent can always be withdrawn.
+    /// Idempotent. The record is kept for provenance.
+    pub async fn revoke_artifact(
+        &self,
+        id: &str,
+        artifact_id: &str,
+        reason: Option<String>,
+    ) -> Result<TrainedArtifact, PassportError> {
+        let store = self.artifact_store()?;
+        let current = self.artifact(id, artifact_id).await?;
+        if current.status == ArtifactStatus::Revoked {
+            return Ok(current);
+        }
+        let mut next = current;
+        next.status = ArtifactStatus::Revoked;
+        next.failure_reason = reason
+            .map(|r| r.trim().chars().take(passport_core::artifact::MAX_FAILURE_REASON_LEN).collect::<String>())
+            .filter(|r| !r.is_empty())
+            .or_else(|| Some("revoked".to_string()));
+        next.updated_at = Utc::now();
+        store
+            .update_artifact(&next)
+            .await?
+            .ok_or(PassportError::ArtifactNotFound)
     }
 
     pub async fn ready(&self) -> Result<(), PassportError> {

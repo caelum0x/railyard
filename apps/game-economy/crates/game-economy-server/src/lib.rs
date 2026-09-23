@@ -27,6 +27,7 @@ use game_economy_core::{
 };
 
 mod admin;
+mod admin_catalog;
 pub mod auth;
 pub mod fulfill;
 mod storefront;
@@ -200,10 +201,9 @@ where
     M: MintTransport + 'static,
     F: Fulfiller + 'static,
 {
-    let items: Vec<CatalogItem> = state
-        .store()
-        .catalog()
-        .products()
+    let catalog = state.store().catalog();
+    let items: Vec<CatalogItem> = catalog
+        .active_products()
         .map(|p| CatalogItem {
             sku: p.sku().to_string(),
             price_micros: p.price_micros(),
@@ -220,7 +220,7 @@ where
             details: p.clone(),
         })
         .collect();
-    ok(json!({ "products": items, "pools": state.store().catalog().pools() }))
+    ok(json!({ "products": items, "pools": catalog.pools() }))
 }
 
 #[derive(Serialize)]
@@ -621,6 +621,9 @@ pub(crate) fn forbidden() -> Response {
 pub(crate) fn game_error(err: &GameError) -> Response {
     let (status, code) = match err {
         GameError::UnknownProduct(_) => (StatusCode::NOT_FOUND, "unknown_product"),
+        GameError::ProductArchived(_) => (StatusCode::GONE, "product_unavailable"),
+        GameError::InvalidCatalog(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid_catalog"),
+        GameError::CatalogConflict { .. } => (StatusCode::CONFLICT, "catalog_conflict"),
         GameError::InsufficientFunds => (StatusCode::PAYMENT_REQUIRED, "insufficient_funds"),
         GameError::HoldNotFound => (StatusCode::NOT_FOUND, "hold_not_found"),
         GameError::IdempotencyConflict => (StatusCode::CONFLICT, "idempotency_conflict"),

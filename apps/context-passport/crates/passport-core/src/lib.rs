@@ -8,6 +8,7 @@
 //! Downstream crates (resolve, store, clients, server) depend only on this
 //! kernel and on the injectable [`ports`] traits declared here.
 
+pub mod artifact;
 pub mod assets;
 pub mod digest;
 pub mod error;
@@ -18,17 +19,20 @@ pub mod ports;
 pub mod rights;
 pub mod version;
 
+pub use artifact::{
+    normalize_provider, validate_artifact_ref, ArtifactKind, ArtifactStatus, TrainedArtifact,
+};
 pub use assets::{
     AssetsPatch, BrandAssets, BrandPatch, CharacterAssets, CharacterPatch, PassportAssets,
-    PersonaAssets, PersonaPatch,
+    PersonaAssets, PersonaPatch, StyleAssets, StylePatch, VoiceAssets, VoicePatch,
 };
 pub use digest::VersionDigest;
 pub use error::PassportError;
-pub use ids::{new_generation_id, new_passport_id};
+pub use ids::{new_artifact_id, new_generation_id, new_passport_id};
 pub use kind::PassportKind;
 pub use passport::{CreatePassport, Passport, PassportFilter, PassportView};
 pub use ports::{
-    CreateOutcome, MintMeter, MintMeterRequest, MintMeterResult, PassportStore, PaymentEvidence,
+    ArtifactStore, CreateOutcome, MintMeter, MintMeterRequest, MintMeterResult, PassportStore, PaymentEvidence,
     RelayConditioningSink, RelayGenerationRequest, RelayGenerationResult, SettlementReceiptProof,
 };
 pub use rights::{ConsentBasis, DisclosureLevel, Rights};

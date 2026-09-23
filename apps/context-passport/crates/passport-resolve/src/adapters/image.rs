@@ -40,6 +40,9 @@ impl ProviderAdapter for ImageAdapter {
                 }
                 p.style_prompt = join([persona.audience.as_deref()]);
             }
+            PassportAssets::Style(s) => super::apply_style(&mut p, s),
+            // A voice has no visual identity; the empty payload fails closed.
+            PassportAssets::Voice(_) => {}
         }
         p
     }

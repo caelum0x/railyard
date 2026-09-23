@@ -42,6 +42,7 @@ where
         .route("/v1/admin/refunds", post(refund::<M, F>))
         .route("/v1/admin/revoke", post(revoke::<M, F>))
         .route("/v1/admin/pass/advance", post(advance_pass::<M, F>))
+        .merge(crate::admin_catalog::routes::<M, F>())
 }
 
 /// `GET /v1/admin/summary` — revenue, refunds and catalog totals.
@@ -66,6 +67,8 @@ where
             "revenue_account": store.revenue_account(),
             "catalog": {
                 "products": catalog.len(),
+                "archived": catalog.archived().len(),
+                "revision": store.catalog_revision(),
                 "card_packs": packs,
                 "cosmetics": cosmetics,
                 "battle_passes": passes,

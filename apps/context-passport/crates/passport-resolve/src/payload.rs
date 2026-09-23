@@ -27,6 +27,10 @@ pub struct ConditioningPayload {
     /// Talking-head / avatar reference for video.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_ref: Option<String>,
+    /// Reference audio recordings (voice passports) for providers that accept
+    /// zero-shot / instant cloning from samples.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reference_audio: Vec<String>,
     /// Provider voice identity for voice/video.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice_id: Option<String>,
@@ -62,6 +66,7 @@ impl ConditioningPayload {
             && self.embedding_ref.is_none()
             && self.avatar_ref.is_none()
             && self.voice_id.is_none()
+            && self.reference_audio.is_empty()
             && self.style_prompt.is_none()
             && self.negative_prompt.is_none()
             && self.text_directives.is_empty()

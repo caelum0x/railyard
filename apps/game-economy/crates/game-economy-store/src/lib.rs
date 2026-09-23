@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use game_economy_core::{
-    CompletedPurchase, GameError, GameStateRepository, Inventory, PurchaseRecord,
-    PurchaseReversal, PurchaseSummary, ReverseOutcome,
+    CatalogFile, CatalogRepository, CompletedPurchase, GameError, GameStateRepository, Inventory,
+    PurchaseRecord, PurchaseReversal, PurchaseSummary, ReverseOutcome, StoredCatalog,
 };
 use serde::{Deserialize, Serialize};
 
@@ -287,6 +287,111 @@ impl GameStateRepository for JsonFileGameState {
             .lock()
             .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
         Ok(game_economy_core::summarize(guard.purchases.values()))
+    }
+}
+
+/// The on-disk shape of [`JsonFileCatalog`].
+#[derive(Serialize, Deserialize)]
+struct CatalogSnapshot {
+    revision: u64,
+    catalog: CatalogFile,
+}
+
+/// Single-instance durable storage for the runtime-edited catalog: one JSON
+/// document (`{revision, catalog}`) rewritten atomically (temp file + fsync +
+/// rename) on every operator edit.
+pub struct JsonFileCatalog {
+    path: PathBuf,
+    state: Mutex<Option<StoredCatalog>>,
+}
+
+impl JsonFileCatalog {
+    /// Open (or lazily create on first save) the catalog file at `path`.
+    pub fn open(path: impl Into<PathBuf>) -> Result<Self, GameError> {
+        let path = path.into();
+        let state = match fs::read(&path) {
+            Ok(bytes) => {
+                let snapshot: CatalogSnapshot = serde_json::from_slice(&bytes)
+                    .map_err(|e| GameError::Storage(format!("decode {}: {e}", path.display())))?;
+                Some(StoredCatalog {
+                    file: snapshot.catalog,
+                    revision: snapshot.revision,
+                })
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(GameError::Storage(format!(
+                    "read {}: {error}",
+                    path.display()
+                )))
+            }
+        };
+        Ok(Self {
+            path,
+            state: Mutex::new(state),
+        })
+    }
+
+    fn persist(&self, snapshot: &CatalogSnapshot) -> Result<(), GameError> {
+        if let Some(parent) = self.path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            fs::create_dir_all(parent)
+                .map_err(|e| GameError::Storage(format!("create {}: {e}", parent.display())))?;
+        }
+        let temp = temp_path(&self.path);
+        let bytes = serde_json::to_vec_pretty(snapshot)
+            .map_err(|e| GameError::Storage(format!("encode catalog: {e}")))?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&temp)
+            .map_err(|e| GameError::Storage(format!("open {}: {e}", temp.display())))?;
+        file.write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|e| GameError::Storage(format!("write {}: {e}", temp.display())))?;
+        fs::rename(&temp, &self.path).map_err(|e| {
+            GameError::Storage(format!(
+                "replace {} from {}: {e}",
+                self.path.display(),
+                temp.display()
+            ))
+        })?;
+        sync_parent(&self.path)
+    }
+}
+
+impl CatalogRepository for JsonFileCatalog {
+    fn load_catalog(&self) -> Result<Option<StoredCatalog>, GameError> {
+        Ok(self
+            .state
+            .lock()
+            .map_err(|_| GameError::Storage("catalog lock poisoned".into()))?
+            .clone())
+    }
+
+    fn save_catalog(&self, file: &CatalogFile, expected_revision: u64) -> Result<u64, GameError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|_| GameError::Storage("catalog lock poisoned".into()))?;
+        let current = guard.as_ref().map(|s| s.revision).unwrap_or(0);
+        if current != expected_revision {
+            return Err(GameError::CatalogConflict {
+                expected: expected_revision,
+                actual: current,
+            });
+        }
+        let revision = current + 1;
+        // Write first; only a durable save updates the in-memory copy.
+        self.persist(&CatalogSnapshot {
+            revision,
+            catalog: file.clone(),
+        })?;
+        *guard = Some(StoredCatalog {
+            file: file.clone(),
+            revision,
+        });
+        Ok(revision)
     }
 }
 

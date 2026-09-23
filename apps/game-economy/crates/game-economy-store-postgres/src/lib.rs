@@ -28,8 +28,9 @@
 use std::future::Future;
 
 use game_economy_core::{
-    CompletedPurchase, GameError, GameStateRepository, Inventory, PurchaseOutcome,
-    PurchaseRecord, PurchaseReversal, PurchaseSummary, ReverseOutcome,
+    CatalogFile, CatalogRepository, CompletedPurchase, GameError, GameStateRepository, Inventory,
+    Product, PurchaseOutcome, PurchaseRecord, PurchaseReversal, PurchaseSummary, Rarity,
+    ReverseOutcome, StoredCatalog,
 };
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::{Postgres, Row, Transaction};
@@ -548,4 +549,142 @@ fn storage(error: sqlx::Error) -> GameError {
 
 fn encode(error: serde_json::Error) -> GameError {
     GameError::Storage(format!("encode game state: {error}"))
+}
+
+// ---------------------------------------------------------------------------
+// Runtime-editable catalog (migrations/0002_game_catalog.sql)
+// ---------------------------------------------------------------------------
+
+impl CatalogRepository for PostgresGameState {
+    fn load_catalog(&self) -> Result<Option<StoredCatalog>, GameError> {
+        let pool = self.pool.clone();
+        self.run(async move {
+            let Some(meta) = sqlx::query("SELECT revision FROM game_catalog_meta WHERE id = 1")
+                .fetch_optional(&pool)
+                .await
+                .map_err(storage)?
+            else {
+                return Ok(None);
+            };
+            let revision: i64 = meta.try_get("revision").map_err(storage)?;
+            let rows = sqlx::query(
+                "SELECT sku, product, archived FROM game_catalog_products ORDER BY position, sku",
+            )
+            .fetch_all(&pool)
+            .await
+            .map_err(storage)?;
+            let mut products = Vec::with_capacity(rows.len());
+            let mut archived = std::collections::BTreeSet::new();
+            for row in rows {
+                let product: Product =
+                    decode_json(row.try_get::<serde_json::Value, _>("product").map_err(storage)?)?;
+                if row.try_get::<bool, _>("archived").map_err(storage)? {
+                    archived.insert(row.try_get::<String, _>("sku").map_err(storage)?);
+                }
+                products.push(product);
+            }
+            let pool_rows = sqlx::query("SELECT rarity, items FROM game_catalog_pools")
+                .fetch_all(&pool)
+                .await
+                .map_err(storage)?;
+            let mut pools = std::collections::BTreeMap::new();
+            for row in pool_rows {
+                let rarity: Rarity = decode_json(serde_json::Value::String(
+                    row.try_get::<String, _>("rarity").map_err(storage)?,
+                ))?;
+                let items: Vec<String> =
+                    decode_json(row.try_get::<serde_json::Value, _>("items").map_err(storage)?)?;
+                pools.insert(rarity, items);
+            }
+            Ok(Some(StoredCatalog {
+                file: CatalogFile {
+                    products,
+                    pools,
+                    archived,
+                },
+                revision: u64::try_from(revision).unwrap_or(0),
+            }))
+        })
+    }
+
+    fn save_catalog(&self, file: &CatalogFile, expected_revision: u64) -> Result<u64, GameError> {
+        let pool = self.pool.clone();
+        let file = file.clone();
+        self.run(async move {
+            let mut tx = pool.begin().await.map_err(storage)?;
+            // Serialize concurrent saves on the single meta row.
+            sqlx::query(
+                "INSERT INTO game_catalog_meta (id, revision) VALUES (1, 0) \
+                 ON CONFLICT (id) DO NOTHING",
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            let current: i64 = sqlx::query("SELECT revision FROM game_catalog_meta WHERE id = 1 FOR UPDATE")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(storage)?
+                .try_get("revision")
+                .map_err(storage)?;
+            let current = u64::try_from(current).unwrap_or(0);
+            if current != expected_revision {
+                return Err(GameError::CatalogConflict {
+                    expected: expected_revision,
+                    actual: current,
+                });
+            }
+            let skus: Vec<String> = file.products.iter().map(|p| p.sku().to_string()).collect();
+            sqlx::query("DELETE FROM game_catalog_products WHERE NOT (sku = ANY($1))")
+                .bind(&skus)
+                .execute(&mut *tx)
+                .await
+                .map_err(storage)?;
+            for (position, product) in file.products.iter().enumerate() {
+                let kind = match product {
+                    Product::CardPack(_) => "card_pack",
+                    Product::Cosmetic(_) => "cosmetic",
+                    Product::BattlePass(_) => "battle_pass",
+                };
+                sqlx::query(
+                    "INSERT INTO game_catalog_products (sku, kind, product, archived, position, updated_at) \
+                     VALUES ($1, $2, $3, $4, $5, now()) \
+                     ON CONFLICT (sku) DO UPDATE SET kind = EXCLUDED.kind, product = EXCLUDED.product, \
+                       archived = EXCLUDED.archived, position = EXCLUDED.position, updated_at = now() \
+                     WHERE game_catalog_products.product IS DISTINCT FROM EXCLUDED.product \
+                        OR game_catalog_products.archived IS DISTINCT FROM EXCLUDED.archived \
+                        OR game_catalog_products.position IS DISTINCT FROM EXCLUDED.position",
+                )
+                .bind(product.sku())
+                .bind(kind)
+                .bind(serde_json::to_value(product).map_err(encode)?)
+                .bind(file.archived.contains(product.sku()))
+                .bind(i32::try_from(position).unwrap_or(i32::MAX))
+                .execute(&mut *tx)
+                .await
+                .map_err(storage)?;
+            }
+            sqlx::query("DELETE FROM game_catalog_pools")
+                .execute(&mut *tx)
+                .await
+                .map_err(storage)?;
+            for (rarity, items) in &file.pools {
+                let rarity_name = serde_json::to_value(rarity).map_err(encode)?;
+                let rarity_name = rarity_name.as_str().unwrap_or_default().to_string();
+                sqlx::query("INSERT INTO game_catalog_pools (rarity, items) VALUES ($1, $2)")
+                    .bind(rarity_name)
+                    .bind(serde_json::to_value(items).map_err(encode)?)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(storage)?;
+            }
+            let next = current + 1;
+            sqlx::query("UPDATE game_catalog_meta SET revision = $1, updated_at = now() WHERE id = 1")
+                .bind(seq_to_i64(next))
+                .execute(&mut *tx)
+                .await
+                .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            Ok(next)
+        })
+    }
 }

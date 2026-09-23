@@ -2,7 +2,7 @@
 //! and a battle-pass. Every SKU carries its Mint price in microdollars, so the
 //! whole storefront is priced on the same unit the ledger settles in.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -115,12 +115,19 @@ impl Product {
     }
 }
 
-/// A read-only storefront: SKU -> product, plus the shared per-rarity item pools
-/// that pack opening draws named items from.
+/// An immutable storefront snapshot: SKU -> product, the shared per-rarity item
+/// pools that pack opening draws named items from, and the set of archived SKUs.
+///
+/// Archived products stay resolvable (so packs, passes and cosmetics players
+/// already own keep opening, advancing and refunding) but are hidden from the
+/// public storefront and can no longer be bought. Runtime edits never mutate a
+/// snapshot: each edit method returns a NEW validated catalog that the store
+/// swaps in atomically.
 #[derive(Clone, Debug, Default)]
 pub struct Catalog {
     products: BTreeMap<String, Product>,
     pools: BTreeMap<Rarity, Vec<String>>,
+    archived: BTreeSet<String>,
 }
 
 impl Catalog {
@@ -142,9 +149,35 @@ impl Catalog {
         self
     }
 
-    /// Look up a product by SKU.
+    /// Look up a product by SKU (active OR archived — owned entitlements must
+    /// always resolve).
     pub fn get(&self, sku: &str) -> Option<&Product> {
         self.products.get(sku)
+    }
+
+    /// Look up a product that is currently for sale (not archived).
+    pub fn get_active(&self, sku: &str) -> Option<&Product> {
+        if self.archived.contains(sku) {
+            return None;
+        }
+        self.products.get(sku)
+    }
+
+    /// `true` if `sku` exists but has been archived (not purchasable).
+    pub fn is_archived(&self, sku: &str) -> bool {
+        self.archived.contains(sku)
+    }
+
+    /// Every archived SKU.
+    pub fn archived(&self) -> &BTreeSet<String> {
+        &self.archived
+    }
+
+    /// Products currently for sale, ordered by SKU (the public storefront).
+    pub fn active_products(&self) -> impl Iterator<Item = &Product> {
+        self.products
+            .values()
+            .filter(|p| !self.archived.contains(p.sku()))
     }
 
     /// Iterate every product in the catalog, ordered by SKU. Powers a storefront
@@ -204,7 +237,104 @@ impl Catalog {
             }
             catalog.pools.insert(rarity, names);
         }
+        for sku in file.archived {
+            if !catalog.products.contains_key(&sku) {
+                return Err(CatalogError(format!("archived sku `{sku}` is not in the catalog")));
+            }
+            catalog.archived.insert(sku);
+        }
+        catalog.validate_pool_coverage()?;
         Ok(catalog)
+    }
+
+    /// Every rarity a pack can roll (non-zero weight) must have a non-empty item
+    /// pool — otherwise a player would be granted a meaningless placeholder.
+    /// Archived packs are included: players may still hold unopened ones.
+    fn validate_pool_coverage(&self) -> Result<(), CatalogError> {
+        for product in self.products.values() {
+            if let Product::CardPack(tier) = product {
+                for (rarity, weight) in &tier.rarity_weights {
+                    if *weight > 0 && self.pool(*rarity).is_empty() {
+                        return Err(CatalogError(format!(
+                            "pack `{}` can roll `{}` but the `{}` item pool is empty",
+                            tier.sku,
+                            rarity.tag(),
+                            rarity.tag()
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A new catalog with `product` created or replaced, fully re-validated.
+    ///
+    /// Identity rules for an existing SKU (so already-granted entitlements keep
+    /// resolving to the same thing):
+    /// - the product shape (pack / cosmetic / pass) cannot change;
+    /// - a cosmetic's `name` and `rarity` cannot change — they derive its
+    ///   content-addressed item id; archive it and create a new SKU instead;
+    /// - a battle pass's tier count can grow but never shrink.
+    ///
+    /// Pack odds CAN change: every purchased pack snapshots the tier it was sold
+    /// under, so edits only affect packs bought afterwards.
+    pub fn with_upserted_product(&self, product: Product) -> Result<Catalog, CatalogError> {
+        validate_product(&product)?;
+        if let Some(existing) = self.products.get(product.sku()) {
+            check_identity_preserved(existing, &product)?;
+        }
+        let mut file = self.to_file();
+        let sku = product.sku().to_string();
+        file.products.retain(|p| p.sku() != sku);
+        file.products.push(product);
+        Catalog::from_file(file)
+    }
+
+    /// A new catalog with `sku` archived (hidden + unbuyable) or restored.
+    pub fn with_archived(&self, sku: &str, archived: bool) -> Result<Catalog, CatalogError> {
+        if !self.products.contains_key(sku) {
+            return Err(CatalogError(format!("unknown sku `{sku}`")));
+        }
+        let mut file = self.to_file();
+        if archived {
+            file.archived.insert(sku.to_string());
+        } else {
+            file.archived.remove(sku);
+        }
+        Catalog::from_file(file)
+    }
+
+    /// A new catalog with the item pool for `rarity` replaced (an empty list
+    /// removes the pool, which is rejected if any pack can still roll it).
+    pub fn with_pool_replaced(
+        &self,
+        rarity: Rarity,
+        names: Vec<String>,
+    ) -> Result<Catalog, CatalogError> {
+        let mut cleaned: Vec<String> = Vec::with_capacity(names.len());
+        for name in names {
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                continue;
+            }
+            if name.len() > 120 {
+                return Err(CatalogError(format!(
+                    "pool `{}` item names must be at most 120 characters",
+                    rarity.tag()
+                )));
+            }
+            if !cleaned.contains(&name) {
+                cleaned.push(name);
+            }
+        }
+        let mut file = self.to_file();
+        if cleaned.is_empty() {
+            file.pools.remove(&rarity);
+        } else {
+            file.pools.insert(rarity, cleaned);
+        }
+        Catalog::from_file(file)
     }
 
     /// The serializable definition of this catalog (round-trips via
@@ -213,6 +343,7 @@ impl Catalog {
         CatalogFile {
             products: self.products.values().cloned().collect(),
             pools: self.pools.clone(),
+            archived: self.archived.clone(),
         }
     }
 
@@ -302,6 +433,10 @@ pub struct CatalogFile {
     /// Per-rarity item names pack drops draw from.
     #[serde(default)]
     pub pools: BTreeMap<Rarity, Vec<String>>,
+    /// SKUs that are archived: still resolvable for owned entitlements, but
+    /// hidden from the storefront and not purchasable.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub archived: BTreeSet<String>,
 }
 
 /// A catalog definition that failed validation.
@@ -316,10 +451,57 @@ impl std::fmt::Display for CatalogError {
 
 impl std::error::Error for CatalogError {}
 
+/// Reject edits that would change what an already-granted entitlement means.
+fn check_identity_preserved(existing: &Product, next: &Product) -> Result<(), CatalogError> {
+    let sku = next.sku();
+    match (existing, next) {
+        (Product::CardPack(_), Product::CardPack(_)) => Ok(()),
+        (Product::Cosmetic(old), Product::Cosmetic(new)) => {
+            if old.name != new.name || old.rarity != new.rarity {
+                return Err(CatalogError(format!(
+                    "cosmetic `{sku}` name and rarity are its item identity and cannot change; archive it and create a new sku"
+                )));
+            }
+            Ok(())
+        }
+        (Product::BattlePass(old), Product::BattlePass(new)) => {
+            if new.tiers < old.tiers {
+                return Err(CatalogError(format!(
+                    "battle pass `{sku}` tiers cannot shrink below {} (players may already hold higher tiers)",
+                    old.tiers
+                )));
+            }
+            Ok(())
+        }
+        _ => Err(CatalogError(format!(
+            "sku `{sku}` already exists as a different product type"
+        ))),
+    }
+}
+
+/// Longest SKU / display name accepted from an operator.
+const MAX_SKU_LEN: usize = 96;
+const MAX_NAME_LEN: usize = 120;
+/// Upper bound on any single price: $100,000 in µ$.
+const MAX_PRICE_MICROS: i64 = 100_000 * 1_000_000;
+
 fn validate_product(product: &Product) -> Result<(), CatalogError> {
     let sku = product.sku();
-    if sku.trim().is_empty() || sku.chars().any(char::is_whitespace) {
+    if sku.trim().is_empty() || sku.chars().any(char::is_whitespace) || sku.len() > MAX_SKU_LEN {
         return Err(CatalogError(format!("invalid sku `{sku}`")));
+    }
+    if product.price_micros() > MAX_PRICE_MICROS {
+        return Err(CatalogError(format!("sku `{sku}` price exceeds the maximum")));
+    }
+    let name = match product {
+        Product::CardPack(t) => &t.name,
+        Product::Cosmetic(c) => &c.name,
+        Product::BattlePass(b) => &b.name,
+    };
+    if name.len() > MAX_NAME_LEN {
+        return Err(CatalogError(format!(
+            "sku `{sku}` name must be at most {MAX_NAME_LEN} characters"
+        )));
     }
     if product.price_micros() <= 0 {
         return Err(CatalogError(format!("sku `{sku}` must have a positive price")));
@@ -332,6 +514,12 @@ fn validate_product(product: &Product) -> Result<(), CatalogError> {
             if t.cards_per_pack == 0 || t.cards_per_pack > 100 {
                 return Err(CatalogError(format!(
                     "pack `{sku}` cards_per_pack must be 1..=100"
+                )));
+            }
+            let mut seen = BTreeSet::new();
+            if t.rarity_weights.iter().any(|(r, _)| !seen.insert(*r)) {
+                return Err(CatalogError(format!(
+                    "pack `{sku}` lists a rarity more than once in rarity_weights"
                 )));
             }
             if t.rarity_weights.iter().map(|(_, w)| *w as u64).sum::<u64>() == 0 {

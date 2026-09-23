@@ -54,6 +54,18 @@
   .modal textarea { width: 100%; min-height: 70px; margin: 8px 0 12px; }
   .row { display: flex; gap: 8px; justify-content: flex-end; }
   h3.section { margin: 20px 0 0; font-size: 14px; }
+  .st-active { color: var(--ok); } .st-archived { color: var(--warn); }
+  .form-grid { display: grid; grid-template-columns: 150px 1fr; gap: 8px 12px; align-items: center; margin: 12px 0; }
+  .form-grid input, .form-grid select { width: 100%; }
+  .weights { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .weights label { font-size: 11px; color: var(--muted); display: block; }
+  .weights input { width: 100%; }
+  .pools { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; margin-top: 12px; }
+  .pool { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+  .pool textarea { width: 100%; min-height: 110px; margin: 6px 0; }
+  .err-text { color: var(--danger); font-size: 12px; min-height: 16px; }
+  dl.kv { display: grid; grid-template-columns: 150px 1fr; gap: 6px 12px; margin: 0; }
+  dl.kv dt { color: var(--muted); font-size: 12px; } dl.kv dd { margin: 0; }
 </style>
 </head>
 <body>
@@ -113,7 +125,7 @@
     document.getElementById("tok").onkeydown = function (e) { if (e.key === "Enter") go(); };
   }
 
-  var TABS = [["overview", "Overview"], ["purchases", "Purchases"], ["player", "Player lookup"]];
+  var TABS = [["overview", "Overview"], ["purchases", "Purchases"], ["player", "Player lookup"], ["catalog", "Catalog"]];
   function renderTabs() {
     var nav = document.getElementById("tabs");
     nav.innerHTML = "";
@@ -145,7 +157,8 @@
         "</div>" +
         '<div class="card"><table><tbody>' +
         '<tr><th>Revenue account</th><td class="mono">' + esc(d.revenue_account) + "</td></tr>" +
-        "<tr><th>Catalog</th><td>" + c.products + " products (" + c.card_packs + " packs, " + c.cosmetics + " cosmetics, " + c.battle_passes + " battle passes)</td></tr>" +
+        "<tr><th>Catalog</th><td>" + c.products + " products (" + c.card_packs + " packs, " + c.cosmetics + " cosmetics, " + c.battle_passes + " battle passes)" +
+          (c.archived ? " &middot; " + c.archived + " archived" : "") + ' &middot; revision ' + esc(c.revision) + "</td></tr>" +
         "</tbody></table></div>";
     }).catch(function (e) { main.innerHTML = '<div class="empty">Could not load totals: ' + esc(e.message) + "</div>"; });
   }
@@ -169,12 +182,52 @@
         return "<tr>" + (showPlayer ? '<td class="mono"><a href="#" data-player="' + esc(p.player) + '">' + esc(p.player) + "</a></td>" : "") +
           "<td>" + esc(p.product_sku) + '</td><td class="num">' + money(p.charged_micros) + "</td><td>" + statusCell(p) +
           '</td><td class="num">#' + esc(p.settlement_seq) + '</td><td class="mono">' + esc(p.receipt_id) + "</td><td>" +
-          (open ? '<div class="actions"><button class="primary" data-refund="' + i + '">Refund</button>' +
-            '<button class="danger" data-revoke="' + i + '">Revoke</button></div>' : "") + "</td></tr>";
+          '<div class="actions"><button data-detail="' + i + '">Details</button>' +
+          (open ? '<button class="primary" data-refund="' + i + '">Refund</button>' +
+            '<button class="danger" data-revoke="' + i + '">Revoke</button>' : "") + "</div></td></tr>";
       }).join("") + "</tbody></table></div>";
   }
 
-  function wireRows(list, reload) {
+  function receiptModal(p, inventory) {
+    var proof = p.settlement_proof || {};
+    var pack = null;
+    if (inventory && inventory.packs) pack = inventory.packs[p.entitlement_id] || null;
+    var rows = [
+      ["Player", p.player], ["Item", p.product_sku], ["Charged", money(p.charged_micros)], ["Status", p.status || "completed"],
+      ["Receipt", p.receipt_id], ["Entitlement", p.entitlement_id], ["Mint settlement", "#" + p.settlement_seq]
+    ];
+    Object.keys(proof).forEach(function (k) {
+      var v = proof[k];
+      if (v !== null && typeof v !== "object") rows.push(["Proof: " + k, v]);
+    });
+    if (p.reversal) {
+      rows.push(["Reversed", p.reversal.kind + " " + when(p.reversal.at_unix)]);
+      if (p.reversal.mint_receipt) rows.push(["Refund receipt", p.reversal.mint_receipt]);
+    }
+    var html = '<dl class="kv">' + rows.map(function (r) {
+      return "<dt>" + esc(r[0]) + '</dt><dd class="mono">' + esc(r[1]) + "</dd>";
+    }).join("") + "</dl>";
+    if (pack) {
+      html += '<h3 class="section">Pack contents</h3>' + (pack.contents
+        ? '<div class="card"><table><thead><tr><th>Slot</th><th>Rarity</th><th>Item</th></tr></thead><tbody>' +
+          pack.contents.map(function (it) {
+            return '<tr><td class="num">' + esc(it.slot + 1) + "</td><td>" + esc(it.rarity) + "</td><td>" + esc(it.name) + "</td></tr>";
+          }).join("") + "</tbody></table></div>"
+        : '<p class="muted">Sealed: the player has not opened this pack yet.</p>');
+    }
+    var bg = document.createElement("div");
+    bg.className = "modal-bg";
+    bg.innerHTML = '<div class="modal" style="width:min(680px,94vw)"><h3>Receipt</h3>' + html +
+      '<div class="row" style="margin-top:14px"><button id="close">Close</button></div></div>';
+    document.body.appendChild(bg);
+    bg.querySelector("#close").onclick = function () { bg.remove(); };
+    bg.onclick = function (e) { if (e.target === bg) bg.remove(); };
+  }
+
+  function wireRows(list, reload, inventory) {
+    main.querySelectorAll("button[data-detail]").forEach(function (b) {
+      b.onclick = function () { receiptModal(list[Number(b.dataset.detail)], inventory); };
+    });
     main.querySelectorAll("button[data-refund]").forEach(function (b) {
       b.onclick = function () { reverse("refund", list[Number(b.dataset.refund)], reload); };
     });
@@ -252,7 +305,7 @@
           "</tbody></table></div>";
         html += '<h3 class="section">Purchases</h3>' + purchaseRows(d.purchases, false);
         out.innerHTML = html;
-        wireRows(d.purchases, find);
+        wireRows(d.purchases, find, inv);
         var adv = document.getElementById("adv");
         if (adv) adv.onclick = function () {
           var tier = Number(document.getElementById("tier").value);
@@ -269,12 +322,186 @@
     if (state.lookup) find();
   }
 
+  // ---- Catalog editor ----------------------------------------------------
+  var RARITIES = ["Common", "Uncommon", "Rare", "Epic", "Legendary"];
+  var KIND_LABEL = { card_pack: "Card pack", cosmetic: "Cosmetic", battle_pass: "Battle pass" };
+  var catalogState = { revision: null, products: [], pools: {} };
+
+  function productSummary(p) {
+    var d = p.details, inner = d.CardPack || d.Cosmetic || d.BattlePass || {};
+    if (d.CardPack) return inner.cards_per_pack + " cards &middot; " + inner.rarity_weights.map(function (w) {
+      return esc(w[0]) + " " + esc(w[1]);
+    }).join(", ");
+    if (d.Cosmetic) return esc(inner.slot) + " slot &middot; " + esc(inner.rarity);
+    if (d.BattlePass) return esc(inner.tiers) + " tiers";
+    return "";
+  }
+
+  function renderCatalog() {
+    main.innerHTML = '<div class="toolbar"><select id="newkind">' +
+      '<option value="card_pack">Card pack</option><option value="cosmetic">Cosmetic</option><option value="battle_pass">Battle pass</option>' +
+      '</select><button class="primary" id="newprod">New product</button><button id="reload">Reload</button>' +
+      '<span class="muted" id="rev"></span></div><div id="prods"><div class="loading">Loading catalog...</div></div>' +
+      '<h3 class="section">Item pools</h3><p class="muted">Pack drops pick a named item from the pool of the rarity they roll. Every rarity a pack can roll must have at least one item. One item per line.</p>' +
+      '<div class="pools" id="pools"></div>';
+    document.getElementById("reload").onclick = renderCatalog;
+    document.getElementById("newprod").onclick = function () { productModal(null, document.getElementById("newkind").value); };
+    api("GET", "/v1/admin/catalog").then(showCatalog).catch(function (e) {
+      document.getElementById("prods").innerHTML = '<div class="empty">Could not load the catalog: ' + esc(e.message) + "</div>";
+    });
+  }
+
+  function showCatalog(d) {
+    catalogState = d;
+    var rev = document.getElementById("rev");
+    if (!rev) return;
+    rev.textContent = "Revision " + d.revision + " \u00b7 edits apply to the live storefront immediately";
+    var list = d.products;
+    document.getElementById("prods").innerHTML = !list.length ? '<div class="empty">The catalog has no products.</div>' :
+      '<div class="card"><table><thead><tr><th>SKU</th><th>Type</th><th>Name</th><th>Price</th><th>Details</th><th>Status</th><th></th></tr></thead><tbody>' +
+      list.map(function (p, i) {
+        return '<tr><td class="mono">' + esc(p.sku) + "</td><td>" + esc(KIND_LABEL[p.kind] || p.kind) + "</td><td>" + esc(p.name) +
+          '</td><td class="num">' + money(p.price_micros) + "</td><td>" + productSummary(p) + "</td><td>" +
+          '<span class="badge st-' + (p.archived ? "archived" : "active") + '">' + (p.archived ? "archived" : "on sale") + "</span></td>" +
+          '<td><div class="actions"><button data-edit="' + i + '">Edit</button>' +
+          '<button class="' + (p.archived ? "primary" : "danger") + '" data-arch="' + i + '">' + (p.archived ? "Restore" : "Archive") + "</button></div></td></tr>";
+      }).join("") + "</tbody></table></div>";
+    main.querySelectorAll("button[data-edit]").forEach(function (b) {
+      b.onclick = function () { var p = list[Number(b.dataset.edit)]; productModal(p, p.kind); };
+    });
+    main.querySelectorAll("button[data-arch]").forEach(function (b) {
+      b.onclick = function () { toggleArchive(list[Number(b.dataset.arch)], b); };
+    });
+    document.getElementById("pools").innerHTML = RARITIES.map(function (r) {
+      var items = (d.pools && d.pools[r]) || [];
+      return '<div class="pool"><strong>' + esc(r) + '</strong> <span class="muted">' + items.length + " items</span>" +
+        '<textarea data-pool="' + r + '">' + esc(items.join("\n")) + "</textarea>" +
+        '<div class="err-text" data-poolerr="' + r + '"></div><button data-savepool="' + r + '">Save ' + esc(r.toLowerCase()) + " pool</button></div>";
+    }).join("");
+    main.querySelectorAll("button[data-savepool]").forEach(function (b) {
+      b.onclick = function () { savePool(b.dataset.savepool, b); };
+    });
+  }
+
+  function catalogConflict(e) {
+    return /changed concurrently|revision/i.test(e.message);
+  }
+
+  function toggleArchive(p, btn) {
+    var archive = !p.archived;
+    var msg = archive
+      ? "Archive " + p.sku + "? It disappears from the storefront and can no longer be bought. Copies players already own keep working."
+      : "Restore " + p.sku + " to the storefront?";
+    if (!window.confirm(msg)) return;
+    btn.disabled = true;
+    api("POST", "/v1/admin/catalog/products/" + encodeURIComponent(p.sku) + "/archive",
+      { archived: archive, expected_revision: catalogState.revision })
+      .then(function (d) { setStatus(archive ? "Archived " + p.sku : "Restored " + p.sku, "ok"); showCatalog(d); })
+      .catch(function (e) {
+        btn.disabled = false; setStatus(e.message, "err");
+        if (catalogConflict(e)) renderCatalog();
+      });
+  }
+
+  function savePool(rarity, btn) {
+    var ta = main.querySelector('textarea[data-pool="' + rarity + '"]');
+    var errEl = main.querySelector('[data-poolerr="' + rarity + '"]');
+    var items = ta.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
+    errEl.textContent = "";
+    btn.disabled = true;
+    api("PUT", "/v1/admin/catalog/pools/" + rarity.toLowerCase(), { items: items, expected_revision: catalogState.revision })
+      .then(function (d) { setStatus(rarity + " pool saved (" + items.length + " items)", "ok"); showCatalog(d); })
+      .catch(function (e) { btn.disabled = false; errEl.textContent = e.message; setStatus(e.message, "err"); });
+  }
+
+  function productModal(existing, kind) {
+    var inner = existing ? (existing.details.CardPack || existing.details.Cosmetic || existing.details.BattlePass) : null;
+    var editing = !!existing;
+    var weights = {};
+    RARITIES.forEach(function (r) { weights[r] = 0; });
+    if (inner && inner.rarity_weights) inner.rarity_weights.forEach(function (w) { weights[w[0]] = w[1]; });
+    else if (!editing && kind === "card_pack") { weights = { Common: 60, Uncommon: 25, Rare: 10, Epic: 4, Legendary: 1 }; }
+    var price = inner ? (inner.price_micros / 1e6).toFixed(2) : "";
+    var fields = '<div class="form-grid">' +
+      '<label class="muted">SKU</label><input id="f-sku" class="mono" placeholder="e.g. pack.gold" value="' + esc(inner ? inner.sku : "") + '"' + (editing ? " disabled" : "") + " />" +
+      '<label class="muted">Display name</label><input id="f-name" maxlength="120" value="' + esc(inner ? inner.name : "") + '" />' +
+      '<label class="muted">Price (USD)</label><input id="f-price" type="number" min="0.01" step="0.01" value="' + esc(price) + '" />';
+    if (kind === "card_pack") {
+      fields += '<label class="muted">Cards per pack</label><input id="f-cards" type="number" min="1" max="100" value="' + esc(inner ? inner.cards_per_pack : 5) + '" />' +
+        '<label class="muted">Drop weights</label><div class="weights">' + RARITIES.map(function (r) {
+          return "<div><label>" + esc(r) + '</label><input type="number" min="0" data-w="' + r + '" value="' + esc(weights[r]) + '" /></div>';
+        }).join("") + "</div>";
+    } else if (kind === "cosmetic") {
+      fields += '<label class="muted">Slot</label><input id="f-slot" placeholder="weapon, back, emote..." value="' + esc(inner ? inner.slot : "") + '" />' +
+        '<label class="muted">Rarity</label><select id="f-rarity"' + (editing ? " disabled" : "") + ">" + RARITIES.map(function (r) {
+          return "<option" + (inner && inner.rarity === r ? " selected" : "") + ">" + r + "</option>";
+        }).join("") + "</select>";
+    } else {
+      fields += '<label class="muted">Reward tiers</label><input id="f-tiers" type="number" min="1" value="' + esc(inner ? inner.tiers : 100) + '" />';
+    }
+    fields += "</div>";
+    var note = kind === "card_pack"
+      ? "Odds changes apply to packs bought from now on; packs already sold keep the odds they were bought under."
+      : kind === "cosmetic"
+        ? (editing ? "Name and rarity are the item's identity and are locked. To change them, archive this SKU and create a new one." : "The name and rarity become the item's permanent identity.")
+        : (editing ? "Tier count can grow but not shrink below " + inner.tiers + "." : "");
+    var bg = document.createElement("div");
+    bg.className = "modal-bg";
+    bg.innerHTML = '<div class="modal" style="width:min(640px,94vw)"><h3>' + (editing ? "Edit " : "New ") + esc(KIND_LABEL[kind].toLowerCase()) + "</h3>" +
+      fields + (note ? '<p class="muted">' + esc(note) + "</p>" : "") + '<div class="err-text" id="f-err"></div>' +
+      '<div class="row"><button id="cancel">Cancel</button><button class="primary" id="save">' + (editing ? "Save changes" : "Create") + "</button></div></div>";
+    document.body.appendChild(bg);
+    if (editing && kind === "cosmetic") bg.querySelector("#f-name").disabled = true;
+    var errEl = bg.querySelector("#f-err");
+    bg.querySelector("#cancel").onclick = function () { bg.remove(); };
+    bg.querySelector("#save").onclick = function () {
+      var sku = bg.querySelector("#f-sku").value.trim();
+      var name = bg.querySelector("#f-name").value.trim();
+      var priceMicros = Math.round(Number(bg.querySelector("#f-price").value) * 1e6);
+      if (!sku || /\s/.test(sku)) { errEl.textContent = "SKU is required and cannot contain spaces."; return; }
+      if (!name) { errEl.textContent = "Display name is required."; return; }
+      if (!(priceMicros > 0)) { errEl.textContent = "Price must be greater than zero."; return; }
+      var product;
+      if (kind === "card_pack") {
+        var cards = Number(bg.querySelector("#f-cards").value);
+        if (!Number.isInteger(cards) || cards < 1 || cards > 100) { errEl.textContent = "Cards per pack must be 1 to 100."; return; }
+        var rw = [], total = 0, bad = false;
+        RARITIES.forEach(function (r) {
+          var w = Number(bg.querySelector('[data-w="' + r + '"]').value);
+          if (!Number.isInteger(w) || w < 0) bad = true;
+          else if (w > 0) { rw.push([r, w]); total += w; }
+        });
+        if (bad || total === 0) { errEl.textContent = "Weights must be whole numbers and at least one must be above zero."; return; }
+        product = { CardPack: { sku: sku, name: name, price_micros: priceMicros, cards_per_pack: cards, rarity_weights: rw } };
+      } else if (kind === "cosmetic") {
+        var slot = bg.querySelector("#f-slot").value.trim();
+        if (!slot) { errEl.textContent = "Slot is required."; return; }
+        product = { Cosmetic: { sku: sku, name: name, price_micros: priceMicros, slot: slot, rarity: bg.querySelector("#f-rarity").value } };
+      } else {
+        var tiers = Number(bg.querySelector("#f-tiers").value);
+        if (!Number.isInteger(tiers) || tiers < 1) { errEl.textContent = "Tiers must be a whole number of at least 1."; return; }
+        product = { BattlePass: { sku: sku, name: name, price_micros: priceMicros, tiers: tiers } };
+      }
+      if (!editing && catalogState.products.some(function (p) { return p.sku === sku; })) {
+        errEl.textContent = "A product with this SKU already exists. Edit it instead."; return;
+      }
+      var btn = bg.querySelector("#save"); btn.disabled = true; errEl.textContent = "";
+      api("PUT", "/v1/admin/catalog/products/" + encodeURIComponent(sku), { product: product, expected_revision: catalogState.revision })
+        .then(function (d) { bg.remove(); setStatus((editing ? "Saved " : "Created ") + sku, "ok"); showCatalog(d); })
+        .catch(function (e) {
+          btn.disabled = false; errEl.textContent = e.message;
+          if (catalogConflict(e)) errEl.textContent += " Close this dialog and reload the catalog.";
+        });
+    };
+  }
+
   function render() {
     document.getElementById("signout").hidden = !state.token;
     renderTabs();
     if (!state.token) return renderSignin();
     if (state.tab === "overview") return renderOverview();
     if (state.tab === "purchases") return renderPurchases();
+    if (state.tab === "catalog") return renderCatalog();
     return renderPlayer();
   }
 

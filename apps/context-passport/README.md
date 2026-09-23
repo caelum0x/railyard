@@ -32,7 +32,7 @@ on `passport-server`.
 
 | crate | role |
 |-------|------|
-| `passport-core` | domain kernel, no I/O: `Passport`/`PassportVersion`, typed `PassportAssets` (character/brand/persona) + patches, `Rights` (consent/likeness/disclosure), `VersionDigest` content-addressing, and the injectable `PassportStore` / `RelayConditioningSink` / `MintMeter` ports + `PassportError` |
+| `passport-core` | domain kernel, no I/O: `Passport`/`PassportVersion`, typed `PassportAssets` (character/brand/persona/voice/style) + patches, `TrainedArtifact` (per-provider voice clones, avatars, LoRAs), `Rights` (consent/likeness/disclosure), `VersionDigest` content-addressing, and the injectable `PassportStore` / `RelayConditioningSink` / `MintMeter` ports + `PassportError` |
 | `passport-resolve` | the resolver: `Modality`, `ConditioningPayload`, a capability-routed `ProviderRegistry` of per-modality `ProviderAdapter`s (image/voice/video/text), fail-closed with `needs_artifact` for non-portable providers |
 | `passport-provenance` | C2PA-aligned `GenerationRecord` (frozen rights snapshot), a `ProvenanceLog` port + in-memory impl, and a `to_c2pa_manifest` exporter |
 | `passport-store` | `MemoryStore` implementing both persistence ports (tests / embedded demos) |
@@ -79,6 +79,11 @@ Two facts drive the design (from the provider research):
 | `POST /v1/passports/:id/resolve` | `X-API-Key` | Resolve a locked version → provider `ConditioningPayload` |
 | `POST /v1/passports/:id/generate` | `X-API-Key` | Generate via Relay from `{provider, modality, prompt}`; returns the produced text (`output_text`, hard-bound by `asset_hash`) plus provenance with signed settlement evidence |
 | `POST /v1/passports/:id/attest` | `X-API-Key` | Record a generation made elsewhere; the Mint receipt signature is verified (Ed25519) and a receipt can back only one generation |
+| `POST /v1/passports/:id/artifacts` | `X-API-Key` | Register a provider-minted artifact (`voice_clone` / `avatar` / `lora`) for a locked version: `{provider, kind, version?, artifact_ref?, provider_model?}`. Without `artifact_ref` it starts `pending` (training running); a newer active registration for the same version/provider/kind supersedes the old one. Resolve uses the ready artifact before failing with `needs_artifact` |
+| `GET /v1/passports/:id/artifacts` | `X-API-Key` | List trained artifacts, newest first |
+| `GET /v1/passports/:id/artifacts/:artifact_id` | `X-API-Key` | Fetch one artifact |
+| `PATCH /v1/passports/:id/artifacts/:artifact_id` | `X-API-Key` | Complete (`ready` + `artifact_ref`) or fail (`failed` + `failure_reason`) a pending artifact, or rotate a ready artifact's ref |
+| `DELETE /v1/passports/:id/artifacts/:artifact_id` | `X-API-Key` | Revoke an artifact (allowed on archived passports; the record is kept for provenance) |
 | `GET /v1/passports/:id/generations` | `X-API-Key` | Provenance: assets conditioned by this passport |
 | `GET /v1/passports/:id/generations/:gen/manifest` | `X-API-Key` | Export one generation's C2PA-aligned Content Credential manifest |
 | `GET /console` | page (key entered in browser) | Web console: create/edit/lock/version/archive passports, view any version, preview resolved conditioning, generate against a chosen locked version, attest external generations, browse generations + manifests |
