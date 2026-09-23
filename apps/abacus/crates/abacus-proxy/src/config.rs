@@ -15,6 +15,9 @@ pub struct Config {
     pub mint_api_key: String,
     /// Ingress `X-API-Key` secret agents must present to Abacus (`ABACUS_API_KEY`).
     pub abacus_api_key: String,
+    /// Separate operator key for the console / fleet views
+    /// (`ABACUS_ADMIN_API_KEY`). Unset ⇒ operator API disabled.
+    pub admin_api_key: Option<String>,
     /// Base URL of the real upstream provider (`UPSTREAM_BASE_URL`).
     pub upstream_base_url: String,
     /// Provider key used for pricing-table lookup (`ABACUS_PROVIDER`, default
@@ -76,11 +79,26 @@ fn positive_i64(key: &str, default: i64) -> Result<i64, AbacusError> {
 impl Config {
     /// Load + validate the configuration from the process environment.
     pub fn from_env() -> Result<Self, AbacusError> {
+        let abacus_api_key = require("ABACUS_API_KEY")?;
+        let admin_api_key = optional_value("ABACUS_ADMIN_API_KEY");
+        if let Some(admin) = &admin_api_key {
+            if admin.len() < 24 {
+                return Err(AbacusError::Config(
+                    "ABACUS_ADMIN_API_KEY must be at least 24 characters".to_string(),
+                ));
+            }
+            if admin == &abacus_api_key {
+                return Err(AbacusError::Config(
+                    "ABACUS_ADMIN_API_KEY must differ from the agents' ABACUS_API_KEY".to_string(),
+                ));
+            }
+        }
         Ok(Config {
             bind_addr: optional("ABACUS_BIND_ADDR", "0.0.0.0:8100"),
             mint_server_url: require("MINT_SERVER_URL")?,
             mint_api_key: require("MINT_API_KEY")?,
-            abacus_api_key: require("ABACUS_API_KEY")?,
+            abacus_api_key,
+            admin_api_key,
             upstream_base_url: require("UPSTREAM_BASE_URL")?,
             provider: optional("ABACUS_PROVIDER", "openai"),
             upstream_path: optional("UPSTREAM_PATH", "/v1/chat/completions"),

@@ -35,6 +35,43 @@ pub enum PayoutDest {
         /// The destination address.
         address: String,
     },
+    /// A PayPal receiver identified by email (PayPal Payouts API).
+    PayPal {
+        /// The receiver's PayPal email.
+        email: String,
+    },
+}
+
+impl PayoutDest {
+    /// The stable wire form (`{"kind":"stripe","account":..}` …) persisted on
+    /// the payout record and echoed by the API.
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            PayoutDest::Stripe { account } => {
+                serde_json::json!({ "kind": "stripe", "account": account })
+            }
+            PayoutDest::Crypto { chain, address } => {
+                serde_json::json!({ "kind": "crypto", "chain": chain, "address": address })
+            }
+            PayoutDest::PayPal { email } => serde_json::json!({ "kind": "paypal", "email": email }),
+        }
+    }
+
+    /// Parse the wire form produced by [`PayoutDest::to_json`].
+    pub fn from_json(v: &serde_json::Value) -> Option<PayoutDest> {
+        let s = |k: &str| v[k].as_str().map(str::to_string);
+        match v["kind"].as_str()? {
+            "stripe" => Some(PayoutDest::Stripe {
+                account: s("account")?,
+            }),
+            "crypto" => Some(PayoutDest::Crypto {
+                chain: s("chain")?,
+                address: s("address")?,
+            }),
+            "paypal" => Some(PayoutDest::PayPal { email: s("email")? }),
+            _ => None,
+        }
+    }
 }
 
 /// A deposit as reported by the ramp. `mint` is gated on `confirmed == true` and
@@ -78,6 +115,9 @@ pub struct Payout {
     pub amount_micros: Micros,
     /// The provider-reported status.
     pub status: PayoutStatus,
+    /// The provider's own id for this payout (Stripe transfer id, PayPal
+    /// payout batch id, tx hash …), used to poll asynchronous settlement.
+    pub provider_ref: Option<String>,
 }
 
 /// Failures the ramp can report. Deposit-side failures map to
@@ -91,6 +131,10 @@ pub enum RampError {
     NotConfirmed,
     /// The provider is transiently unavailable (retryable).
     ProviderUnavailable,
+    /// The operation is structurally impossible for this ramp (unknown or
+    /// inactive provider, a billing-only provider with no payout API, a
+    /// destination kind or amount the provider cannot pay). NOT retryable.
+    Unsupported,
 }
 
 /// The injectable ramp seam.
@@ -106,6 +150,32 @@ pub trait Ramp: Send + Sync {
         dest: &PayoutDest,
         amount: Micros,
     ) -> Result<Payout, RampError>;
+
+    /// Pre-burn routability check — NO network, NO side effects. `redeem`
+    /// calls this BEFORE burning so a payout that can never be delivered
+    /// (unknown provider tag, billing-only provider, wrong destination kind,
+    /// sub-cent fiat amount) is rejected without destroying user funds.
+    /// Adapters that can pay anything they are asked to keep the default.
+    async fn check_payout(
+        &self,
+        _payout_ref: &str,
+        _dest: &PayoutDest,
+        _amount: Micros,
+    ) -> Result<(), RampError> {
+        Ok(())
+    }
+
+    /// Re-query the provider for the settlement state of a previously
+    /// initiated payout (asynchronous providers such as PayPal Payouts).
+    /// Providers whose payouts settle synchronously keep the default
+    /// [`RampError::Unsupported`].
+    async fn payout_status(
+        &self,
+        _payout_ref: &str,
+        _provider_ref: Option<&str>,
+    ) -> Result<PayoutStatus, RampError> {
+        Err(RampError::Unsupported)
+    }
 }
 
 /// A KYC verification tier. Ordered: `None < Basic < Verified`.
@@ -266,6 +336,7 @@ impl Ramp for FakeRamp {
             payout_ref: payout_ref.to_string(),
             amount_micros: amount,
             status: PayoutStatus::Paid,
+            provider_ref: Some(format!("fake_{payout_ref}")),
         };
         payouts.push(payout.clone());
         Ok(payout)

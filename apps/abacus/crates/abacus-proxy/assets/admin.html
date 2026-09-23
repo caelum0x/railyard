@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex" />
-<title>Abacus Admin</title>
+<title>Abacus Operator Console</title>
 <style>
   :root {
     --bg: #0f1117; --panel: #181b24; --border: #262b38; --fg: #e6e8ee;
@@ -61,173 +61,201 @@
   .gate { max-width: 480px; margin: 60px auto; text-align: center; }
   .gate p { color: var(--muted); }
   code { background: var(--row); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  main { max-width: 1200px; }
+  nav { display: flex; gap: 4px; }
+  nav button { background: transparent; border-color: transparent; color: var(--muted); }
+  nav button.active { color: var(--fg); background: var(--row); border-color: var(--border); }
+  th.col { width: auto; }
+  td.num { text-align: right; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .tile { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .tile .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  .tile .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 4px; }
+  .badge.captured { color: var(--ok); } .badge.released { color: var(--muted); }
+  .hidden { display: none !important; }
+  .error { padding: 24px; color: var(--danger); text-align: center; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Abacus Admin</h1>
-  <input id="key" type="password" placeholder="X-API-Key (ingress key)" autocomplete="off" />
-  <button id="connect" class="primary">Connect</button>
-  <button id="logout" style="display:none">Sign out</button>
+  <h1>Abacus Operator Console</h1>
+  <nav id="tabs" class="hidden">
+    <button data-tab="agents" class="active">Agents</button>
+    <button data-tab="holds">Open holds</button>
+    <button data-tab="receipts">Receipts</button>
+    <button data-tab="lookup">Lookup</button>
+  </nav>
   <div class="spacer"></div>
+  <input id="key" type="password" placeholder="X-API-Key (ABACUS_ADMIN_API_KEY)" autocomplete="off" />
+  <button id="connect" class="primary">Connect</button>
+  <button id="logout" class="hidden">Sign out</button>
   <span id="status">Not connected</span>
 </header>
 
 <div id="gate" class="gate">
-  <p>Enter the Abacus ingress API key to look up spend receipts.<br />
-  Requests use the <code>X-API-Key</code> header — the same credential the enforced
-  <code>/v1/proxy</code> and <code>/v1/receipts</code> endpoints require. No bypass.</p>
+  <p>Enter the Abacus <b>operator</b> key (<code>ABACUS_ADMIN_API_KEY</code>). It is separate
+  from the agents' ingress key, which cannot read fleet-wide spend. The key stays in this
+  tab's session storage and is sent as <code>X-API-Key</code> to the operator API.</p>
 </div>
 
-<div id="app" style="display:none">
-  <main>
-    <div class="note">
-      Abacus is a spend-enforcement reverse proxy. Its only authenticated read
-      endpoint is <b>GET&nbsp;/v1/receipts/:request_id</b> — the money system-of-record
-      for a <b>single</b> enforced request. There is no HTTP endpoint that lists
-      receipts, spend policies, budgets, or holds, so this console looks up one
-      receipt by its <code>request_id</code> (the <code>x-request-id</code> correlation
-      key returned by a proxied call). Nothing here is fabricated.
+<main id="app" class="hidden">
+  <section id="tab-agents">
+    <div class="lookup"><button id="refresh-agents">Refresh</button></div>
+    <div class="grid" id="tiles"></div>
+    <div class="card" id="agents"></div>
+  </section>
+  <section id="tab-holds" class="hidden">
+    <div class="lookup"><button id="refresh-holds">Refresh</button></div>
+    <div class="card" id="holds"></div>
+  </section>
+  <section id="tab-receipts" class="hidden">
+    <div class="lookup">
+      <input id="receipt-agent" placeholder="Filter by agent_id" />
+      <button id="refresh-receipts">Apply</button>
     </div>
+    <div class="card" id="receipts"></div>
+  </section>
+  <section id="tab-lookup" class="hidden">
     <div class="lookup">
       <input id="request_id" placeholder="request_id" autocomplete="off" />
       <button id="lookup" class="primary">Look up receipt</button>
     </div>
     <div id="view" class="card"><div class="empty">Enter a request_id to view its receipt.</div></div>
-  </main>
-</div>
+  </section>
+</main>
 
 <script>
 "use strict";
 (function () {
-  const KEY_STORE = "abacus_admin_key";
-  const el = (id) => document.getElementById(id);
-  const statusEl = el("status");
-
-  function setStatus(msg, kind) {
-    statusEl.textContent = msg;
-    statusEl.className = kind || "";
-  }
-
-  function getKey() { return sessionStorage.getItem(KEY_STORE) || ""; }
-  function setKey(k) {
-    if (k) sessionStorage.setItem(KEY_STORE, k);
-    else sessionStorage.removeItem(KEY_STORE);
-  }
-
-  function esc(v) {
-    if (v === null || v === undefined) return "";
-    return String(v).replace(/[&<>"']/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  }
-
-  // µ$ (micros of a dollar) → dollar string.
-  function usd(micros) {
-    if (micros === null || micros === undefined || micros === "") return "";
-    const n = Number(micros);
-    if (Number.isNaN(n)) return esc(micros);
-    return "$" + (n / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.$/, ".0")
-      + ' <span class="badge">' + esc(micros) + " µ$</span>";
-  }
-
-  function badge(text) {
-    if (text === null || text === undefined || text === "") return "—";
-    return '<span class="badge">' + esc(text) + "</span>";
-  }
+  const KEY_STORE = "abacus_operator_key";
+  const $ = (id) => document.getElementById(id);
+  const setStatus = (m, k) => { $("status").textContent = m; $("status").className = k || ""; };
+  const getKey = () => sessionStorage.getItem(KEY_STORE) || "";
+  const setKey = (k) => (k ? sessionStorage.setItem(KEY_STORE, k) : sessionStorage.removeItem(KEY_STORE));
+  const usd = (m) => (m === null || m === undefined ? "-" : (Number(m) / 1e6).toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6 }));
+  const when = (ms) => (ms ? new Date(Number(ms)).toLocaleString() : "-");
+  const el = (tag, props, ...kids) => {
+    const n = document.createElement(tag);
+    if (props) for (const [k, v] of Object.entries(props)) n.setAttribute(k, v);
+    for (const k of kids) n.append(k instanceof Node ? k : document.createTextNode(k === null || k === undefined ? "-" : String(k)));
+    return n;
+  };
+  const badge = (t) => el("span", { class: "badge " + String(t) }, t);
+  const table = (heads, rows) => {
+    const t = el("table", null, el("thead", null, el("tr", null, ...heads.map((h) => el("th", { class: "col" }, h)))));
+    const b = el("tbody"); rows.forEach((r) => b.append(r)); t.append(b); return t;
+  };
+  const show = (node, cls, text) => node.replaceChildren(el("div", { class: cls }, text));
 
   async function api(path) {
-    const res = await fetch(path, {
-      headers: { "X-API-Key": getKey(), "Accept": "application/json" },
-    });
-    if (res.status === 401 || res.status === 403) throw new Error("Unauthorized — check the ingress API key.");
-    if (res.status === 404) throw new Error("No receipt found for that request_id.");
-    if (!res.ok) throw new Error("HTTP " + res.status + " on " + path);
-    const body = await res.json();
-    // { success, data } envelope.
+    const res = await fetch(path, { headers: { "X-API-Key": getKey(), Accept: "application/json" } });
+    let body = null; try { body = await res.json(); } catch (_) {}
+    if (res.status === 401) { logout(); throw new Error("Operator key rejected"); }
+    if (!res.ok) throw new Error(body && body.error ? body.error.message : "HTTP " + res.status);
     return body && Object.prototype.hasOwnProperty.call(body, "data") ? body.data : body;
   }
 
-  function row(label, valueHtml, mono) {
-    return "<tr><th>" + esc(label) + "</th><td" + (mono ? ' class="mono"' : "") + ">"
-      + (valueHtml === "" || valueHtml === undefined ? "—" : valueHtml) + "</td></tr>";
-  }
-
-  function renderReceipt(r) {
-    if (!r || typeof r !== "object") {
-      el("view").innerHTML = '<div class="empty">No receipt.</div>';
-      return;
-    }
-    const proof = r.settlement_proof || {};
-    const html =
-      "<table><tbody>"
-      + row("Request ID", esc(r.request_id), true)
-      + row("Outcome", badge(r.outcome))
-      + row("Agent ID", esc(r.agent_id), true)
-      + row("Run ID", esc(r.run_id), true)
-      + row("Budget ID", esc(r.budget_id), true)
-      + row("Payer Account", esc(r.payer_account), true)
-      + row("Hold ID", esc(r.hold_id), true)
-      + row("Reserved", usd(r.reserved_micros))
-      + row("Captured", usd(r.captured_micros))
-      + row("Balance After", usd(r.balance_after_micros))
-      + row("Settlement Seq", esc(r.settlement_seq))
-      + "</tbody></table>"
-      + '<div class="section-title">Settlement Proof</div>'
-      + '<table><tbody>'
-      + row("Sequence", esc(proof.sequence))
-      + row("Operation", esc(proof.operation), true)
-      + row("Operation Hash", esc(proof.operation_hash), true)
-      + row("Receipt Hash", esc(proof.receipt_hash), true)
-      + row("Signature", esc(proof.signature), true)
-      + "</tbody></table>";
-    const wrap = document.createElement("div");
-    wrap.innerHTML = html;
-    const view = el("view");
-    view.innerHTML = "";
-    view.appendChild(wrap);
-  }
-
-  async function load() {
-    const id = el("request_id").value.trim();
-    if (!id) { setStatus("Enter a request_id.", "err"); return; }
-    el("view").innerHTML = '<div class="loading">Loading…</div>';
+  async function loadAgents() {
+    show($("agents"), "loading", "Loading agents...");
     try {
-      const data = await api("/v1/receipts/" + encodeURIComponent(id));
-      renderReceipt(data);
+      const o = await api("/v1/admin/overview");
+      const tile = (l, v) => el("div", { class: "tile" }, el("div", { class: "label" }, l), el("div", { class: "value" }, v));
+      const captured = o.agents.reduce((a, r) => a + r.recent_captured_micros, 0);
+      const reserved = o.agents.reduce((a, r) => a + r.reserved_micros, 0);
+      $("tiles").replaceChildren(tile("Agents", o.agents.length), tile("Open holds", o.open_holds_total),
+        tile("Reserved in flight", usd(reserved)), tile("Recent captured spend", usd(captured)));
+      if (!o.agents.length) { show($("agents"), "empty", "No agents configured."); return; }
+      $("agents").replaceChildren(table(["Agent", "Funding", "Per-request cap", "Allowance remaining", "Open holds", "Reserved", "Recent requests", "Recent spend", "Released"],
+        o.agents.map((a) => el("tr", null,
+          el("td", { class: "mono" }, a.agent_id), el("td", null, a.funding_path),
+          el("td", { class: "num" }, a.per_request_max_micros === null ? "none" : usd(a.per_request_max_micros)),
+          el("td", { class: "num" }, a.allowance ? (a.allowance.error ? "unavailable" : usd(a.allowance.remaining_micros) + " of " + usd(a.allowance.limit_micros)) : "n/a"),
+          el("td", { class: "num" }, a.open_holds), el("td", { class: "num" }, usd(a.reserved_micros)),
+          el("td", { class: "num" }, a.recent_requests), el("td", { class: "num" }, usd(a.recent_captured_micros)),
+          el("td", { class: "num" }, a.recent_released)))));
       setStatus("Connected", "ok");
-    } catch (e) {
-      el("view").innerHTML = '<div class="empty">' + esc(e.message) + "</div>";
-      setStatus(e.message, "err");
-      if (/Unauthorized/.test(e.message)) showGate();
-    }
+    } catch (e) { show($("agents"), "error", e.message); setStatus(e.message, "err"); }
   }
 
-  function showApp() {
-    el("gate").style.display = "none";
-    el("app").style.display = "";
-    el("logout").style.display = "";
+  async function loadHolds() {
+    show($("holds"), "loading", "Loading holds...");
+    try {
+      const h = await api("/v1/admin/holds");
+      if (!h.items.length) { show($("holds"), "empty", "No open holds. Every reservation has settled."); return; }
+      $("holds").replaceChildren(table(["Opened", "Hold", "Agent", "Request", "Reserved", "Deadline"],
+        h.items.map((r) => el("tr", null, el("td", null, when(r.created_at_ms)), el("td", { class: "mono" }, r.hold_id),
+          el("td", { class: "mono" }, r.receipt_context ? r.receipt_context.agent_id : "untracked"),
+          el("td", { class: "mono" }, r.receipt_context ? r.receipt_context.request_id : "-"),
+          el("td", { class: "num" }, usd(r.reserved_micros)), el("td", null, when(r.deadline_ms))))));
+    } catch (e) { show($("holds"), "error", e.message); }
   }
 
-  function showGate() {
-    el("app").style.display = "none";
-    el("gate").style.display = "";
-    el("logout").style.display = "none";
-    el("key").value = "";
+  async function loadReceipts() {
+    show($("receipts"), "loading", "Loading receipts...");
+    const q = new URLSearchParams({ limit: "200" });
+    if ($("receipt-agent").value.trim()) q.set("agent_id", $("receipt-agent").value.trim());
+    try {
+      const r = await api("/v1/admin/receipts?" + q);
+      if (!r.items.length) { show($("receipts"), "empty", "No receipts yet."); return; }
+      $("receipts").replaceChildren(table(["Request", "Agent", "Outcome", "Reserved", "Captured", "Balance after", "Seq"],
+        r.items.map((x) => {
+          const tr = el("tr", null, el("td", { class: "mono" }, x.request_id), el("td", { class: "mono" }, x.agent_id),
+            el("td", null, badge(x.outcome)), el("td", { class: "num" }, usd(x.reserved_micros)), el("td", { class: "num" }, usd(x.captured_micros)),
+            el("td", { class: "num" }, usd(x.balance_after_micros)), el("td", { class: "num" }, x.settlement_seq));
+          tr.style.cursor = "pointer";
+          tr.onclick = () => { $("request_id").value = x.request_id; showTab("lookup"); lookup(); };
+          return tr;
+        })));
+    } catch (e) { show($("receipts"), "error", e.message); }
   }
 
-  el("connect").onclick = () => {
-    const k = el("key").value.trim();
-    if (!k) { setStatus("Enter the ingress API key.", "err"); return; }
-    setKey(k);
-    setStatus("Connected", "ok");
-    showApp();
-  };
-  el("key").addEventListener("keydown", (e) => { if (e.key === "Enter") el("connect").click(); });
-  el("logout").onclick = () => { setKey(""); setStatus("Not connected"); showGate(); };
-  el("lookup").onclick = load;
-  el("request_id").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
+  async function lookup() {
+    const id = $("request_id").value.trim();
+    if (!id) { setStatus("Enter a request_id.", "err"); return; }
+    show($("view"), "loading", "Loading...");
+    try {
+      const r = await api("/v1/receipts/" + encodeURIComponent(id));
+      const p = r.settlement_proof || {};
+      const row = (l, v) => el("tr", null, el("th", null, l), el("td", { class: "mono" }, v));
+      $("view").replaceChildren(el("table", null, el("tbody", null,
+        row("Request ID", r.request_id), row("Outcome", r.outcome), row("Agent ID", r.agent_id), row("Run ID", r.run_id),
+        row("Budget ID", r.budget_id), row("Payer account", r.payer_account), row("Hold ID", r.hold_id),
+        row("Reserved", usd(r.reserved_micros)), row("Captured", usd(r.captured_micros)), row("Balance after", usd(r.balance_after_micros)),
+        row("Settlement seq", r.settlement_seq), row("Proof operation", p.operation), row("Proof sequence", p.sequence),
+        row("Receipt hash", p.receipt_hash), row("Signature", p.signature))));
+    } catch (e) { show($("view"), "error", e.message); }
+  }
 
-  if (getKey()) showApp(); else showGate();
+  function showTab(name) {
+    document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+    ["agents", "holds", "receipts", "lookup"].forEach((t) => $("tab-" + t).classList.toggle("hidden", t !== name));
+    if (name === "agents") loadAgents();
+    if (name === "holds") loadHolds();
+    if (name === "receipts") loadReceipts();
+  }
+  function logout() {
+    setKey(""); setStatus("Not connected");
+    $("app").classList.add("hidden"); $("tabs").classList.add("hidden"); $("gate").classList.remove("hidden");
+    $("logout").classList.add("hidden"); $("connect").classList.remove("hidden"); $("key").classList.remove("hidden");
+  }
+  function connect() {
+    const k = $("key").value.trim() || getKey();
+    if (!k) { setStatus("Enter the operator key.", "err"); return; }
+    setKey(k); $("key").value = "";
+    $("gate").classList.add("hidden"); $("app").classList.remove("hidden"); $("tabs").classList.remove("hidden");
+    $("logout").classList.remove("hidden"); $("connect").classList.add("hidden"); $("key").classList.add("hidden");
+    showTab("agents");
+  }
+  $("connect").onclick = connect;
+  $("key").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
+  $("logout").onclick = logout;
+  document.querySelectorAll("#tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+  $("refresh-agents").onclick = loadAgents;
+  $("refresh-holds").onclick = loadHolds;
+  $("refresh-receipts").onclick = loadReceipts;
+  $("lookup").onclick = lookup;
+  $("request_id").addEventListener("keydown", (e) => { if (e.key === "Enter") lookup(); });
+  if (getKey()) connect();
 })();
 </script>
 </body>

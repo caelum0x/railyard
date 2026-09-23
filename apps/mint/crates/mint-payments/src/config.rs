@@ -118,12 +118,19 @@ impl PaymentsConfig {
             ProviderId::Creem,
             base(ProviderId::Creem, mode)
                 .with_api_key(g("CREEM_API_KEY"))
+                // Creem checkouts are product-based: a fixed-price "AIT credit"
+                // product bought in `units` (amount = units × unit price).
+                .with_extra("product_id", g("CREEM_PRODUCT_ID"))
+                .with_extra("unit_price_cents", g("CREEM_UNIT_PRICE_CENTS"))
                 .with_webhook_secret(g("CREEM_WEBHOOK_SECRET")),
         );
         providers.insert(
             ProviderId::Polar,
             base(ProviderId::Polar, mode)
                 .with_api_key(g("POLAR_ACCESS_TOKEN"))
+                // A pay-what-you-want (custom price) Polar product; the checkout
+                // sets `amount` per deposit.
+                .with_extra("product_id", g("POLAR_PRODUCT_ID"))
                 .with_webhook_secret(g("POLAR_WEBHOOK_SECRET")),
         );
         providers.insert(

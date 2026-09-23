@@ -12,9 +12,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use mint_reserve::{FakeRamp, Ramp};
+use mint_reserve::{Deposit, FakeRamp, Ramp};
 
-use crate::card::Checkout;
+use crate::card::{Checkout, CheckoutUrls};
 use crate::card::{CreemRamp, PayPalRamp, PolarRamp, StripeRamp};
 use crate::composite::CompositeRamp;
 use crate::config::{PaymentsConfig, ProviderConfig};
@@ -84,6 +84,7 @@ impl PaymentRegistry {
         provider: ProviderId,
         account_id: &str,
         amount_micros: i64,
+        urls: &CheckoutUrls,
     ) -> Result<Checkout, PaymentError> {
         let cfg = self
             .active_configs
@@ -93,22 +94,29 @@ impl PaymentRegistry {
         let checkout = match provider {
             ProviderId::Stripe => {
                 StripeRamp::new(self.transport.clone(), cfg)
-                    .create_checkout(account_id, amount_micros)
+                    .create_checkout(account_id, amount_micros, urls)
                     .await?
             }
             ProviderId::Creem => {
                 CreemRamp::new(self.transport.clone(), cfg)
-                    .create_checkout(account_id, amount_micros)
+                    .create_checkout(account_id, amount_micros, urls)
                     .await?
             }
             ProviderId::Polar => {
                 PolarRamp::new(self.transport.clone(), cfg)
-                    .create_checkout(account_id, amount_micros)
+                    .create_checkout(account_id, amount_micros, urls)
                     .await?
             }
             ProviderId::PayPal => {
+                if urls.capture_return_url.is_none() {
+                    return Err(PaymentError::Misconfigured(
+                        "MINT_PUBLIC_URL must be set so PayPal can return the buyer to Mint's \
+                         capture endpoint"
+                            .into(),
+                    ));
+                }
                 PayPalRamp::new(self.transport.clone(), cfg)
-                    .create_checkout(account_id, amount_micros)
+                    .create_checkout(account_id, amount_micros, urls)
                     .await?
             }
             ProviderId::Usdc => {
@@ -131,6 +139,27 @@ impl PaymentRegistry {
             ));
         }
         Ok(checkout)
+    }
+
+    /// Capture an approved PayPal order (the buyer returned from PayPal) and
+    /// return the authenticated, confirmed deposit keyed by the ORDER id.
+    pub async fn capture_paypal_order(&self, order_id: &str) -> Result<Deposit, PaymentError> {
+        let cfg = self
+            .active_configs
+            .get(&ProviderId::PayPal)
+            .cloned()
+            .ok_or(PaymentError::NotConfigured(ProviderId::PayPal))?;
+        PayPalRamp::new(self.transport.clone(), cfg)
+            .capture_order(order_id)
+            .await
+            .map_err(PaymentError::from)
+    }
+
+    /// The tags of every active provider (for the operator dashboard).
+    pub fn active_providers(&self) -> Vec<ProviderId> {
+        let mut v: Vec<ProviderId> = self.ramps.keys().copied().collect();
+        v.sort_by_key(|p| p.tag());
+        v
     }
 
     /// Verify a provider webhook over its RAW bytes and, on success, return the
@@ -243,20 +272,30 @@ mod tests {
 
     #[tokio::test]
     async fn checkout_binds_mint_account_in_provider_metadata() {
-        let config = PaymentsConfig::from_lookup(|key| {
-            (key == "CREEM_API_KEY").then(|| "creem_test".to_string())
+        let config = PaymentsConfig::from_lookup(|key| match key {
+            "CREEM_API_KEY" => Some("creem_test".to_string()),
+            "CREEM_PRODUCT_ID" => Some("prod_ait".to_string()),
+            _ => None,
         });
         let transport = Arc::new(CheckoutTransport::default());
         let registry = PaymentRegistry::from_config(config, transport.clone());
+        let urls = CheckoutUrls {
+            success_url: "https://app.test/ok".into(),
+            cancel_url: "https://app.test/cancel".into(),
+            capture_return_url: None,
+        };
 
         let checkout = registry
-            .create_checkout(ProviderId::Creem, "acct_user", 5_000_000)
+            .create_checkout(ProviderId::Creem, "acct_user", 5_000_000, &urls)
             .await
             .unwrap();
         assert_eq!(checkout.checkout_id, "checkout_1");
         let bodies = transport.bodies.lock().unwrap();
         let body: serde_json::Value = serde_json::from_slice(&bodies[0]).unwrap();
         assert_eq!(body["metadata"]["account_id"], "acct_user");
-        assert_eq!(body["amount"], 500);
+        assert_eq!(body["product_id"], "prod_ait");
+        // $5.00 at the default $1.00 unit price ⇒ 5 units.
+        assert_eq!(body["units"], 5);
+        assert_eq!(body["success_url"], "https://app.test/ok");
     }
 }

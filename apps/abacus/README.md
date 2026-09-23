@@ -16,6 +16,7 @@ cp -f config/agents.example.json /tmp/abacus-agents.json
 MINT_SERVER_URL=http://127.0.0.1:8080 \
 MINT_API_KEY=mint-secret \
 ABACUS_API_KEY=proxy-secret \
+ABACUS_ADMIN_API_KEY=operator-secret-at-least-24-chars \
 UPSTREAM_BASE_URL=https://api.openai.com \
 ABACUS_AGENT_CONFIG=/tmp/abacus-agents.json \
 ABACUS_RECEIPT_LOG=/tmp/abacus-receipts.jsonl \
@@ -27,7 +28,16 @@ Replace the example treasury account and payee in the copied JSON with real Mint
 identities before sending paid traffic.
 
 Clients call `POST /v1/proxy` with `X-API-Key`, `X-Abacus-Agent`, and the
-upstream `Authorization: Bearer ...` header. `ABACUS_BIND_ADDR` defaults to
+upstream `Authorization: Bearer ...` header. An agent reads its own remaining
+budget (policy, live allowance headroom, reservations in flight) with
+`GET /v1/budget` and the same `X-API-Key` + `X-Abacus-Agent` headers.
+
+Operators use a SEPARATE key, `ABACUS_ADMIN_API_KEY` (min 24 chars, must differ
+from `ABACUS_API_KEY`; unset disables the operator API): `GET /v1/admin/overview`
+(every agent's policy, open holds, recent spend, allowance headroom),
+`GET /v1/admin/receipts?agent_id=&limit=`, `GET /v1/admin/holds`, and the console
+at `GET /admin`. `/readyz` returns `503` unless the hold store, the policy store
+and Mint's own `/readyz` all answer. `ABACUS_BIND_ADDR` defaults to
 `0.0.0.0:8100`; `ABACUS_PROVIDER` defaults to `openai`.
 
 `ABACUS_PRICING_CONFIG` (optional) points at a JSON file of per-provider/model

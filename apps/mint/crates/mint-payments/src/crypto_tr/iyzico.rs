@@ -188,7 +188,25 @@ impl Ramp for IyzicoRamp {
             payout_ref: payout_ref.to_string(),
             amount_micros: amount,
             status: PayoutStatus::Paid,
+            provider_ref: v["paymentTransactionId"]
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| Some(payout_ref.to_string())),
         })
+    }
+
+    async fn check_payout(
+        &self,
+        payout_ref: &str,
+        _dest: &PayoutDest,
+        amount: Micros,
+    ) -> Result<(), RampError> {
+        // An Iyzico payout is a refund against the original card payment named
+        // by the ref; it must name one and be a whole number of cents.
+        if payout_ref.trim().is_empty() || !crate::card::is_whole_cents(amount.get()) {
+            return Err(RampError::Unsupported);
+        }
+        Ok(())
     }
 }
 

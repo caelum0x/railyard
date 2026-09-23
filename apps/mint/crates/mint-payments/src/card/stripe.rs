@@ -10,7 +10,7 @@ use mint_core::Micros;
 use mint_reserve::{Asset, Deposit, Payout, PayoutDest, PayoutStatus, Ramp, RampError};
 use serde_json::Value;
 
-use crate::card::Checkout;
+use crate::card::{is_whole_cents, Checkout, CheckoutUrls};
 use crate::config::ProviderConfig;
 use crate::event::{DepositEvent, WebhookError};
 use crate::http::{map_status, Headers, HttpTransport};
@@ -44,12 +44,13 @@ impl StripeRamp {
         &self,
         account_id: &str,
         amount_micros: i64,
+        urls: &CheckoutUrls,
     ) -> Result<Checkout, RampError> {
         let cents = amount_micros / 10_000;
         let form = form_urlencode(&[
             ("mode", "payment"),
-            ("success_url", "https://mint.local/checkout/success"),
-            ("cancel_url", "https://mint.local/checkout/cancel"),
+            ("success_url", &urls.success_url),
+            ("cancel_url", &urls.cancel_url),
             ("line_items[0][quantity]", "1"),
             ("line_items[0][price_data][currency]", "usd"),
             (
@@ -116,9 +117,10 @@ impl Ramp for StripeRamp {
         dest: &PayoutDest,
         amount: Micros,
     ) -> Result<Payout, RampError> {
+        self.check_payout(payout_ref, dest, amount).await?;
         let account = match dest {
             PayoutDest::Stripe { account } => account.clone(),
-            PayoutDest::Crypto { .. } => return Err(RampError::ProviderUnavailable),
+            _ => return Err(RampError::Unsupported),
         };
         let cents = (amount.get() / 10_000).to_string();
         let form = form_urlencode(&[
@@ -139,13 +141,43 @@ impl Ramp for StripeRamp {
                 .post_json(&url, &headers, form.as_bytes())
                 .await,
         )?;
-        let _v: Value =
+        let v: Value =
             serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)?;
+        // A 2xx without a transfer id is not proof of a transfer.
+        let transfer_id = v["id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or(RampError::ProviderUnavailable)?
+            .to_string();
+        // Stripe transfers to a connected account settle synchronously into its
+        // balance; a transfer already reversed did not deliver funds.
+        let status = if v["reversed"].as_bool() == Some(true) {
+            PayoutStatus::Failed
+        } else {
+            PayoutStatus::Paid
+        };
         Ok(Payout {
             payout_ref: payout_ref.to_string(),
             amount_micros: amount,
-            status: PayoutStatus::Paid,
+            status,
+            provider_ref: Some(transfer_id),
         })
+    }
+
+    async fn check_payout(
+        &self,
+        _payout_ref: &str,
+        dest: &PayoutDest,
+        amount: Micros,
+    ) -> Result<(), RampError> {
+        match dest {
+            PayoutDest::Stripe { account } if account.starts_with("acct_") => {}
+            _ => return Err(RampError::Unsupported),
+        }
+        if !is_whole_cents(amount.get()) {
+            return Err(RampError::Unsupported);
+        }
+        Ok(())
     }
 }
 

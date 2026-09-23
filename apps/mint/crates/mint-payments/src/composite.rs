@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use mint_core::Micros;
-use mint_reserve::{Deposit, Payout, PayoutDest, Ramp, RampError};
+use mint_reserve::{Deposit, Payout, PayoutDest, PayoutStatus, Ramp, RampError};
 
 use crate::provider::ProviderId;
 
@@ -55,5 +55,28 @@ impl Ramp for CompositeRamp {
     ) -> Result<Payout, RampError> {
         let (ramp, raw) = self.route(payout_ref)?;
         ramp.initiate_payout(raw, dest, amount).await
+    }
+
+    async fn check_payout(
+        &self,
+        payout_ref: &str,
+        dest: &PayoutDest,
+        amount: Micros,
+    ) -> Result<(), RampError> {
+        // An unknown / inactive `<provider>:` prefix can never be paid out.
+        let (ramp, raw) = self.route(payout_ref).map_err(|_| RampError::Unsupported)?;
+        if raw.trim().is_empty() {
+            return Err(RampError::Unsupported);
+        }
+        ramp.check_payout(raw, dest, amount).await
+    }
+
+    async fn payout_status(
+        &self,
+        payout_ref: &str,
+        provider_ref: Option<&str>,
+    ) -> Result<PayoutStatus, RampError> {
+        let (ramp, raw) = self.route(payout_ref)?;
+        ramp.payout_status(raw, provider_ref).await
     }
 }

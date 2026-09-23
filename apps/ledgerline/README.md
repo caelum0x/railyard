@@ -79,10 +79,32 @@ The server runs its embedded Postgres migration at startup and listens on
 | `MINT_BASE` | yes | Base URL of the live Mint service |
 | `MINT_API_KEY` | yes | Mint's internal `X-API-Key` credential |
 | `LEDGERLINE_API_KEY` | yes | Credential clients send to Ledgerline as `X-API-Key` |
+| `LEDGERLINE_ACCOUNT_POLICY_JSON` | yes | Allowlisted `revenue_accounts` / `cogs_accounts` / `provider_accounts` plus a `customers` map (`customer_id` to Mint account); events naming other accounts get `403 forbidden` before any Mint call |
+| `LEDGERLINE_ALLOW_UNRESTRICTED_ACCOUNTS` | no | `1` skips the policy (local development only) |
 | `LEDGERLINE_BIND_ADDR` | no | Listener address; default `0.0.0.0:8093` |
 | `RUST_LOG` | no | Tracing filter; default `info` |
 
-No deployment silently starts without its database or credentials.
+No deployment silently starts without its database, credentials or account policy.
+
+```bash
+export LEDGERLINE_ACCOUNT_POLICY_JSON='{
+  "revenue_accounts": ["acct_revenue"],
+  "cogs_accounts": ["acct_cogs"],
+  "provider_accounts": ["acct_provider_openai"],
+  "customers": {"customer-1": "acct_customer_1"},
+  "allow_unmapped_customers": false
+}'
+```
+
+## Margin lens
+
+- `GET /v1/margins?customer_id=&feature=&model=&from=&to=&before=&limit=` — request-level
+  records newest first; page with `before=<created_at of the last row>`.
+- `GET /v1/margins/summary?group_by=customer|feature|model|day&from=&to=` — rollups
+  with revenue, COGS, margin, margin bps, failed and negative-margin counts, totals
+  and the list of buckets losing money.
+- `GET /admin` — the margin console (rollups, negative-margin alerts, recent
+  requests); it calls the API above with your `X-API-Key`.
 
 ## Ingest an event
 

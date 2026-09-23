@@ -3,14 +3,14 @@
 use std::path::Path;
 
 use abacus_core::error::AbacusError;
-use abacus_core::identity::{AgentIdentity, BudgetRepo};
+use abacus_core::identity::{AgentIdentity, AgentProfile, BudgetRepo};
 use abacus_core::ids::{AgentId, RunId};
 use abacus_core::receipt::{MintReceipt, ReceiptStore};
 use async_trait::async_trait;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Row;
 
-use crate::local_store::{load_agent_config, ConfiguredAgent};
+use crate::local_store::{load_agent_config, profile, ConfiguredAgent};
 
 #[derive(Clone)]
 pub struct PostgresProductStore {
@@ -97,6 +97,24 @@ impl BudgetRepo for PostgresProductStore {
             .map_err(|error| AbacusError::Storage(format!("invalid stored policy: {error}")))?;
         Ok(identity(configured, run))
     }
+
+    async fn list_agents(&self) -> Result<Vec<AgentProfile>, AbacusError> {
+        let rows = sqlx::query(
+            "SELECT policy_json::text AS policy_json FROM abacus_agent_policies ORDER BY agent_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(storage)?;
+        rows.iter()
+            .map(|row| {
+                let configured: ConfiguredAgent = serde_json::from_str(row.get("policy_json"))
+                    .map_err(|error| {
+                        AbacusError::Storage(format!("invalid stored policy: {error}"))
+                    })?;
+                Ok(profile(&configured))
+            })
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -160,5 +178,30 @@ impl ReceiptStore for PostgresProductStore {
                 .map_err(|error| AbacusError::Storage(format!("invalid stored receipt: {error}")))
         })
         .transpose()
+    }
+
+    async fn list_recent(
+        &self,
+        agent_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MintReceipt>, AbacusError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = sqlx::query(
+            "SELECT receipt_json::text AS receipt_json FROM abacus_receipts \
+             WHERE ($1::text IS NULL OR receipt_json->>'agent_id' = $1) \
+             ORDER BY created_at DESC, hold_id DESC LIMIT $2",
+        )
+        .bind(agent_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(storage)?;
+        rows.iter()
+            .map(|row| {
+                serde_json::from_str(row.get("receipt_json")).map_err(|error| {
+                    AbacusError::Storage(format!("invalid stored receipt: {error}"))
+                })
+            })
+            .collect()
     }
 }

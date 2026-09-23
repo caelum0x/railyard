@@ -5,6 +5,7 @@ pub mod domain;
 pub mod error;
 pub mod mint;
 pub mod outbox;
+pub mod policy;
 pub mod recovery;
 pub mod server;
 pub mod settle;

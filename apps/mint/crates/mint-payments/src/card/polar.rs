@@ -12,12 +12,13 @@ use mint_core::Micros;
 use mint_reserve::{Asset, Deposit, Payout, PayoutDest, Ramp, RampError};
 use serde_json::Value;
 
-use crate::card::Checkout;
+use crate::card::{Checkout, CheckoutUrls};
 use crate::config::ProviderConfig;
 use crate::event::{DepositEvent, WebhookError};
 use crate::http::{map_status, Headers, HttpTransport};
 use crate::money::cents_to_micros;
 use crate::provider::ProviderId;
+use crate::PaymentError;
 use crate::verify::standard_webhooks_verify;
 
 const API_BASE: &str = "https://api.polar.sh";
@@ -40,26 +41,42 @@ impl PolarRamp {
     }
 
     /// Create a Polar checkout crediting `account_id` (threaded via `metadata`).
+    /// Polar checkouts are product-based: `POLAR_PRODUCT_ID` must be a
+    /// custom-price ("pay what you want") product so `amount` sets the deposit.
     pub async fn create_checkout(
         &self,
         account_id: &str,
         amount_micros: i64,
-    ) -> Result<Checkout, RampError> {
+        urls: &CheckoutUrls,
+    ) -> Result<Checkout, PaymentError> {
+        let product_id = self.cfg.extra("product_id").ok_or_else(|| {
+            PaymentError::Misconfigured(
+                "POLAR_PRODUCT_ID must name a custom-price AIT credit product".into(),
+            )
+        })?;
         let body = serde_json::json!({
+            "products": [product_id],
             "amount": amount_micros / 10_000,
-            "currency": "usd",
+            "success_url": urls.success_url,
             "metadata": { "account_id": account_id },
         });
         let mut headers = self.auth_headers();
         headers.push(("content-type".into(), "application/json".into()));
-        let url = format!("{API_BASE}/v1/checkouts");
+        let url = format!("{API_BASE}/v1/checkouts/");
         let raw = serde_json::to_vec(&body).expect("json");
         let resp = map_status(self.transport.post_json(&url, &headers, &raw).await)?;
-        let v: Value =
-            serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)?;
+        let v: Value = serde_json::from_slice(&resp.body)
+            .map_err(|_| PaymentError::Transport("Polar returned a non-JSON checkout".into()))?;
+        let checkout_url = v["url"].as_str().unwrap_or_default().to_string();
+        let checkout_id = v["id"].as_str().unwrap_or_default().to_string();
+        if checkout_url.is_empty() || checkout_id.is_empty() {
+            return Err(PaymentError::Transport(
+                "Polar checkout response is missing id/url".into(),
+            ));
+        }
         Ok(Checkout {
-            checkout_url: v["url"].as_str().unwrap_or_default().to_string(),
-            checkout_id: v["id"].as_str().unwrap_or_default().to_string(),
+            checkout_url,
+            checkout_id,
         })
     }
 }
@@ -93,6 +110,16 @@ impl Ramp for PolarRamp {
         _amount: Micros,
     ) -> Result<Payout, RampError> {
         Err(RampError::ProviderUnavailable)
+    }
+
+    async fn check_payout(
+        &self,
+        _payout_ref: &str,
+        _dest: &PayoutDest,
+        _amount: Micros,
+    ) -> Result<(), RampError> {
+        // Billing-only provider: refuse BEFORE the redeem burns anything.
+        Err(RampError::Unsupported)
     }
 }
 

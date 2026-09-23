@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context};
 use ledgerline::mint::{MintClient, MintSettlement};
 use ledgerline::outbox::{OutboxStore, PostgresOutbox};
+use ledgerline::policy::AccountPolicy;
 use ledgerline::recovery::{spawn_recovery_worker, RecoveryConfig};
 use ledgerline::server::{build_router, AppState};
 use ledgerline::settle::{Clock, SettlementCoordinator, SystemClock};
@@ -17,6 +18,7 @@ struct Config {
     mint_base: String,
     mint_api_key: String,
     ledgerline_api_key: String,
+    policy: AccountPolicy,
 }
 
 impl Config {
@@ -30,6 +32,7 @@ impl Config {
             mint_base: required("MINT_BASE")?,
             mint_api_key: required("MINT_API_KEY")?,
             ledgerline_api_key: required("LEDGERLINE_API_KEY")?,
+            policy: load_policy()?,
         })
     }
 }
@@ -80,6 +83,7 @@ async fn main() -> anyhow::Result<()> {
         mint: coordinator,
         store: event_store,
         api_key: Arc::from(config.ledgerline_api_key),
+        policy: Arc::new(config.policy),
     };
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await
@@ -89,6 +93,32 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("Ledgerline server failed")?;
     Ok(())
+}
+
+/// Load the Mint account policy. Ledgerline moves money between the accounts an
+/// event names, so running without a policy is refused unless explicitly opted
+/// into for local development.
+fn load_policy() -> anyhow::Result<AccountPolicy> {
+    match std::env::var("LEDGERLINE_ACCOUNT_POLICY_JSON") {
+        Ok(raw) if !raw.trim().is_empty() => {
+            AccountPolicy::from_json(&raw).map_err(anyhow::Error::msg)
+        }
+        _ => {
+            if std::env::var("LEDGERLINE_ALLOW_UNRESTRICTED_ACCOUNTS").as_deref() == Ok("1") {
+                tracing::warn!(
+                    "LEDGERLINE_ALLOW_UNRESTRICTED_ACCOUNTS=1: events may name ANY Mint account \
+                     (development only)"
+                );
+                Ok(AccountPolicy::unrestricted())
+            } else {
+                bail!(
+                    "LEDGERLINE_ACCOUNT_POLICY_JSON must be set (allowlisted revenue/cogs/provider \
+                     accounts + customer_id -> account mapping); set \
+                     LEDGERLINE_ALLOW_UNRESTRICTED_ACCOUNTS=1 only for local development"
+                )
+            }
+        }
+    }
 }
 
 fn required(name: &str) -> anyhow::Result<String> {

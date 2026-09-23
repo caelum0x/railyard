@@ -21,4 +21,4 @@ pub mod state;
 pub mod views;
 
 pub use router::build_router;
-pub use state::AppState;
+pub use state::{AppState, PublicConfig};

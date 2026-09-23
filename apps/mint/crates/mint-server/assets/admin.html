@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Mint Operator Console</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #181b24; --border: #262b38; --fg: #e6e8ee;
+    --muted: #8b91a1; --accent: #6ea8fe; --danger: #f2668b; --ok: #55c98a;
+    --warn: #f0b35a; --row: #1e222d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+  header .spacer { flex: 1; }
+  nav { display: flex; gap: 4px; }
+  nav button { background: transparent; border-color: transparent; color: var(--muted); }
+  nav button.active { color: var(--fg); background: var(--row); border-color: var(--border); }
+  input, button, select {
+    font: inherit; color: var(--fg); background: var(--row);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
+  }
+  button { cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); color: #0b1020; border-color: var(--accent); font-weight: 600; }
+  button.small { padding: 3px 8px; font-size: 12px; }
+  #status { font-size: 12px; color: var(--muted); }
+  #status.err { color: var(--danger); }
+  #status.ok { color: var(--ok); }
+  main { padding: 20px; max-width: 1200px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .tile { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .tile .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  .tile .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 4px; word-break: break-all; }
+  .tile .value.mono { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: auto; margin-bottom: 18px; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; }
+  td.num { text-align: right; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: var(--row); }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 12px; border: 1px solid var(--border); background: var(--row); }
+  .badge.ok, .badge.paid, .badge.approved { color: var(--ok); border-color: #2c5a41; }
+  .badge.bad, .badge.failed, .badge.declined { color: var(--danger); border-color: #6a2c3d; }
+  .badge.pending, .badge.unverified, .badge.unavailable { color: var(--warn); border-color: #6a5130; }
+  .section-title { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; margin: 20px 0 8px; }
+  .empty, .loading, .error { padding: 24px; color: var(--muted); text-align: center; }
+  .error { color: var(--danger); }
+  .gate { max-width: 520px; margin: 60px auto; text-align: center; color: var(--muted); }
+  .form { display: grid; grid-template-columns: 160px 1fr; gap: 10px; align-items: center; max-width: 640px; padding: 16px; }
+  .form label { color: var(--muted); font-size: 13px; }
+  .result { padding: 0 16px 16px; font-size: 13px; }
+  .result a { color: var(--accent); word-break: break-all; }
+  code { background: var(--row); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .hidden { display: none !important; }
+  svg.icon { width: 14px; height: 14px; vertical-align: -2px; stroke: currentColor; fill: none; stroke-width: 2; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mint Operator Console</h1>
+  <nav id="tabs" class="hidden">
+    <button data-tab="overview" class="active">Overview</button>
+    <button data-tab="accounts">Accounts</button>
+    <button data-tab="payouts">Payouts</button>
+    <button data-tab="funding">Funding</button>
+  </nav>
+  <div class="spacer"></div>
+  <input id="key" type="password" placeholder="X-API-Key (MINT_API_KEY)" autocomplete="off" style="min-width:240px" />
+  <button id="connect" class="primary">Connect</button>
+  <button id="logout" class="hidden">Sign out</button>
+  <span id="status">Not connected</span>
+</header>
+
+<div id="gate" class="gate">
+  <p>Enter the Mint API key to open the console. Every request is sent to this
+  Mint server with the <code>X-API-Key</code> header and is authorized exactly like
+  any other API call. The key is kept only in this browser tab's session storage.</p>
+</div>
+
+<main id="app" class="hidden">
+  <!-- Overview -->
+  <section id="tab-overview">
+    <div class="toolbar"><button id="refresh-overview"><svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg> Refresh</button></div>
+    <div class="grid" id="reserve-tiles"></div>
+    <div class="section-title">Reconciliation by provider</div>
+    <div class="card" id="recon"></div>
+  </section>
+
+  <!-- Accounts -->
+  <section id="tab-accounts" class="hidden">
+    <div class="toolbar">
+      <input id="acct-lookup" placeholder="acct_... (open an account)" style="min-width:320px" />
+      <button id="acct-open">Open</button>
+      <div class="spacer"></div>
+      <button id="acct-more" class="hidden">Load more</button>
+    </div>
+    <div class="card" id="accounts"></div>
+    <div id="account-detail" class="hidden">
+      <div class="section-title" id="detail-title">Account</div>
+      <div class="grid" id="detail-tiles"></div>
+      <div class="toolbar">
+        <label>From <input id="stmt-from" type="date" /></label>
+        <label>To <input id="stmt-to" type="date" /></label>
+        <button id="stmt-run">Load statement</button>
+        <button id="kyc-start">Start KYC verification</button>
+      </div>
+      <div class="result" id="kyc-result"></div>
+      <div class="card" id="statement"></div>
+    </div>
+  </section>
+
+  <!-- Payouts -->
+  <section id="tab-payouts" class="hidden">
+    <div class="toolbar">
+      <select id="payout-status">
+        <option value="">All statuses</option>
+        <option value="failed">Failed</option>
+        <option value="pending">Pending</option>
+        <option value="paid">Paid</option>
+      </select>
+      <input id="payout-account" placeholder="Filter by acct_..." style="min-width:260px" />
+      <button id="payout-load">Apply</button>
+      <div class="spacer"></div>
+      <button id="payout-more" class="hidden">Load more</button>
+    </div>
+    <div class="card" id="payouts"></div>
+  </section>
+
+  <!-- Funding -->
+  <section id="tab-funding" class="hidden">
+    <div class="card">
+      <div class="form">
+        <label for="co-account">Account</label><input id="co-account" placeholder="acct_..." />
+        <label for="co-amount">Amount (USD)</label><input id="co-amount" type="number" min="0.01" step="0.01" placeholder="25.00" />
+        <label for="co-provider">Provider</label>
+        <select id="co-provider">
+          <option value="stripe">Stripe</option>
+          <option value="paypal">PayPal</option>
+          <option value="creem">Creem</option>
+          <option value="polar">Polar</option>
+          <option value="usdc">USDC</option>
+          <option value="iyzico">Iyzico</option>
+        </select>
+        <span></span><button id="co-create" class="primary">Create hosted checkout</button>
+      </div>
+      <div class="result" id="co-result"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const KEY = "mint.admin.key";
+  let apiKey = sessionStorage.getItem(KEY) || "";
+  let acctCursor = null;
+  let payoutCursor = null;
+  let currentAccount = null;
+
+  const setStatus = (text, cls) => { const s = $("status"); s.textContent = text; s.className = cls || ""; };
+  const usd = (micros) => {
+    if (micros === null || micros === undefined) return "-";
+    const n = Number(micros) / 1e6;
+    return n.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6 });
+  };
+  const when = (ms) => (ms ? new Date(Number(ms)).toLocaleString() : "-");
+  const el = (tag, props, ...kids) => {
+    const n = document.createElement(tag);
+    if (props) for (const [k, v] of Object.entries(props)) {
+      if (k === "class") n.className = v; else if (k === "onclick") n.onclick = v; else n.setAttribute(k, v);
+    }
+    for (const k of kids) n.append(k instanceof Node ? k : document.createTextNode(k === null || k === undefined ? "-" : String(k)));
+    return n;
+  };
+  const badge = (text) => el("span", { class: "badge " + String(text).toLowerCase() }, text);
+  const placeholder = (node, cls, text) => { node.replaceChildren(el("div", { class: cls }, text)); };
+
+  async function api(method, path, body) {
+    const res = await fetch(path, {
+      method,
+      headers: Object.assign({ "x-api-key": apiKey }, body ? { "content-type": "application/json" } : {}),
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    let json = null;
+    try { json = await res.json(); } catch (_) { /* non-JSON */ }
+    if (res.status === 401) { logout(); throw new Error("API key rejected"); }
+    if (!res.ok || !json || json.success === false) {
+      const msg = json && json.error ? json.error.message + " (" + json.error.code + ")" : "HTTP " + res.status;
+      throw new Error(msg);
+    }
+    return json.data;
+  }
+
+  function table(headers, rows) {
+    const t = el("table");
+    t.append(el("thead", null, el("tr", null, ...headers.map((h) => el("th", null, h)))));
+    const tb = el("tbody");
+    rows.forEach((r) => tb.append(r));
+    t.append(tb);
+    return t;
+  }
+
+  // ---- overview --------------------------------------------------------
+  async function loadOverview() {
+    const tiles = $("reserve-tiles");
+    placeholder(tiles, "loading", "Loading reserve...");
+    placeholder($("recon"), "loading", "Loading reconciliation...");
+    try {
+      const [reserve, audit, recon] = await Promise.all([
+        api("GET", "/v1/reserve"), api("GET", "/v1/receipts/audit"), api("GET", "/v1/reconciliation"),
+      ]);
+      const tile = (label, value, mono) => el("div", { class: "tile" }, el("div", { class: "label" }, label), el("div", { class: "value" + (mono ? " mono" : "") }, value));
+      tiles.replaceChildren(
+        tile("Solvency", reserve.ok ? "Solvent" : "MISMATCH"),
+        tile("Supply (reserve)", usd(reserve.supply_micros)),
+        tile("Backing (balances)", usd(reserve.backing_micros)),
+        tile("Burned, not yet paid", usd(recon.totals.burned_unpaid_micros)),
+        tile("Journal epoch", audit.epoch),
+        tile("Receipt Merkle root", audit.merkle_root, true),
+      );
+      tiles.children[0].querySelector(".value").style.color = reserve.ok ? "var(--ok)" : "var(--danger)";
+      if (!recon.providers.length) {
+        placeholder($("recon"), "empty", "No deposits or payouts yet. Active providers: " + (recon.active_providers.join(", ") || "none"));
+      } else {
+        $("recon").replaceChildren(table(
+          ["Provider", "Active", "Deposits minted", "Burned for payout", "Paid", "Pending", "Failed", "Burned unpaid"],
+          recon.providers.map((p) => el("tr", null,
+            el("td", null, p.provider),
+            el("td", null, badge(p.active ? "ok" : "inactive")),
+            el("td", { class: "num" }, usd(p.deposits_minted.micros) + " (" + p.deposits_minted.count + ")"),
+            el("td", { class: "num" }, usd(p.burned_for_payout.micros) + " (" + p.burned_for_payout.count + ")"),
+            el("td", { class: "num" }, usd(p.payouts.paid_micros)),
+            el("td", { class: "num" }, usd(p.payouts.pending_micros) + " (" + p.payouts.pending_count + ")"),
+            el("td", { class: "num" }, usd(p.payouts.failed_micros) + " (" + p.payouts.failed_count + ")"),
+            el("td", { class: "num" }, usd(p.burned_unpaid_micros)),
+          )),
+        ));
+      }
+      setStatus("Connected", "ok");
+    } catch (e) {
+      placeholder(tiles, "error", "Could not load reserve: " + e.message);
+      placeholder($("recon"), "error", e.message);
+      setStatus(e.message, "err");
+    }
+  }
+
+  // ---- accounts --------------------------------------------------------
+  async function loadAccounts(append) {
+    const box = $("accounts");
+    if (!append) { acctCursor = null; placeholder(box, "loading", "Loading accounts..."); }
+    try {
+      const qs = new URLSearchParams({ limit: "50" });
+      if (append && acctCursor) qs.set("after", acctCursor);
+      const page = await api("GET", "/v1/accounts?" + qs);
+      acctCursor = page.next_cursor;
+      $("acct-more").classList.toggle("hidden", !acctCursor);
+      const rows = page.items.map((a) => {
+        const tr = el("tr", { class: "clickable" },
+          el("td", { class: "mono" }, a.account_id), el("td", null, a.kind), el("td", null, a.owner_ref),
+          el("td", { class: "num" }, usd(a.available_micros)), el("td", { class: "num" }, usd(a.held_micros)),
+          el("td", null, when(a.created_ms)));
+        tr.onclick = () => openAccount(a.account_id);
+        return tr;
+      });
+      if (append && box.querySelector("tbody")) {
+        rows.forEach((r) => box.querySelector("tbody").append(r));
+      } else if (!rows.length) {
+        placeholder(box, "empty", "No accounts yet.");
+      } else {
+        box.replaceChildren(table(["Account", "Kind", "Owner ref", "Available", "Held", "Created"], rows));
+      }
+    } catch (e) { placeholder(box, "error", "Could not load accounts: " + e.message); }
+  }
+
+  async function openAccount(id) {
+    id = (id || "").trim();
+    if (!id) return;
+    currentAccount = id;
+    $("account-detail").classList.remove("hidden");
+    $("detail-title").textContent = "Account " + id;
+    $("kyc-result").replaceChildren();
+    const tiles = $("detail-tiles");
+    placeholder(tiles, "loading", "Loading account...");
+    try {
+      const [bal, kyc] = await Promise.all([
+        api("GET", "/v1/accounts/" + encodeURIComponent(id) + "/balance"),
+        api("GET", "/v1/accounts/" + encodeURIComponent(id) + "/kyc").catch((e) => ({ status: "error", provider: e.message })),
+      ]);
+      const tile = (label, value) => el("div", { class: "tile" }, el("div", { class: "label" }, label), el("div", { class: "value" }, value));
+      tiles.replaceChildren(
+        tile("Available", usd(bal.available_micros)),
+        tile("Held", usd(bal.held_micros)),
+        el("div", { class: "tile" }, el("div", { class: "label" }, "KYC " + (kyc.provider || "")), el("div", { class: "value" }, badge(kyc.status))),
+      );
+      $("kyc-start").disabled = !kyc.can_start;
+      await loadStatement();
+    } catch (e) { placeholder(tiles, "error", "Could not open account: " + e.message); }
+  }
+
+  async function loadStatement() {
+    if (!currentAccount) return;
+    const box = $("statement");
+    placeholder(box, "loading", "Loading statement...");
+    const qs = new URLSearchParams();
+    if ($("stmt-from").value) qs.set("from_ms", String(new Date($("stmt-from").value + "T00:00:00").getTime()));
+    if ($("stmt-to").value) qs.set("to_ms", String(new Date($("stmt-to").value + "T00:00:00").getTime() + 86400000));
+    try {
+      const s = await api("GET", "/v1/accounts/" + encodeURIComponent(currentAccount) + "/statement?" + qs);
+      const summary = el("div", { class: "result" },
+        "Period " + when(s.from_ms) + " to " + when(s.to_ms) + ". Opening " + usd(s.opening.available_micros + s.opening.held_micros) +
+        ", credits " + usd(s.totals.credits_micros) + ", debits " + usd(s.totals.debits_micros) +
+        ", closing " + usd(s.closing.available_micros + s.closing.held_micros) + ".");
+      if (!s.entries.length) {
+        box.replaceChildren(summary, el("div", { class: "empty" }, "No activity in this period."));
+        return;
+      }
+      box.replaceChildren(summary, table(["Time", "Op", "Change", "Available after", "Held after", "Counterparty", "Receipt"],
+        s.entries.map((r) => el("tr", null,
+          el("td", null, when(r.ts)), el("td", null, r.op),
+          el("td", { class: "num" }, (r.delta_micros > 0 ? "+" : "") + usd(r.delta_micros)),
+          el("td", { class: "num" }, usd(r.available_after_micros)), el("td", { class: "num" }, usd(r.held_after_micros)),
+          el("td", { class: "mono" }, r.from === currentAccount ? r.to : r.from),
+          el("td", { class: "mono" }, r.receipt_hash.slice(0, 16) + "...")))));
+    } catch (e) { placeholder(box, "error", "Could not load statement: " + e.message); }
+  }
+
+  async function startKyc() {
+    if (!currentAccount) return;
+    const out = $("kyc-result");
+    out.textContent = "Starting verification...";
+    try {
+      const s = await api("POST", "/v1/accounts/" + encodeURIComponent(currentAccount) + "/kyc/session", {});
+      out.replaceChildren("Verification link (" + s.provider + "): ", el("a", { href: s.url, target: "_blank", rel: "noopener noreferrer" }, s.url));
+    } catch (e) { out.textContent = "Could not start verification: " + e.message; }
+  }
+
+  // ---- payouts ---------------------------------------------------------
+  async function loadPayouts(append) {
+    const box = $("payouts");
+    if (!append) { payoutCursor = null; placeholder(box, "loading", "Loading payouts..."); }
+    const qs = new URLSearchParams({ limit: "50" });
+    if ($("payout-status").value) qs.set("status", $("payout-status").value);
+    if ($("payout-account").value.trim()) qs.set("account_id", $("payout-account").value.trim());
+    if (append && payoutCursor) qs.set("cursor", payoutCursor);
+    try {
+      const page = await api("GET", "/v1/payouts?" + qs);
+      payoutCursor = page.next_cursor;
+      $("payout-more").classList.toggle("hidden", !payoutCursor);
+      const rows = page.items.map(payoutRow);
+      if (append && box.querySelector("tbody")) rows.forEach((r) => box.querySelector("tbody").append(r));
+      else if (!rows.length) placeholder(box, "empty", "No payouts match.");
+      else box.replaceChildren(table(["Created", "Payout ref", "Account", "Amount", "Destination", "Status", "Attempts", "Last error", ""], rows));
+    } catch (e) { placeholder(box, "error", "Could not load payouts: " + e.message); }
+  }
+
+  function destText(d) {
+    if (!d) return "-";
+    if (d.kind === "stripe") return "Stripe " + d.account;
+    if (d.kind === "paypal") return "PayPal " + d.email;
+    if (d.kind === "crypto") return d.chain + " " + d.address;
+    return JSON.stringify(d);
+  }
+
+  function payoutRow(p) {
+    const action = el("td");
+    const ref = encodeURIComponent(p.payout_ref);
+    const act = (label, method, path) => {
+      const b = el("button", { class: "small" }, label);
+      b.onclick = async (ev) => {
+        ev.stopPropagation();
+        b.disabled = true;
+        try {
+          const updated = await api(method, path);
+          tr.replaceWith(payoutRow(updated));
+          setStatus("Payout " + updated.payout_ref + " is " + updated.status, "ok");
+        } catch (e) { setStatus(e.message, "err"); b.disabled = false; }
+      };
+      return b;
+    };
+    if (p.status === "failed") action.append(act("Retry", "POST", "/v1/payouts/" + ref + "/retry"));
+    if (p.status === "pending") action.append(act("Check status", "GET", "/v1/payouts/" + ref));
+    const tr = el("tr", null,
+      el("td", null, when(p.created_ms)), el("td", { class: "mono" }, p.payout_ref),
+      el("td", { class: "mono" }, p.account_id), el("td", { class: "num" }, usd(p.amount_micros)),
+      el("td", null, destText(p.dest)), el("td", null, badge(p.status)), el("td", { class: "num" }, p.attempts),
+      el("td", null, p.last_error), action);
+    return tr;
+  }
+
+  // ---- funding ---------------------------------------------------------
+  async function createCheckout() {
+    const out = $("co-result");
+    const dollars = Number($("co-amount").value);
+    if (!$("co-account").value.trim() || !(dollars > 0)) { out.textContent = "Enter an account and a positive amount."; return; }
+    const btn = $("co-create");
+    btn.disabled = true;
+    out.textContent = "Creating checkout...";
+    try {
+      const c = await api("POST", "/v1/checkouts", {
+        provider: $("co-provider").value,
+        account_id: $("co-account").value.trim(),
+        amount_micros: Math.round(dollars * 100) * 10000,
+      });
+      out.replaceChildren("Send the buyer to: ", el("a", { href: c.checkout_url, target: "_blank", rel: "noopener noreferrer" }, c.checkout_url),
+        el("br"), "Credits " + usd(c.amount_micros) + " to " + c.account_id + " once the provider confirms payment.");
+    } catch (e) { out.textContent = "Could not create checkout: " + e.message; }
+    finally { btn.disabled = false; }
+  }
+
+  // ---- shell -----------------------------------------------------------
+  function showTab(name) {
+    document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+    ["overview", "accounts", "payouts", "funding"].forEach((t) => $("tab-" + t).classList.toggle("hidden", t !== name));
+    if (name === "overview") loadOverview();
+    if (name === "accounts") loadAccounts(false);
+    if (name === "payouts") loadPayouts(false);
+  }
+
+  function logout() {
+    apiKey = "";
+    sessionStorage.removeItem(KEY);
+    $("app").classList.add("hidden");
+    $("tabs").classList.add("hidden");
+    $("gate").classList.remove("hidden");
+    $("logout").classList.add("hidden");
+    $("connect").classList.remove("hidden");
+    $("key").classList.remove("hidden");
+    setStatus("Not connected");
+  }
+
+  function connect() {
+    const k = $("key").value.trim() || apiKey;
+    if (!k) { setStatus("Enter the API key", "err"); return; }
+    apiKey = k;
+    sessionStorage.setItem(KEY, k);
+    $("key").value = "";
+    $("gate").classList.add("hidden");
+    $("app").classList.remove("hidden");
+    $("tabs").classList.remove("hidden");
+    $("logout").classList.remove("hidden");
+    $("connect").classList.add("hidden");
+    $("key").classList.add("hidden");
+    showTab("overview");
+  }
+
+  $("connect").onclick = connect;
+  $("key").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
+  $("logout").onclick = logout;
+  document.querySelectorAll("#tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+  $("refresh-overview").onclick = loadOverview;
+  $("acct-open").onclick = () => openAccount($("acct-lookup").value);
+  $("acct-lookup").addEventListener("keydown", (e) => { if (e.key === "Enter") openAccount($("acct-lookup").value); });
+  $("acct-more").onclick = () => loadAccounts(true);
+  $("stmt-run").onclick = loadStatement;
+  $("kyc-start").onclick = startKyc;
+  $("payout-load").onclick = () => loadPayouts(false);
+  $("payout-more").onclick = () => loadPayouts(true);
+  $("co-create").onclick = createCheckout;
+  if (apiKey) connect();
+})();
+</script>
+</body>
+</html>

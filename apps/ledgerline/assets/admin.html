@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Ledgerline Margin Console</title>
+<style>
+  :root { --bg:#0f1117; --panel:#181b24; --border:#262b38; --fg:#e6e8ee; --muted:#8b91a1; --accent:#6ea8fe; --danger:#f2668b; --ok:#55c98a; --row:#1e222d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 20px; background:var(--panel); border-bottom:1px solid var(--border); position:sticky; top:0; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  .spacer { flex:1; }
+  input, button, select { font:inherit; color:var(--fg); background:var(--row); border:1px solid var(--border); border-radius:6px; padding:7px 10px; }
+  button { cursor:pointer; }
+  button.primary { background:var(--accent); color:#0b1020; border-color:var(--accent); font-weight:600; }
+  #status { font-size:12px; color:var(--muted); }
+  #status.err { color:var(--danger); }
+  #status.ok { color:var(--ok); }
+  main { padding:20px; max-width:1200px; }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-bottom:18px; }
+  .tile { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px 16px; }
+  .tile .label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.5px; }
+  .tile .value { font-size:22px; font-weight:600; font-variant-numeric:tabular-nums; margin-top:4px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:auto; margin-bottom:18px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--border); font-variant-numeric:tabular-nums; }
+  th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.5px; }
+  td.num { text-align:right; }
+  td.neg { color:var(--danger); }
+  td.mono { font-family:ui-monospace,Menlo,monospace; font-size:12px; word-break:break-all; }
+  .section-title { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.5px; margin:20px 0 8px; }
+  .empty, .loading, .error { padding:24px; color:var(--muted); text-align:center; }
+  .error { color:var(--danger); }
+  .gate { max-width:520px; margin:60px auto; text-align:center; color:var(--muted); }
+  .alert { background:#2a1720; border:1px solid #6a2c3d; color:var(--danger); border-radius:8px; padding:10px 14px; margin-bottom:14px; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ledgerline Margin Console</h1>
+  <div class="spacer"></div>
+  <input id="key" type="password" placeholder="X-API-Key (LEDGERLINE_API_KEY)" autocomplete="off" style="min-width:240px" />
+  <button id="connect" class="primary">Connect</button>
+  <button id="logout" class="hidden">Sign out</button>
+  <span id="status">Not connected</span>
+</header>
+<div id="gate" class="gate"><p>Enter the Ledgerline API key. Every panel calls the regular
+  <code>/v1/margins</code> API with the <code>X-API-Key</code> header; the key stays in this tab's session storage.</p></div>
+<main id="app" class="hidden">
+  <div class="toolbar">
+    <label>Group by <select id="group">
+      <option value="customer">Customer</option><option value="feature">Feature</option>
+      <option value="model">Model</option><option value="day">Day</option></select></label>
+    <label>From <input id="from" type="date" /></label>
+    <label>To <input id="to" type="date" /></label>
+    <input id="customer" placeholder="customer_id" />
+    <input id="feature" placeholder="feature" />
+    <input id="model" placeholder="model" />
+    <button id="apply" class="primary">Apply</button>
+  </div>
+  <div id="alerts"></div>
+  <div class="grid" id="tiles"></div>
+  <div class="section-title">Rollup</div>
+  <div class="card" id="groups"></div>
+  <div class="section-title">Recent requests</div>
+  <div class="card" id="recent"></div>
+  <div class="toolbar"><button id="more" class="hidden">Load older</button></div>
+</main>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const KEY = "ledgerline.admin.key";
+  let apiKey = sessionStorage.getItem(KEY) || "";
+  let before = null;
+  const usd = (m) => (Number(m) / 1e6).toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6 });
+  const pct = (bps) => (bps === null || bps === undefined ? "-" : (bps / 100).toFixed(2) + "%");
+  const setStatus = (t, c) => { $("status").textContent = t; $("status").className = c || ""; };
+  const el = (tag, props, ...kids) => {
+    const n = document.createElement(tag);
+    if (props) for (const [k, v] of Object.entries(props)) n.setAttribute(k, v);
+    for (const k of kids) n.append(k instanceof Node ? k : document.createTextNode(k === null || k === undefined ? "-" : String(k)));
+    return n;
+  };
+  const table = (heads, rows) => {
+    const t = el("table", null, el("thead", null, el("tr", null, ...heads.map((h) => el("th", null, h)))));
+    const b = el("tbody"); rows.forEach((r) => b.append(r)); t.append(b); return t;
+  };
+  const filters = () => {
+    const q = new URLSearchParams();
+    if ($("from").value) q.set("from", new Date($("from").value + "T00:00:00Z").toISOString());
+    if ($("to").value) q.set("to", new Date(new Date($("to").value + "T00:00:00Z").getTime() + 86400000).toISOString());
+    for (const f of ["customer", "feature", "model"]) if ($(f).value.trim()) q.set(f === "customer" ? "customer_id" : f, $(f).value.trim());
+    return q;
+  };
+  async function api(path) {
+    const res = await fetch(path, { headers: { "x-api-key": apiKey } });
+    let json = null; try { json = await res.json(); } catch (_) {}
+    if (res.status === 401) { logout(); throw new Error("API key rejected"); }
+    if (!res.ok) throw new Error(json && json.error ? json.error.message : "HTTP " + res.status);
+    return json.data;
+  }
+  async function loadSummary() {
+    $("groups").replaceChildren(el("div", { class: "loading" }, "Loading rollup..."));
+    const q = filters(); q.set("group_by", $("group").value);
+    try {
+      const s = await api("/v1/margins/summary?" + q);
+      const tile = (l, v) => el("div", { class: "tile" }, el("div", { class: "label" }, l), el("div", { class: "value" }, v));
+      $("tiles").replaceChildren(tile("Requests", s.totals.requests), tile("Revenue", usd(s.totals.revenue_micros)),
+        tile("COGS", usd(s.totals.cogs_micros)), tile("Margin", usd(s.totals.margin_micros)), tile("Margin %", pct(s.totals.margin_bps)),
+        tile("Negative-margin requests", s.totals.negative_margin_requests));
+      $("alerts").replaceChildren(...(s.negative_margin_groups.length
+        ? [el("div", { class: "alert" }, "Losing money (" + s.group_by + "): " + s.negative_margin_groups.join(", "))] : []));
+      if (!s.groups.length) { $("groups").replaceChildren(el("div", { class: "empty" }, "No margin events match these filters.")); }
+      else $("groups").replaceChildren(table([s.group_by, "Requests", "Failed", "Revenue", "COGS", "Margin", "Margin %", "Negative"],
+        s.groups.map((g) => el("tr", null, el("td", { class: "mono" }, g.key), el("td", { class: "num" }, g.requests),
+          el("td", { class: "num" }, g.failed_requests), el("td", { class: "num" }, usd(g.revenue_micros)), el("td", { class: "num" }, usd(g.cogs_micros)),
+          el("td", { class: "num" + (g.margin_micros < 0 ? " neg" : "") }, usd(g.margin_micros)), el("td", { class: "num" }, pct(g.margin_bps)),
+          el("td", { class: "num" }, g.negative_margin_requests)))));
+      setStatus("Connected", "ok");
+    } catch (e) { $("groups").replaceChildren(el("div", { class: "error" }, e.message)); setStatus(e.message, "err"); }
+  }
+  async function loadRecent(append) {
+    if (!append) { before = null; $("recent").replaceChildren(el("div", { class: "loading" }, "Loading requests...")); }
+    const q = filters(); q.set("limit", "50"); if (append && before) q.set("before", before);
+    try {
+      const rows = await api("/v1/margins?" + q);
+      before = rows.length === 50 ? rows[rows.length - 1].created_at : null;
+      $("more").classList.toggle("hidden", !before);
+      const trs = rows.map((r) => el("tr", null, el("td", null, new Date(r.created_at).toLocaleString()), el("td", { class: "mono" }, r.request_id),
+        el("td", null, r.customer_id), el("td", null, r.feature), el("td", null, r.model), el("td", null, r.outcome),
+        el("td", { class: "num" }, usd(r.revenue_micros)), el("td", { class: "num" }, usd(r.cogs_micros)),
+        el("td", { class: "num" + (r.margin_micros < 0 ? " neg" : "") }, usd(r.margin_micros))));
+      const body = $("recent").querySelector("tbody");
+      if (append && body) trs.forEach((t) => body.append(t));
+      else if (!trs.length) $("recent").replaceChildren(el("div", { class: "empty" }, "No requests match these filters."));
+      else $("recent").replaceChildren(table(["Time", "Request", "Customer", "Feature", "Model", "Outcome", "Revenue", "COGS", "Margin"], trs));
+    } catch (e) { $("recent").replaceChildren(el("div", { class: "error" }, e.message)); }
+  }
+  function refresh() { loadSummary(); loadRecent(false); }
+  function logout() {
+    apiKey = ""; sessionStorage.removeItem(KEY);
+    $("app").classList.add("hidden"); $("gate").classList.remove("hidden");
+    $("logout").classList.add("hidden"); $("connect").classList.remove("hidden"); $("key").classList.remove("hidden");
+    setStatus("Not connected");
+  }
+  function connect() {
+    const k = $("key").value.trim() || apiKey;
+    if (!k) { setStatus("Enter the API key", "err"); return; }
+    apiKey = k; sessionStorage.setItem(KEY, k); $("key").value = "";
+    $("gate").classList.add("hidden"); $("app").classList.remove("hidden");
+    $("logout").classList.remove("hidden"); $("connect").classList.add("hidden"); $("key").classList.add("hidden");
+    refresh();
+  }
+  $("connect").onclick = connect;
+  $("key").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
+  $("logout").onclick = logout;
+  $("apply").onclick = refresh;
+  $("group").onchange = loadSummary;
+  $("more").onclick = () => loadRecent(true);
+  if (apiKey) connect();
+})();
+</script>
+</body>
+</html>

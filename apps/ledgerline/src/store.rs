@@ -9,7 +9,8 @@ use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::Row;
 
 use crate::domain::{
-    EventOutcome, EventSource, MarginFilter, MarginRecord, MeterEvent, SettlementRefs,
+    EventOutcome, EventSource, GroupBy, MarginFilter, MarginRecord, MarginSummaryQuery,
+    MarginSummaryRow, MeterEvent, SettlementRefs,
 };
 use crate::error::LedgerlineError;
 
@@ -24,7 +25,22 @@ pub trait EventStore: Send + Sync {
         request_id: &str,
     ) -> Result<Option<MarginRecord>, LedgerlineError>;
     async fn list(&self, filter: &MarginFilter) -> Result<Vec<MarginRecord>, LedgerlineError>;
+    /// Aggregate margin records into rollup buckets (largest revenue first).
+    async fn summarize(
+        &self,
+        query: &MarginSummaryQuery,
+    ) -> Result<Vec<MarginSummaryRow>, LedgerlineError>;
     async fn ready(&self) -> Result<(), LedgerlineError>;
+}
+
+/// The bucket key of a record for a rollup dimension.
+fn group_key(record: &MarginRecord, group_by: GroupBy) -> String {
+    match group_by {
+        GroupBy::Customer => record.event.customer_id.clone(),
+        GroupBy::Feature => record.event.feature.clone(),
+        GroupBy::Model => record.event.model.clone(),
+        GroupBy::Day => record.created_at.format("%Y-%m-%d").to_string(),
+    }
 }
 
 /// Lightweight store for focused server tests and embedded demos.
@@ -95,12 +111,49 @@ impl EventStore for MemoryStore {
                         .model
                         .as_ref()
                         .is_none_or(|value| &record.event.model == value)
+                    && filter.from.is_none_or(|from| record.created_at >= from)
+                    && filter.to.is_none_or(|to| record.created_at < to)
+                    && filter.before.is_none_or(|before| record.created_at < before)
             })
             .cloned()
             .collect();
         result.sort_by_key(|record| std::cmp::Reverse(record.created_at));
         result.truncate(limit);
         Ok(result)
+    }
+
+    async fn summarize(
+        &self,
+        query: &MarginSummaryQuery,
+    ) -> Result<Vec<MarginSummaryRow>, LedgerlineError> {
+        let records = self
+            .records
+            .read()
+            .map_err(|_| LedgerlineError::Storage("memory store lock poisoned".into()))?;
+        let mut buckets: HashMap<String, MarginSummaryRow> = HashMap::new();
+        for record in records.values().filter(|record| {
+            query
+                .customer_id
+                .as_ref()
+                .is_none_or(|v| &record.event.customer_id == v)
+                && query.feature.as_ref().is_none_or(|v| &record.event.feature == v)
+                && query.model.as_ref().is_none_or(|v| &record.event.model == v)
+                && query.from.is_none_or(|from| record.created_at >= from)
+                && query.to.is_none_or(|to| record.created_at < to)
+        }) {
+            let key = group_key(record, query.group_by);
+            buckets
+                .entry(key.clone())
+                .or_insert_with(|| MarginSummaryRow {
+                    key,
+                    ..MarginSummaryRow::default()
+                })
+                .add(record);
+        }
+        let mut rows: Vec<MarginSummaryRow> =
+            buckets.into_values().map(MarginSummaryRow::finish).collect();
+        rows.sort_by(|a, b| b.revenue_micros.cmp(&a.revenue_micros).then(a.key.cmp(&b.key)));
+        Ok(rows)
     }
 
     async fn ready(&self) -> Result<(), LedgerlineError> {
@@ -220,16 +273,77 @@ impl EventStore for PostgresStore {
              WHERE ($1::TEXT IS NULL OR customer_id = $1) \
                AND ($2::TEXT IS NULL OR feature = $2) \
                AND ($3::TEXT IS NULL OR model = $3) \
+               AND ($5::TIMESTAMPTZ IS NULL OR created_at >= $5) \
+               AND ($6::TIMESTAMPTZ IS NULL OR created_at < $6) \
+               AND ($7::TIMESTAMPTZ IS NULL OR created_at < $7) \
              ORDER BY created_at DESC LIMIT $4",
         )
         .bind(&filter.customer_id)
         .bind(&filter.feature)
         .bind(&filter.model)
         .bind(limit)
+        .bind(filter.from)
+        .bind(filter.to)
+        .bind(filter.before)
         .fetch_all(&self.pool)
         .await
         .map_err(storage_error)?;
         rows.iter().map(row_to_record).collect()
+    }
+
+    async fn summarize(
+        &self,
+        query: &MarginSummaryQuery,
+    ) -> Result<Vec<MarginSummaryRow>, LedgerlineError> {
+        // The grouping column comes from a closed enum, never from input text.
+        let key_expr = match query.group_by {
+            GroupBy::Customer => "customer_id",
+            GroupBy::Feature => "feature",
+            GroupBy::Model => "model",
+            GroupBy::Day => "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')",
+        };
+        let sql = format!(
+            "SELECT {key_expr} AS key, \
+                    count(*)::BIGINT AS requests, \
+                    count(*) FILTER (WHERE outcome = 'failed')::BIGINT AS failed_requests, \
+                    count(*) FILTER (WHERE margin_micros < 0)::BIGINT AS negative_margin_requests, \
+                    COALESCE(sum(revenue_micros), 0)::BIGINT AS revenue_micros, \
+                    COALESCE(sum(cogs_micros), 0)::BIGINT AS cogs_micros, \
+                    COALESCE(sum(margin_micros), 0)::BIGINT AS margin_micros \
+             FROM margin_events \
+             WHERE ($1::TEXT IS NULL OR customer_id = $1) \
+               AND ($2::TEXT IS NULL OR feature = $2) \
+               AND ($3::TEXT IS NULL OR model = $3) \
+               AND ($4::TIMESTAMPTZ IS NULL OR created_at >= $4) \
+               AND ($5::TIMESTAMPTZ IS NULL OR created_at < $5) \
+             GROUP BY 1 ORDER BY revenue_micros DESC, key ASC LIMIT 1000"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(&query.customer_id)
+            .bind(&query.feature)
+            .bind(&query.model)
+            .bind(query.from)
+            .bind(query.to)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(storage_error)?;
+        rows.iter()
+            .map(|row| {
+                Ok(MarginSummaryRow {
+                    key: row.try_get("key").map_err(storage_error)?,
+                    requests: row.try_get("requests").map_err(storage_error)?,
+                    failed_requests: row.try_get("failed_requests").map_err(storage_error)?,
+                    negative_margin_requests: row
+                        .try_get("negative_margin_requests")
+                        .map_err(storage_error)?,
+                    revenue_micros: row.try_get("revenue_micros").map_err(storage_error)?,
+                    cogs_micros: row.try_get("cogs_micros").map_err(storage_error)?,
+                    margin_micros: row.try_get("margin_micros").map_err(storage_error)?,
+                    margin_bps: None,
+                }
+                .finish())
+            })
+            .collect()
     }
 
     async fn ready(&self) -> Result<(), LedgerlineError> {

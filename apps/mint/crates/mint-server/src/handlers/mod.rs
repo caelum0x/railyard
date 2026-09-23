@@ -4,6 +4,7 @@
 //! logic lives here — it is all in the ledger/protocol/stream/reserve facades.
 
 pub mod accounts;
+pub mod admin;
 pub mod addresses;
 pub mod aitp;
 pub mod allowances;
@@ -11,9 +12,12 @@ pub mod checkouts;
 pub mod deposits;
 pub mod health;
 pub mod holds;
+pub mod kyc;
 pub mod mint_redeem;
+pub mod payouts;
 pub mod receipts;
 pub mod reserve;
+pub mod statements;
 pub mod streams;
 pub mod transfers;
 pub mod verification_keys;

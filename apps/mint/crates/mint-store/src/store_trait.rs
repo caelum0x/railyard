@@ -13,10 +13,11 @@ use mint_core::{
     AccountId, AccountKind, Address, AllowanceId, HoldId, Micros, MintError, OpHash, StreamId,
     TransferAmount,
 };
-use mint_receipts::{Receipt, ReceiptHash, ReceiptLog};
+use mint_receipts::{merkle_root, Receipt, ReceiptHash, ReceiptLog};
 use serde::{Deserialize, Serialize};
 
 use crate::balance::Balance;
+use crate::reporting::{AccountSummary, PayoutQuery, PayoutRecord, ReceiptQuery, ReserveMovementTotal};
 
 /// The validated input to the atomic transfer commit. Built by `mint-ledger`
 /// after boundary validation (amount > 0, no self-transfer) and `op_hash`
@@ -667,4 +668,102 @@ pub trait LedgerStore: Send + Sync {
 
     /// The Merkle audit root over the whole live receipt log (§6 audit).
     async fn receipt_merkle_root(&self) -> ReceiptHash;
+
+    // ---- fallible read-side (audit / solvency / ops) ----------------------
+    //
+    // The infallible reads above predate the Postgres store and collapse a DB
+    // outage into "zero" / "empty". Every audit, solvency, statement and
+    // readiness path MUST use these `try_*` variants instead so an outage is
+    // surfaced as an error (HTTP 5xx), never as a healthy-looking empty ledger.
+    // The defaults delegate to the infallible reads, which is exact for the
+    // in-memory store (it cannot fail); `PgStore` overrides every one of them.
+
+    /// The in-store reserve total, propagating storage faults.
+    async fn try_reserve_micros(&self) -> Result<Micros, MintError> {
+        Ok(self.reserve_micros().await)
+    }
+
+    /// Number of journal rows, propagating storage faults.
+    async fn try_journal_len(&self) -> Result<u64, MintError> {
+        Ok(self.journal_len().await)
+    }
+
+    /// The full signed receipt log in global order, propagating storage faults.
+    async fn try_snapshot_receipts(&self) -> Result<Vec<Receipt>, MintError> {
+        Ok(self.snapshot_receipts().await)
+    }
+
+    /// The Merkle audit root, propagating storage faults.
+    async fn try_receipt_merkle_root(&self) -> Result<ReceiptHash, MintError> {
+        Ok(merkle_root(&self.try_snapshot_receipts().await?))
+    }
+
+    /// The most recent receipt of every account (the solvency `backed` input).
+    /// Postgres answers this with one `DISTINCT ON` scan instead of shipping the
+    /// entire receipt table to the application.
+    async fn latest_receipts_per_account(&self) -> Result<Vec<Receipt>, MintError> {
+        let mut last: HashMap<AccountId, Receipt> = HashMap::new();
+        for r in self.try_snapshot_receipts().await? {
+            last.insert(r.body.account_id.clone(), r);
+        }
+        Ok(last.into_values().collect())
+    }
+
+    /// A bounded slice of one account's receipt chain in chain order.
+    async fn query_account_receipts(
+        &self,
+        account_id: &AccountId,
+        q: ReceiptQuery,
+    ) -> Result<Vec<Receipt>, MintError> {
+        let rows = self
+            .try_snapshot_receipts()
+            .await?
+            .into_iter()
+            .filter(|r| &r.body.account_id == account_id)
+            .filter(|r| q.after_seq.is_none_or(|a| r.body.account_seq > a))
+            .filter(|r| q.from_ms.is_none_or(|f| r.body.ts >= f))
+            .filter(|r| q.to_ms.is_none_or(|t| r.body.ts < t))
+            .take(q.limit)
+            .collect();
+        Ok(rows)
+    }
+
+    /// The account's last receipt strictly before `ts_ms` (a statement's
+    /// opening balance), or `None` when the account had no activity yet.
+    async fn account_receipt_before(
+        &self,
+        account_id: &AccountId,
+        ts_ms: i64,
+    ) -> Result<Option<Receipt>, MintError> {
+        Ok(self
+            .try_snapshot_receipts()
+            .await?
+            .into_iter()
+            .filter(|r| &r.body.account_id == account_id && r.body.ts < ts_ms)
+            .last())
+    }
+
+    /// Operator listing of accounts (with live balances), ordered by id, keyset
+    /// paginated by `after` (exclusive).
+    async fn list_accounts(
+        &self,
+        after: Option<AccountId>,
+        limit: usize,
+    ) -> Result<Vec<AccountSummary>, MintError>;
+
+    // ---- durable payout log (post-burn off-ramp tracking) ------------------
+
+    /// Insert or update a payout record keyed by `payout_ref`. The store
+    /// assigns `created_ms` on first insert (preserving it afterwards) and
+    /// stamps `updated_ms` on every call.
+    async fn upsert_payout(&self, record: PayoutRecord) -> Result<PayoutRecord, MintError>;
+
+    /// Read one payout record.
+    async fn get_payout(&self, payout_ref: &str) -> Result<Option<PayoutRecord>, MintError>;
+
+    /// List payout records newest-first.
+    async fn list_payouts(&self, q: PayoutQuery) -> Result<Vec<PayoutRecord>, MintError>;
+
+    /// Reserve movements (mints / redeem burns) aggregated per provider tag.
+    async fn reserve_movement_totals(&self) -> Result<Vec<ReserveMovementTotal>, MintError>;
 }

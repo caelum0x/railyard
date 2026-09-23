@@ -39,3 +39,70 @@ pub async fn require_api_key(State(state): State<AppState>, req: Request, next: 
             .into_response()
     }
 }
+
+/// Reject the request unless `X-API-Key` matches the SEPARATE operator key
+/// (`ABACUS_ADMIN_API_KEY`), in constant time. The agents' ingress key never
+/// grants operator views. With no operator key configured the operator API is
+/// disabled (`503`), never silently opened.
+pub async fn require_admin_key(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    let Some(expected) = state.admin_api_key.as_deref().filter(|k| !k.is_empty()) else {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "success": false,
+                "error": {
+                    "code": "admin_disabled",
+                    "message": "operator API disabled: set ABACUS_ADMIN_API_KEY"
+                }
+            })),
+        )
+            .into_response();
+    };
+    let provided = req
+        .headers()
+        .get(API_KEY_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let matches: bool = expected.as_bytes().ct_eq(provided.as_bytes()).into();
+    if matches {
+        next.run(req).await
+    } else {
+        let err = AbacusError::Unauthorized;
+        (
+            axum::http::StatusCode::UNAUTHORIZED,
+            Json(ErrorEnvelope::from_error(&err)),
+        )
+            .into_response()
+    }
+}
+
+/// Accept either the ingress key (an agent reading its own receipt) or the
+/// operator key (console lookups).
+pub async fn require_ingress_or_admin_key(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let provided = req
+        .headers()
+        .get(API_KEY_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let ingress = state.ingress_api_key.as_bytes();
+    let ingress_ok: bool = !ingress.is_empty() && bool::from(ingress.ct_eq(provided.as_bytes()));
+    let admin_ok: bool = state
+        .admin_api_key
+        .as_deref()
+        .filter(|k| !k.is_empty())
+        .is_some_and(|k| bool::from(k.as_bytes().ct_eq(provided.as_bytes())));
+    if ingress_ok || admin_ok {
+        next.run(req).await
+    } else {
+        let err = AbacusError::Unauthorized;
+        (
+            axum::http::StatusCode::UNAUTHORIZED,
+            Json(ErrorEnvelope::from_error(&err)),
+        )
+            .into_response()
+    }
+}

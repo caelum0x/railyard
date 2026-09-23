@@ -69,6 +69,7 @@ impl Ramp for AutoConfirmRamp {
             payout_ref: payout_ref.to_string(),
             amount_micros: amount,
             status: PayoutStatus::Paid,
+            provider_ref: Some(format!("dev_{payout_ref}")),
         })
     }
 }

@@ -66,6 +66,7 @@ fn app(receipts: Arc<dyn ReceiptStore>) -> axum::Router {
         receipts,
         holds: Arc::new(InMemoryHoldStore::new()),
         ingress_api_key: INGRESS_KEY.into(),
+        admin_api_key: None,
         pricing: Arc::new(PricingTable::builtin()),
         provider: "openai".into(),
         upstream_path: "/v1/chat/completions".into(),

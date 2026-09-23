@@ -33,12 +33,13 @@ pub mod provider;
 pub mod registry;
 pub mod verify;
 
+pub use card::CheckoutUrls;
 pub use composite::CompositeRamp;
 pub use config::{Mode, PaymentsConfig, ProviderConfig};
 pub use error::PaymentError;
 pub use event::{DepositEvent, WebhookError};
 pub use http::{Headers, HttpResponse, HttpTransport, ReqwestTransport, TransportError};
-pub use kyc::{PersonaKycVerifier, StripeIdentityKycVerifier};
+pub use kyc::{KycOnboarding, KycSession, PersonaKycVerifier, StripeIdentityKycVerifier};
 pub use provider::ProviderId;
 pub use registry::PaymentRegistry;
 

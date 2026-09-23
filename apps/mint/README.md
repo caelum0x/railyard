@@ -36,16 +36,90 @@ verified webhook is the only operation that credits the account.
 
 ```bash
 curl --fail-with-body http://127.0.0.1:8080/v1/checkouts \
-  -H "Authorization: Bearer $MINT_API_KEY" \
+  -H "x-api-key: $MINT_API_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"provider":"creem","account_id":"acct_customer","amount_micros":20000000}'
+  -d '{"provider":"stripe","account_id":"acct_customer","amount_micros":20000000,
+       "success_url":"https://app.example.com/billing/success",
+       "cancel_url":"https://app.example.com/billing"}'
 ```
 
-Configure at least one checkout-capable provider (`STRIPE_API_KEY`,
-`CREEM_API_KEY`, `POLAR_ACCESS_TOKEN`, `PAYPAL_CLIENT_ID`, `USDC_RPC_URL` plus
-`COINBASE_COMMERCE_API_KEY`, or `IYZICO_API_KEY`) and its corresponding webhook
-secret. Mobile IAP providers confirm store purchases but do not expose this
+`success_url` / `cancel_url` are optional per request; otherwise Mint uses
+`MINT_CHECKOUT_SUCCESS_URL` / `MINT_CHECKOUT_CANCEL_URL`, then its own hosted
+`/checkout/success` and `/checkout/cancel` pages under `MINT_PUBLIC_URL`.
+
+Configure at least one checkout-capable provider and its webhook secret:
+
+| Provider | Keys | Notes |
+|---|---|---|
+| Stripe | `STRIPE_API_KEY`, `STRIPE_WEBHOOK_SECRET` | credits on `payment_intent.succeeded` |
+| PayPal | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `MINT_PUBLIC_URL` | buyer returns to `/checkout/paypal/return`, which captures and credits (order id = deposit ref) |
+| Creem | `CREEM_API_KEY`, `CREEM_WEBHOOK_SECRET`, `CREEM_PRODUCT_ID`, optional `CREEM_UNIT_PRICE_CENTS` (default 100) | a fixed-price credit product bought in units; amount must be a multiple of the unit price |
+| Polar | `POLAR_ACCESS_TOKEN`, `POLAR_WEBHOOK_SECRET`, `POLAR_PRODUCT_ID` | the product must be custom-price ("pay what you want") |
+| USDC | `USDC_RPC_URL`, `COINBASE_COMMERCE_API_KEY`, `COINBASE_COMMERCE_WEBHOOK_SECRET` | |
+| Iyzico | `IYZICO_API_KEY`, `IYZICO_SECRET_KEY`, `IYZICO_WEBHOOK_SECRET` | |
+
+Mobile IAP providers confirm store purchases but do not expose this
 arbitrary hosted-checkout route.
+
+## Cash out, payouts and reconciliation
+
+`POST /v1/redeem` burns AIT and pays out. The payout is checked for
+routability BEFORE the burn (known active `<provider>:` prefix on `payout_ref`,
+a payout-capable provider, a destination kind it supports, whole cents): an
+unroutable payout returns `422 payout_unroutable` and nothing is burned.
+Destinations: `{"kind":"stripe","account":"acct_…"}`,
+`{"kind":"paypal","email":"…"}`, `{"kind":"crypto","chain":"ethereum","address":"0x…"}`.
+
+Every payout attempt is persisted:
+
+- `GET /v1/payouts?status=failed|pending|paid&account_id=&cursor=` — the payout log;
+- `GET /v1/payouts/{payout_ref}` — one payout (pending ones are refreshed from
+  the provider: PayPal batch status, on-chain receipt);
+- `POST /v1/payouts/{payout_ref}/retry` — re-send a failed payout with the same
+  provider idempotency key (paid/pending payouts are never re-sent);
+- `GET /v1/reconciliation` — per-provider deposits minted vs. burns vs. payout
+  outcomes, the burned-but-unpaid worklist and the supply identity check.
+
+## KYC onboarding
+
+- `GET /v1/accounts/{id}/kyc` — provider-verified status (`unverified`,
+  `pending`, `approved`, `declined`, or `unavailable` with no provider);
+- `POST /v1/accounts/{id}/kyc/session` `{"return_url":"https://…"}` — starts a
+  hosted Persona inquiry (needs `PERSONA_INQUIRY_TEMPLATE_ID`) or Stripe
+  Identity session and returns its URL.
+
+## Statements and accounts
+
+- `GET /v1/accounts?after=&limit=` — accounts with live balances;
+- `GET /v1/accounts/{id}/statement?from_ms=&to_ms=` — opening balance, every
+  entry with its signed delta, credit/debit totals and closing balance;
+- `GET /v1/accounts/{id}/receipts?after_seq=&limit=&from_ms=&to_ms=` — a page of
+  the hash-linked receipt chain.
+
+## Operator console
+
+`GET /admin` serves the operator console (reserve and solvency, Merkle audit
+root, reconciliation, accounts and statements, KYC, payouts with retry, hosted
+checkout creation). It holds no data itself; every panel calls the API with the
+operator's `X-API-Key`.
+
+## API keys
+
+`MINT_API_KEY` is the master key. Give each consuming service its own scoped
+key instead:
+
+```bash
+export MINT_API_KEYS_JSON='[
+  {"name":"ledgerline","key":"<32+ random chars>","scopes":["read","spend"]},
+  {"name":"abacus","key":"<32+ random chars>","scopes":["read","spend"]},
+  {"name":"autogtm","key":"<32+ random chars>","scopes":["read","accounts","spend","funding"]}
+]'
+```
+
+Scopes: `read` (all GETs), `accounts`, `spend` (transfers/holds/streams/
+allowances/AITP), `funding` (checkouts, mint), `payouts` (redeem, retry),
+`admin`. Rotate a key by adding the new one under the same name, redeploying
+callers, then removing the old one.
 
 Mint turns AI credits into a first-class **transferable token (AIT)** —
 sendable/receivable/deliverable between accounts, agents, providers, and models —
@@ -80,8 +154,9 @@ trust decision.
 
 ## Product gaps
 
-Payer-key rotation is config-and-restart rather than an authenticated control
-plane. Redemption fails closed until a real KYC provider is configured: set
+Payer-key and API-key rotation is config-and-restart rather than an
+authenticated control plane, and scoped keys are per-capability rather than
+per-account. Redemption fails closed until a real KYC provider is configured: set
 `MINT_KYC_PROVIDER=persona|stripe_identity` plus the provider key
 (`PERSONA_API_KEY` / `STRIPE_API_KEY`) to install the `VerifiedKycGate`, which
 authorizes each cash-out against the account's provider-verified identity and a

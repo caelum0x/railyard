@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use abacus_core::error::AbacusError;
-use abacus_core::identity::{AgentIdentity, BudgetPolicy, BudgetRepo, FundingPath};
+use abacus_core::identity::{AgentIdentity, AgentProfile, BudgetPolicy, BudgetRepo, FundingPath};
 use abacus_core::ids::{AccountId, AgentId, Ait1Address, BudgetId, RunId};
 use abacus_core::receipt::{MintReceipt, ReceiptStore};
 use async_trait::async_trait;
@@ -42,6 +42,8 @@ pub struct LocalStore {
 struct ReceiptLog {
     path: PathBuf,
     by_hold: HashMap<String, MintReceipt>,
+    /// Hold ids in append (settlement) order, for newest-first listing.
+    order: Vec<String>,
 }
 
 impl LocalStore {
@@ -54,12 +56,13 @@ impl LocalStore {
         let agents = load_agent_config(config_path)?;
 
         let receipt_path = receipt_log_path.as_ref().to_path_buf();
-        let by_hold = load_receipts(&receipt_path)?;
+        let (by_hold, order) = load_receipts(&receipt_path)?;
         Ok(Self {
             agents,
             receipts: Mutex::new(ReceiptLog {
                 path: receipt_path,
                 by_hold,
+                order,
             }),
         })
     }
@@ -130,10 +133,14 @@ fn validate_agent(agent: &ConfiguredAgent) -> Result<(), String> {
     }
 }
 
-fn load_receipts(path: &Path) -> Result<HashMap<String, MintReceipt>, AbacusError> {
+type LoadedReceipts = (HashMap<String, MintReceipt>, Vec<String>);
+
+fn load_receipts(path: &Path) -> Result<LoadedReceipts, AbacusError> {
     let file = match File::open(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((HashMap::new(), Vec::new()))
+        }
         Err(error) => {
             return Err(AbacusError::Storage(format!(
                 "opening receipt log {}: {error}",
@@ -143,6 +150,7 @@ fn load_receipts(path: &Path) -> Result<HashMap<String, MintReceipt>, AbacusErro
     };
 
     let mut receipts = HashMap::new();
+    let mut order = Vec::new();
     for (index, line) in BufReader::new(file).lines().enumerate() {
         let line = line.map_err(|error| {
             AbacusError::Storage(format!(
@@ -161,9 +169,14 @@ fn load_receipts(path: &Path) -> Result<HashMap<String, MintReceipt>, AbacusErro
                 index + 1
             ))
         })?;
-        receipts.insert(receipt.hold_id.clone(), receipt);
+        if receipts
+            .insert(receipt.hold_id.clone(), receipt.clone())
+            .is_none()
+        {
+            order.push(receipt.hold_id);
+        }
     }
-    Ok(receipts)
+    Ok((receipts, order))
 }
 
 #[async_trait]
@@ -180,6 +193,23 @@ impl BudgetRepo for LocalStore {
             payee: configured.payee.clone(),
             budget: configured.budget.clone(),
         })
+    }
+
+    async fn list_agents(&self) -> Result<Vec<AgentProfile>, AbacusError> {
+        let mut agents: Vec<AgentProfile> = self.agents.values().map(profile).collect();
+        agents.sort_by(|a, b| a.agent_id.as_str().cmp(b.agent_id.as_str()));
+        Ok(agents)
+    }
+}
+
+/// Project a configured agent onto its operator-facing profile.
+pub(crate) fn profile(configured: &ConfiguredAgent) -> AgentProfile {
+    AgentProfile {
+        agent_id: configured.agent_id.clone(),
+        agent_acct: configured.agent_acct.clone(),
+        treasury: configured.treasury.clone(),
+        payee: configured.payee.clone(),
+        budget: configured.budget.clone(),
     }
 }
 
@@ -225,6 +255,7 @@ impl ReceiptStore for LocalStore {
             .and_then(|_| file.sync_data())
             .map_err(|error| AbacusError::Storage(format!("persisting receipt: {error}")))?;
         log.by_hold.insert(receipt.hold_id.clone(), receipt.clone());
+        log.order.push(receipt.hold_id.clone());
         Ok(())
     }
 
@@ -249,5 +280,25 @@ impl ReceiptStore for LocalStore {
             .values()
             .find(|receipt| receipt.request_id == request_id)
             .cloned())
+    }
+
+    async fn list_recent(
+        &self,
+        agent_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MintReceipt>, AbacusError> {
+        let log = self
+            .receipts
+            .lock()
+            .map_err(|_| AbacusError::Storage("receipt log lock poisoned".to_string()))?;
+        Ok(log
+            .order
+            .iter()
+            .rev()
+            .filter_map(|hold| log.by_hold.get(hold))
+            .filter(|r| agent_id.is_none_or(|a| r.agent_id.as_str() == a))
+            .take(limit)
+            .cloned()
+            .collect())
     }
 }

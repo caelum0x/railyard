@@ -5,7 +5,10 @@
 //! Env:
 //! - `MINT_BIND_ADDR`   — listen addr (default `0.0.0.0:8080`).
 //! - `DATABASE_URL`     — Postgres DSN. When set → `PgStore` (production).
-//! - `MINT_API_KEY`     — required `X-API-Key` for all non-health routes.
+//! - `MINT_API_KEY`     — master `X-API-Key` (full authority) for all API routes.
+//! - `MINT_API_KEYS_JSON` — optional named, scoped service keys:
+//!   `[{"name":"ledgerline","key":"…","scopes":["read","spend"]}]`; scopes are
+//!   `read | accounts | spend | funding | payouts | admin`.
 //! - `MINT_SIGNING_KEY` — hex 32-byte receipt-signing seed (required with Postgres).
 //! - `MINT_PAYER_KEYS_JSON` — JSON payer-key registrations for AITP-402.
 //! - `STRIPE_WEBHOOK_SECRET` — HMAC secret for the Stripe on-ramp webhook.
@@ -22,6 +25,13 @@
 //! - `MINT_DEV_KYC_ALLOW=1` — dev-only: install the permissive `FakeKycGate`
 //!   instead of the deny-by-default `StrictKycGate`. REFUSED in production
 //!   (`DATABASE_URL` set) so it cannot ship enabled on a money-moving deployment.
+//! - `PERSONA_INQUIRY_TEMPLATE_ID` — Persona inquiry template (`itmpl_…`) used by
+//!   `POST /v1/accounts/:id/kyc/session` to start a hosted verification.
+//! - `MINT_PUBLIC_URL` — Mint's externally reachable base URL; hosts the
+//!   `/checkout/success|cancel` pages and the PayPal capture return. Required for
+//!   PayPal checkouts.
+//! - `MINT_CHECKOUT_SUCCESS_URL` / `MINT_CHECKOUT_CANCEL_URL` — default buyer
+//!   landing pages after a hosted checkout (a request may override them).
 //! - `MINT_DEV_FUNDING=1` — dev-only: explicitly opt into the in-memory dev
 //!   funding ramp when no payment provider is configured. Without it, a
 //!   production deployment with no provider refuses to start rather than silently
@@ -33,12 +43,13 @@ use std::sync::Arc;
 use anyhow::{bail, Context};
 use ed25519_dalek::VerifyingKey;
 use mint_payments::{
-    HttpTransport, PaymentRegistry, PersonaKycVerifier, ReqwestTransport, StripeIdentityKycVerifier,
+    HttpTransport, KycOnboarding, PaymentRegistry, PersonaKycVerifier, ReqwestTransport,
+    StripeIdentityKycVerifier,
 };
 use mint_protocol::InMemoryPayerKeys;
 use mint_receipts::{Ed25519Signer, FixedSigner, Signer};
 use mint_reserve::{FakeKycGate, KycGate, KycTier, Ramp, StrictKycGate, VerifiedKycGate};
-use mint_server::{build_router, AppState};
+use mint_server::{build_router, AppState, PublicConfig};
 use mint_store::{Clock, LedgerStore, SystemClock};
 use mint_store_postgres::PgStore;
 
@@ -55,6 +66,11 @@ async fn main() -> anyhow::Result<()> {
         bail!("MINT_API_KEY must be set (no unauthenticated deployments)");
     }
     let stripe_secret = std::env::var("STRIPE_WEBHOOK_SECRET").unwrap_or_default();
+    let scoped_keys = match env_nonempty("MINT_API_KEYS_JSON") {
+        Some(raw) => mint_server::auth::parse_scoped_keys(&raw).map_err(anyhow::Error::msg)?,
+        None => Vec::new(),
+    };
+    tracing::info!(scoped_keys = scoped_keys.len(), "API keys loaded");
 
     let database_url = std::env::var("DATABASE_URL")
         .ok()
@@ -77,7 +93,14 @@ async fn main() -> anyhow::Result<()> {
         "payment registry loaded"
     );
     let ramp: Arc<dyn Ramp> = resolve_ramp(&payments, production)?;
-    let kyc: Arc<dyn KycGate> = load_kyc_gate(production, transport)?;
+    let (kyc, kyc_onboarding) = load_kyc_gate(production, transport)?;
+    let public = PublicConfig::from_env();
+    if public.public_url.is_none() && public.checkout_success_url.is_none() {
+        tracing::warn!(
+            "neither MINT_PUBLIC_URL nor MINT_CHECKOUT_SUCCESS_URL is set: hosted checkouts must \
+             pass success_url/cancel_url per request, and PayPal checkouts are disabled"
+        );
+    }
     let payer_keys = Arc::new(load_payer_keys()?);
 
     match database_url {
@@ -97,7 +120,13 @@ async fn main() -> anyhow::Result<()> {
                 api_key,
                 stripe_secret,
             )
-            .with_payments(payments);
+            .with_payments(payments)
+            .with_public_config(public)
+            .with_scoped_keys(scoped_keys);
+            let state = match kyc_onboarding {
+                Some(k) => state.with_kyc_onboarding(k),
+                None => state,
+            };
             serve(state, bind).await
         }
         _ => {
@@ -120,7 +149,13 @@ async fn main() -> anyhow::Result<()> {
                 api_key,
                 stripe_secret,
             )
-            .with_payments(payments);
+            .with_payments(payments)
+            .with_public_config(public)
+            .with_scoped_keys(scoped_keys);
+            let state = match kyc_onboarding {
+                Some(k) => state.with_kyc_onboarding(k),
+                None => state,
+            };
             serve(state, bind).await
         }
     }
@@ -304,10 +339,14 @@ fn kyc_min_tier() -> anyhow::Result<KycTier> {
 /// 2. `MINT_DEV_KYC_ALLOW=1` (dev only, refused in production) → the permissive
 ///    [`FakeKycGate`].
 /// 3. Otherwise the deny-by-default [`StrictKycGate`].
+/// The installed redemption gate plus, when a real provider is configured, the
+/// onboarding client used to start verifications and report status.
+type KycWiring = (Arc<dyn KycGate>, Option<Arc<dyn KycOnboarding>>);
+
 fn load_kyc_gate(
     production: bool,
     transport: Arc<dyn HttpTransport>,
-) -> anyhow::Result<Arc<dyn KycGate>> {
+) -> anyhow::Result<KycWiring> {
     let dev_allow = std::env::var("MINT_DEV_KYC_ALLOW").ok().as_deref() == Some("1");
     let provider_raw = env_nonempty("MINT_KYC_PROVIDER");
     let provider = match &provider_raw {
@@ -328,17 +367,34 @@ fn load_kyc_gate(
     match choose_kyc(production, dev_allow, provider, provider_key.is_some())? {
         KycChoice::Provider(p) => {
             let key = provider_key.expect("provider key presence checked by choose_kyc");
-            let gate: Arc<dyn KycGate> = match p {
-                KycProvider::Persona => Arc::new(VerifiedKycGate::new(
-                    PersonaKycVerifier::new(transport, key),
-                    min_tier,
-                    per_tx_limit,
-                )),
-                KycProvider::StripeIdentity => Arc::new(VerifiedKycGate::new(
-                    StripeIdentityKycVerifier::new(transport, key),
-                    min_tier,
-                    per_tx_limit,
-                )),
+            let (gate, onboarding): KycWiring = match p {
+                KycProvider::Persona => {
+                    let template = env_nonempty("PERSONA_INQUIRY_TEMPLATE_ID");
+                    if template.is_none() {
+                        tracing::warn!(
+                            "PERSONA_INQUIRY_TEMPLATE_ID unset: KYC status works, but starting a \
+                             new verification returns 503 until it is set"
+                        );
+                    }
+                    (
+                        Arc::new(VerifiedKycGate::new(
+                            PersonaKycVerifier::new(transport.clone(), key.clone()),
+                            min_tier,
+                            per_tx_limit,
+                        )),
+                        Some(Arc::new(
+                            PersonaKycVerifier::new(transport, key).with_template(template),
+                        )),
+                    )
+                }
+                KycProvider::StripeIdentity => (
+                    Arc::new(VerifiedKycGate::new(
+                        StripeIdentityKycVerifier::new(transport.clone(), key.clone()),
+                        min_tier,
+                        per_tx_limit,
+                    )),
+                    Some(Arc::new(StripeIdentityKycVerifier::new(transport, key))),
+                ),
             };
             tracing::info!(
                 provider = ?p,
@@ -346,14 +402,14 @@ fn load_kyc_gate(
                 min_tier = ?min_tier,
                 "KYC: live provider gate installed (authorizes against provider-verified identity)"
             );
-            Ok(gate)
+            Ok((gate, onboarding))
         }
         KycChoice::DevFake => {
             tracing::warn!(
                 "MINT_DEV_KYC_ALLOW=1 — installing permissive FakeKycGate (dev only; approves \
                  caller-presented redemptions)"
             );
-            Ok(Arc::new(FakeKycGate::new(KycTier::Basic, i64::MAX)))
+            Ok((Arc::new(FakeKycGate::new(KycTier::Basic, i64::MAX)), None))
         }
         KycChoice::Strict => {
             if provider_raw.is_some() {
@@ -367,7 +423,7 @@ fn load_kyc_gate(
                      KycGate provider is wired (MINT_KYC_PROVIDER)"
                 );
             }
-            Ok(Arc::new(StrictKycGate::new()))
+            Ok((Arc::new(StrictKycGate::new()), None))
         }
     }
 }

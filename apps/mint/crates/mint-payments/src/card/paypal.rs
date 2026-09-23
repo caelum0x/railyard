@@ -1,5 +1,9 @@
-//! PayPal adapter. On-ramp: order create + capture re-confirmation. Off-ramp:
-//! Payouts API. Webhook verification is SERVER-SIDE (not a local HMAC): the
+//! PayPal adapter. On-ramp: order create (with a return URL pointing at Mint's
+//! own `/checkout/paypal/return`), server-side order capture once the buyer
+//! approves, and ORDER re-confirmation (the deposit ref is always the order id,
+//! so the checkout response, the capture return and the
+//! `PAYMENT.CAPTURE.COMPLETED` webhook all mint under ONE idempotency key).
+//! Off-ramp: Payouts API (asynchronous — recorded `Pending` and polled). Webhook verification is SERVER-SIDE (not a local HMAC): the
 //! delivery is echoed back to PayPal's
 //! `/v1/notifications/verify-webhook-signature` endpoint, so this provider's
 //! `verify_webhook` is **async** and uses the injected [`HttpTransport`] (hence
@@ -14,7 +18,7 @@ use mint_core::Micros;
 use mint_reserve::{Asset, Deposit, Payout, PayoutDest, PayoutStatus, Ramp, RampError};
 use serde_json::Value;
 
-use crate::card::Checkout;
+use crate::card::{is_whole_cents, Checkout, CheckoutUrls};
 use crate::config::{Mode, ProviderConfig};
 use crate::event::{DepositEvent, WebhookError};
 use crate::http::{map_status, Headers, HttpTransport};
@@ -78,31 +82,44 @@ impl PayPalRamp {
     }
 
     /// Create a PayPal order crediting `account_id` (threaded via `custom_id`).
+    /// The buyer approves on PayPal and is sent to `urls.capture_return_url`
+    /// (Mint's capture endpoint), which captures the order and mints.
     pub async fn create_checkout(
         &self,
         account_id: &str,
         amount_micros: i64,
+        urls: &CheckoutUrls,
     ) -> Result<Checkout, RampError> {
+        let return_url = urls
+            .capture_return_url
+            .as_deref()
+            .ok_or(RampError::Unsupported)?;
         let token = self.access_token().await?;
-        let dollars = format!(
-            "{}.{:02}",
-            amount_micros / 1_000_000,
-            (amount_micros % 1_000_000) / 10_000
-        );
         let body = serde_json::json!({
             "intent": "CAPTURE",
             "purchase_units": [{
                 "custom_id": account_id,
-                "amount": { "currency_code": "USD", "value": dollars },
+                "description": "AIT deposit",
+                "amount": { "currency_code": "USD", "value": micros_to_dollars(amount_micros) },
             }],
+            "application_context": {
+                "return_url": return_url,
+                "cancel_url": urls.cancel_url,
+                "user_action": "PAY_NOW",
+                "shipping_preference": "NO_SHIPPING",
+                "brand_name": "Mint",
+            },
         });
         let url = format!("{}/v2/checkout/orders", self.base());
         let raw = serde_json::to_vec(&body).expect("json");
-        let resp = map_status(
-            self.transport
-                .post_json(&url, &Self::bearer(&token), &raw)
-                .await,
-        )?;
+        let mut headers = Self::bearer(&token);
+        // Idempotent order creation is not required (a duplicate order is simply
+        // never approved), but PayPal-Request-Id makes client retries safe.
+        headers.push((
+            "paypal-request-id".into(),
+            format!("mint-order-{account_id}-{amount_micros}-{}", ulid_like()),
+        ));
+        let resp = map_status(self.transport.post_json(&url, &headers, &raw).await)?;
         let v: Value =
             serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)?;
         let checkout_id = v["id"].as_str().unwrap_or_default().to_string();
@@ -111,15 +128,49 @@ impl PayPalRamp {
             .and_then(|links| {
                 links
                     .iter()
-                    .find(|l| l["rel"].as_str() == Some("approve"))
+                    .find(|l| matches!(l["rel"].as_str(), Some("approve" | "payer-action")))
                     .and_then(|l| l["href"].as_str())
             })
             .unwrap_or_default()
             .to_string();
+        if checkout_id.is_empty() || checkout_url.is_empty() {
+            return Err(RampError::ProviderUnavailable);
+        }
         Ok(Checkout {
             checkout_url,
             checkout_id,
         })
+    }
+
+    /// Capture an APPROVED order (the buyer returned from PayPal). Idempotent:
+    /// the `PayPal-Request-Id` is the order id, and an already-captured order
+    /// (a replayed return, or the webhook raced us) still resolves because the
+    /// outcome is always read back from the authenticated order state.
+    pub async fn capture_order(&self, order_id: &str) -> Result<Deposit, RampError> {
+        if order_id.is_empty()
+            || !order_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(RampError::DepositNotFound);
+        }
+        let token = self.access_token().await?;
+        let url = format!("{}/v2/checkout/orders/{order_id}/capture", self.base());
+        let mut headers = Self::bearer(&token);
+        headers.push(("paypal-request-id".into(), format!("mint-capture-{order_id}")));
+        // The capture response itself is not trusted: a 422
+        // ORDER_ALREADY_CAPTURED is a success for us, and a 2xx is re-read below.
+        let _ = self.transport.post_json(&url, &headers, b"{}").await;
+        self.confirm_deposit(order_id).await
+    }
+
+    /// Read back an order's authenticated state (status, captured amount, the
+    /// `custom_id` account binding).
+    async fn fetch_order(&self, order_id: &str) -> Result<Value, RampError> {
+        let token = self.access_token().await?;
+        let url = format!("{}/v2/checkout/orders/{order_id}", self.base());
+        let resp = map_status(self.transport.get(&url, &Self::bearer(&token)).await)?;
+        serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)
     }
 
     /// Verify a PayPal webhook by echoing it back to PayPal's
@@ -172,9 +223,13 @@ impl PayPalRamp {
             return Err(WebhookError::Ignored(event_type.to_string()));
         }
         let resource = &event["resource"];
-        let deposit_ref = resource["id"]
+        // Mint under the ORDER id (not the capture id) so the webhook, the
+        // capture-return endpoint and the checkout response share one key.
+        let deposit_ref = resource["supplementary_data"]["related_ids"]["order_id"]
             .as_str()
-            .ok_or_else(|| WebhookError::Malformed("missing resource.id".into()))?
+            .ok_or_else(|| {
+                WebhookError::Malformed("missing supplementary_data.related_ids.order_id".into())
+            })?
             .to_string();
         let value = resource["amount"]["value"]
             .as_str()
@@ -198,16 +253,19 @@ impl PayPalRamp {
 #[async_trait]
 impl Ramp for PayPalRamp {
     async fn confirm_deposit(&self, deposit_ref: &str) -> Result<Deposit, RampError> {
-        let token = self.access_token().await?;
-        let url = format!("{}/v2/payments/captures/{deposit_ref}", self.base());
-        let resp = map_status(self.transport.get(&url, &Self::bearer(&token)).await)?;
-        let v: Value =
-            serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)?;
-        let confirmed = v["status"].as_str() == Some("COMPLETED");
-        if !confirmed {
+        // `deposit_ref` is the PayPal ORDER id. Credit only a COMPLETED order
+        // whose first capture is COMPLETED; the authenticated `custom_id` binds
+        // the credit to the account that created the checkout.
+        let v = self.fetch_order(deposit_ref).await?;
+        if v["status"].as_str() != Some("COMPLETED") {
             return Err(RampError::NotConfirmed);
         }
-        let value = v["amount"]["value"]
+        let unit = &v["purchase_units"][0];
+        let capture = &unit["payments"]["captures"][0];
+        if capture["status"].as_str() != Some("COMPLETED") {
+            return Err(RampError::NotConfirmed);
+        }
+        let value = capture["amount"]["value"]
             .as_str()
             .ok_or(RampError::ProviderUnavailable)?;
         let micros = decimal_to_micros(value).ok_or(RampError::ProviderUnavailable)?;
@@ -215,8 +273,8 @@ impl Ramp for PayPalRamp {
             deposit_ref: deposit_ref.to_string(),
             amount_micros: Micros::new(micros),
             asset: Asset::Usd,
-            confirmed,
-            bound_account: None,
+            confirmed: true,
+            bound_account: unit["custom_id"].as_str().map(str::to_string),
         })
     }
 
@@ -226,24 +284,24 @@ impl Ramp for PayPalRamp {
         dest: &PayoutDest,
         amount: Micros,
     ) -> Result<Payout, RampError> {
+        self.check_payout(payout_ref, dest, amount).await?;
         let receiver = match dest {
-            // A PayPal payout targets an email / receiver id carried in the
-            // `Stripe`-less `Crypto{address}` slot is invalid; use the account.
-            PayoutDest::Stripe { account } => account.clone(),
-            PayoutDest::Crypto { .. } => return Err(RampError::ProviderUnavailable),
+            PayoutDest::PayPal { email } => email.clone(),
+            _ => return Err(RampError::Unsupported),
         };
         let token = self.access_token().await?;
-        let dollars = format!(
-            "{}.{:02}",
-            amount.get() / 1_000_000,
-            (amount.get() % 1_000_000) / 10_000
-        );
         let body = serde_json::json!({
-            "sender_batch_header": { "sender_batch_id": payout_ref },
+            // PayPal dedupes on sender_batch_id, so a retry with the same
+            // payout_ref never pays twice.
+            "sender_batch_header": {
+                "sender_batch_id": payout_ref,
+                "email_subject": "You have a payout",
+            },
             "items": [{
                 "recipient_type": "EMAIL",
-                "amount": { "value": dollars, "currency": "USD" },
+                "amount": { "value": micros_to_dollars(amount.get()), "currency": "USD" },
                 "receiver": receiver,
+                "sender_item_id": payout_ref,
             }],
         });
         let url = format!("{}/v1/payments/payouts", self.base());
@@ -253,12 +311,102 @@ impl Ramp for PayPalRamp {
                 .post_json(&url, &Self::bearer(&token), &raw)
                 .await,
         )?;
-        let _v: Value =
+        let v: Value =
             serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)?;
+        let header = &v["batch_header"];
+        let batch_id = header["payout_batch_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or(RampError::ProviderUnavailable)?
+            .to_string();
+        // Payouts are asynchronous: a freshly created batch is PENDING until
+        // PayPal settles each item. Only an outright DENIED batch fails now.
+        let status = match header["batch_status"].as_str() {
+            Some("DENIED") | Some("CANCELED") => PayoutStatus::Failed,
+            Some("SUCCESS") => PayoutStatus::Paid,
+            _ => PayoutStatus::Pending,
+        };
         Ok(Payout {
             payout_ref: payout_ref.to_string(),
             amount_micros: amount,
-            status: PayoutStatus::Paid,
+            status,
+            provider_ref: Some(batch_id),
         })
     }
+
+    async fn check_payout(
+        &self,
+        _payout_ref: &str,
+        dest: &PayoutDest,
+        amount: Micros,
+    ) -> Result<(), RampError> {
+        match dest {
+            PayoutDest::PayPal { email } if looks_like_email(email) => {}
+            _ => return Err(RampError::Unsupported),
+        }
+        if !is_whole_cents(amount.get()) {
+            return Err(RampError::Unsupported);
+        }
+        Ok(())
+    }
+
+    async fn payout_status(
+        &self,
+        _payout_ref: &str,
+        provider_ref: Option<&str>,
+    ) -> Result<PayoutStatus, RampError> {
+        let batch_id = provider_ref
+            .filter(|id| !id.is_empty())
+            .ok_or(RampError::Unsupported)?;
+        let token = self.access_token().await?;
+        let url = format!("{}/v1/payments/payouts/{batch_id}", self.base());
+        let resp = map_status(self.transport.get(&url, &Self::bearer(&token)).await)?;
+        let v: Value =
+            serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)?;
+        // One item per batch: its transaction_status is authoritative.
+        if let Some(item_status) = v["items"][0]["transaction_status"].as_str() {
+            return Ok(match item_status {
+                "SUCCESS" => PayoutStatus::Paid,
+                "FAILED" | "RETURNED" | "BLOCKED" | "REFUNDED" | "REVERSED" => {
+                    PayoutStatus::Failed
+                }
+                // PENDING / ONHOLD / UNCLAIMED (receiver has 30 days) / NEW.
+                _ => PayoutStatus::Pending,
+            });
+        }
+        Ok(match v["batch_header"]["batch_status"].as_str() {
+            Some("SUCCESS") => PayoutStatus::Paid,
+            Some("DENIED") | Some("CANCELED") => PayoutStatus::Failed,
+            _ => PayoutStatus::Pending,
+        })
+    }
+}
+
+/// Microdollars → a PayPal decimal dollar string (`"12.34"`). Callers have
+/// already enforced whole cents.
+fn micros_to_dollars(micros: i64) -> String {
+    format!("{}.{:02}", micros / 1_000_000, (micros % 1_000_000) / 10_000)
+}
+
+/// Minimal structural email check for a PayPal receiver.
+fn looks_like_email(s: &str) -> bool {
+    let s = s.trim();
+    match s.split_once('@') {
+        Some((local, domain)) => {
+            !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && s.len() <= 254
+        }
+        None => false,
+    }
+}
+
+/// A process-unique suffix for PayPal-Request-Id on order creation.
+fn ulid_like() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{ms}-{}", SEQ.fetch_add(1, Ordering::Relaxed))
 }

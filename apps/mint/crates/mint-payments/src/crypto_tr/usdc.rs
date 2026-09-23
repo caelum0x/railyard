@@ -191,7 +191,7 @@ impl Ramp for UsdcRamp {
         // `payout_from` selects the operator hot wallet when the node holds many.
         let address = match dest {
             PayoutDest::Crypto { address, .. } => address.as_str(),
-            PayoutDest::Stripe { .. } => return Err(RampError::ProviderUnavailable),
+            _ => return Err(RampError::ProviderUnavailable),
         };
         // USDC is a 6-decimal ERC-20 and microdollars are also 6-decimal, so the
         // payout base-unit amount equals the microdollar amount 1:1
@@ -214,13 +214,69 @@ impl Ramp for UsdcRamp {
         if let Some(from) = self.cfg.extra("payout_from").filter(|f| !f.is_empty()) {
             tx["from"] = serde_json::json!(from);
         }
-        let _ = self
+        let sent = self
             .rpc_call("eth_sendTransaction", serde_json::json!([tx]))
             .await?;
+        if sent["error"].is_object() {
+            return Err(RampError::ProviderUnavailable);
+        }
+        let tx_hash = sent["result"]
+            .as_str()
+            .filter(|h| !h.is_empty())
+            .ok_or(RampError::ProviderUnavailable)?
+            .to_string();
+        // Submitted, not yet mined: settlement is tracked via `payout_status`
+        // (the transaction receipt) until the transfer is final.
         Ok(Payout {
             payout_ref: payout_ref.to_string(),
             amount_micros: amount,
-            status: PayoutStatus::Paid,
+            status: PayoutStatus::Pending,
+            provider_ref: Some(tx_hash),
+        })
+    }
+
+    async fn check_payout(
+        &self,
+        _payout_ref: &str,
+        dest: &PayoutDest,
+        amount: Micros,
+    ) -> Result<(), RampError> {
+        let PayoutDest::Crypto { address, .. } = dest else {
+            return Err(RampError::Unsupported);
+        };
+        if self
+            .cfg
+            .extra("token_contract")
+            .filter(|c| !c.is_empty())
+            .is_none()
+        {
+            return Err(RampError::Unsupported);
+        }
+        let amount_base_units = u128::try_from(amount.get()).map_err(|_| RampError::Unsupported)?;
+        encode_erc20_transfer(address, amount_base_units)
+            .map(|_| ())
+            .map_err(|_| RampError::Unsupported)
+    }
+
+    async fn payout_status(
+        &self,
+        _payout_ref: &str,
+        provider_ref: Option<&str>,
+    ) -> Result<PayoutStatus, RampError> {
+        let tx_hash = provider_ref
+            .filter(|h| !h.is_empty())
+            .ok_or(RampError::Unsupported)?;
+        let v = self
+            .rpc_call("eth_getTransactionReceipt", serde_json::json!([tx_hash]))
+            .await?;
+        let result = &v["result"];
+        if result.is_null() {
+            return Ok(PayoutStatus::Pending);
+        }
+        Ok(match result["status"].as_str() {
+            Some("0x1") => PayoutStatus::Paid,
+            Some("0x0") => PayoutStatus::Failed,
+            _ => PayoutStatus::Pending,
         })
     }
 }
@@ -455,8 +511,10 @@ mod tests {
         let payout = ramp
             .initiate_payout("usdc:p1", &dest, Micros::new(25_000_000))
             .await
-            .expect("payout paid");
-        assert_eq!(payout.status, PayoutStatus::Paid);
+            .expect("payout submitted");
+        // Submitted on-chain but not yet mined ⇒ Pending, tracked by tx hash.
+        assert_eq!(payout.status, PayoutStatus::Pending);
+        assert_eq!(payout.provider_ref.as_deref(), Some("0xtxhash"));
         assert_eq!(payout.amount_micros, Micros::new(25_000_000));
 
         let body = String::from_utf8(transport.last_post_body()).unwrap();

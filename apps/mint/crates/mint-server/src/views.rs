@@ -77,6 +77,25 @@ fn payout(p: &Payout) -> Value {
         "payout_ref": p.payout_ref,
         "amount_micros": p.amount_micros.get(),
         "status": format!("{:?}", p.status).to_lowercase(),
+        "provider_ref": p.provider_ref,
+    })
+}
+
+/// A persisted payout record (operator payout tracking).
+pub fn payout_record(r: &mint_store::PayoutRecord) -> Value {
+    json!({
+        "payout_ref": r.payout_ref,
+        "provider": mint_store::provider_tag_of(&r.payout_ref),
+        "account_id": r.account_id.as_str(),
+        "amount_micros": r.amount_micros.get(),
+        "dest": r.dest,
+        "status": r.status.as_str(),
+        "provider_ref": r.provider_ref,
+        "attempts": r.attempts,
+        "last_error": r.last_error,
+        "burn_seq": r.burn_seq,
+        "created_ms": r.created_ms,
+        "updated_ms": r.updated_ms,
     })
 }
 

@@ -29,7 +29,7 @@ pub use reserve_ledger::ReserveLedger;
 // ledger and read balances without depending on `mint-store` directly.
 pub use mint_core::{AccountId, Micros, MintError};
 pub use mint_receipts::ReserveProof;
-pub use mint_store::Balance;
+pub use mint_store::{Balance, PayoutRecord, PayoutRecordStatus};
 
 /// Boundary request for `mint` (deposit-gated AIT creation).
 #[derive(Debug, Clone)]

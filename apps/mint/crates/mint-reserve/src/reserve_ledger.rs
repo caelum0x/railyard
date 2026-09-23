@@ -3,10 +3,10 @@
 
 use mint_core::{op_hash, Micros, MintError, TransferAmount};
 use mint_receipts::{reserve_proof_from_receipts, ReserveProof};
-use mint_store::{LedgerStore, MintCommit, RedeemCommit};
+use mint_store::{LedgerStore, MintCommit, PayoutRecord, PayoutRecordStatus, RedeemCommit};
 use serde_json::json;
 
-use crate::ramp::{KycGate, Payout, PayoutStatus, Ramp, RampError};
+use crate::ramp::{KycGate, Payout, PayoutDest, PayoutStatus, Ramp, RampError};
 use crate::{MintReceipt, MintRequest, RedeemReceipt, RedeemRequest};
 
 /// The reserve facade: the ONLY place AIT supply changes. Every `mint`/`redeem`
@@ -114,12 +114,16 @@ impl<S: LedgerStore, R: Ramp, K: KycGate> ReserveLedger<S, R, K> {
     /// - below the required KYC tier is [`MintError::KycRequired`];
     /// - over the payout limit is [`MintError::PayoutLimitExceeded`];
     /// - insufficient balance is [`MintError::InsufficientFunds`];
-    /// - draining the reserve below the amount is [`MintError::ReserveInsufficient`].
+    /// - draining the reserve below the amount is [`MintError::ReserveInsufficient`];
+    /// - a payout the ramp can never deliver is [`MintError::PayoutUnroutable`]
+    ///   and is rejected BEFORE the burn (no funds destroyed).
     ///
     /// A transient payout-provider outage does NOT fail the call: the burn is
-    /// durable and the returned [`RedeemReceipt::payout`] carries
-    /// [`PayoutStatus::Failed`]. Retrying `redeem` with the same `payout_ref`
-    /// replays the burn (no double-burn) and re-sends the payout exactly once.
+    /// durable, the outcome is persisted as a `Failed` payout record (listable
+    /// and retryable via [`ReserveLedger::retry_payout`]) and the returned
+    /// [`RedeemReceipt::payout`] carries [`PayoutStatus::Failed`]. Retrying
+    /// `redeem` with the same `payout_ref` replays the burn (no double-burn) and
+    /// re-sends only a payout that has not already succeeded.
     pub async fn redeem(&self, req: RedeemRequest) -> Result<RedeemReceipt, MintError> {
         let amount = TransferAmount::new(Micros::new(req.amount_micros))?;
 
@@ -128,7 +132,16 @@ impl<S: LedgerStore, R: Ramp, K: KycGate> ReserveLedger<S, R, K> {
             .authorize(&req.from, req.kyc_tier, amount.micros())
             .await?;
 
-        // 2. Atomic burn: available + reserve fall in lockstep.
+        // 2. Routability preflight BEFORE the burn: a payout that can never be
+        //    delivered (unknown / inactive provider, billing-only provider,
+        //    wrong destination kind, sub-cent fiat) is refused while the funds
+        //    are still intact. Nothing is burned on this path.
+        self.ramp
+            .check_payout(&req.payout_ref, &req.payout_dest, amount.micros())
+            .await
+            .map_err(|_| MintError::PayoutUnroutable)?;
+
+        // 3. Atomic burn: available + reserve fall in lockstep.
         let idem_key = format!("redeem:{}", req.payout_ref);
         // NOTE: as in mint(), the caller-supplied `req.idem_key` is deliberately
         // NOT folded into the op_hash. The authoritative dedupe key is
@@ -145,7 +158,7 @@ impl<S: LedgerStore, R: Ramp, K: KycGate> ReserveLedger<S, R, K> {
         let out = self
             .store
             .commit_redeem(RedeemCommit {
-                from: req.from,
+                from: req.from.clone(),
                 amount,
                 payout_ref: req.payout_ref.clone(),
                 idem_key,
@@ -153,24 +166,27 @@ impl<S: LedgerStore, R: Ramp, K: KycGate> ReserveLedger<S, R, K> {
             })
             .await?;
 
-        // 3. Post-commit payout (idempotent by payout_ref). A provider outage is
-        //    surfaced as a Failed payout on the receipt, NOT a burn rollback.
-        let payout = match self
-            .ramp
-            .initiate_payout(&req.payout_ref, &req.payout_dest, amount.micros())
-            .await
-        {
-            Ok(p) => p,
-            Err(RampError::ProviderUnavailable) => Payout {
-                payout_ref: req.payout_ref.clone(),
-                amount_micros: amount.micros(),
-                status: PayoutStatus::Failed,
-            },
-            Err(_) => Payout {
-                payout_ref: req.payout_ref.clone(),
-                amount_micros: amount.micros(),
-                status: PayoutStatus::Failed,
-            },
+        // 4. Post-commit payout, durably recorded. A replayed redeem whose payout
+        //    already succeeded (or is still settling) is NOT re-sent.
+        let existing = self.store.get_payout(&req.payout_ref).await?;
+        let record = match existing {
+            Some(rec) if rec.status != PayoutRecordStatus::Failed => rec,
+            prior => {
+                let base = prior.unwrap_or_else(|| PayoutRecord {
+                    payout_ref: req.payout_ref.clone(),
+                    account_id: req.from.clone(),
+                    amount_micros: amount.micros(),
+                    dest: req.payout_dest.to_json(),
+                    status: PayoutRecordStatus::Pending,
+                    provider_ref: None,
+                    attempts: 0,
+                    last_error: None,
+                    burn_seq: out.first_seq,
+                    created_ms: 0,
+                    updated_ms: 0,
+                });
+                self.attempt_payout(base, &req.payout_dest).await?
+            }
         };
 
         Ok(RedeemReceipt {
@@ -178,27 +194,153 @@ impl<S: LedgerStore, R: Ramp, K: KycGate> ReserveLedger<S, R, K> {
             from_balance: out.from_balance,
             reserve_after_micros: out.reserve_after_micros,
             payout_ref: req.payout_ref,
-            payout,
+            payout: payout_from_record(&record),
             idempotent_replay: out.idempotent_replay,
         })
+    }
+
+    /// Re-send a failed payout against its already-burned supply. `Paid` and
+    /// `Pending` payouts are returned unchanged (never double-sent); a `Failed`
+    /// one is re-initiated with the SAME `payout_ref`, which every adapter uses
+    /// as its provider idempotency key. `None` ⇒ no such payout.
+    pub async fn retry_payout(&self, payout_ref: &str) -> Result<Option<PayoutRecord>, MintError> {
+        let Some(rec) = self.store.get_payout(payout_ref).await? else {
+            return Ok(None);
+        };
+        if rec.status != PayoutRecordStatus::Failed {
+            return Ok(Some(rec));
+        }
+        let dest = PayoutDest::from_json(&rec.dest).ok_or(MintError::Storage)?;
+        self.ramp
+            .check_payout(&rec.payout_ref, &dest, rec.amount_micros)
+            .await
+            .map_err(|_| MintError::PayoutUnroutable)?;
+        self.attempt_payout(rec, &dest).await.map(Some)
+    }
+
+    /// Poll the provider for a `Pending` payout's settlement and persist the
+    /// transition. Providers without a status API leave the record unchanged.
+    pub async fn refresh_payout(
+        &self,
+        payout_ref: &str,
+    ) -> Result<Option<PayoutRecord>, MintError> {
+        let Some(rec) = self.store.get_payout(payout_ref).await? else {
+            return Ok(None);
+        };
+        if rec.status != PayoutRecordStatus::Pending {
+            return Ok(Some(rec));
+        }
+        match self
+            .ramp
+            .payout_status(&rec.payout_ref, rec.provider_ref.as_deref())
+            .await
+        {
+            Ok(status) => {
+                let status = record_status(status);
+                if status == rec.status {
+                    return Ok(Some(rec));
+                }
+                let last_error = (status == PayoutRecordStatus::Failed)
+                    .then(|| "provider reported the payout as failed/returned".to_string());
+                self.store
+                    .upsert_payout(PayoutRecord {
+                        status,
+                        last_error,
+                        ..rec
+                    })
+                    .await
+                    .map(Some)
+            }
+            // No status API / transient outage: keep the record as-is.
+            Err(_) => Ok(Some(rec)),
+        }
+    }
+
+    /// One `initiate_payout` attempt, persisted. Provider errors become a
+    /// durable `Failed` record (with the error) rather than a lost response.
+    async fn attempt_payout(
+        &self,
+        base: PayoutRecord,
+        dest: &PayoutDest,
+    ) -> Result<PayoutRecord, MintError> {
+        let attempts = base.attempts.saturating_add(1);
+        let outcome = self
+            .ramp
+            .initiate_payout(&base.payout_ref, dest, base.amount_micros)
+            .await;
+        let next = match outcome {
+            Ok(p) => PayoutRecord {
+                status: record_status(p.status),
+                provider_ref: p.provider_ref.or(base.provider_ref.clone()),
+                attempts,
+                last_error: (p.status == PayoutStatus::Failed)
+                    .then(|| "provider rejected the payout".to_string()),
+                ..base
+            },
+            Err(e) => PayoutRecord {
+                status: PayoutRecordStatus::Failed,
+                attempts,
+                last_error: Some(ramp_error_message(e).to_string()),
+                ..base
+            },
+        };
+        self.store.upsert_payout(next).await
     }
 
     /// The §6 solvency gate: `supply == in-store reserve`, `backed == Σ last
     /// receipt (available + held) per account`, `ok == (backed == supply)`. With
     /// the reserve tracked in-store, `Σ(available + held) == reserve` is directly
     /// assertable.
+    ///
+    /// Storage faults propagate as errors: an unreachable database must never
+    /// read as `supply == backed == 0 ⇒ ok`. Only the latest receipt per account
+    /// is loaded (one `DISTINCT ON` scan on Postgres).
     pub async fn solvency(&self) -> Result<ReserveProof, MintError> {
-        let reserve = self.store.reserve_micros().await;
-        let receipts = self.store.snapshot_receipts().await;
-        Ok(reserve_proof_from_receipts(&receipts, reserve))
+        let reserve = self.store.try_reserve_micros().await?;
+        let latest = self.store.latest_receipts_per_account().await?;
+        Ok(reserve_proof_from_receipts(&latest, reserve))
+    }
+}
+
+/// Map a ramp payout status onto the persisted record status.
+fn record_status(s: PayoutStatus) -> PayoutRecordStatus {
+    match s {
+        PayoutStatus::Paid => PayoutRecordStatus::Paid,
+        PayoutStatus::Pending => PayoutRecordStatus::Pending,
+        PayoutStatus::Failed => PayoutRecordStatus::Failed,
+    }
+}
+
+/// Project a persisted record back onto the receipt-level [`Payout`].
+fn payout_from_record(r: &PayoutRecord) -> Payout {
+    Payout {
+        payout_ref: r.payout_ref.clone(),
+        amount_micros: r.amount_micros,
+        status: match r.status {
+            PayoutRecordStatus::Paid => PayoutStatus::Paid,
+            PayoutRecordStatus::Pending => PayoutStatus::Pending,
+            PayoutRecordStatus::Failed => PayoutStatus::Failed,
+        },
+        provider_ref: r.provider_ref.clone(),
+    }
+}
+
+/// Operator-facing text for a payout-side ramp error.
+fn ramp_error_message(e: RampError) -> &'static str {
+    match e {
+        RampError::ProviderUnavailable => "payout provider unavailable (retryable)",
+        RampError::DepositNotFound => "payout provider reported the target as not found",
+        RampError::NotConfirmed => "payout provider did not confirm the payout",
+        RampError::Unsupported => "payout not supported by the configured provider",
     }
 }
 
 /// Map a deposit-side [`RampError`] to the stable §7 mint error code.
 fn map_deposit_err(e: RampError) -> MintError {
     match e {
-        RampError::DepositNotFound | RampError::NotConfirmed | RampError::ProviderUnavailable => {
-            MintError::DepositNotConfirmed
-        }
+        RampError::DepositNotFound
+        | RampError::NotConfirmed
+        | RampError::ProviderUnavailable
+        | RampError::Unsupported => MintError::DepositNotConfirmed,
     }
 }

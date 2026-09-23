@@ -36,6 +36,7 @@ const STRIPE_API_BASE: &str = "https://api.stripe.com/v1";
 pub struct PersonaKycVerifier {
     transport: Arc<dyn HttpTransport>,
     api_key: String,
+    template_id: Option<String>,
 }
 
 impl PersonaKycVerifier {
@@ -44,7 +45,124 @@ impl PersonaKycVerifier {
         PersonaKycVerifier {
             transport,
             api_key: api_key.into(),
+            template_id: None,
         }
+    }
+
+    /// Set the Persona inquiry template (`itmpl_…`) used to START new
+    /// verifications. Without it the verifier can still read status, but
+    /// [`KycOnboarding::start_session`] reports [`KycError::NotConfigured`].
+    pub fn with_template(mut self, template_id: Option<String>) -> Self {
+        self.template_id = template_id.filter(|t| !t.trim().is_empty());
+        self
+    }
+
+    fn headers(&self) -> Vec<(String, String)> {
+        vec![
+            (
+                "authorization".to_string(),
+                format!("Bearer {}", self.api_key),
+            ),
+            (
+                "persona-version".to_string(),
+                PERSONA_API_VERSION.to_string(),
+            ),
+            ("accept".to_string(), "application/json".to_string()),
+            ("content-type".to_string(), "application/json".to_string()),
+        ]
+    }
+}
+
+/// A freshly started hosted identity-verification session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KycSession {
+    /// The provider tag (`persona` | `stripe_identity`).
+    pub provider: &'static str,
+    /// The provider's inquiry / verification-session id.
+    pub session_id: String,
+    /// The hosted URL the account holder opens to verify.
+    pub url: String,
+}
+
+/// A [`KycVerifier`] that can also START a hosted verification for an account
+/// (the onboarding half of the KYC flow that unblocks redemptions).
+#[async_trait]
+pub trait KycOnboarding: KycVerifier {
+    /// The provider tag reported to clients.
+    fn provider(&self) -> &'static str;
+
+    /// Start a hosted verification bound to `account` (the provider
+    /// reference-id / metadata key the gate later looks up).
+    async fn start_session(
+        &self,
+        account: &AccountId,
+        return_url: Option<&str>,
+    ) -> Result<KycSession, KycError>;
+}
+
+#[async_trait]
+impl KycOnboarding for PersonaKycVerifier {
+    fn provider(&self) -> &'static str {
+        "persona"
+    }
+
+    async fn start_session(
+        &self,
+        account: &AccountId,
+        return_url: Option<&str>,
+    ) -> Result<KycSession, KycError> {
+        if self.api_key.trim().is_empty() {
+            return Err(KycError::NotConfigured);
+        }
+        let template = self.template_id.as_deref().ok_or(KycError::NotConfigured)?;
+        let mut attributes = serde_json::json!({
+            "inquiry-template-id": template,
+            "reference-id": account.as_str(),
+        });
+        if let Some(url) = return_url {
+            attributes["redirect-uri"] = serde_json::json!(url);
+        }
+        let body = serde_json::to_vec(&serde_json::json!({ "data": { "attributes": attributes } }))
+            .expect("json");
+        let resp = self
+            .transport
+            .post_json(&format!("{PERSONA_API_BASE}/inquiries"), &self.headers(), &body)
+            .await
+            .map_err(|_| KycError::ProviderUnavailable)?;
+        if !(200..300).contains(&resp.status) {
+            return Err(KycError::ProviderUnavailable);
+        }
+        let v: Value =
+            serde_json::from_slice(&resp.body).map_err(|_| KycError::MalformedResponse)?;
+        let inquiry_id = v["data"]["id"]
+            .as_str()
+            .ok_or(KycError::MalformedResponse)?
+            .to_string();
+        // A one-time hosted link for this inquiry.
+        let link_url = format!(
+            "{PERSONA_API_BASE}/inquiries/{}/generate-one-time-link",
+            pct_encode(&inquiry_id)
+        );
+        let resp = self
+            .transport
+            .post_json(&link_url, &self.headers(), b"{}")
+            .await
+            .map_err(|_| KycError::ProviderUnavailable)?;
+        if !(200..300).contains(&resp.status) {
+            return Err(KycError::ProviderUnavailable);
+        }
+        let v: Value =
+            serde_json::from_slice(&resp.body).map_err(|_| KycError::MalformedResponse)?;
+        let url = v["meta"]["one-time-link"]
+            .as_str()
+            .or_else(|| v["meta"]["one_time_link"].as_str())
+            .ok_or(KycError::MalformedResponse)?
+            .to_string();
+        Ok(KycSession {
+            provider: "persona",
+            session_id: inquiry_id,
+            url,
+        })
     }
 }
 
@@ -152,6 +270,71 @@ impl KycVerifier for StripeIdentityKycVerifier {
                 .collect::<Vec<_>>()
         });
         Ok(best_status(statuses.unwrap_or_default()))
+    }
+}
+
+#[async_trait]
+impl KycOnboarding for StripeIdentityKycVerifier {
+    fn provider(&self) -> &'static str {
+        "stripe_identity"
+    }
+
+    async fn start_session(
+        &self,
+        account: &AccountId,
+        return_url: Option<&str>,
+    ) -> Result<KycSession, KycError> {
+        if self.secret_key.trim().is_empty() {
+            return Err(KycError::NotConfigured);
+        }
+        let mut form = format!(
+            "type=document&metadata%5Baccount_id%5D={}",
+            pct_encode(account.as_str())
+        );
+        if let Some(url) = return_url {
+            form.push_str(&format!("&return_url={}", pct_encode(url)));
+        }
+        let headers = vec![
+            (
+                "authorization".to_string(),
+                format!("Bearer {}", self.secret_key),
+            ),
+            (
+                "content-type".to_string(),
+                "application/x-www-form-urlencoded".to_string(),
+            ),
+            // One open session per account at a time is enough; Stripe replays
+            // the same session for an identical retry within 24h.
+            (
+                "idempotency-key".to_string(),
+                format!("mint-kyc-{}", account.as_str()),
+            ),
+        ];
+        let resp = self
+            .transport
+            .post_json(
+                &format!("{STRIPE_API_BASE}/identity/verification_sessions"),
+                &headers,
+                form.as_bytes(),
+            )
+            .await
+            .map_err(|_| KycError::ProviderUnavailable)?;
+        if !(200..300).contains(&resp.status) {
+            return Err(KycError::ProviderUnavailable);
+        }
+        let v: Value =
+            serde_json::from_slice(&resp.body).map_err(|_| KycError::MalformedResponse)?;
+        Ok(KycSession {
+            provider: "stripe_identity",
+            session_id: v["id"]
+                .as_str()
+                .ok_or(KycError::MalformedResponse)?
+                .to_string(),
+            url: v["url"]
+                .as_str()
+                .ok_or(KycError::MalformedResponse)?
+                .to_string(),
+        })
     }
 }
 

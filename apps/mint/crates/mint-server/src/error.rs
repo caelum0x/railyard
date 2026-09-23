@@ -18,8 +18,15 @@ pub enum ApiError {
     BadRequest(String),
     /// Missing / wrong API key.
     Unauthorized,
+    /// A valid key without the capability this route needs.
+    Forbidden(String),
     /// An infrastructure fault (DB down, signature-verify config missing).
     Internal(String),
+    /// A resource that is not a ledger entity (e.g. a payout record) was absent.
+    NotFound(String),
+    /// A dependency (store, provider) is unavailable — surfaced as 503 so load
+    /// balancers and dashboards never read an outage as a healthy empty result.
+    Unavailable(String),
 }
 
 impl From<MintError> for ApiError {
@@ -52,7 +59,8 @@ pub fn status_for(err: &MintError) -> StatusCode {
         | MintError::SignatureInvalid
         | MintError::StreamClosed
         | MintError::StreamSeqRegressed
-        | MintError::StreamCapExceeded => StatusCode::UNPROCESSABLE_ENTITY,
+        | MintError::StreamCapExceeded
+        | MintError::PayoutUnroutable => StatusCode::UNPROCESSABLE_ENTITY,
         // 429 Too Many Requests — payout / velocity limit.
         MintError::PayoutLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
         // 400 Bad Request — malformed identity/amount/address.
@@ -77,6 +85,13 @@ impl IntoResponse for ApiError {
                 "missing or invalid API key".to_string(),
             ),
             ApiError::Internal(m) => (StatusCode::INTERNAL_SERVER_ERROR, "internal".to_string(), m),
+            ApiError::Forbidden(m) => (StatusCode::FORBIDDEN, "forbidden".to_string(), m),
+            ApiError::NotFound(m) => (StatusCode::NOT_FOUND, "not_found".to_string(), m),
+            ApiError::Unavailable(m) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "unavailable".to_string(),
+                m,
+            ),
         };
         let body = json!({
             "success": false,

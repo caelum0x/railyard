@@ -25,6 +25,9 @@ use ulid::Ulid;
 use crate::balance::Balance;
 use crate::clock::{Clock, SystemClock};
 use crate::journal::{Bucket, JournalEntry, OpKind};
+use crate::reporting::{
+    provider_tag_of, AccountSummary, PayoutQuery, PayoutRecord, ReserveMovementTotal,
+};
 use crate::store_trait::{
     AllowanceGrantCommit, AllowanceGrantOutcome, AllowanceRecord, AllowanceRevokeCommit,
     AllowanceScheme, AllowanceSpendCommit, AllowanceSpendOutcome, AllowanceWindow, CommitOutcome,
@@ -84,6 +87,11 @@ struct State {
     /// The per-account hash-linked, signed receipt log (AP2). Advances lock-step
     /// with the journal inside the same critical section.
     receipts: ReceiptLog,
+    /// Opaque owner references + creation times supplied at account creation
+    /// (operator listing only; never consulted by money paths).
+    account_meta: HashMap<AccountId, (Option<String>, i64)>,
+    /// The durable post-burn payout log, keyed by `payout_ref`.
+    payouts: HashMap<String, PayoutRecord>,
     /// Set to `true` only while a critical section is mid-write (between its
     /// first and last mutation). If a panic poisons the lock while this is set,
     /// the state is torn and `lock()` refuses to serve it; a panic before any
@@ -653,11 +661,13 @@ impl LedgerStore for InMemoryStore {
     async fn create_account(
         &self,
         kind: AccountKind,
-        _owner_ref: Option<String>,
+        owner_ref: Option<String>,
     ) -> Result<AccountId, MintError> {
         let id = AccountId::new(kind, Ulid::new());
+        let now = self.clock.now();
         let mut st = self.lock();
         st.accounts.insert(id.clone(), kind);
+        st.account_meta.insert(id.clone(), (owner_ref, now));
         st.balances.insert(id.clone(), Balance::zeroed(id.clone()));
         Ok(id)
     }
@@ -2475,6 +2485,106 @@ impl LedgerStore for InMemoryStore {
 
     async fn receipt_merkle_root(&self) -> ReceiptHash {
         self.merkle_root()
+    }
+
+    async fn list_accounts(
+        &self,
+        after: Option<AccountId>,
+        limit: usize,
+    ) -> Result<Vec<AccountSummary>, MintError> {
+        let st = self.lock();
+        let mut ids: Vec<&AccountId> = st
+            .accounts
+            .keys()
+            .filter(|id| after.as_ref().is_none_or(|a| id.as_str() > a.as_str()))
+            .collect();
+        ids.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        Ok(ids
+            .into_iter()
+            .take(limit)
+            .map(|id| {
+                let meta = st.account_meta.get(id);
+                AccountSummary {
+                    balance: st
+                        .balances
+                        .get(id)
+                        .cloned()
+                        .unwrap_or_else(|| Balance::zeroed(id.clone())),
+                    owner_ref: meta.and_then(|m| m.0.clone()),
+                    created_ms: meta.map(|m| m.1),
+                }
+            })
+            .collect())
+    }
+
+    async fn upsert_payout(&self, record: PayoutRecord) -> Result<PayoutRecord, MintError> {
+        let now = self.clock.now();
+        let mut st = self.lock();
+        let created_ms = st
+            .payouts
+            .get(&record.payout_ref)
+            .map(|existing| existing.created_ms)
+            .unwrap_or(now);
+        let stored = PayoutRecord {
+            created_ms,
+            updated_ms: now,
+            ..record
+        };
+        st.payouts
+            .insert(stored.payout_ref.clone(), stored.clone());
+        Ok(stored)
+    }
+
+    async fn get_payout(&self, payout_ref: &str) -> Result<Option<PayoutRecord>, MintError> {
+        Ok(self.lock().payouts.get(payout_ref).cloned())
+    }
+
+    async fn list_payouts(&self, q: PayoutQuery) -> Result<Vec<PayoutRecord>, MintError> {
+        let st = self.lock();
+        let mut rows: Vec<PayoutRecord> = st
+            .payouts
+            .values()
+            .filter(|p| q.status.is_none_or(|s| p.status == s))
+            .filter(|p| q.account_id.as_ref().is_none_or(|a| &p.account_id == a))
+            .filter(|p| {
+                q.before.as_ref().is_none_or(|(ms, r)| {
+                    (p.created_ms, p.payout_ref.as_str()) < (*ms, r.as_str())
+                })
+            })
+            .cloned()
+            .collect();
+        rows.sort_by(|a, b| {
+            (b.created_ms, b.payout_ref.as_str()).cmp(&(a.created_ms, a.payout_ref.as_str()))
+        });
+        rows.truncate(q.limit);
+        Ok(rows)
+    }
+
+    async fn reserve_movement_totals(&self) -> Result<Vec<ReserveMovementTotal>, MintError> {
+        let st = self.lock();
+        let mut acc: HashMap<(String, String), (u64, i64)> = HashMap::new();
+        for e in &st.journal {
+            let kind = match e.op {
+                OpKind::Mint => "mint",
+                OpKind::Redeem => "redeem",
+                _ => continue,
+            };
+            let tag = provider_tag_of(e.ref_.as_deref().unwrap_or(""));
+            let slot = acc.entry((kind.to_string(), tag)).or_insert((0, 0));
+            slot.0 += 1;
+            slot.1 = slot.1.saturating_add(e.delta_micros.get().saturating_abs());
+        }
+        let mut out: Vec<ReserveMovementTotal> = acc
+            .into_iter()
+            .map(|((kind, provider), (count, total))| ReserveMovementTotal {
+                kind,
+                provider,
+                count,
+                total_micros: total,
+            })
+            .collect();
+        out.sort_by(|a, b| (&a.kind, &a.provider).cmp(&(&b.kind, &b.provider)));
+        Ok(out)
     }
 }
 

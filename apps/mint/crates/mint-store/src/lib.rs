@@ -16,12 +16,17 @@ pub mod balance;
 pub mod clock;
 pub mod journal;
 pub mod memory;
+pub mod reporting;
 pub mod store_trait;
 
 pub use balance::Balance;
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use journal::{Bucket, JournalEntry, OpKind};
 pub use memory::{ait_to_micros, InMemoryStore};
+pub use reporting::{
+    provider_tag_of, AccountSummary, PayoutQuery, PayoutRecord, PayoutRecordStatus, ReceiptQuery,
+    ReserveMovementTotal,
+};
 pub use store_trait::{
     AllowanceGrantCommit, AllowanceGrantOutcome, AllowanceRecord, AllowanceRevokeCommit,
     AllowanceScheme, AllowanceScope, AllowanceSpendCommit, AllowanceSpendOutcome, AllowanceWindow,

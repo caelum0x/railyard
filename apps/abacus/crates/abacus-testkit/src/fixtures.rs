@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 
 use abacus_core::error::AbacusError;
-use abacus_core::identity::{AgentIdentity, BudgetPolicy, BudgetRepo, FundingPath};
+use abacus_core::identity::{AgentIdentity, AgentProfile, BudgetPolicy, BudgetRepo, FundingPath};
 use abacus_core::ids::{AccountId, AgentId, Ait1Address, BudgetId, RunId};
 use abacus_core::receipt::{MintReceipt, ReceiptStore};
 
@@ -117,6 +117,24 @@ impl BudgetRepo for FakeBudgetRepo {
         identity.run_id = run.clone();
         Ok(identity)
     }
+
+    async fn list_agents(&self) -> Result<Vec<AgentProfile>, AbacusError> {
+        let identities = self.identities.lock().unwrap();
+        let mut out: Vec<AgentProfile> = identities
+            .iter()
+            .filter_map(|(agent, identity)| {
+                Some(AgentProfile {
+                    agent_id: AgentId::parse(agent).ok()?,
+                    agent_acct: identity.agent_acct.clone(),
+                    treasury: identity.treasury.clone(),
+                    payee: identity.payee.clone(),
+                    budget: identity.budget.clone(),
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| a.agent_id.as_str().cmp(b.agent_id.as_str()));
+        Ok(out)
+    }
 }
 
 /// An in-memory receipt system-of-record; records every persisted receipt.
@@ -175,6 +193,24 @@ impl ReceiptStore for FakeReceiptStore {
             .values()
             .find(|receipt| receipt.request_id == request_id)
             .cloned())
+    }
+
+    async fn list_recent(
+        &self,
+        agent_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MintReceipt>, AbacusError> {
+        let mut out: Vec<MintReceipt> = self
+            .by_hold
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|r| agent_id.is_none_or(|a| r.agent_id.as_str() == a))
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| b.hold_id.cmp(&a.hold_id));
+        out.truncate(limit);
+        Ok(out)
     }
 }
 

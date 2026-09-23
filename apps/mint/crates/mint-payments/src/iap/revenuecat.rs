@@ -76,6 +76,16 @@ impl Ramp for RevenueCatRamp {
     ) -> Result<Payout, RampError> {
         Err(RampError::ProviderUnavailable)
     }
+
+    async fn check_payout(
+        &self,
+        _payout_ref: &str,
+        _dest: &PayoutDest,
+        _amount: Micros,
+    ) -> Result<(), RampError> {
+        // Billing-only provider: refuse BEFORE the redeem burns anything.
+        Err(RampError::Unsupported)
+    }
 }
 
 /// Whether a RevenueCat purchase/subscriber payload indicates the transaction

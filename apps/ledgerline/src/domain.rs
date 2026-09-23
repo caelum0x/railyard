@@ -213,6 +213,81 @@ pub struct MarginFilter {
     pub feature: Option<String>,
     pub model: Option<String>,
     pub limit: Option<i64>,
+    /// Only records created at/after this instant (RFC 3339).
+    #[serde(default)]
+    pub from: Option<DateTime<Utc>>,
+    /// Only records created strictly before this instant (RFC 3339).
+    #[serde(default)]
+    pub to: Option<DateTime<Utc>>,
+    /// Keyset cursor: only records created strictly before this instant — pass
+    /// the previous page's `next_before`.
+    #[serde(default)]
+    pub before: Option<DateTime<Utc>>,
+}
+
+/// The dimension a margin rollup groups by.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupBy {
+    #[default]
+    Customer,
+    Feature,
+    Model,
+    /// Calendar day (UTC), `YYYY-MM-DD`.
+    Day,
+}
+
+/// Query for `GET /v1/margins/summary`.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct MarginSummaryQuery {
+    #[serde(default)]
+    pub group_by: GroupBy,
+    pub customer_id: Option<String>,
+    pub feature: Option<String>,
+    pub model: Option<String>,
+    #[serde(default)]
+    pub from: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub to: Option<DateTime<Utc>>,
+}
+
+/// One rollup bucket of request-level margin records.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarginSummaryRow {
+    pub key: String,
+    pub requests: i64,
+    pub failed_requests: i64,
+    pub negative_margin_requests: i64,
+    pub revenue_micros: i64,
+    pub cogs_micros: i64,
+    pub margin_micros: i64,
+    /// Gross margin in basis points over the bucket (`None` when revenue is 0).
+    pub margin_bps: Option<i64>,
+}
+
+impl MarginSummaryRow {
+    /// Fold one record into the bucket (saturating integer math).
+    pub fn add(&mut self, record: &MarginRecord) {
+        self.requests += 1;
+        if record.event.outcome == EventOutcome::Failed {
+            self.failed_requests += 1;
+        }
+        if record.margin_micros < 0 {
+            self.negative_margin_requests += 1;
+        }
+        self.revenue_micros = self.revenue_micros.saturating_add(record.event.revenue_micros);
+        self.cogs_micros = self.cogs_micros.saturating_add(record.event.cogs_micros);
+        self.margin_micros = self.margin_micros.saturating_add(record.margin_micros);
+    }
+
+    /// Compute `margin_bps` from the folded totals.
+    pub fn finish(mut self) -> Self {
+        self.margin_bps = (self.revenue_micros != 0).then(|| {
+            let scaled = i128::from(self.margin_micros) * 10_000 / i128::from(self.revenue_micros);
+            i64::try_from(scaled).unwrap_or(if scaled < 0 { i64::MIN } else { i64::MAX })
+        });
+        self
+    }
 }
 
 #[cfg(test)]

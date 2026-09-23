@@ -11,6 +11,7 @@
 //! `abacus-mint-client` + `abacus-upstream`, while tests wire the `abacus-testkit`
 //! fakes.
 
+pub mod admin;
 pub mod audit;
 pub mod auth;
 pub mod config;
@@ -55,6 +56,9 @@ pub struct AppState {
     pub holds: Arc<dyn HoldStore>,
     /// Ingress `X-API-Key` secret agents must present.
     pub ingress_api_key: String,
+    /// Separate operator `X-API-Key` for fleet-wide views
+    /// (`ABACUS_ADMIN_API_KEY`). `None` disables the operator API.
+    pub admin_api_key: Option<String>,
     /// Per-provider/model pricing table → `est_max`.
     pub pricing: Arc<PricingTable>,
     /// Provider key for pricing-table lookup.
@@ -68,37 +72,94 @@ pub struct AppState {
 pub fn build_router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/v1/proxy", post(handler::proxy))
-        // Read the receipt system-of-record for one enforced request. Behind the
-        // same ingress key — agent spend is not public.
-        .route("/v1/receipts/:request_id", get(audit::get_receipt))
+        // An agent's own remaining budget + in-flight reservations.
+        .route("/v1/budget", get(admin::own_budget))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_api_key,
         ));
 
+    // Receipt lookup: an agent reading its own spend, or an operator.
+    let receipts = Router::new()
+        .route("/v1/receipts/:request_id", get(audit::get_receipt))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_ingress_or_admin_key,
+        ));
+
+    // Fleet-wide operator views: separate credential.
+    let operator = Router::new()
+        .route("/v1/admin/overview", get(admin::overview))
+        .route("/v1/admin/receipts", get(admin::receipts))
+        .route("/v1/admin/holds", get(admin::holds))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_admin_key,
+        ));
+
     Router::new()
         .merge(protected)
+        .merge(receipts)
+        .merge(operator)
         .route("/admin", get(admin_page))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .with_state(state)
 }
 
-/// `GET /admin` — a self-contained operator console (static HTML + vanilla JS, no
-/// build step). The page loads unauthenticated, but every data request it makes
-/// carries the operator's `X-API-Key` — the same ingress credential the enforced
-/// endpoints require — against the real `GET /v1/receipts/:request_id` route.
-/// There is no server-side bypass and no new auth path. Abacus exposes no list or
-/// policy read endpoint over HTTP, so the console honestly surfaces only single
-/// receipt lookups by `request_id`.
-async fn admin_page() -> axum::response::Html<&'static str> {
-    axum::response::Html(include_str!("../assets/admin.html"))
+/// `GET /admin` — the self-contained operator console (static HTML + vanilla
+/// JS). The page carries no data; every panel calls the operator API with the
+/// operator's `X-API-Key` (`ABACUS_ADMIN_API_KEY`), which the agents' ingress
+/// key does not satisfy.
+async fn admin_page() -> impl axum::response::IntoResponse {
+    use axum::http::header;
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+            (header::X_FRAME_OPTIONS, "DENY"),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; \
+                 connect-src 'self'; frame-ancestors 'none'; base-uri 'none'",
+            ),
+        ],
+        include_str!("../assets/admin.html"),
+    )
 }
 
 async fn healthz() -> &'static str {
     "ok"
 }
 
-async fn readyz() -> &'static str {
-    "ready"
+/// Readiness: the hold store and policy source must answer and Mint must be
+/// reachable — otherwise this instance could reserve but not settle, so it
+/// reports `503` and a blue-green cutover keeps traffic away.
+async fn readyz(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    let checks = [
+        ("hold_store", state.holds.list().await.err()),
+        ("policy_store", state.budgets.list_agents().await.err()),
+        ("mint", state.mint.ready().await.err()),
+    ];
+    let failed: Vec<serde_json::Value> = checks
+        .iter()
+        .filter_map(|(name, err)| {
+            err.as_ref()
+                .map(|e| serde_json::json!({ "check": name, "error": e.to_string() }))
+        })
+        .collect();
+    if failed.is_empty() {
+        (StatusCode::OK, "ready").into_response()
+    } else {
+        tracing::warn!(?failed, "abacus not ready");
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(serde_json::json!({ "ready": false, "failed": failed })),
+        )
+            .into_response()
+    }
 }

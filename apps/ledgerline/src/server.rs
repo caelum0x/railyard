@@ -11,9 +11,10 @@ use serde::Serialize;
 use subtle::ConstantTimeEq;
 use tower_http::trace::TraceLayer;
 
-use crate::domain::{MarginFilter, MarginRecord, MeterEvent};
+use crate::domain::{MarginFilter, MarginRecord, MarginSummaryQuery, MarginSummaryRow, MeterEvent};
 use crate::error::LedgerlineError;
 use crate::mint::MintSettlement;
+use crate::policy::AccountPolicy;
 use crate::store::EventStore;
 
 #[derive(Clone)]
@@ -21,7 +22,12 @@ pub struct AppState {
     pub mint: Arc<dyn MintSettlement>,
     pub store: Arc<dyn EventStore>,
     pub api_key: Arc<str>,
+    /// Which Mint accounts an ingested event may name (enforced at the HTTP
+    /// boundary before any settlement).
+    pub policy: Arc<AccountPolicy>,
 }
+
+const ADMIN_HTML: &str = include_str!("../assets/admin.html");
 
 #[derive(Serialize)]
 struct Data<T> {
@@ -33,7 +39,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/v1/events", post(create_event))
+        .route("/admin", get(admin_console))
         .route("/v1/margins", get(list_margins))
+        .route("/v1/margins/summary", get(margin_summary))
         .route("/v1/margins/:request_id", get(get_margin))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
@@ -54,6 +62,10 @@ async fn create_event(
     Json(event): Json<MeterEvent>,
 ) -> Result<(StatusCode, Json<Data<MarginRecord>>), LedgerlineError> {
     authorize(&state, &headers)?;
+    // Validate shape first (clear 422s), then the account policy, so no Mint
+    // call is ever made for an event naming accounts outside the policy.
+    event.validate()?;
+    state.policy.check(&event)?;
     let (record, created) = ingest_event(&state, event).await?;
     let status = if created {
         StatusCode::CREATED
@@ -85,6 +97,78 @@ async fn list_margins(
     authorize(&state, &headers)?;
     let records = state.store.list(&filter).await?;
     Ok(Json(Data { data: records }))
+}
+
+/// `GET /v1/margins/summary?group_by=customer|feature|model|day&from=&to=` —
+/// margin rollups with totals and negative-margin counts.
+async fn margin_summary(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<MarginSummaryQuery>,
+) -> Result<Json<Data<SummaryBody>>, LedgerlineError> {
+    authorize(&state, &headers)?;
+    if let (Some(from), Some(to)) = (query.from, query.to) {
+        if from >= to {
+            return Err(LedgerlineError::Invalid("from must be before to".into()));
+        }
+    }
+    let groups = state.store.summarize(&query).await?;
+    let totals = groups
+        .iter()
+        .fold(MarginSummaryRow::default(), |mut acc, g| {
+            acc.requests += g.requests;
+            acc.failed_requests += g.failed_requests;
+            acc.negative_margin_requests += g.negative_margin_requests;
+            acc.revenue_micros = acc.revenue_micros.saturating_add(g.revenue_micros);
+            acc.cogs_micros = acc.cogs_micros.saturating_add(g.cogs_micros);
+            acc.margin_micros = acc.margin_micros.saturating_add(g.margin_micros);
+            acc
+        });
+    let totals = MarginSummaryRow {
+        key: "total".into(),
+        ..totals
+    }
+    .finish();
+    let negative_margin_groups = groups
+        .iter()
+        .filter(|g| g.margin_micros < 0)
+        .map(|g| g.key.clone())
+        .collect();
+    Ok(Json(Data {
+        data: SummaryBody {
+            group_by: query.group_by,
+            totals,
+            negative_margin_groups,
+            groups,
+        },
+    }))
+}
+
+#[derive(Serialize)]
+struct SummaryBody {
+    group_by: crate::domain::GroupBy,
+    totals: MarginSummaryRow,
+    /// Buckets losing money overall — the alert list.
+    negative_margin_groups: Vec<String>,
+    groups: Vec<MarginSummaryRow>,
+}
+
+/// `GET /admin` — the margin console (static; data calls use `X-API-Key`).
+async fn admin_console() -> impl axum::response::IntoResponse {
+    use axum::http::header;
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+            (header::X_FRAME_OPTIONS, "DENY"),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; \
+                 connect-src 'self'; frame-ancestors 'none'; base-uri 'none'",
+            ),
+        ],
+        ADMIN_HTML,
+    )
 }
 
 fn authorize(state: &AppState, headers: &HeaderMap) -> Result<(), LedgerlineError> {
@@ -199,6 +283,7 @@ mod tests {
             mint: mint.clone(),
             store: Arc::new(MemoryStore::default()),
             api_key: Arc::from("secret"),
+            policy: Arc::new(AccountPolicy::unrestricted()),
         };
 
         let (first, created) = ingest_event(&state, event()).await.expect("first ingest");
@@ -217,6 +302,7 @@ mod tests {
             mint: Arc::new(CountingMint::default()),
             store: Arc::new(MemoryStore::default()),
             api_key: Arc::from("secret"),
+            policy: Arc::new(AccountPolicy::unrestricted()),
         };
         ingest_event(&state, event()).await.expect("first ingest");
         let mut changed = event();
@@ -234,6 +320,7 @@ mod tests {
             mint: mint.clone(),
             store: Arc::new(MemoryStore::default()),
             api_key: Arc::from("secret"),
+            policy: Arc::new(AccountPolicy::unrestricted()),
         };
         ingest_event(&state, event()).await.expect("first ingest");
         let mut duplicate_request = event();
@@ -252,6 +339,7 @@ mod tests {
             mint: mint.clone(),
             store: Arc::new(MemoryStore::default()),
             api_key: Arc::from("secret"),
+            policy: Arc::new(AccountPolicy::unrestricted()),
         };
         let mut failed = event();
         failed.outcome = EventOutcome::Failed;
@@ -269,6 +357,7 @@ mod tests {
             mint: Arc::new(CountingMint::default()),
             store: Arc::new(MemoryStore::default()),
             api_key: Arc::from("secret"),
+            policy: Arc::new(AccountPolicy::unrestricted()),
         };
         let app = build_router(state);
         let body = serde_json::to_vec(&event()).expect("serialize event");

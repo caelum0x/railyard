@@ -25,3 +25,25 @@ pub struct Checkout {
     /// The provider's checkout/session/order id.
     pub checkout_id: String,
 }
+
+/// Where the provider sends the buyer after a hosted checkout. Resolved by
+/// `mint-server` from the request, then `MINT_CHECKOUT_SUCCESS_URL` /
+/// `MINT_CHECKOUT_CANCEL_URL`, then Mint's own hosted `/checkout/*` pages.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckoutUrls {
+    /// Buyer lands here after paying.
+    pub success_url: String,
+    /// Buyer lands here after abandoning the checkout.
+    pub cancel_url: String,
+    /// Provider-approval return target for providers that need a server-side
+    /// capture after the buyer approves (PayPal): Mint's own
+    /// `/checkout/paypal/return` endpoint, which captures and then redirects to
+    /// `success_url`. `None` when Mint's public URL is not configured.
+    pub capture_return_url: Option<String>,
+}
+
+/// `true` iff an amount in microdollars is a whole number of cents (every fiat
+/// rail pays in cents; a sub-cent remainder would be burned but never paid).
+pub(crate) fn is_whole_cents(amount_micros: i64) -> bool {
+    amount_micros > 0 && amount_micros % 10_000 == 0
+}

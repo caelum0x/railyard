@@ -160,6 +160,12 @@ pub trait MintTransport: Send + Sync {
         &self,
         req: AllowanceSpend,
     ) -> Result<AllowanceSpendReceipt, AbacusError>;
+
+    /// Readiness probe: can this instance reach Mint right now? Transports
+    /// without a probe report ready.
+    async fn ready(&self) -> Result<(), AbacusError> {
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

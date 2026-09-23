@@ -72,6 +72,19 @@ pub trait ReceiptStore: Send + Sync {
         &self,
         request_id: &str,
     ) -> Result<Option<MintReceipt>, AbacusError>;
+
+    /// The most recent receipts (newest first), optionally for one agent.
+    /// Stores that cannot enumerate report a storage error rather than an
+    /// empty (misleading) list.
+    async fn list_recent(
+        &self,
+        _agent_id: Option<&str>,
+        _limit: usize,
+    ) -> Result<Vec<MintReceipt>, AbacusError> {
+        Err(AbacusError::Storage(
+            "this receipt store cannot list receipts".to_string(),
+        ))
+    }
 }
 
 #[cfg(test)]

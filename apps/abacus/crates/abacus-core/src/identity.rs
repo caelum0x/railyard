@@ -70,6 +70,30 @@ impl AgentIdentity {
 pub trait BudgetRepo: Send + Sync {
     /// Resolve the spend identity + policy for an authenticated agent + run.
     async fn resolve(&self, agent: &AgentId, run: &RunId) -> Result<AgentIdentity, AbacusError>;
+
+    /// Every configured agent and its policy (operator console / budget views).
+    /// Stores that cannot enumerate agents report a storage error rather than
+    /// pretending the fleet is empty.
+    async fn list_agents(&self) -> Result<Vec<AgentProfile>, AbacusError> {
+        Err(AbacusError::Storage(
+            "this budget source cannot enumerate agents".to_string(),
+        ))
+    }
+}
+
+/// One configured agent as seen by operators (no run binding).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentProfile {
+    /// The agent id.
+    pub agent_id: AgentId,
+    /// The Mint account representing the agent.
+    pub agent_acct: AccountId,
+    /// The treasury the direct-hold path reserves against.
+    pub treasury: AccountId,
+    /// The provider payee.
+    pub payee: Ait1Address,
+    /// The budget policy.
+    pub budget: BudgetPolicy,
 }
 
 #[cfg(test)]

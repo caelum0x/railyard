@@ -21,6 +21,8 @@ pub enum LedgerlineError {
     Storage(String),
     #[error("unauthorized")]
     Unauthorized,
+    #[error("forbidden: {0}")]
+    Forbidden(String),
 }
 
 impl LedgerlineError {
@@ -33,6 +35,7 @@ impl LedgerlineError {
             Self::Mint(_) => "mint_unavailable",
             Self::Storage(_) => "storage_unavailable",
             Self::Unauthorized => "unauthorized",
+            Self::Forbidden(_) => "forbidden",
         }
     }
 
@@ -42,6 +45,7 @@ impl LedgerlineError {
             Self::IdempotencyConflict => StatusCode::CONFLICT,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::Mint(_) => StatusCode::BAD_GATEWAY,
             Self::Storage(_) => StatusCode::SERVICE_UNAVAILABLE,
         }

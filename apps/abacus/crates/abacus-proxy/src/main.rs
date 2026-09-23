@@ -70,6 +70,9 @@ async fn main() -> anyhow::Result<()> {
         );
         (product.clone(), product, holds)
     };
+    if config.admin_api_key.is_none() {
+        tracing::warn!("ABACUS_ADMIN_API_KEY unset: the operator console and /v1/admin/* are disabled");
+    }
     let bind: SocketAddr = config
         .bind_addr
         .parse()
@@ -100,6 +103,7 @@ async fn main() -> anyhow::Result<()> {
         receipts,
         holds: holds.clone(),
         ingress_api_key: config.abacus_api_key.clone(),
+        admin_api_key: config.admin_api_key.clone(),
         pricing,
         provider: config.provider.clone(),
         upstream_path: config.upstream_path.clone(),

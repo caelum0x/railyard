@@ -18,7 +18,7 @@ use mint_core::{
 };
 use mint_protocol::PayerKeys;
 use mint_receipts::{Receipt, ReceiptHash, ReceiptLog};
-use mint_reserve::{Deposit, KycGate, KycTier, Payout, PayoutDest, Ramp, RampError};
+use mint_reserve::{Deposit, KycGate, KycTier, Payout, PayoutDest, PayoutStatus, Ramp, RampError};
 use mint_store::{
     AllowanceGrantCommit, AllowanceGrantOutcome, AllowanceRecord, AllowanceRevokeCommit,
     AllowanceSpendCommit, AllowanceSpendOutcome, Balance, CommitOutcome, HoldCaptureCommit,
@@ -27,6 +27,7 @@ use mint_store::{
     StreamOpenCommit, StreamOpenOutcome, StreamRecord, StreamTickCommit, StreamTickOutcome,
     TransferCommit,
 };
+use mint_store::{AccountSummary, PayoutQuery, PayoutRecord, ReceiptQuery, ReserveMovementTotal};
 
 /// An `Arc`-shared [`LedgerStore`]. Every facade holds a clone; all point at one
 /// backing store.
@@ -160,6 +161,57 @@ impl<S: LedgerStore> LedgerStore for SharedStore<S> {
     async fn receipt_merkle_root(&self) -> ReceiptHash {
         self.0.receipt_merkle_root().await
     }
+    // Every fallible read MUST be forwarded explicitly: relying on the trait
+    // defaults here would bypass `PgStore`'s error-propagating overrides and
+    // silently reintroduce the "outage reads as an empty ledger" failure mode.
+    async fn try_reserve_micros(&self) -> Result<Micros, MintError> {
+        self.0.try_reserve_micros().await
+    }
+    async fn try_journal_len(&self) -> Result<u64, MintError> {
+        self.0.try_journal_len().await
+    }
+    async fn try_snapshot_receipts(&self) -> Result<Vec<Receipt>, MintError> {
+        self.0.try_snapshot_receipts().await
+    }
+    async fn try_receipt_merkle_root(&self) -> Result<ReceiptHash, MintError> {
+        self.0.try_receipt_merkle_root().await
+    }
+    async fn latest_receipts_per_account(&self) -> Result<Vec<Receipt>, MintError> {
+        self.0.latest_receipts_per_account().await
+    }
+    async fn query_account_receipts(
+        &self,
+        account_id: &AccountId,
+        q: ReceiptQuery,
+    ) -> Result<Vec<Receipt>, MintError> {
+        self.0.query_account_receipts(account_id, q).await
+    }
+    async fn account_receipt_before(
+        &self,
+        account_id: &AccountId,
+        ts_ms: i64,
+    ) -> Result<Option<Receipt>, MintError> {
+        self.0.account_receipt_before(account_id, ts_ms).await
+    }
+    async fn list_accounts(
+        &self,
+        after: Option<AccountId>,
+        limit: usize,
+    ) -> Result<Vec<AccountSummary>, MintError> {
+        self.0.list_accounts(after, limit).await
+    }
+    async fn upsert_payout(&self, record: PayoutRecord) -> Result<PayoutRecord, MintError> {
+        self.0.upsert_payout(record).await
+    }
+    async fn get_payout(&self, payout_ref: &str) -> Result<Option<PayoutRecord>, MintError> {
+        self.0.get_payout(payout_ref).await
+    }
+    async fn list_payouts(&self, q: PayoutQuery) -> Result<Vec<PayoutRecord>, MintError> {
+        self.0.list_payouts(q).await
+    }
+    async fn reserve_movement_totals(&self) -> Result<Vec<ReserveMovementTotal>, MintError> {
+        self.0.reserve_movement_totals().await
+    }
 }
 
 /// An `Arc`-shared [`Ramp`] (fiat/crypto on/off-ramp seam).
@@ -178,6 +230,21 @@ impl Ramp for DynRamp {
         amount: Micros,
     ) -> Result<Payout, RampError> {
         self.0.initiate_payout(payout_ref, dest, amount).await
+    }
+    async fn check_payout(
+        &self,
+        payout_ref: &str,
+        dest: &PayoutDest,
+        amount: Micros,
+    ) -> Result<(), RampError> {
+        self.0.check_payout(payout_ref, dest, amount).await
+    }
+    async fn payout_status(
+        &self,
+        payout_ref: &str,
+        provider_ref: Option<&str>,
+    ) -> Result<PayoutStatus, RampError> {
+        self.0.payout_status(payout_ref, provider_ref).await
     }
 }
 

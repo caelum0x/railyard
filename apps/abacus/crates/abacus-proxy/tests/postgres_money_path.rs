@@ -511,6 +511,7 @@ fn proxy_state(
         receipts: Arc::new(products),
         holds: Arc::new(holds),
         ingress_api_key: "ignored-here".into(),
+        admin_api_key: None,
         pricing: Arc::new(PricingTable::builtin()),
         provider: "openai".into(),
         upstream_path: "/v1/chat/completions".into(),

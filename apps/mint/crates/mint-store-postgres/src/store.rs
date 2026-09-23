@@ -25,6 +25,10 @@ use mint_store::{
     StreamOpenOutcome, StreamRecord, StreamStatus, StreamTickCommit, StreamTickOutcome,
     SystemClock, TransferCommit,
 };
+use mint_store::{
+    AccountSummary, PayoutQuery, PayoutRecord, PayoutRecordStatus, ReceiptQuery,
+    ReserveMovementTotal,
+};
 use sqlx::postgres::{PgPoolOptions, PgRow};
 use sqlx::{PgConnection, PgPool, Row};
 use ulid::Ulid;
@@ -106,6 +110,46 @@ impl PgStore {
 
     fn signer(&self) -> &dyn Signer {
         self.signer.as_ref()
+    }
+
+    /// The receipt column list shared by every receipt read.
+    const RECEIPT_COLS: &'static str =
+        "account_id, seq, journal_seq, op, op_hash, amount_micros, from_id, to_id, \
+         balance_after_micros, balance_after_held, ts, prev_hash, hash, sig, signer";
+
+    /// Decode receipt rows, treating an undecodable row as a storage fault (a
+    /// silently-dropped row would corrupt audit roots and statements).
+    fn receipts_from_rows(rows: &[PgRow]) -> Result<Vec<Receipt>, MintError> {
+        rows.iter()
+            .map(|row| {
+                Self::receipt_from_row(row).ok_or_else(|| {
+                    tracing::error!("mint-store-postgres: undecodable receipt row");
+                    MintError::Storage
+                })
+            })
+            .collect()
+    }
+
+    fn payout_from_row(row: &PgRow) -> Result<PayoutRecord, MintError> {
+        let account_id =
+            AccountId::parse(&row.get::<String, _>("account_id")).map_err(|_| MintError::Storage)?;
+        let status = PayoutRecordStatus::parse(&row.get::<String, _>("status"))
+            .ok_or(MintError::Storage)?;
+        let dest: serde_json::Value = serde_json::from_str(&row.get::<String, _>("dest"))
+            .map_err(|_| MintError::Storage)?;
+        Ok(PayoutRecord {
+            payout_ref: row.get("payout_ref"),
+            account_id,
+            amount_micros: Micros::new(row.get::<i64, _>("amount_micros")),
+            dest,
+            status,
+            provider_ref: row.get("provider_ref"),
+            attempts: u32::try_from(row.get::<i32, _>("attempts")).unwrap_or(0),
+            last_error: row.get("last_error"),
+            burn_seq: u64::try_from(row.get::<i64, _>("burn_seq")).unwrap_or(0),
+            created_ms: row.get("created_ms"),
+            updated_ms: row.get("updated_ms"),
+        })
     }
 
     fn receipt_from_row(row: &PgRow) -> Option<Receipt> {
@@ -2085,6 +2129,240 @@ impl LedgerStore for PgStore {
 
     async fn receipt_merkle_root(&self) -> ReceiptHash {
         merkle_root(&self.snapshot_receipts().await)
+    }
+
+    async fn try_reserve_micros(&self) -> Result<Micros, MintError> {
+        let row = sqlx::query("SELECT total_micros FROM reserve WHERE id = 0")
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?;
+        // The 0003 migration seeds the singleton row; its absence is a broken
+        // schema, not "zero reserve".
+        let row = row.ok_or_else(|| {
+            tracing::error!("mint-store-postgres: reserve singleton row missing");
+            MintError::Storage
+        })?;
+        Ok(Micros::new(row.get::<i64, _>("total_micros")))
+    }
+
+    async fn try_journal_len(&self) -> Result<u64, MintError> {
+        let row = sqlx::query("SELECT count(*) AS n FROM journal")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(row.get::<i64, _>("n") as u64)
+    }
+
+    async fn try_snapshot_receipts(&self) -> Result<Vec<Receipt>, MintError> {
+        let sql = format!(
+            "SELECT {} FROM receipts ORDER BY global_seq ASC",
+            Self::RECEIPT_COLS
+        );
+        let rows = sqlx::query(&sql)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Self::receipts_from_rows(&rows)
+    }
+
+    async fn latest_receipts_per_account(&self) -> Result<Vec<Receipt>, MintError> {
+        let sql = format!(
+            "SELECT DISTINCT ON (account_id) {} FROM receipts ORDER BY account_id, seq DESC",
+            Self::RECEIPT_COLS
+        );
+        let rows = sqlx::query(&sql)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Self::receipts_from_rows(&rows)
+    }
+
+    async fn query_account_receipts(
+        &self,
+        account_id: &AccountId,
+        q: ReceiptQuery,
+    ) -> Result<Vec<Receipt>, MintError> {
+        let after = q
+            .after_seq
+            .map(|a| i64::try_from(a).unwrap_or(i64::MAX))
+            .unwrap_or(-1);
+        let limit = i64::try_from(q.limit).unwrap_or(i64::MAX);
+        let sql = format!(
+            "SELECT {} FROM receipts \
+             WHERE account_id = $1 AND seq > $2 \
+               AND ($3::bigint IS NULL OR ts >= $3) \
+               AND ($4::bigint IS NULL OR ts < $4) \
+             ORDER BY seq ASC LIMIT $5",
+            Self::RECEIPT_COLS
+        );
+        let rows = sqlx::query(&sql)
+            .bind(account_id.as_str())
+            .bind(after)
+            .bind(q.from_ms)
+            .bind(q.to_ms)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Self::receipts_from_rows(&rows)
+    }
+
+    async fn account_receipt_before(
+        &self,
+        account_id: &AccountId,
+        ts_ms: i64,
+    ) -> Result<Option<Receipt>, MintError> {
+        let sql = format!(
+            "SELECT {} FROM receipts WHERE account_id = $1 AND ts < $2 \
+             ORDER BY seq DESC LIMIT 1",
+            Self::RECEIPT_COLS
+        );
+        let row = sqlx::query(&sql)
+            .bind(account_id.as_str())
+            .bind(ts_ms)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?;
+        match row {
+            Some(r) => Self::receipts_from_rows(std::slice::from_ref(&r))
+                .map(|mut v| v.pop()),
+            None => Ok(None),
+        }
+    }
+
+    async fn list_accounts(
+        &self,
+        after: Option<AccountId>,
+        limit: usize,
+    ) -> Result<Vec<AccountSummary>, MintError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let after = after.map(|a| a.as_str().to_string());
+        let rows = sqlx::query(
+            "SELECT a.id, a.owner_ref, \
+                    (extract(epoch FROM a.created_at) * 1000)::bigint AS created_ms, \
+                    COALESCE(b.available_micros, 0) AS available_micros, \
+                    COALESCE(b.held_micros, 0) AS held_micros, \
+                    COALESCE(b.updated_seq, 0) AS updated_seq \
+             FROM accounts a LEFT JOIN balances b ON b.account_id = a.id \
+             WHERE ($1::text IS NULL OR a.id > $1) \
+             ORDER BY a.id ASC LIMIT $2",
+        )
+        .bind(after)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        rows.iter()
+            .map(|r| {
+                let id = AccountId::parse(&r.get::<String, _>("id"))
+                    .map_err(|_| MintError::Storage)?;
+                Ok(AccountSummary {
+                    balance: Balance {
+                        account_id: id,
+                        available_micros: Micros::new(r.get::<i64, _>("available_micros")),
+                        held_micros: Micros::new(r.get::<i64, _>("held_micros")),
+                        updated_seq: r.get::<i64, _>("updated_seq") as u64,
+                    },
+                    owner_ref: r.get("owner_ref"),
+                    created_ms: r.get("created_ms"),
+                })
+            })
+            .collect()
+    }
+
+    async fn upsert_payout(&self, record: PayoutRecord) -> Result<PayoutRecord, MintError> {
+        let now = self.clock.now();
+        let dest = serde_json::to_string(&record.dest).map_err(|_| MintError::Storage)?;
+        let burn_seq = i64::try_from(record.burn_seq).map_err(|_| MintError::Overflow)?;
+        let attempts = i32::try_from(record.attempts).unwrap_or(i32::MAX);
+        let row = sqlx::query(
+            "INSERT INTO payouts (payout_ref, account_id, amount_micros, dest, status, \
+                                  provider_ref, attempts, last_error, burn_seq, created_ms, updated_ms) \
+             VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $10) \
+             ON CONFLICT (payout_ref) DO UPDATE SET \
+                 status = EXCLUDED.status, \
+                 provider_ref = COALESCE(EXCLUDED.provider_ref, payouts.provider_ref), \
+                 attempts = EXCLUDED.attempts, \
+                 last_error = EXCLUDED.last_error, \
+                 updated_ms = EXCLUDED.updated_ms \
+             RETURNING payout_ref, account_id, amount_micros, dest::text AS dest, status, \
+                       provider_ref, attempts, last_error, burn_seq, created_ms, updated_ms",
+        )
+        .bind(&record.payout_ref)
+        .bind(record.account_id.as_str())
+        .bind(record.amount_micros.get())
+        .bind(dest)
+        .bind(record.status.as_str())
+        .bind(&record.provider_ref)
+        .bind(attempts)
+        .bind(&record.last_error)
+        .bind(burn_seq)
+        .bind(now)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Self::payout_from_row(&row)
+    }
+
+    async fn get_payout(&self, payout_ref: &str) -> Result<Option<PayoutRecord>, MintError> {
+        let row = sqlx::query(
+            "SELECT payout_ref, account_id, amount_micros, dest::text AS dest, status, \
+                    provider_ref, attempts, last_error, burn_seq, created_ms, updated_ms \
+             FROM payouts WHERE payout_ref = $1",
+        )
+        .bind(payout_ref)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?;
+        row.as_ref().map(Self::payout_from_row).transpose()
+    }
+
+    async fn list_payouts(&self, q: PayoutQuery) -> Result<Vec<PayoutRecord>, MintError> {
+        let (before_ms, before_ref) = match q.before {
+            Some((ms, r)) => (Some(ms), Some(r)),
+            None => (None, None),
+        };
+        let limit = i64::try_from(q.limit).unwrap_or(i64::MAX);
+        let rows = sqlx::query(
+            "SELECT payout_ref, account_id, amount_micros, dest::text AS dest, status, \
+                    provider_ref, attempts, last_error, burn_seq, created_ms, updated_ms \
+             FROM payouts \
+             WHERE ($1::text IS NULL OR status = $1) \
+               AND ($2::text IS NULL OR account_id = $2) \
+               AND ($3::bigint IS NULL OR (created_ms, payout_ref) < ($3, $4::text)) \
+             ORDER BY created_ms DESC, payout_ref DESC LIMIT $5",
+        )
+        .bind(q.status.map(|s| s.as_str()))
+        .bind(q.account_id.map(|a| a.as_str().to_string()))
+        .bind(before_ms)
+        .bind(before_ref)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        rows.iter().map(Self::payout_from_row).collect()
+    }
+
+    async fn reserve_movement_totals(&self) -> Result<Vec<ReserveMovementTotal>, MintError> {
+        let rows = sqlx::query(
+            "SELECT kind, \
+                    COALESCE(NULLIF(split_part(COALESCE(source, ''), ':', 1), ''), 'unknown') AS provider, \
+                    count(*)::bigint AS n, \
+                    COALESCE(sum(abs(amount_micros)), 0)::bigint AS total \
+             FROM reserve_ledger GROUP BY 1, 2 ORDER BY 1, 2",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(rows
+            .iter()
+            .map(|r| ReserveMovementTotal {
+                kind: r.get("kind"),
+                provider: r.get("provider"),
+                count: r.get::<i64, _>("n") as u64,
+                total_micros: r.get("total"),
+            })
+            .collect())
     }
 }
 

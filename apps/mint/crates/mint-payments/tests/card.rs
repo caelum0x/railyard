@@ -135,7 +135,7 @@ async fn stripe_payout_pays_and_surfaces_outage() {
 
     let ramp = StripeRamp::new(FakeTransport::failing(), cfg(ProviderId::Stripe, "s"));
     assert_eq!(
-        ramp.initiate_payout("stripe:pr_1", &dest, Micros::new(1))
+        ramp.initiate_payout("stripe:pr_1", &dest, Micros::new(5_000_000))
             .await,
         Err(RampError::ProviderUnavailable)
     );
@@ -219,7 +219,7 @@ async fn paypal_server_side_verify_yields_deposit_event() {
         )
         .arc();
     let ramp = PayPalRamp::new(transport, c);
-    let body = br#"{"event_type":"PAYMENT.CAPTURE.COMPLETED","resource":{"id":"cap_1","custom_id":"acct_4","amount":{"value":"12.50","currency_code":"USD"}}}"#;
+    let body = br#"{"event_type":"PAYMENT.CAPTURE.COMPLETED","resource":{"id":"cap_1","custom_id":"acct_4","amount":{"value":"12.50","currency_code":"USD"},"supplementary_data":{"related_ids":{"order_id":"ORDER_1"}}}}"#;
     let hdrs = common::headers(&[
         ("paypal-transmission-id", "tid"),
         ("paypal-transmission-time", "t"),
@@ -228,7 +228,9 @@ async fn paypal_server_side_verify_yields_deposit_event() {
         ("paypal-transmission-sig", "sig"),
     ]);
     let ev = ramp.verify_webhook(&hdrs, body).await.expect("verifies");
-    assert_eq!(ev.deposit_ref, "cap_1");
+    // Minted under the ORDER id so checkout, capture-return and webhook share
+    // one idempotency key.
+    assert_eq!(ev.deposit_ref, "ORDER_1");
     assert_eq!(ev.amount_micros, 12_500_000);
     assert_eq!(ev.account_id, "acct_4");
 }

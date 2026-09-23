@@ -10,8 +10,8 @@ use tower_http::trace::TraceLayer;
 
 use crate::auth;
 use crate::handlers::{
-    accounts, addresses, aitp, allowances, checkouts, deposits, health, holds, mint_redeem,
-    receipts, reserve, streams, transfers, verification_keys,
+    accounts, addresses, admin, aitp, allowances, checkouts, deposits, health, holds, kyc,
+    mint_redeem, payouts, receipts, reserve, statements, streams, transfers, verification_keys,
 };
 use crate::state::AppState;
 
@@ -19,7 +19,10 @@ use crate::state::AppState;
 pub fn build_router<S: LedgerStore + 'static>(state: AppState<S>) -> Router {
     let protected = Router::new()
         // accounts + addresses
-        .route("/v1/accounts", post(accounts::create::<S>))
+        .route(
+            "/v1/accounts",
+            post(accounts::create::<S>).get(statements::list::<S>),
+        )
         .route("/v1/accounts/:id", get(accounts::get::<S>))
         .route("/v1/accounts/:id/balance", get(accounts::balance::<S>))
         .route("/v1/accounts/:id/addresses", post(addresses::create::<S>))
@@ -27,6 +30,12 @@ pub fn build_router<S: LedgerStore + 'static>(state: AppState<S>) -> Router {
             "/v1/accounts/:id/receipts",
             get(receipts::account_receipts::<S>),
         )
+        .route(
+            "/v1/accounts/:id/statement",
+            get(statements::statement::<S>),
+        )
+        .route("/v1/accounts/:id/kyc", get(kyc::status::<S>))
+        .route("/v1/accounts/:id/kyc/session", post(kyc::start_session::<S>))
         .route("/v1/addresses/:address", get(addresses::lookup::<S>))
         // transfers
         .route("/v1/transfers", post(transfers::create::<S>))
@@ -57,6 +66,11 @@ pub fn build_router<S: LedgerStore + 'static>(state: AppState<S>) -> Router {
         .route("/v1/reserve", get(reserve::get::<S>))
         .route("/v1/mint", post(mint_redeem::mint::<S>))
         .route("/v1/redeem", post(mint_redeem::redeem::<S>))
+        // payout tracking + reconciliation
+        .route("/v1/payouts", get(payouts::list::<S>))
+        .route("/v1/payouts/:payout_ref", get(payouts::get::<S>))
+        .route("/v1/payouts/:payout_ref/retry", post(payouts::retry::<S>))
+        .route("/v1/reconciliation", get(reserve::reconciliation::<S>))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_api_key::<S>,
@@ -79,7 +93,16 @@ pub fn build_router<S: LedgerStore + 'static>(state: AppState<S>) -> Router {
         .route(
             "/v1/deposits/:provider/webhook",
             post(deposits::provider_webhook::<S>),
-        );
+        )
+        // Buyer-facing checkout return surface (browsers carry no API key).
+        .route("/checkout/success", get(checkouts::success_page))
+        .route("/checkout/cancel", get(checkouts::cancel_page))
+        .route(
+            "/checkout/paypal/return",
+            get(checkouts::paypal_return::<S>),
+        )
+        // Operator console shell (static; its data calls use X-API-Key).
+        .route("/admin", get(admin::console));
 
     protected
         .merge(public)

@@ -103,6 +103,12 @@ pub enum MintError {
     /// A `mint` requested more AIT than the confirmed deposit's amount.
     #[error("deposit_amount_mismatch")]
     DepositAmountMismatch,
+    /// A `redeem` named a payout the configured ramp cannot deliver (unknown or
+    /// inactive `<provider>:` prefix, a billing-only provider with no payout
+    /// API, a destination kind the provider does not support, or a sub-cent fiat
+    /// amount). Rejected BEFORE the burn so no funds are destroyed.
+    #[error("payout_unroutable")]
+    PayoutUnroutable,
 }
 
 impl MintError {
@@ -135,6 +141,7 @@ impl MintError {
             MintError::PayoutLimitExceeded => "payout_limit",
             MintError::DepositNotConfirmed => "deposit_not_confirmed",
             MintError::DepositAmountMismatch => "deposit_amount_mismatch",
+            MintError::PayoutUnroutable => "payout_unroutable",
         }
     }
 
@@ -171,6 +178,7 @@ impl MintError {
             "payout_limit" => MintError::PayoutLimitExceeded,
             "deposit_not_confirmed" => MintError::DepositNotConfirmed,
             "deposit_amount_mismatch" => MintError::DepositAmountMismatch,
+            "payout_unroutable" => MintError::PayoutUnroutable,
             _ => return None,
         };
         Some(err)
@@ -213,6 +221,7 @@ mod tests {
             (MintError::PayoutLimitExceeded, "payout_limit"),
             (MintError::DepositNotConfirmed, "deposit_not_confirmed"),
             (MintError::DepositAmountMismatch, "deposit_amount_mismatch"),
+            (MintError::PayoutUnroutable, "payout_unroutable"),
         ];
         for (err, code) in cases {
             assert_eq!(err.code(), code);
@@ -252,6 +261,7 @@ mod tests {
             MintError::PayoutLimitExceeded,
             MintError::DepositNotConfirmed,
             MintError::DepositAmountMismatch,
+            MintError::PayoutUnroutable,
         ];
         for err in all {
             assert_eq!(MintError::from_code(err.code()), Some(err));

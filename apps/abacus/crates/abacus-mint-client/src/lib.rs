@@ -285,6 +285,26 @@ struct SpendReceiptData {
 
 #[async_trait]
 impl MintTransport for MintClient {
+    async fn ready(&self) -> Result<(), AbacusError> {
+        // Mint's own readiness probe round-trips its ledger store; a 503 there
+        // means holds cannot be opened or settled.
+        let resp = self
+            .http
+            .get(self.url("/readyz"))
+            .timeout(std::time::Duration::from_secs(3))
+            .send()
+            .await
+            .map_err(|e| AbacusError::Transport(e.to_string()))?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            Err(AbacusError::Transport(format!(
+                "mint readyz returned {}",
+                resp.status()
+            )))
+        }
+    }
+
     async fn create_hold(&self, req: Hold) -> Result<HoldReceipt, AbacusError> {
         let data: HoldData = self
             .post_json(

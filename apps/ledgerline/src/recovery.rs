@@ -754,6 +754,7 @@ mod tests {
             mint: Arc::new(coordinator.clone()),
             store: store.clone(),
             api_key: Arc::from("secret"),
+            policy: Arc::new(crate::policy::AccountPolicy::unrestricted()),
         };
         let (replayed, created) = ingest_event(&state, event.clone())
             .await

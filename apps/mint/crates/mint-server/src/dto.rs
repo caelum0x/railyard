@@ -147,6 +147,13 @@ pub struct CheckoutReq {
     pub provider: String,
     pub account_id: String,
     pub amount_micros: i64,
+    /// Where the buyer lands after paying (https). Defaults to
+    /// `MINT_CHECKOUT_SUCCESS_URL`, then Mint's hosted `/checkout/success`.
+    #[serde(default)]
+    pub success_url: Option<String>,
+    /// Where the buyer lands after abandoning the checkout (https).
+    #[serde(default)]
+    pub cancel_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -183,6 +190,7 @@ impl From<KycTierDto> for KycTier {
 pub enum PayoutDestDto {
     Stripe { account: String },
     Crypto { chain: String, address: String },
+    Paypal { email: String },
 }
 
 impl From<PayoutDestDto> for PayoutDest {
@@ -190,6 +198,7 @@ impl From<PayoutDestDto> for PayoutDest {
         match v {
             PayoutDestDto::Stripe { account } => PayoutDest::Stripe { account },
             PayoutDestDto::Crypto { chain, address } => PayoutDest::Crypto { chain, address },
+            PayoutDestDto::Paypal { email } => PayoutDest::PayPal { email },
         }
     }
 }
