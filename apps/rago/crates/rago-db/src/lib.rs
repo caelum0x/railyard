@@ -45,8 +45,8 @@ pub use graphql_admin5::{
     AiConversationRow, AiMessageRow, OrderFormRow, OrderRow, QuoteRow, QuoteVersionRow,
 };
 pub use repo::{
-    AnalyticsPoint, BilledInvoice, Db, InvoiceCollectionPoint, LeasedJob, PrepaidSettlement,
-    RetryingWebhook,
+    AdvisoryLock, AnalyticsPoint, BilledInvoice, Db, InvoiceCollectionPoint, LeasedJob,
+    PrepaidSettlement, RetryingWebhook,
 };
 
 /// Embedded migrations (see `migrations/`).

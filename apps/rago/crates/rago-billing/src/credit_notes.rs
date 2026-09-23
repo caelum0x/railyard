@@ -158,11 +158,18 @@ fn find_invoice_applied_tax<'a>(invoice: &'a Invoice, code: &str) -> Option<&'a 
 /// `credit_amount = Σ item_amount − coupons_adjustment + precise_taxes`
 /// (`compute_creditable_amount`); `total = credit + refund`;
 /// `balance = credit`.
+///
+/// `sequential_id` is the credit note's per-invoice ordinal — the caller passes
+/// `MAX(sequential_id) + 1` for the invoice (see
+/// [`rago_db::Db::next_credit_note_sequential_id`]). Both `sequential_id` and
+/// the derived `number` (`<invoice>-CN<n>`) come from it, so sibling credit
+/// notes never collide on `-CN1`.
 pub fn create_credit_note(
     invoice: &Invoice,
     fees: &[Fee],
     items: Vec<CreditNoteItem>,
     refund: CreditRefund,
+    sequential_id: i32,
 ) -> CreditNote {
     let fees_by_id: BTreeMap<Uuid, &Fee> = fees.iter().map(|f| (f.id, f)).collect();
     let taxes = apply_taxes(invoice, &fees_by_id, &items);
@@ -199,8 +206,8 @@ pub fn create_credit_note(
         organization_id: invoice.organization_id,
         customer_id: invoice.customer_id.unwrap_or_default(),
         invoice_id: invoice.id,
-        sequential_id: 1,
-        number: format!("{}-CN1", invoice.number),
+        sequential_id,
+        number: format!("{}-CN{sequential_id}", invoice.number),
         issuing_date: now.date_naive(),
         reason: 0,
         credit_status: Some(0),

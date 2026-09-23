@@ -184,7 +184,7 @@ pub async fn create_payment_request(
             id: r.id,
             currency: currency.clone(),
             total_amount_cents: r.total_amount_cents,
-            total_paid_amount_cents: 0,
+            total_paid_amount_cents: r.total_paid_amount_cents,
             credit_note_offset_cents: r.credit_note_offset_cents,
             payment_overdue: true,
         })

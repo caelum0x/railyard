@@ -698,7 +698,9 @@ pub async fn estimate_credit_note(
         return Err(ApiError::validation("items", "must_be_an_array"));
     }
     let _ = &mut fees;
-    let cn = create_credit_note(&invoice, &fees, items, CreditRefund::CreditOnly);
+    // Preview only (not persisted); project the number the created note would get.
+    let seq = st.db.next_credit_note_sequential_id(invoice.id).await?;
+    let cn = create_credit_note(&invoice, &fees, items, CreditRefund::CreditOnly, seq);
     Ok(Json(json!({ "estimated_credit_note": ser::credit_note(&cn) })))
 }
 
@@ -747,10 +749,9 @@ pub async fn create_credit_note(
         Some(r) if r > 0 => CreditRefund::Split { refund_amount_cents: r },
         _ => CreditRefund::CreditOnly,
     };
-    let mut cn = build_cn(&invoice, &fees, items, refund);
+    let seq = st.db.next_credit_note_sequential_id(invoice.id).await?;
+    let mut cn = build_cn(&invoice, &fees, items, refund, seq);
     cn.customer_id = invoice.customer_id.unwrap_or_default();
-    cn.sequential_id = st.db.next_credit_note_sequential_id(invoice.id).await?;
-    cn.number = format!("{}-CN{}", invoice.number, cn.sequential_id);
     st.db.insert_credit_note(&cn).await?;
 
     // `CreditNotes::CreateService` emits `credit_note.created`.

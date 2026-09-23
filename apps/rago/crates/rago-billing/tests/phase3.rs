@@ -392,7 +392,7 @@ fn credit_note_full_fee_with_tax() {
         precise_amount_cents: dec!(10000),
         amount_currency: "USD".into(),
     };
-    let cn = create_credit_note(&invoice, &fees, vec![item], CreditRefund::CreditOnly);
+    let cn = create_credit_note(&invoice, &fees, vec![item], CreditRefund::CreditOnly, 1);
     assert_eq!(cn.taxes_amount_cents, 2000);
     assert_eq!(cn.credit_amount_cents, 12000);
     assert_eq!(cn.total_amount_cents, 12000);
@@ -425,6 +425,7 @@ fn credit_note_partial_with_refund_split() {
         CreditRefund::Split {
             refund_amount_cents: 4000,
         },
+        1,
     );
     assert_eq!(cn.taxes_amount_cents, 1000);
     assert_eq!(cn.total_amount_cents, 6000);
@@ -492,7 +493,7 @@ fn credit_note_with_coupon_adjustment() {
         precise_amount_cents: dec!(10000),
         amount_currency: "USD".into(),
     };
-    let cn = create_credit_note(&invoice, &fees, vec![item], CreditRefund::CreditOnly);
+    let cn = create_credit_note(&invoice, &fees, vec![item], CreditRefund::CreditOnly, 1);
     assert_eq!(cn.coupons_adjustment_amount_cents, 1000);
     assert_eq!(cn.taxes_amount_cents, 1800);
     assert_eq!(cn.credit_amount_cents, 10800);

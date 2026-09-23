@@ -282,10 +282,12 @@ impl Db {
     /// finalized credit-note offset. Ports the invoice set + credit-note offset
     /// used by `PaymentRequests::CreateService`.
     ///
-    /// Rago invoices do not track partial payments, so `total_paid_amount_cents`
-    /// is reported as 0; the credit-note offset uses finalized, non-voided
-    /// credit notes' `credit_amount_cents` (the credited portion that reduces
-    /// the amount owed, excluding cash refunds).
+    /// `total_paid_amount_cents` is derived as `SUM(payments.amount_cents)` over
+    /// `succeeded` payments recorded against the invoice, so a partially-paid
+    /// invoice is dunned/charged only for the amount still owed (total − paid −
+    /// credit notes). The credit-note offset uses finalized, non-voided credit
+    /// notes' `credit_amount_cents` (the credited portion that reduces the amount
+    /// owed, excluding cash refunds).
     pub async fn overdue_invoices_for_currency(
         &self,
         org: Uuid,
@@ -297,7 +299,11 @@ impl Db {
                  COALESCE(( \
                      SELECT SUM(cn.credit_amount_cents)::bigint FROM credit_notes cn \
                      WHERE cn.invoice_id = i.id AND cn.status = 1 AND cn.voided_at IS NULL \
-                 ), 0) AS offset_cents \
+                 ), 0) AS offset_cents, \
+                 COALESCE(( \
+                     SELECT SUM(p.amount_cents)::bigint FROM payments p \
+                     WHERE p.invoice_id = i.id AND p.status = 'succeeded' \
+                 ), 0) AS paid_cents \
              FROM invoices i \
              WHERE i.organization_id = $1 AND i.customer_id = $2 \
                AND i.currency = $3 AND i.payment_overdue = true AND i.status = 1 \
@@ -313,6 +319,7 @@ impl Db {
             .map(|r| OverdueInvoiceRow {
                 id: r.get("id"),
                 total_amount_cents: r.get("total_amount_cents"),
+                total_paid_amount_cents: r.get::<i64, _>("paid_cents"),
                 credit_note_offset_cents: r.get::<i64, _>("offset_cents"),
             })
             .collect())
@@ -391,10 +398,12 @@ impl Db {
     }
 }
 
-/// An overdue invoice row with its credit-note offset.
+/// An overdue invoice row with its already-paid amount and credit-note offset.
 #[derive(Debug, Clone)]
 pub struct OverdueInvoiceRow {
     pub id: Uuid,
     pub total_amount_cents: i64,
+    /// Amount already settled against the invoice (`SUM` of succeeded payments).
+    pub total_paid_amount_cents: i64,
     pub credit_note_offset_cents: i64,
 }

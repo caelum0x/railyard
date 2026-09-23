@@ -26,10 +26,49 @@ pub fn deterministic_payment_id(invoice_id: Uuid) -> Uuid {
     Uuid::new_v5(&PAYMENT_ID_NAMESPACE, invoice_id.as_bytes())
 }
 
+/// Derive a stable `i64` Postgres advisory-lock key from an invoice id (its
+/// first 8 bytes). Only needs to be deterministic per invoice and collision-
+/// resistant enough that unrelated invoices rarely share a key (a coincidental
+/// collision only serializes two unrelated charges — safe, never incorrect).
+fn advisory_lock_key(invoice_id: Uuid) -> i64 {
+    let b = invoice_id.as_bytes();
+    i64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+}
+
 /// Charge `invoice` via Stripe (over the injected `transport`), record the
 /// payment, and update the invoice `payment_status`. Returns the mapped
 /// [`PayableStatus`].
+///
+/// Concurrency: the "already charged?" check and the provider call are guarded
+/// by a Postgres advisory lock keyed on the invoice id. Without it two workers
+/// running the dunning sweep at once could both read "no prior payment" and
+/// both call Stripe before either records a row — a double charge. The lock
+/// serializes them per invoice; a worker that cannot take the lock (another is
+/// mid-charge) skips with `Pending` rather than racing.
 pub async fn charge_invoice<T: HttpTransport>(
+    db: &Db,
+    transport: &T,
+    stripe_secret_key: &str,
+    invoice: &Invoice,
+    provider_customer_id: &str,
+) -> Result<PayableStatus, JobError> {
+    let key = advisory_lock_key(invoice.id);
+    let lock = match db.try_advisory_lock(key).await? {
+        Some(l) => l,
+        // Another worker holds the charge lock for this invoice — do not race it.
+        None => return Ok(PayableStatus::Pending),
+    };
+    let result =
+        charge_invoice_locked(db, transport, stripe_secret_key, invoice, provider_customer_id)
+            .await;
+    // Always release, even on error, so the lock never leaks on the pooled conn.
+    lock.release().await?;
+    result
+}
+
+/// The charge critical section, run while holding the per-invoice advisory lock
+/// (see [`charge_invoice`]).
+async fn charge_invoice_locked<T: HttpTransport>(
     db: &Db,
     transport: &T,
     stripe_secret_key: &str,

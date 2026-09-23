@@ -4,7 +4,8 @@
 
 use chrono::{NaiveDate, NaiveDateTime};
 use rago_core::models::*;
-use sqlx::{PgPool, Row};
+use sqlx::pool::PoolConnection;
+use sqlx::{PgPool, Postgres, Row};
 use uuid::Uuid;
 
 use crate::error::Result;
@@ -66,6 +67,30 @@ pub struct Db {
     pub pool: PgPool,
 }
 
+/// A held session-level Postgres advisory lock.
+///
+/// Acquired by [`Db::try_advisory_lock`], it owns a dedicated pooled
+/// connection for the lock's lifetime (a session advisory lock is bound to the
+/// connection that took it). Call [`AdvisoryLock::release`] to unlock and hand
+/// the connection back to the pool; dropping without releasing keeps the lock
+/// held until that connection is closed, so always release on every path.
+pub struct AdvisoryLock {
+    conn: PoolConnection<Postgres>,
+    key: i64,
+}
+
+impl AdvisoryLock {
+    /// Release the advisory lock (`pg_advisory_unlock`) and return the
+    /// connection to the pool.
+    pub async fn release(mut self) -> Result<()> {
+        sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(self.key)
+            .execute(&mut *self.conn)
+            .await?;
+        Ok(())
+    }
+}
+
 impl Db {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -84,6 +109,25 @@ impl Db {
             .await
             .map_err(sqlx::Error::from)?;
         Ok(())
+    }
+
+    /// Try to take a session-level Postgres advisory lock on `key` without
+    /// blocking (`pg_try_advisory_lock`). Returns `Some(AdvisoryLock)` when this
+    /// caller now owns the lock, or `None` when another session already holds it
+    /// — the caller should then skip the guarded critical section rather than
+    /// wait. Used to serialize the invoice charge path so two concurrent workers
+    /// cannot both pass the "already charged?" check and double-charge.
+    pub async fn try_advisory_lock(&self, key: i64) -> Result<Option<AdvisoryLock>> {
+        let mut conn = self.pool.acquire().await?;
+        let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(key)
+            .fetch_one(&mut *conn)
+            .await?;
+        Ok(if locked {
+            Some(AdvisoryLock { conn, key })
+        } else {
+            None
+        })
     }
 
     pub async fn find_charge(&self, id: Uuid) -> Result<Charge> {
