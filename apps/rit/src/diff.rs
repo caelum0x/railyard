@@ -83,16 +83,15 @@ pub fn diff_trees(
                 new_mode: Some(new_mode.clone()),
                 new_oid: Some(*new_oid),
             }),
-            Some((old_mode, old_oid)) if old_oid != new_oid || old_mode != new_mode => {
-                changes.push(TreeChange {
+            Some((old_mode, old_oid)) if old_oid != new_oid || old_mode != new_mode => changes
+                .push(TreeChange {
                     path: path.clone(),
                     kind: ChangeKind::Modified,
                     old_mode: Some(old_mode.clone()),
                     old_oid: Some(*old_oid),
                     new_mode: Some(new_mode.clone()),
                     new_oid: Some(*new_oid),
-                })
-            }
+                }),
             Some(_) => {} // identical — not a change
         }
     }
@@ -161,7 +160,8 @@ mod tests {
     fn tree(repo: &Repository, entries: Vec<TreeEntry>) -> ObjectId {
         let mut t = Tree { entries };
         t.canonicalize();
-        repo.hash_object(ObjectType::Tree, &t.serialize(), true).unwrap()
+        repo.hash_object(ObjectType::Tree, &t.serialize(), true)
+            .unwrap()
     }
 
     #[test]
@@ -173,8 +173,16 @@ mod tests {
         let old = tree(
             &repo,
             vec![
-                TreeEntry { mode: "100644".into(), name: b"a.txt".to_vec(), oid: a1 },
-                TreeEntry { mode: "100644".into(), name: b"b.txt".to_vec(), oid: b1 },
+                TreeEntry {
+                    mode: "100644".into(),
+                    name: b"a.txt".to_vec(),
+                    oid: a1,
+                },
+                TreeEntry {
+                    mode: "100644".into(),
+                    name: b"b.txt".to_vec(),
+                    oid: b1,
+                },
             ],
         );
         let a2 = blob(&repo, b"two\n");
@@ -182,9 +190,21 @@ mod tests {
         let new = tree(
             &repo,
             vec![
-                TreeEntry { mode: "100644".into(), name: b"a.txt".to_vec(), oid: a2 },
-                TreeEntry { mode: "100644".into(), name: b"b.txt".to_vec(), oid: b1 },
-                TreeEntry { mode: "100644".into(), name: b"c.txt".to_vec(), oid: c1 },
+                TreeEntry {
+                    mode: "100644".into(),
+                    name: b"a.txt".to_vec(),
+                    oid: a2,
+                },
+                TreeEntry {
+                    mode: "100644".into(),
+                    name: b"b.txt".to_vec(),
+                    oid: b1,
+                },
+                TreeEntry {
+                    mode: "100644".into(),
+                    name: b"c.txt".to_vec(),
+                    oid: c1,
+                },
             ],
         );
         let changes = diff_trees(repo.odb(), Some(old), Some(new)).unwrap();
@@ -196,6 +216,8 @@ mod tests {
 
         // Reverse diff sees the deletion.
         let rev = diff_trees(repo.odb(), Some(new), Some(old)).unwrap();
-        assert!(rev.iter().any(|c| c.path == b"c.txt" && c.kind == ChangeKind::Deleted));
+        assert!(rev
+            .iter()
+            .any(|c| c.path == b"c.txt" && c.kind == ChangeKind::Deleted));
     }
 }

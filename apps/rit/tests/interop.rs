@@ -1373,7 +1373,11 @@ fn rit_generated_pack_is_decoded_by_stock_git() {
 
     // Object set reachable from HEAD (commit + trees + blobs), packed by rit.
     let send = rit::reachable_objects(&repo, &[head], &[]).unwrap();
-    assert!(send.len() >= 4, "expected commit+trees+blobs, got {}", send.len());
+    assert!(
+        send.len() >= 4,
+        "expected commit+trees+blobs, got {}",
+        send.len()
+    );
     let pack = rit::generate_pack(&repo, &send).unwrap();
     assert_eq!(&pack[0..4], b"PACK");
 
@@ -1398,6 +1402,9 @@ fn rit_generated_pack_is_decoded_by_stock_git() {
     );
 
     // Every object is now present and valid.
-    assert_eq!(git(target.path(), &["cat-file", "-t", &head.to_hex()]), "commit");
+    assert_eq!(
+        git(target.path(), &["cat-file", "-t", &head.to_hex()]),
+        "commit"
+    );
     git(target.path(), &["fsck", "--strict"]);
 }

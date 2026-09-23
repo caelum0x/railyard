@@ -90,19 +90,18 @@ pub fn cmd_switch(repo: &Repository, target: &str, create: bool) -> Result<Switc
         // Determine whether HEAD should be symbolic or detached.
         // Priority: exact local branch → full refs/heads/... → detached.
         let branch_refname = format!("refs/heads/{target}");
-        let head = if validate_refname(&branch_refname).is_ok()
-            && refs.resolve(&branch_refname).is_ok()
-        {
-            SwitchHead::Symbolic(branch_refname)
-        } else if target.starts_with("refs/heads/")
-            && validate_refname(target).is_ok()
-            && refs.resolve(target).is_ok()
-        {
-            SwitchHead::Symbolic(target.to_string())
-        } else {
-            // Raw oid, tag, or non-local-branch ref → detached HEAD.
-            SwitchHead::Detached(commit_oid)
-        };
+        let head =
+            if validate_refname(&branch_refname).is_ok() && refs.resolve(&branch_refname).is_ok() {
+                SwitchHead::Symbolic(branch_refname)
+            } else if target.starts_with("refs/heads/")
+                && validate_refname(target).is_ok()
+                && refs.resolve(target).is_ok()
+            {
+                SwitchHead::Symbolic(target.to_string())
+            } else {
+                // Raw oid, tag, or non-local-branch ref → detached HEAD.
+                SwitchHead::Detached(commit_oid)
+            };
         (head, commit_oid)
     };
 
@@ -210,11 +209,20 @@ mod tests {
         let sig_raw = "Test User <test@example.com> 1700000000 +0000";
         let sig = Signature::parse(sig_raw, "test").unwrap();
         // Write an empty blob and stage it so write_tree succeeds.
-        let oid = repo.hash_object(ObjectType::Blob, b"content", true).unwrap();
+        let oid = repo
+            .hash_object(ObjectType::Blob, b"content", true)
+            .unwrap();
         // For a minimal commit, use commit_tree with the empty tree.
         let empty_tree = repo.hash_object(ObjectType::Tree, b"", true).unwrap();
-        repo.commit_tree(empty_tree, vec![], sig.clone(), sig, message.as_bytes(), Some("refs/heads/main"))
-            .unwrap()
+        repo.commit_tree(
+            empty_tree,
+            vec![],
+            sig.clone(),
+            sig,
+            message.as_bytes(),
+            Some("refs/heads/main"),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -230,7 +238,10 @@ mod tests {
         assert!(repo.refs().resolve("refs/heads/feature").is_ok());
         // HEAD must now be the symbolic ref.
         let head_target = repo.refs().read_head().unwrap();
-        assert_eq!(head_target, crate::RefTarget::Symbolic("refs/heads/feature".into()));
+        assert_eq!(
+            head_target,
+            crate::RefTarget::Symbolic("refs/heads/feature".into())
+        );
     }
 
     #[test]
@@ -248,7 +259,9 @@ mod tests {
         make_commit(&repo, "initial\n");
         // Create a second branch.
         let head_oid = repo.head().unwrap();
-        repo.refs().compare_and_swap("refs/heads/other", None, head_oid).unwrap();
+        repo.refs()
+            .compare_and_swap("refs/heads/other", None, head_oid)
+            .unwrap();
 
         let result = cmd_switch(&repo, "other", false).unwrap();
         assert!(matches!(result.head, SwitchHead::Symbolic(ref n) if n == "refs/heads/other"));
@@ -276,10 +289,13 @@ mod tests {
         std::fs::write(dir.path().join("file.txt"), data).unwrap();
         // add() expects paths relative to the worktree root.
         repo.add(&[std::path::PathBuf::from("file.txt")]).unwrap();
-        repo.commit_index("initial\n", sig.clone(), sig.clone()).unwrap();
+        repo.commit_index("initial\n", sig.clone(), sig.clone())
+            .unwrap();
 
         // Create "other" branch: same parent commit but tree has different file.txt.
-        let new_blob = repo.hash_object(ObjectType::Blob, b"different\n", true).unwrap();
+        let new_blob = repo
+            .hash_object(ObjectType::Blob, b"different\n", true)
+            .unwrap();
         let mut t = crate::Tree {
             entries: vec![crate::TreeEntry {
                 mode: "100644".into(),
@@ -288,7 +304,9 @@ mod tests {
             }],
         };
         t.canonicalize();
-        let new_tree = repo.hash_object(ObjectType::Tree, &t.serialize(), true).unwrap();
+        let new_tree = repo
+            .hash_object(ObjectType::Tree, &t.serialize(), true)
+            .unwrap();
         let head_oid = repo.head().unwrap();
         repo.commit_tree(
             new_tree,

@@ -176,7 +176,9 @@ mod tests {
             }],
         };
         tree_obj.canonicalize();
-        let tree_oid = repo.hash_object(ObjectType::Tree, &tree_obj.serialize(), true).unwrap();
+        let tree_oid = repo
+            .hash_object(ObjectType::Tree, &tree_obj.serialize(), true)
+            .unwrap();
 
         let sig = Signature::parse("Test <t@t.com> 1700000000 +0000", "test").unwrap();
         let commit_oid = repo
@@ -204,7 +206,10 @@ mod tests {
         assert!(text.contains("commit "), "expected 'commit' header: {text}");
         assert!(text.contains("Author: Test"), "expected author: {text}");
         assert!(text.contains("    root commit"), "expected message: {text}");
-        assert!(text.contains("new file mode 100644"), "expected new file: {text}");
+        assert!(
+            text.contains("new file mode 100644"),
+            "expected new file: {text}"
+        );
         assert!(text.contains("+hello"), "expected diff line: {text}");
     }
 
@@ -234,7 +239,9 @@ mod tests {
             }],
         };
         tree_obj.canonicalize();
-        let tree_oid = repo.hash_object(ObjectType::Tree, &tree_obj.serialize(), true).unwrap();
+        let tree_oid = repo
+            .hash_object(ObjectType::Tree, &tree_obj.serialize(), true)
+            .unwrap();
 
         let mut out = Vec::new();
         cmd_show(&repo, Some(&tree_oid.to_hex()), &mut out).unwrap();
@@ -251,7 +258,9 @@ mod tests {
         let sig = Signature::parse("Test <t@t.com> 1700000000 +0000", "test").unwrap();
 
         // First commit: file.txt = "version 1\n"
-        let blob1 = repo.hash_object(ObjectType::Blob, b"version 1\n", true).unwrap();
+        let blob1 = repo
+            .hash_object(ObjectType::Blob, b"version 1\n", true)
+            .unwrap();
         let mut t1 = Tree {
             entries: vec![TreeEntry {
                 mode: "100644".into(),
@@ -260,13 +269,24 @@ mod tests {
             }],
         };
         t1.canonicalize();
-        let tree1 = repo.hash_object(ObjectType::Tree, &t1.serialize(), true).unwrap();
+        let tree1 = repo
+            .hash_object(ObjectType::Tree, &t1.serialize(), true)
+            .unwrap();
         let commit1 = repo
-            .commit_tree(tree1, vec![], sig.clone(), sig.clone(), b"v1\n", Some("refs/heads/main"))
+            .commit_tree(
+                tree1,
+                vec![],
+                sig.clone(),
+                sig.clone(),
+                b"v1\n",
+                Some("refs/heads/main"),
+            )
             .unwrap();
 
         // Second commit: file.txt = "version 2\n"
-        let blob2 = repo.hash_object(ObjectType::Blob, b"version 2\n", true).unwrap();
+        let blob2 = repo
+            .hash_object(ObjectType::Blob, b"version 2\n", true)
+            .unwrap();
         let mut t2 = Tree {
             entries: vec![TreeEntry {
                 mode: "100644".into(),
@@ -275,16 +295,31 @@ mod tests {
             }],
         };
         t2.canonicalize();
-        let tree2 = repo.hash_object(ObjectType::Tree, &t2.serialize(), true).unwrap();
+        let tree2 = repo
+            .hash_object(ObjectType::Tree, &t2.serialize(), true)
+            .unwrap();
         let commit2 = repo
-            .commit_tree(tree2, vec![commit1], sig.clone(), sig, b"v2\n", Some("refs/heads/main"))
+            .commit_tree(
+                tree2,
+                vec![commit1],
+                sig.clone(),
+                sig,
+                b"v2\n",
+                Some("refs/heads/main"),
+            )
             .unwrap();
 
         let mut out = Vec::new();
         cmd_show(&repo, Some(&commit2.to_hex()), &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();
 
-        assert!(text.contains("-version 1"), "expected deletion line: {text}");
-        assert!(text.contains("+version 2"), "expected addition line: {text}");
+        assert!(
+            text.contains("-version 1"),
+            "expected deletion line: {text}"
+        );
+        assert!(
+            text.contains("+version 2"),
+            "expected addition line: {text}"
+        );
     }
 }

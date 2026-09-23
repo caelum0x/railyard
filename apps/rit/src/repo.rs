@@ -79,7 +79,10 @@ impl Repository {
 
         // HEAD points at the (not-yet-existing) default branch. Preserve an
         // existing HEAD so reinitialization does not move the current branch.
-        write_if_absent(&git_dir.join("HEAD"), format!("ref: {head_ref}\n").as_bytes())?;
+        write_if_absent(
+            &git_dir.join("HEAD"),
+            format!("ref: {head_ref}\n").as_bytes(),
+        )?;
 
         // Minimal but real config. `bare` reflects the requested mode so that
         // downstream tools (and `worktree_root`) behave correctly.
@@ -810,15 +813,10 @@ impl Repository {
         let mut branches: Vec<(String, ObjectId, bool)> = all
             .into_iter()
             .filter_map(|(refname, oid)| {
-                refname
-                    .strip_prefix("refs/heads/")
-                    .map(|short| {
-                        let is_current = current
-                            .as_deref()
-                            .map(|c| c == refname)
-                            .unwrap_or(false);
-                        (short.to_string(), oid, is_current)
-                    })
+                refname.strip_prefix("refs/heads/").map(|short| {
+                    let is_current = current.as_deref().map(|c| c == refname).unwrap_or(false);
+                    (short.to_string(), oid, is_current)
+                })
             })
             .collect();
         branches.sort_by(|a, b| a.0.cmp(&b.0));
@@ -1004,9 +1002,10 @@ impl Repository {
     pub fn tag_delete(&self, name: &str) -> Result<()> {
         let refname = format!("refs/tags/{name}");
         validate_refname(&refname)?;
-        let tip = self.refs.resolve(&refname).map_err(|_| {
-            ForgeError::InvalidRef(format!("tag {name} not found"))
-        })?;
+        let tip = self
+            .refs
+            .resolve(&refname)
+            .map_err(|_| ForgeError::InvalidRef(format!("tag {name} not found")))?;
         self.refs.compare_and_delete(&refname, tip)?;
         Ok(())
     }

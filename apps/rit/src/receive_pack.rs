@@ -7,20 +7,25 @@
 //! storage transactions are implemented.
 
 use crate::error::{ForgeError, Result};
-use crate::receive::{ReceiveLimits, ReceiveOutcome, ReceiveTransaction, RefUpdate};
+use crate::receive::{
+    AtomicRefUpdate, ReceiveAtomicOutcome, ReceiveLimits, ReceiveOutcome, ReceiveTransaction,
+};
+use crate::refs::{AtomicRefError, RefChange, RefCommand};
 use crate::wire::{
     encode_packet_line, encode_receive_status, parse_receive_pack_request, PacketLine,
     PacketLineLimits, ReceivePackCommand, ReceivePackRequest, ReceiveStatus,
 };
 use crate::Repository;
 
-/// Capabilities implemented by the current one-ref SHA-1 receive server.
-/// Unsupported features (atomic multi-ref, push-options, sideband)
-/// are intentionally absent so stock Git will not negotiate them.
+/// Capabilities implemented by the SHA-1 receive server. Every push is applied
+/// as one all-or-nothing transaction, so `atomic` is advertised and honored for
+/// multi-ref pushes. Unsupported features (push-options, sideband) are
+/// intentionally absent so stock Git will not negotiate them.
 pub const RECEIVE_PACK_CAPABILITIES: &[&str] = &[
     "report-status",
     "report-status-v2",
     "delete-refs",
+    "atomic",
     "ofs-delta",
     "object-format=sha1",
     "agent=rit/0.1",
@@ -116,65 +121,41 @@ pub fn execute_receive_pack(
     let report_status = request.capabilities.contains("report-status")
         || request.capabilities.contains("report-status-v2");
 
-    if request.commands.len() != 1 {
-        let rejection =
-            ForgeError::ReceiveRejected("atomic multi-ref receive is not implemented".into());
-        return rejected_refs(
+    // Whether any command carries objects (create/update) and therefore expects
+    // a packfile. A push made up solely of deletions carries no pack.
+    let carries_objects = request
+        .commands
+        .iter()
+        .any(|command| !matches!(command, ReceivePackCommand::Delete { .. }));
+
+    if carries_objects {
+        execute_with_pack(
+            repository,
+            input,
             &request,
             report_status,
-            None,
-            "atomic multi-ref receive is not supported",
-            rejection,
-        );
+            receive_limits,
+            policy,
+        )
+    } else {
+        execute_delete_only(repository, input, &request, report_status)
     }
+}
 
-    let update = match &request.commands[0] {
-        ReceivePackCommand::Create { new, name } => RefUpdate {
-            name: name.clone(),
-            expected_old: None,
-            new: *new,
-            allow_non_fast_forward: policy.allow_non_fast_forward,
-        },
-        ReceivePackCommand::Update { old, new, name } => RefUpdate {
-            name: name.clone(),
-            expected_old: Some(*old),
-            new: *new,
-            allow_non_fast_forward: policy.allow_non_fast_forward,
-        },
-        ReceivePackCommand::Delete { old, name } => {
-            if request.pack_offset != input.len() {
-                return rejected_refs(
-                    &request,
-                    report_status,
-                    None,
-                    "unexpected pack for deletion",
-                    ForgeError::ReceiveRejected(
-                        "single-ref deletion request carried unexpected pack bytes".into(),
-                    ),
-                );
-            }
-            return match repository.refs().compare_and_delete(name, *old) {
-                Ok(()) => Ok(ReceivePackExecution {
-                    response: status_response(&request, report_status, None, None)?,
-                    outcome: None,
-                    deleted: Some(DeletedRef {
-                        name: name.clone(),
-                        old: *old,
-                    }),
-                    rejection: None,
-                }),
-                Err(error) => {
-                    let public_reason = public_ref_rejection(&error);
-                    rejected_refs(&request, report_status, None, public_reason, error)
-                }
-            };
-        }
-    };
-
+/// Apply a push that stages a pack (any mix of create/update, optionally with
+/// deletions) as one atomic multi-ref transaction.
+fn execute_with_pack(
+    repository: &Repository,
+    input: &[u8],
+    request: &ReceivePackRequest,
+    report_status: bool,
+    receive_limits: ReceiveLimits,
+    policy: ReceivePackPolicy,
+) -> Result<ReceivePackExecution> {
     let mut transaction = ReceiveTransaction::begin(repository, receive_limits)?;
     if let Err(error) = transaction.stage_pack(&input[request.pack_offset..]) {
         return rejected_refs(
-            &request,
+            request,
             report_status,
             Some("pack rejected"),
             "unpacker error",
@@ -182,18 +163,221 @@ pub fn execute_receive_pack(
         );
     }
 
-    match transaction.finish(update) {
-        Ok(outcome) => Ok(ReceivePackExecution {
-            response: status_response(&request, report_status, None, None)?,
-            outcome: Some(outcome),
-            deleted: None,
-            rejection: None,
-        }),
+    let updates: Vec<AtomicRefUpdate> = request
+        .commands
+        .iter()
+        .map(|command| atomic_update_from_command(command, policy))
+        .collect();
+
+    match transaction.finish_atomic(updates) {
+        Ok(outcome) => Ok(execution_from_atomic(request, report_status, outcome)?),
         Err(error) => {
+            // A whole-graph failure (bad connectivity, disconnected objects):
+            // report the same stable reason on every ref, as the single-ref
+            // path did, and never move a ref.
             let public_reason = public_ref_rejection(&error);
-            rejected_refs(&request, report_status, None, public_reason, error)
+            rejected_refs(request, report_status, None, public_reason, error)
         }
     }
+}
+
+/// Apply a deletion-only push (no pack) as one atomic ref transaction.
+fn execute_delete_only(
+    repository: &Repository,
+    input: &[u8],
+    request: &ReceivePackRequest,
+    report_status: bool,
+) -> Result<ReceivePackExecution> {
+    if request.pack_offset != input.len() {
+        return rejected_refs(
+            request,
+            report_status,
+            None,
+            "unexpected pack for deletion",
+            ForgeError::ReceiveRejected(
+                "deletion-only request carried unexpected pack bytes".into(),
+            ),
+        );
+    }
+
+    let commands: Vec<RefCommand> = request
+        .commands
+        .iter()
+        .map(|command| match command {
+            ReceivePackCommand::Delete { old, name } => RefCommand {
+                name: name.clone(),
+                change: RefChange::Delete { old: *old },
+            },
+            // `carries_objects` guaranteed every command here is a deletion.
+            other => unreachable!("non-delete command in deletion-only push: {other:?}"),
+        })
+        .collect();
+
+    match repository.refs().atomic_update(&commands) {
+        Ok(()) => {
+            let statuses = request
+                .commands
+                .iter()
+                .map(|command| ReceiveStatus {
+                    ref_name: command.name().to_string(),
+                    error: None,
+                })
+                .collect::<Vec<_>>();
+            Ok(ReceivePackExecution {
+                response: encode_status_body(report_status, None, &statuses)?,
+                outcome: None,
+                deleted: single_deleted_ref(&commands),
+                rejection: None,
+            })
+        }
+        Err(error) => atomic_failure_execution(request, report_status, error),
+    }
+}
+
+/// Translate one wire command into an [`AtomicRefUpdate`], applying the server's
+/// non-fast-forward policy (never inferred from the client).
+fn atomic_update_from_command(
+    command: &ReceivePackCommand,
+    policy: ReceivePackPolicy,
+) -> AtomicRefUpdate {
+    match command {
+        ReceivePackCommand::Create { new, name } => AtomicRefUpdate {
+            name: name.clone(),
+            expected_old: None,
+            new: Some(*new),
+            allow_non_fast_forward: policy.allow_non_fast_forward,
+        },
+        ReceivePackCommand::Update { old, new, name } => AtomicRefUpdate {
+            name: name.clone(),
+            expected_old: Some(*old),
+            new: Some(*new),
+            allow_non_fast_forward: policy.allow_non_fast_forward,
+        },
+        ReceivePackCommand::Delete { old, name } => AtomicRefUpdate {
+            name: name.clone(),
+            expected_old: Some(*old),
+            new: None,
+            allow_non_fast_forward: policy.allow_non_fast_forward,
+        },
+    }
+}
+
+/// Build the transport execution from a finished atomic outcome, encoding the
+/// per-ref report-status and surfacing a typed rejection when nothing committed.
+fn execution_from_atomic(
+    request: &ReceivePackRequest,
+    report_status: bool,
+    outcome: ReceiveAtomicOutcome,
+) -> Result<ReceivePackExecution> {
+    let statuses = outcome
+        .results
+        .iter()
+        .map(|result| ReceiveStatus {
+            ref_name: result.name.clone(),
+            error: result.error.clone(),
+        })
+        .collect::<Vec<_>>();
+    let response = encode_status_body(report_status, None, &statuses)?;
+
+    if outcome.committed {
+        Ok(ReceivePackExecution {
+            response,
+            outcome: single_receive_outcome(request, &outcome),
+            deleted: None,
+            rejection: None,
+        })
+    } else {
+        let reason = outcome
+            .results
+            .iter()
+            .find_map(|result| result.error.clone())
+            .unwrap_or_else(|| "receive rejected".into());
+        Ok(ReceivePackExecution {
+            response,
+            outcome: None,
+            deleted: None,
+            rejection: Some(ForgeError::ReceiveRejected(reason)),
+        })
+    }
+}
+
+/// Preserve the single-ref `outcome` summary for the common one-ref update push.
+fn single_receive_outcome(
+    request: &ReceivePackRequest,
+    outcome: &ReceiveAtomicOutcome,
+) -> Option<ReceiveOutcome> {
+    let [command] = request.commands.as_slice() else {
+        return None;
+    };
+    match command {
+        ReceivePackCommand::Create { new, name } => Some(ReceiveOutcome {
+            ref_name: name.clone(),
+            old: None,
+            new: *new,
+            published_objects: outcome.published_objects,
+        }),
+        ReceivePackCommand::Update { old, new, name } => Some(ReceiveOutcome {
+            ref_name: name.clone(),
+            old: Some(*old),
+            new: *new,
+            published_objects: outcome.published_objects,
+        }),
+        ReceivePackCommand::Delete { .. } => None,
+    }
+}
+
+/// Preserve the single-ref `deleted` summary for the common one-ref delete push.
+fn single_deleted_ref(commands: &[RefCommand]) -> Option<DeletedRef> {
+    let [command] = commands else {
+        return None;
+    };
+    match &command.change {
+        RefChange::Delete { old } => Some(DeletedRef {
+            name: command.name.clone(),
+            old: *old,
+        }),
+        RefChange::Update { .. } => None,
+    }
+}
+
+/// Map a rejected deletion-only atomic transaction into per-ref `ng` statuses.
+fn atomic_failure_execution(
+    request: &ReceivePackRequest,
+    report_status: bool,
+    error: AtomicRefError,
+) -> Result<ReceivePackExecution> {
+    let reason = public_ref_rejection(&error.source);
+    let statuses = request
+        .commands
+        .iter()
+        .map(|command| ReceiveStatus {
+            ref_name: command.name().to_string(),
+            error: Some(if command.name() == error.name {
+                reason.to_string()
+            } else {
+                "atomic transaction failed".to_string()
+            }),
+        })
+        .collect::<Vec<_>>();
+    Ok(ReceivePackExecution {
+        response: encode_status_body(report_status, None, &statuses)?,
+        outcome: None,
+        deleted: None,
+        rejection: Some(error.source),
+    })
+}
+
+/// Encode a report-status body, or an empty body when the client did not
+/// negotiate report-status/report-status-v2.
+fn encode_status_body(
+    report_status: bool,
+    unpack_error: Option<&str>,
+    statuses: &[ReceiveStatus],
+) -> Result<Vec<u8>> {
+    if !report_status {
+        return Ok(Vec::new());
+    }
+    encode_receive_status(unpack_error, statuses)
 }
 
 fn rejected_refs(
@@ -256,7 +440,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_multi_ref_before_unpacking_and_reports_every_ref() {
+    fn multi_ref_push_with_invalid_pack_rejects_every_ref_atomically() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("objects")).unwrap();
         let repo = Repository::open_git_dir(dir.path()).unwrap();
@@ -285,11 +469,10 @@ mod tests {
             ReceivePackPolicy::default(),
         )
         .unwrap();
+        // Multi-ref is now processed atomically, but an undecodable pack rejects
+        // the whole batch: no ref moves and every ref reports `ng`.
         assert!(execution.outcome.is_none());
-        assert!(matches!(
-            execution.rejection,
-            Some(ForgeError::ReceiveRejected(_))
-        ));
+        assert!(matches!(execution.rejection, Some(ForgeError::Pack(_))));
         let status = decode_packet_lines(&execution.response, PacketLineLimits::default()).unwrap();
         assert_eq!(status.len(), 4);
         assert!(
@@ -333,7 +516,8 @@ mod tests {
         assert!(
             matches!(&packets[0], PacketLine::Data(line) if line.starts_with(b"0000000000000000000000000000000000000000 capabilities^{}\0"))
         );
-        assert!(!empty
+        // Atomic multi-ref receive is now advertised and honored.
+        assert!(empty
             .windows(b"atomic".len())
             .any(|window| window == b"atomic"));
         assert!(empty

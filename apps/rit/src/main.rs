@@ -10,10 +10,13 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use rit::object::Object;
 use rit::{
-    advertise_receive_pack, cmd_diff, cmd_show, cmd_switch, dispatch_branch, dispatch_tag,
-    execute_receive_pack, parse_receive_pack_request, BranchOp, ObjectType, PacketLineLimits,
-    ReceiveLimits, ReceivePackCommand, ReceivePackPolicy, Repository, Signature, SwitchHead, TagOp,
-    WorktreeState, RECEIVE_PACK_CAPABILITIES,
+    abort_merge, advertise_receive_pack, cmd_cherry_pick, cmd_diff, cmd_merge, cmd_rebase,
+    cmd_sequencer_abort, cmd_sequencer_continue, cmd_sequencer_skip, cmd_show, cmd_stash_apply,
+    cmd_stash_drop, cmd_stash_pop, cmd_stash_push, cmd_switch, continue_merge, dispatch_branch,
+    dispatch_tag, execute_receive_pack, parse_receive_pack_request, smart_http_serve_blocking,
+    stash_list, BranchOp, MergeKind, ObjectType, PacketLineLimits, ReceiveLimits,
+    ReceivePackCommand, ReceivePackPolicy, Repository, SequencerStatus, Signature, SmartHttpConfig,
+    SmartHttpState, StashApply, SwitchHead, TagOp, WorktreeState, RECEIVE_PACK_CAPABILITIES,
 };
 
 #[derive(Parser)]
@@ -73,6 +76,16 @@ enum Command {
     ReceivePack(ReceivePackArgs),
     /// Serve Git upload-pack through the installed open-source Git backend.
     UploadPack(UploadPackArgs),
+    /// Join another branch's history into the current one. Like `git merge`.
+    Merge(MergeArgs),
+    /// Reapply commits on top of another base tip. Like `git rebase`.
+    Rebase(RebaseArgs),
+    /// Apply the changes of existing commits. Like `git cherry-pick`.
+    CherryPick(CherryPickArgs),
+    /// Stash the dirty worktree/index away and restore it later. Like `git stash`.
+    Stash(StashArgs),
+    /// Serve one repository over the Git smart-HTTP protocol.
+    ServeHttp(ServeHttpArgs),
 }
 
 #[derive(Args)]
@@ -254,6 +267,108 @@ struct UploadPackArgs {
     git_dir: PathBuf,
 }
 
+#[derive(Args)]
+struct MergeArgs {
+    /// Create a merge commit even when a fast-forward is possible. Like `git merge --no-ff`.
+    #[arg(long = "no-ff")]
+    no_ff: bool,
+    /// Conclude a conflicted merge after resolving the worktree. Like `git merge --continue`.
+    #[arg(long = "continue", conflicts_with_all = ["abort", "target"])]
+    cont: bool,
+    /// Abort an in-progress merge and restore the pre-merge state. Like `git merge --abort`.
+    #[arg(long = "abort", conflicts_with_all = ["cont", "target"])]
+    abort: bool,
+    /// Merge commit message (defaults to a generated `Merge ...` line).
+    #[arg(short = 'm', long = "message")]
+    message: Option<String>,
+    /// Branch, tag, or commit to merge into the current branch.
+    target: Option<String>,
+}
+
+#[derive(Args)]
+struct RebaseArgs {
+    /// Reset onto this base instead of `<upstream>`. Like `git rebase --onto`.
+    #[arg(long = "onto")]
+    onto: Option<String>,
+    /// Resume after resolving a conflict. Like `git rebase --continue`.
+    #[arg(long = "continue", conflicts_with_all = ["abort", "skip", "upstream"])]
+    cont: bool,
+    /// Abort and return to the pre-rebase branch tip. Like `git rebase --abort`.
+    #[arg(long = "abort", conflicts_with_all = ["cont", "skip", "upstream"])]
+    abort: bool,
+    /// Drop the current commit and continue. Like `git rebase --skip`.
+    #[arg(long = "skip", conflicts_with_all = ["cont", "abort", "upstream"])]
+    skip: bool,
+    /// Upstream branch/commit whose `..HEAD` commits are replayed.
+    upstream: Option<String>,
+}
+
+#[derive(Args)]
+struct CherryPickArgs {
+    /// Resume after resolving a conflict. Like `git cherry-pick --continue`.
+    #[arg(long = "continue", conflicts_with_all = ["abort", "skip", "revs"])]
+    cont: bool,
+    /// Abort the in-progress cherry-pick sequence. Like `git cherry-pick --abort`.
+    #[arg(long = "abort", conflicts_with_all = ["cont", "skip", "revs"])]
+    abort: bool,
+    /// Drop the current commit and continue. Like `git cherry-pick --skip`.
+    #[arg(long = "skip", conflicts_with_all = ["cont", "abort", "revs"])]
+    skip: bool,
+    /// One or more commits to replay onto the current branch.
+    revs: Vec<String>,
+}
+
+#[derive(Args)]
+struct StashArgs {
+    #[command(subcommand)]
+    action: Option<StashAction>,
+}
+
+#[derive(Subcommand)]
+enum StashAction {
+    /// Record the dirty worktree/index and reset back to HEAD (default action).
+    Push {
+        /// Optional description for the stash entry.
+        #[arg(short = 'm', long = "message")]
+        message: Option<String>,
+    },
+    /// List the stash entries, newest first.
+    List,
+    /// Apply a stash entry without removing it from the stack.
+    Apply {
+        /// Stash index (0 = most recent).
+        #[arg(default_value_t = 0)]
+        index: usize,
+    },
+    /// Apply a stash entry and drop it on a clean apply.
+    Pop {
+        /// Stash index (0 = most recent).
+        #[arg(default_value_t = 0)]
+        index: usize,
+    },
+    /// Delete a stash entry from the stack.
+    Drop {
+        /// Stash index (0 = most recent).
+        #[arg(default_value_t = 0)]
+        index: usize,
+    },
+}
+
+#[derive(Args)]
+struct ServeHttpArgs {
+    /// Exact bare repository/git directory to serve at the URL root.
+    git_dir: PathBuf,
+    /// Address to bind, e.g. `127.0.0.1:8080`.
+    #[arg(long = "addr", default_value = "127.0.0.1:8080")]
+    addr: String,
+    /// Branch (short name) whose direct push is blocked. Repeatable.
+    #[arg(long = "block-branch")]
+    block_branch: Vec<String>,
+    /// Allow non-fast-forward branch updates (a repository-owner decision).
+    #[arg(long = "allow-non-ff")]
+    allow_non_ff: bool,
+}
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("rit: {err:#}");
@@ -284,7 +399,185 @@ fn run() -> Result<()> {
         Command::Restore(args) => cmd_restore(&cli, args),
         Command::ReceivePack(args) => cmd_receive_pack(args),
         Command::UploadPack(args) => cmd_upload_pack(args),
+        Command::Merge(args) => cmd_merge_cli(&cli, args),
+        Command::Rebase(args) => cmd_rebase_cli(&cli, args),
+        Command::CherryPick(args) => cmd_cherry_pick_cli(&cli, args),
+        Command::Stash(args) => cmd_stash_cli(&cli, args),
+        Command::ServeHttp(args) => cmd_serve_http(args),
     }
+}
+
+fn cmd_merge_cli(cli: &Cli, args: &MergeArgs) -> Result<()> {
+    let repo = Repository::discover(&cli.repo)
+        .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
+
+    if args.abort {
+        abort_merge(&repo)?;
+        println!("merge aborted");
+        return Ok(());
+    }
+
+    let sig = current_signature(repo.git_dir())?;
+
+    if args.cont {
+        let oid = continue_merge(&repo, &sig, args.message.as_deref())?;
+        println!("{oid}");
+        return Ok(());
+    }
+
+    let target = args
+        .target
+        .as_deref()
+        .context("merge requires a target (or --continue/--abort)")?;
+    let result = cmd_merge(&repo, target, &sig, args.message.as_deref(), args.no_ff)?;
+    match result.kind {
+        MergeKind::AlreadyUpToDate => println!("Already up to date."),
+        MergeKind::FastForward(oid) => println!("Fast-forward to {oid}"),
+        MergeKind::Merged(oid) => println!("Merge made by the three-way strategy: {oid}"),
+        MergeKind::Conflicts(paths) => {
+            report_conflicts("merge", &paths);
+            std::process::exit(1);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_rebase_cli(cli: &Cli, args: &RebaseArgs) -> Result<()> {
+    let repo = Repository::discover(&cli.repo)
+        .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
+
+    if args.abort {
+        cmd_sequencer_abort(&repo)?;
+        println!("rebase aborted");
+        return Ok(());
+    }
+
+    let sig = current_signature(repo.git_dir())?;
+    let status = if args.cont {
+        cmd_sequencer_continue(&repo, &sig)?
+    } else if args.skip {
+        cmd_sequencer_skip(&repo, &sig)?
+    } else {
+        let upstream = args
+            .upstream
+            .as_deref()
+            .context("rebase requires an upstream (or --continue/--abort/--skip)")?;
+        cmd_rebase(&repo, upstream, args.onto.as_deref(), &sig)?
+    };
+    report_sequencer("rebase", &status)
+}
+
+fn cmd_cherry_pick_cli(cli: &Cli, args: &CherryPickArgs) -> Result<()> {
+    let repo = Repository::discover(&cli.repo)
+        .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
+
+    if args.abort {
+        cmd_sequencer_abort(&repo)?;
+        println!("cherry-pick aborted");
+        return Ok(());
+    }
+
+    let sig = current_signature(repo.git_dir())?;
+    let status = if args.cont {
+        cmd_sequencer_continue(&repo, &sig)?
+    } else if args.skip {
+        cmd_sequencer_skip(&repo, &sig)?
+    } else {
+        if args.revs.is_empty() {
+            bail!("cherry-pick requires at least one commit (or --continue/--abort/--skip)");
+        }
+        let revs: Vec<&str> = args.revs.iter().map(String::as_str).collect();
+        cmd_cherry_pick(&repo, &revs, &sig)?
+    };
+    report_sequencer("cherry-pick", &status)
+}
+
+/// Print a sequencer outcome, exiting non-zero when it stopped on a conflict.
+fn report_sequencer(op: &str, status: &SequencerStatus) -> Result<()> {
+    match status {
+        SequencerStatus::Completed => {
+            println!("{op} completed");
+            Ok(())
+        }
+        SequencerStatus::Stopped { conflicts } => {
+            report_conflicts(op, conflicts);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn report_conflicts(op: &str, paths: &[String]) {
+    eprintln!("{op} stopped due to conflicts in:");
+    for path in paths {
+        eprintln!("\t{path}");
+    }
+    eprintln!("resolve them, then run `rit {op} --continue` (or `--abort`)");
+}
+
+fn cmd_stash_cli(cli: &Cli, args: &StashArgs) -> Result<()> {
+    let repo = Repository::discover(&cli.repo)
+        .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
+
+    match args.action.as_ref() {
+        Some(StashAction::List) => {
+            for (index, message) in stash_list(&repo)? {
+                println!("stash@{{{index}}}: {message}");
+            }
+            Ok(())
+        }
+        Some(StashAction::Apply { index }) => report_stash_apply(cmd_stash_apply(&repo, *index)?),
+        Some(StashAction::Pop { index }) => report_stash_apply(cmd_stash_pop(&repo, *index)?),
+        Some(StashAction::Drop { index }) => {
+            cmd_stash_drop(&repo, *index)?;
+            println!("dropped stash@{{{index}}}");
+            Ok(())
+        }
+        // `rit stash` with no subcommand defaults to push, like `git stash`.
+        Some(StashAction::Push { .. }) | None => {
+            let message = match args.action.as_ref() {
+                Some(StashAction::Push { message }) => message.as_deref(),
+                _ => None,
+            };
+            let sig = current_signature(repo.git_dir())?;
+            match cmd_stash_push(&repo, &sig, message)? {
+                Some(oid) => println!("Saved working directory and index state: {oid}"),
+                None => println!("No local changes to save"),
+            }
+            Ok(())
+        }
+    }
+}
+
+fn report_stash_apply(result: StashApply) -> Result<()> {
+    match result {
+        StashApply::Clean => Ok(()),
+        StashApply::Conflicts(paths) => {
+            report_conflicts("stash apply", &paths);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Serve one repository over Git smart-HTTP until the process is stopped.
+fn cmd_serve_http(args: &ServeHttpArgs) -> Result<()> {
+    let addr: std::net::SocketAddr = args
+        .addr
+        .parse()
+        .with_context(|| format!("invalid --addr {:?} (expected ip:port)", args.addr))?;
+
+    // Validate the repository up front so a bad path fails before we bind.
+    Repository::open_git_dir(&args.git_dir)
+        .with_context(|| format!("opening bare repo at {}", args.git_dir.display()))?;
+
+    let config = SmartHttpConfig {
+        blocked_branches: args.block_branch.clone(),
+        allow_non_fast_forward: args.allow_non_ff,
+        ..SmartHttpConfig::new()
+    };
+    let state = SmartHttpState::new(args.git_dir.clone(), config);
+    eprintln!("rit: serving {} on http://{addr}/", args.git_dir.display());
+    smart_http_serve_blocking(addr, state)?;
+    Ok(())
 }
 
 /// Serve a **native** stateful (SSH/process) upload-pack session over
@@ -410,7 +703,9 @@ fn read_pkt_line(input: &mut impl Read) -> Result<PktLine> {
         4 => Ok(PktLine::Other),     // empty payload
         _ => {
             let mut payload = vec![0u8; length - 4];
-            input.read_exact(&mut payload).context("reading pkt-line payload")?;
+            input
+                .read_exact(&mut payload)
+                .context("reading pkt-line payload")?;
             let line = String::from_utf8_lossy(&payload);
             let line = line.trim_end();
             if let Some(rest) = line.strip_prefix("want ") {
@@ -449,7 +744,8 @@ fn cmd_receive_pack(args: &ReceivePackArgs) -> Result<()> {
     // targets a blocked branch, reject the whole push with a per-ref `ng` status
     // and never touch objects or refs.
     if !args.block_branch.is_empty() {
-        let parsed = parse_receive_pack_request(&request, RECEIVE_PACK_CAPABILITIES, packet_limits)?;
+        let parsed =
+            parse_receive_pack_request(&request, RECEIVE_PACK_CAPABILITIES, packet_limits)?;
         let blocked = parsed.commands.iter().any(|cmd| {
             cmd.name()
                 .strip_prefix("refs/heads/")
@@ -559,8 +855,14 @@ fn read_receive_pack_request(
     }
 
     let parsed = parse_receive_pack_request(&request, RECEIVE_PACK_CAPABILITIES, packet_limits)?;
-    let needs_pack = parsed.commands.len() == 1
-        && !matches!(parsed.commands[0], ReceivePackCommand::Delete { .. });
+    // A pack follows whenever any command creates or updates a ref (including a
+    // multi-ref push). A push made up solely of deletions carries no pack, and
+    // Git keeps its write side open awaiting status, so reading for EOF there
+    // would deadlock.
+    let needs_pack = parsed
+        .commands
+        .iter()
+        .any(|command| !matches!(command, ReceivePackCommand::Delete { .. }));
     if needs_pack {
         let max_pack = usize::try_from(receive_limits.max_pack_bytes)
             .context("receive pack limit does not fit this platform")?;
@@ -844,10 +1146,7 @@ fn cmd_init(args: &InitArgs) -> Result<()> {
     };
     let kind = if args.bare { "bare " } else { "" };
     let git_dir = std::fs::canonicalize(repo.git_dir()).unwrap_or_else(|_| repo.git_dir().into());
-    println!(
-        "{action} {kind}Git repository in {}/",
-        git_dir.display()
-    );
+    println!("{action} {kind}Git repository in {}/", git_dir.display());
     Ok(())
 }
 

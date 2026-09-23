@@ -105,14 +105,7 @@ pub fn cmd_branch_create(
     let message = format!("branch: Created from {source_desc}");
 
     repo.branch_create(
-        name,
-        start_oid,
-        force,
-        &sig.name,
-        &sig.email,
-        sig.time,
-        &sig.tz,
-        &message,
+        name, start_oid, force, &sig.name, &sig.email, sig.time, &sig.tz, &message,
     )
     .with_context(|| format!("creating branch {name:?}"))?;
 
@@ -125,11 +118,7 @@ pub fn cmd_branch_create(
 /// (equivalent to `git branch -D`).
 ///
 /// Prints a confirmation line for each deleted branch.
-pub fn cmd_branch_delete(
-    repo: &Repository,
-    names: &[&str],
-    force: bool,
-) -> anyhow::Result<()> {
+pub fn cmd_branch_delete(repo: &Repository, names: &[&str], force: bool) -> anyhow::Result<()> {
     if names.is_empty() {
         bail!("branch --delete requires at least one branch name");
     }
@@ -159,13 +148,7 @@ pub fn cmd_branch_rename(
     sig: &Signature,
 ) -> anyhow::Result<()> {
     repo.branch_rename(
-        old_name,
-        new_name,
-        force,
-        &sig.name,
-        &sig.email,
-        sig.time,
-        &sig.tz,
+        old_name, new_name, force, &sig.name, &sig.email, sig.time, &sig.tz,
     )
     .with_context(|| format!("renaming branch {old_name:?} → {new_name:?}"))?;
     println!("Renamed branch {old_name} to {new_name}.");
@@ -177,10 +160,23 @@ pub fn cmd_branch_rename(
 /// Decoded branch operation — used by the convenience dispatcher.
 #[derive(Debug)]
 pub enum BranchOp<'a> {
-    List { verbose: bool },
-    Create { name: &'a str, start: Option<&'a str>, force: bool },
-    Delete { names: Vec<&'a str>, force: bool },
-    Rename { old: &'a str, new: &'a str, force: bool },
+    List {
+        verbose: bool,
+    },
+    Create {
+        name: &'a str,
+        start: Option<&'a str>,
+        force: bool,
+    },
+    Delete {
+        names: Vec<&'a str>,
+        force: bool,
+    },
+    Rename {
+        old: &'a str,
+        new: &'a str,
+        force: bool,
+    },
 }
 
 /// High-level branch dispatcher: given a decoded [`BranchOp`] and an actor
@@ -188,16 +184,10 @@ pub enum BranchOp<'a> {
 ///
 /// The integrator calls this from their `cmd_branch` main.rs function after
 /// translating clap args into a `BranchOp`.
-pub fn dispatch_branch(
-    repo: &Repository,
-    op: BranchOp<'_>,
-    sig: &Signature,
-) -> anyhow::Result<()> {
+pub fn dispatch_branch(repo: &Repository, op: BranchOp<'_>, sig: &Signature) -> anyhow::Result<()> {
     match op {
         BranchOp::List { verbose } => cmd_branch_list(repo, verbose),
-        BranchOp::Create { name, start, force } => {
-            cmd_branch_create(repo, name, start, force, sig)
-        }
+        BranchOp::Create { name, start, force } => cmd_branch_create(repo, name, start, force, sig),
         BranchOp::Delete { names, force } => cmd_branch_delete(repo, &names, force),
         BranchOp::Rename { old, new, force } => cmd_branch_rename(repo, old, new, force, sig),
     }

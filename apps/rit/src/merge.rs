@@ -241,10 +241,7 @@ fn is_binary(data: &[u8]) -> bool {
 }
 
 /// Flatten an optional tree; `None` → empty map.
-fn flatten_opt(
-    repo: &Repository,
-    tree: Option<ObjectId>,
-) -> Result<BTreeMap<Vec<u8>, Entry>> {
+fn flatten_opt(repo: &Repository, tree: Option<ObjectId>) -> Result<BTreeMap<Vec<u8>, Entry>> {
     match tree {
         Some(oid) => flatten(repo, oid),
         None => Ok(BTreeMap::new()),
@@ -405,7 +402,8 @@ mod tests {
                 .collect(),
         };
         t.canonicalize();
-        repo.hash_object(ObjectType::Tree, &t.serialize(), true).unwrap()
+        repo.hash_object(ObjectType::Tree, &t.serialize(), true)
+            .unwrap()
     }
 
     fn tree_modes(repo: &Repository, entries: Vec<(&str, &str, ObjectId)>) -> ObjectId {
@@ -420,11 +418,13 @@ mod tests {
                 .collect(),
         };
         t.canonicalize();
-        repo.hash_object(ObjectType::Tree, &t.serialize(), true).unwrap()
+        repo.hash_object(ObjectType::Tree, &t.serialize(), true)
+            .unwrap()
     }
 
     fn commit(repo: &Repository, tree: ObjectId, parents: Vec<ObjectId>) -> ObjectId {
-        repo.commit_tree(tree, parents, sig(), sig(), b"c\n", None).unwrap()
+        repo.commit_tree(tree, parents, sig(), sig(), b"c\n", None)
+            .unwrap()
     }
 
     #[test]
@@ -441,7 +441,11 @@ mod tests {
         let ours_only = blob(&repo, b"ours\n");
         let ours_tree = tree(
             &repo,
-            vec![("a.txt", a_ours), ("shared.txt", shared), ("ours.txt", ours_only)],
+            vec![
+                ("a.txt", a_ours),
+                ("shared.txt", shared),
+                ("ours.txt", ours_only),
+            ],
         );
         let ours = commit(&repo, ours_tree, vec![base]);
         // theirs: change line 3 + add theirs.txt
@@ -449,7 +453,11 @@ mod tests {
         let theirs_only = blob(&repo, b"theirs\n");
         let theirs_tree = tree(
             &repo,
-            vec![("a.txt", a_theirs), ("shared.txt", shared), ("theirs.txt", theirs_only)],
+            vec![
+                ("a.txt", a_theirs),
+                ("shared.txt", shared),
+                ("theirs.txt", theirs_only),
+            ],
         );
         let theirs = commit(&repo, theirs_tree, vec![base]);
 
@@ -497,9 +505,16 @@ mod tests {
         let g1 = commit(&repo, tree(&repo, vec![("a.txt", blob0)]), vec![root]);
         let g2 = commit(&repo, tree(&repo, vec![("a.txt", blob0)]), vec![g1]);
         // Distinct trees so the two tips are distinct commits (not the same oid).
-        let ours = commit(&repo, tree(&repo, vec![("a.txt", blob(&repo, b"ours\n"))]), vec![g2]);
-        let theirs =
-            commit(&repo, tree(&repo, vec![("a.txt", blob(&repo, b"theirs\n"))]), vec![g2]);
+        let ours = commit(
+            &repo,
+            tree(&repo, vec![("a.txt", blob(&repo, b"ours\n"))]),
+            vec![g2],
+        );
+        let theirs = commit(
+            &repo,
+            tree(&repo, vec![("a.txt", blob(&repo, b"theirs\n"))]),
+            vec![g2],
+        );
 
         assert_eq!(merge_bases(&repo, ours, theirs).unwrap(), vec![g2]);
         assert_eq!(merge_base(&repo, ours, theirs).unwrap(), Some(g2));
@@ -518,11 +533,27 @@ mod tests {
         let repo = Repository::init(dir.path(), true, Some("main")).unwrap();
         let blob0 = blob(&repo, b"0\n");
         let root = commit(&repo, tree(&repo, vec![("a.txt", blob0)]), vec![]);
-        let a = commit(&repo, tree(&repo, vec![("a.txt", blob(&repo, b"a\n"))]), vec![root]);
-        let b = commit(&repo, tree(&repo, vec![("a.txt", blob(&repo, b"b\n"))]), vec![root]);
+        let a = commit(
+            &repo,
+            tree(&repo, vec![("a.txt", blob(&repo, b"a\n"))]),
+            vec![root],
+        );
+        let b = commit(
+            &repo,
+            tree(&repo, vec![("a.txt", blob(&repo, b"b\n"))]),
+            vec![root],
+        );
         // Two independent merges of the same pair of branches => criss-cross.
-        let m1 = commit(&repo, tree(&repo, vec![("a.txt", blob(&repo, b"m1\n"))]), vec![a, b]);
-        let m2 = commit(&repo, tree(&repo, vec![("a.txt", blob(&repo, b"m2\n"))]), vec![a, b]);
+        let m1 = commit(
+            &repo,
+            tree(&repo, vec![("a.txt", blob(&repo, b"m1\n"))]),
+            vec![a, b],
+        );
+        let m2 = commit(
+            &repo,
+            tree(&repo, vec![("a.txt", blob(&repo, b"m2\n"))]),
+            vec![a, b],
+        );
 
         let mut bases = merge_bases(&repo, m1, m2).unwrap();
         bases.sort();
@@ -543,10 +574,18 @@ mod tests {
         let repo = Repository::init(dir.path(), true, Some("main")).unwrap();
         let a0 = blob(&repo, b"base\n");
         let keep = blob(&repo, b"keep\n");
-        let base = commit(&repo, tree(&repo, vec![("a.txt", a0), ("k.txt", keep)]), vec![]);
+        let base = commit(
+            &repo,
+            tree(&repo, vec![("a.txt", a0), ("k.txt", keep)]),
+            vec![],
+        );
         // ours modifies a.txt; theirs deletes a.txt (tree omits it).
         let a_mod = blob(&repo, b"changed\n");
-        let ours = commit(&repo, tree(&repo, vec![("a.txt", a_mod), ("k.txt", keep)]), vec![base]);
+        let ours = commit(
+            &repo,
+            tree(&repo, vec![("a.txt", a_mod), ("k.txt", keep)]),
+            vec![base],
+        );
         let theirs = commit(&repo, tree(&repo, vec![("k.txt", keep)]), vec![base]);
 
         match merge_commits(&repo, ours, theirs).unwrap() {
@@ -562,12 +601,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let repo = Repository::init(dir.path(), true, Some("main")).unwrap();
         let content = blob(&repo, b"x\n");
-        let base = commit(&repo, tree_modes(&repo, vec![("s.sh", "100644", content)]), vec![]);
+        let base = commit(
+            &repo,
+            tree_modes(&repo, vec![("s.sh", "100644", content)]),
+            vec![],
+        );
         // ours: chmod +x, same content. theirs: same mode, new content.
-        let ours = commit(&repo, tree_modes(&repo, vec![("s.sh", "100755", content)]), vec![base]);
+        let ours = commit(
+            &repo,
+            tree_modes(&repo, vec![("s.sh", "100755", content)]),
+            vec![base],
+        );
         let new_content = blob(&repo, b"y\n");
-        let theirs =
-            commit(&repo, tree_modes(&repo, vec![("s.sh", "100644", new_content)]), vec![base]);
+        let theirs = commit(
+            &repo,
+            tree_modes(&repo, vec![("s.sh", "100644", new_content)]),
+            vec![base],
+        );
 
         match merge_commits(&repo, ours, theirs).unwrap() {
             MergeOutcome::Conflict(paths) => assert_eq!(paths, vec!["s.sh".to_string()]),
@@ -586,9 +636,16 @@ mod tests {
         // new.txt is the add/add-identical path under test.
         let ours_only = blob(&repo, b"o\n");
         let theirs_only = blob(&repo, b"t\n");
-        let ours = commit(&repo, tree(&repo, vec![("new.txt", same), ("o.txt", ours_only)]), vec![base]);
-        let theirs =
-            commit(&repo, tree(&repo, vec![("new.txt", same), ("t.txt", theirs_only)]), vec![base]);
+        let ours = commit(
+            &repo,
+            tree(&repo, vec![("new.txt", same), ("o.txt", ours_only)]),
+            vec![base],
+        );
+        let theirs = commit(
+            &repo,
+            tree(&repo, vec![("new.txt", same), ("t.txt", theirs_only)]),
+            vec![base],
+        );
 
         match merge_commits(&repo, ours, theirs).unwrap() {
             MergeOutcome::Clean(t) => {
@@ -609,9 +666,16 @@ mod tests {
         let repo = Repository::init(dir.path(), true, Some("main")).unwrap();
         let base_bin = blob(&repo, b"\x00base");
         let base = commit(&repo, tree(&repo, vec![("a.bin", base_bin)]), vec![]);
-        let ours = commit(&repo, tree(&repo, vec![("a.bin", blob(&repo, b"\x00ours"))]), vec![base]);
-        let theirs =
-            commit(&repo, tree(&repo, vec![("a.bin", blob(&repo, b"\x00theirs"))]), vec![base]);
+        let ours = commit(
+            &repo,
+            tree(&repo, vec![("a.bin", blob(&repo, b"\x00ours"))]),
+            vec![base],
+        );
+        let theirs = commit(
+            &repo,
+            tree(&repo, vec![("a.bin", blob(&repo, b"\x00theirs"))]),
+            vec![base],
+        );
 
         match merge_commits(&repo, ours, theirs).unwrap() {
             MergeOutcome::Conflict(paths) => assert_eq!(paths, vec!["a.bin".to_string()]),

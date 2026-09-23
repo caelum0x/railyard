@@ -191,7 +191,8 @@ mod tests {
 
     #[test]
     fn name_with_spaces_parses() {
-        let line = "0000000000000000000000000000000000000000 1111111111111111111111111111111111111111 \
+        let line =
+            "0000000000000000000000000000000000000000 1111111111111111111111111111111111111111 \
             Joe Q Public <joe@example.com> 1700000001 +0100\tbranch: Created from HEAD";
         let e = ReflogEntry::parse(line).unwrap();
         assert_eq!(e.name, "Joe Q Public");
@@ -238,8 +239,14 @@ mod tests {
         // Read unbounded — should return newest first.
         let entries = read_reflog(git_dir, "refs/heads/main", 100).unwrap();
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].new_oid, "2222222222222222222222222222222222222222");
-        assert_eq!(entries[1].new_oid, "1111111111111111111111111111111111111111");
+        assert_eq!(
+            entries[0].new_oid,
+            "2222222222222222222222222222222222222222"
+        );
+        assert_eq!(
+            entries[1].new_oid,
+            "1111111111111111111111111111111111111111"
+        );
     }
 
     #[test]

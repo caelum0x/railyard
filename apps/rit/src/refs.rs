@@ -238,6 +238,137 @@ impl Refs {
         result
     }
 
+    /// Apply several ref changes as one all-or-nothing transaction.
+    ///
+    /// Phase 1 locks every ref with the same `.lock` protocol as
+    /// [`compare_and_swap`](Self::compare_and_swap) and verifies each current
+    /// value against its command's expectation. If any lock cannot be taken or
+    /// any expectation is stale, nothing is modified and the offending ref is
+    /// named in the returned [`AtomicRefError`] so the caller can report a
+    /// precise per-ref status. Locks are non-blocking (`create_new`), so two
+    /// conflicting transactions never deadlock — the loser observes an existing
+    /// `.lock` and aborts.
+    ///
+    /// Phase 2 publishes each change (write+rename for updates, unlink for
+    /// deletes). Because every expectation was already verified under lock, this
+    /// phase only fails on an unexpected filesystem error; the decision to accept
+    /// or reject the batch is fully atomic even though the physical commit, like
+    /// Git's own loose-ref backend, is not perfectly crash-atomic across files.
+    pub fn atomic_update(
+        &self,
+        commands: &[RefCommand],
+    ) -> std::result::Result<(), AtomicRefError> {
+        let fail = |name: &str, source: ForgeError| AtomicRefError {
+            name: name.to_string(),
+            source,
+        };
+
+        let mut held: Vec<HeldRefLock> = Vec::new();
+        for (index, command) in commands.iter().enumerate() {
+            match self.lock_and_verify(index, command) {
+                Ok(lock) => held.push(lock),
+                Err(source) => {
+                    rollback_ref_locks(&held);
+                    return Err(fail(&command.name, source));
+                }
+            }
+        }
+
+        for position in 0..held.len() {
+            let command = &commands[held[position].index];
+            if let Err(source) = commit_ref_change(&mut held[position], &command.change) {
+                // The physical commit failed mid-batch. Clean every remaining
+                // lock so a retry is possible; earlier renames cannot be undone.
+                rollback_ref_locks(&held);
+                return Err(fail(&command.name, source));
+            }
+        }
+        Ok(())
+    }
+
+    /// Lock one ref and verify its current value matches `command`'s expectation.
+    /// On success the returned guard owns the `.lock` file for the commit phase.
+    fn lock_and_verify(&self, index: usize, command: &RefCommand) -> Result<HeldRefLock> {
+        validate_refname(&command.name)?;
+        let path = self.git_dir.join(&command.name);
+        let parent = path
+            .parent()
+            .ok_or_else(|| ForgeError::UnsafePath(command.name.clone()))?;
+        std::fs::create_dir_all(parent)?;
+        reject_symlink_components(&self.git_dir, parent)?;
+        if std::fs::symlink_metadata(&path)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return Err(ForgeError::UnsafePath(path.display().to_string()));
+        }
+
+        let lock_path = PathBuf::from(format!("{}.lock", path.display()));
+        let lock = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(ForgeError::RefLocked(command.name.clone()))
+            }
+            Err(error) => return Err(error.into()),
+        };
+
+        let verify = (|| {
+            let actual = match self.resolve(&command.name) {
+                Ok(oid) => Some(oid),
+                Err(ForgeError::InvalidRef(_)) => None,
+                Err(error) => return Err(error),
+            };
+            match &command.change {
+                RefChange::Update { expected, .. } => {
+                    if actual != *expected {
+                        return Err(ForgeError::RefConflict {
+                            name: command.name.clone(),
+                            expected: expected
+                                .map(|oid| oid.to_hex())
+                                .unwrap_or_else(|| "<missing>".into()),
+                            actual: actual
+                                .map(|oid| oid.to_hex())
+                                .unwrap_or_else(|| "<missing>".into()),
+                        });
+                    }
+                }
+                RefChange::Delete { old } => {
+                    if actual != Some(*old) {
+                        return Err(ForgeError::RefConflict {
+                            name: command.name.clone(),
+                            expected: old.to_hex(),
+                            actual: actual
+                                .map(|oid| oid.to_hex())
+                                .unwrap_or_else(|| "<missing>".into()),
+                        });
+                    }
+                    if self.read_packed_refs()?.contains_key(&command.name) {
+                        return Err(ForgeError::ReceiveRejected(format!(
+                            "cannot safely delete packed ref {} with the loose-ref transaction",
+                            command.name
+                        )));
+                    }
+                }
+            }
+            Ok(())
+        })();
+
+        if let Err(error) = verify {
+            let _ = std::fs::remove_file(&lock_path);
+            return Err(error);
+        }
+        Ok(HeldRefLock {
+            index,
+            path,
+            lock_path,
+            lock,
+        })
+    }
+
     /// Append one reflog entry to `.git/logs/<refname>` and, when this ref is
     /// HEAD's current symbolic target, also to `.git/logs/HEAD`.
     ///
@@ -321,6 +452,76 @@ impl Refs {
             format!("refs/remotes/{name}/HEAD"),
         ]
     }
+}
+
+/// One ref change requested inside an atomic multi-ref transaction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RefChange {
+    /// Set the ref to `new`, requiring its current value to equal `expected`
+    /// (`None` means the ref must not currently exist — a creation).
+    Update {
+        expected: Option<ObjectId>,
+        new: ObjectId,
+    },
+    /// Delete the ref, requiring its current value to equal `old`.
+    Delete { old: ObjectId },
+}
+
+/// A named [`RefChange`] for [`Refs::atomic_update`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefCommand {
+    pub name: String,
+    pub change: RefChange,
+}
+
+/// Failure from [`Refs::atomic_update`], naming the offending ref so a caller can
+/// report a precise per-ref status while failing every other ref generically.
+#[derive(Debug)]
+pub struct AtomicRefError {
+    pub name: String,
+    pub source: ForgeError,
+}
+
+/// A ref lock held between the verify and commit phases of an atomic update.
+struct HeldRefLock {
+    /// Position of the originating command, so the commit phase can recover it.
+    index: usize,
+    path: PathBuf,
+    lock_path: PathBuf,
+    lock: std::fs::File,
+}
+
+/// Best-effort release of every acquired `.lock` file (used to abort a batch).
+fn rollback_ref_locks(held: &[HeldRefLock]) {
+    for lock in held {
+        let _ = std::fs::remove_file(&lock.lock_path);
+    }
+}
+
+/// Publish one verified change: write+rename for an update, unlink for a delete.
+fn commit_ref_change(held: &mut HeldRefLock, change: &RefChange) -> Result<()> {
+    match change {
+        RefChange::Update { new, .. } => {
+            writeln!(held.lock, "{new}")?;
+            held.lock.sync_all()?;
+            std::fs::rename(&held.lock_path, &held.path)?;
+            if let Some(parent) = held.path.parent() {
+                std::fs::File::open(parent)?.sync_all()?;
+            }
+        }
+        RefChange::Delete { .. } => {
+            match std::fs::remove_file(&held.path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            if let Some(parent) = held.path.parent() {
+                std::fs::File::open(parent)?.sync_all()?;
+            }
+            std::fs::remove_file(&held.lock_path)?;
+        }
+    }
+    Ok(())
 }
 
 /// Interpret raw ref file / HEAD content.

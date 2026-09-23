@@ -65,8 +65,10 @@ pub mod diff_render;
 pub mod error;
 pub mod fsck;
 pub mod headers;
+pub mod http;
 pub mod index;
 pub mod merge;
+pub mod merge_cmd;
 pub mod object;
 pub mod odb;
 pub mod oid;
@@ -76,9 +78,11 @@ pub mod receive_pack;
 pub mod reflog;
 pub mod refs;
 pub mod repo;
+pub mod sequencer;
 pub mod server;
 pub mod show;
 pub mod signature;
+pub mod stash;
 pub mod tag;
 pub mod tag_ops;
 pub mod tree;
@@ -87,43 +91,63 @@ pub mod wire;
 pub mod worktree;
 
 pub use blob::Blob;
+pub use branch::{
+    cmd_branch_create, cmd_branch_delete, cmd_branch_list, cmd_branch_rename, dispatch_branch,
+    BranchOp,
+};
+pub use checkout::{cmd_switch, SwitchHead, SwitchResult};
 pub use commit::Commit;
 pub use diff::{diff_trees, ChangeKind, TreeChange};
+pub use diff_render::cmd_diff;
 pub use error::{ForgeError, Result};
 pub use fsck::{
     check_connectivity, is_ancestor, ConnectivityLimits, ConnectivityReport, ObjectReader,
 };
+pub use http::smart_http::{
+    info_refs, maybe_gunzip, receive_pack_rpc, router as smart_http_router,
+    serve as smart_http_serve, serve_blocking as smart_http_serve_blocking, upload_pack_rpc,
+    Service, SmartHttpConfig, SmartHttpState, SmartResponse, DEFAULT_MAX_BODY_BYTES,
+};
 pub use index::{Index, IndexEntry};
 pub use merge::{merge_base, merge_bases, merge_commits, merge_trees, MergeOutcome};
+pub use merge_cmd::{abort_merge, cmd_merge, continue_merge, MergeKind, MergeResult};
 pub use object::{hash_content, parse_loose, Object, ObjectType};
 pub use odb::Odb;
 pub use oid::ObjectId;
 pub use pack::PackStore;
-pub use receive::{ReceiveLimits, ReceiveObject, ReceiveOutcome, ReceiveTransaction, RefUpdate};
+pub use receive::{
+    AtomicRefResult, AtomicRefUpdate, ReceiveAtomicOutcome, ReceiveLimits, ReceiveObject,
+    ReceiveOutcome, ReceiveTransaction, RefUpdate,
+};
 pub use receive_pack::{
     advertise_receive_pack, execute_receive_pack, DeletedRef, ReceivePackExecution,
     ReceivePackPolicy, RECEIVE_PACK_CAPABILITIES,
 };
-pub use refs::{validate_refname, RefTarget, Refs};
+pub use reflog::{append_reflog_file, log_path_for_ref, read_reflog, ReflogEntry, NULL_OID_HEX};
+pub use refs::{validate_refname, AtomicRefError, RefChange, RefCommand, RefTarget, Refs};
 pub use repo::Repository;
+pub use sequencer::{
+    cmd_cherry_pick, cmd_rebase, cmd_sequencer_abort, cmd_sequencer_continue, cmd_sequencer_skip,
+    SequencerStatus,
+};
 pub use server::{dumb_info_refs, objects_info_packs, update_server_info};
+pub use show::cmd_show;
 pub use signature::Signature;
+pub use stash::{
+    cmd_stash_apply, cmd_stash_drop, cmd_stash_pop, cmd_stash_push, stash_list, StashApply,
+};
 pub use tag::Tag;
+pub use tag_ops::{
+    cmd_tag_create_annotated, cmd_tag_create_lightweight, cmd_tag_delete, cmd_tag_list,
+    dispatch_tag, TagOp,
+};
 pub use tree::{Tree, TreeEntry};
 pub use upload_pack::{
-    advertise_upload_pack, generate_pack, parse_fetch_request, reachable_objects, upload_pack_v0,
-    FetchRequest, UPLOAD_PACK_CAPABILITIES,
+    advertise_upload_pack, generate_pack, generate_pack_with_options, parse_fetch_request,
+    reachable_objects, upload_pack_v0, FetchRequest, PackOptions, UPLOAD_PACK_CAPABILITIES,
 };
 pub use wire::{
     decode_packet_lines, encode_packet_line, encode_receive_status, parse_receive_pack_request,
     PacketLine, PacketLineLimits, ReceivePackCommand, ReceivePackRequest, ReceiveStatus,
 };
 pub use worktree::{StatusEntry, WorktreeState};
-pub use branch::{BranchOp, dispatch_branch, cmd_branch_list, cmd_branch_create,
-                 cmd_branch_delete, cmd_branch_rename};
-pub use checkout::{cmd_switch, SwitchHead, SwitchResult};
-pub use diff_render::cmd_diff;
-pub use show::cmd_show;
-pub use tag_ops::{TagOp, dispatch_tag, cmd_tag_list, cmd_tag_create_lightweight,
-                  cmd_tag_create_annotated, cmd_tag_delete};
-pub use reflog::{ReflogEntry, read_reflog, append_reflog_file, log_path_for_ref, NULL_OID_HEX};

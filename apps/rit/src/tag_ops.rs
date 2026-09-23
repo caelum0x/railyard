@@ -52,16 +52,10 @@ pub fn cmd_tag_list(repo: &Repository, show_annotation: bool) -> anyhow::Result<
                 .ok()
                 .and_then(|obj| match obj {
                     crate::object::Object::Tag(t) => {
-                        t.message_str()
-                            .lines()
-                            .next()
-                            .map(|l| l.trim().to_string())
+                        t.message_str().lines().next().map(|l| l.trim().to_string())
                     }
                     crate::object::Object::Commit(c) => {
-                        c.message_str()
-                            .lines()
-                            .next()
-                            .map(|l| l.trim().to_string())
+                        c.message_str().lines().next().map(|l| l.trim().to_string())
                     }
                     _ => None,
                 })
@@ -160,10 +154,23 @@ pub fn cmd_tag_delete(repo: &Repository, names: &[&str]) -> anyhow::Result<()> {
 /// Decoded tag operation — used by the convenience dispatcher.
 #[derive(Debug)]
 pub enum TagOp<'a> {
-    List { show_annotation: bool },
-    CreateLightweight { name: &'a str, target: Option<&'a str>, force: bool },
-    CreateAnnotated { name: &'a str, target: Option<&'a str>, message: &'a str, force: bool },
-    Delete { names: Vec<&'a str> },
+    List {
+        show_annotation: bool,
+    },
+    CreateLightweight {
+        name: &'a str,
+        target: Option<&'a str>,
+        force: bool,
+    },
+    CreateAnnotated {
+        name: &'a str,
+        target: Option<&'a str>,
+        message: &'a str,
+        force: bool,
+    },
+    Delete {
+        names: Vec<&'a str>,
+    },
 }
 
 /// High-level tag dispatcher: given a decoded [`TagOp`] and an optional actor
@@ -178,12 +185,19 @@ pub fn dispatch_tag(
 ) -> anyhow::Result<()> {
     match op {
         TagOp::List { show_annotation } => cmd_tag_list(repo, show_annotation),
-        TagOp::CreateLightweight { name, target, force } => {
-            cmd_tag_create_lightweight(repo, name, target, force)
-        }
-        TagOp::CreateAnnotated { name, target, message, force } => {
-            let tagger = sig
-                .ok_or_else(|| anyhow::anyhow!("annotated tag requires an actor signature"))?;
+        TagOp::CreateLightweight {
+            name,
+            target,
+            force,
+        } => cmd_tag_create_lightweight(repo, name, target, force),
+        TagOp::CreateAnnotated {
+            name,
+            target,
+            message,
+            force,
+        } => {
+            let tagger =
+                sig.ok_or_else(|| anyhow::anyhow!("annotated tag requires an actor signature"))?;
             cmd_tag_create_annotated(repo, name, target, message, tagger, force)?;
             Ok(())
         }

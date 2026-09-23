@@ -257,7 +257,10 @@ fn commit_or_tree_oid(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
             other => {
                 return Err(ForgeError::malformed(
                     "object",
-                    format!("{current} is a {}, expected commit or tree", other.object_type()),
+                    format!(
+                        "{current} is a {}, expected commit or tree",
+                        other.object_type()
+                    ),
                 ))
             }
         }
@@ -482,11 +485,7 @@ fn flatten_tree(
 /// Fails with [`ForgeError::NoWorktree`] for bare repositories.
 fn repo_worktree(repo: &Repository) -> Result<PathBuf> {
     let git_dir = repo.git_dir();
-    if git_dir
-        .file_name()
-        .map(|n| n == ".git")
-        .unwrap_or(false)
-    {
+    if git_dir.file_name().map(|n| n == ".git").unwrap_or(false) {
         git_dir
             .parent()
             .map(|p| p.to_path_buf())
@@ -504,9 +503,7 @@ fn path_from_bytes(bytes: &[u8]) -> Result<PathBuf> {
     let s = std::str::from_utf8(bytes)
         .map_err(|_| ForgeError::UnsafePath("non-UTF-8 path in index".into()))?;
     let p = Path::new(s);
-    if p.components()
-        .any(|c| !matches!(c, Component::Normal(_)))
-    {
+    if p.components().any(|c| !matches!(c, Component::Normal(_))) {
         return Err(ForgeError::UnsafePath(s.into()));
     }
     Ok(p.to_path_buf())
@@ -516,11 +513,7 @@ fn path_from_bytes(bytes: &[u8]) -> Result<PathBuf> {
 mod tests {
     use super::*;
 
-    fn init_repo_with_file(
-        dir: &Path,
-        name: &str,
-        content: &[u8],
-    ) -> (Repository, ObjectId) {
+    fn init_repo_with_file(dir: &Path, name: &str, content: &[u8]) -> (Repository, ObjectId) {
         let repo = Repository::init(dir, false, Some("main")).unwrap();
         let oid = repo.hash_object(ObjectType::Blob, content, true).unwrap();
         (repo, oid)
@@ -530,7 +523,9 @@ mod tests {
     fn diff_identical_trees_produces_no_output() {
         let dir = tempfile::tempdir().unwrap();
         let repo = Repository::init(dir.path(), true, Some("main")).unwrap();
-        let blob = repo.hash_object(ObjectType::Blob, b"hello\n", true).unwrap();
+        let blob = repo
+            .hash_object(ObjectType::Blob, b"hello\n", true)
+            .unwrap();
 
         let mut entry = crate::tree::Tree {
             entries: vec![crate::TreeEntry {
@@ -540,11 +535,16 @@ mod tests {
             }],
         };
         entry.canonicalize();
-        let tree_oid = repo.hash_object(ObjectType::Tree, &entry.serialize(), true).unwrap();
+        let tree_oid = repo
+            .hash_object(ObjectType::Tree, &entry.serialize(), true)
+            .unwrap();
 
         let mut out = Vec::new();
         diff_two_revs_with_trees(&repo, tree_oid, tree_oid, &mut out).unwrap();
-        assert!(out.is_empty(), "identical trees should produce no diff output");
+        assert!(
+            out.is_empty(),
+            "identical trees should produce no diff output"
+        );
     }
 
     fn diff_two_revs_with_trees(
@@ -564,7 +564,9 @@ mod tests {
     fn diff_addition_shows_new_file_mode_header() {
         let dir = tempfile::tempdir().unwrap();
         let repo = Repository::init(dir.path(), true, Some("main")).unwrap();
-        let blob = repo.hash_object(ObjectType::Blob, b"new content\n", true).unwrap();
+        let blob = repo
+            .hash_object(ObjectType::Blob, b"new content\n", true)
+            .unwrap();
 
         let empty_tree = repo.hash_object(ObjectType::Tree, b"", true).unwrap();
         let mut new_tree_obj = crate::tree::Tree {
@@ -575,13 +577,21 @@ mod tests {
             }],
         };
         new_tree_obj.canonicalize();
-        let new_tree = repo.hash_object(ObjectType::Tree, &new_tree_obj.serialize(), true).unwrap();
+        let new_tree = repo
+            .hash_object(ObjectType::Tree, &new_tree_obj.serialize(), true)
+            .unwrap();
 
         let mut out = Vec::new();
         diff_two_revs_with_trees(&repo, empty_tree, new_tree, &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();
-        assert!(text.contains("new file mode 100644"), "expected 'new file mode' header: {text}");
-        assert!(text.contains("+++ b/new.txt"), "expected +++ header: {text}");
+        assert!(
+            text.contains("new file mode 100644"),
+            "expected 'new file mode' header: {text}"
+        );
+        assert!(
+            text.contains("+++ b/new.txt"),
+            "expected +++ header: {text}"
+        );
         assert!(text.contains("+new content"), "expected added line: {text}");
     }
 
@@ -598,13 +608,18 @@ mod tests {
             }],
         };
         old_tree_obj.canonicalize();
-        let old_tree = repo.hash_object(ObjectType::Tree, &old_tree_obj.serialize(), true).unwrap();
+        let old_tree = repo
+            .hash_object(ObjectType::Tree, &old_tree_obj.serialize(), true)
+            .unwrap();
         let empty_tree = repo.hash_object(ObjectType::Tree, b"", true).unwrap();
 
         let mut out = Vec::new();
         diff_two_revs_with_trees(&repo, old_tree, empty_tree, &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();
-        assert!(text.contains("deleted file mode"), "expected 'deleted file mode': {text}");
+        assert!(
+            text.contains("deleted file mode"),
+            "expected 'deleted file mode': {text}"
+        );
         assert!(text.contains("-gone"), "expected removed line: {text}");
     }
 
@@ -630,6 +645,9 @@ mod tests {
         )
         .unwrap();
         let text = String::from_utf8(out).unwrap();
-        assert!(text.contains("Binary files"), "expected binary marker: {text}");
+        assert!(
+            text.contains("Binary files"),
+            "expected binary marker: {text}"
+        );
     }
 }

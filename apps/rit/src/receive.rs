@@ -3,8 +3,10 @@
 //! Network and pack negotiation are deliberately outside this module. Once an
 //! open-source pack decoder yields typed payloads, this is the safety boundary:
 //! isolate them, verify declared identities, fsck the complete overlay graph,
-//! enforce fast-forward policy, publish immutable objects, then move one ref by
-//! compare-and-swap. A failed transaction never moves the ref.
+//! enforce fast-forward policy, publish immutable objects, then move the ref(s).
+//! [`ReceiveTransaction::finish`] moves exactly one ref by compare-and-swap;
+//! [`ReceiveTransaction::finish_atomic`] applies a whole multi-ref push as one
+//! all-or-nothing transaction. A failed transaction never moves any ref.
 
 use std::collections::BTreeSet;
 use std::io::Cursor;
@@ -20,7 +22,7 @@ use crate::fsck::{check_connectivity, is_ancestor, ConnectivityLimits, ObjectRea
 use crate::object::{Object, ObjectType, MAX_OBJECT_SIZE};
 use crate::odb::Odb;
 use crate::oid::ObjectId;
-use crate::refs::validate_refname;
+use crate::refs::{validate_refname, RefChange, RefCommand};
 use crate::Repository;
 
 static NEXT_QUARANTINE: AtomicU64 = AtomicU64::new(0);
@@ -53,9 +55,9 @@ pub struct ReceiveObject {
     pub payload: Vec<u8>,
 }
 
-/// One ref update. This first safe receive slice deliberately owns exactly one
-/// ref per transaction; multi-ref atomic transactions remain a later wire-layer
-/// capability rather than pretending sequential renames are globally atomic.
+/// One ref update for the single-ref [`ReceiveTransaction::finish`] path.
+/// Multi-ref pushes use [`AtomicRefUpdate`] with
+/// [`ReceiveTransaction::finish_atomic`] instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RefUpdate {
     pub name: String,
@@ -71,6 +73,58 @@ pub struct ReceiveOutcome {
     pub old: Option<ObjectId>,
     pub new: ObjectId,
     pub published_objects: usize,
+}
+
+/// One ref command in an atomic multi-ref receive. `new == None` is a deletion
+/// (and then `expected_old` must be the required current value); otherwise it is
+/// a create (`expected_old == None`) or an update (`expected_old == Some`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AtomicRefUpdate {
+    pub name: String,
+    pub expected_old: Option<ObjectId>,
+    pub new: Option<ObjectId>,
+    pub allow_non_fast_forward: bool,
+}
+
+/// Per-ref result of an atomic receive. `error == None` means the ref was (or
+/// would have been) accepted; every ref shares the same accept/reject verdict.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AtomicRefResult {
+    pub name: String,
+    pub error: Option<String>,
+}
+
+/// Outcome of [`ReceiveTransaction::finish_atomic`]: the per-ref results plus
+/// whether the batch was actually committed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReceiveAtomicOutcome {
+    pub results: Vec<AtomicRefResult>,
+    pub published_objects: usize,
+    pub committed: bool,
+}
+
+/// Pair each update name with its per-ref error into ordered results.
+fn build_results(updates: &[AtomicRefUpdate], errors: Vec<Option<String>>) -> Vec<AtomicRefResult> {
+    updates
+        .iter()
+        .zip(errors)
+        .map(|(update, error)| AtomicRefResult {
+            name: update.name.clone(),
+            error,
+        })
+        .collect()
+}
+
+/// Stable, privacy-safe report-status reason for a rejected ref transaction.
+fn atomic_ref_public_reason(error: &ForgeError) -> &'static str {
+    match error {
+        ForgeError::NonFastForward { .. } => "non-fast-forward",
+        ForgeError::RefConflict { .. } => "stale info",
+        ForgeError::RefLocked(_) => "ref locked",
+        ForgeError::ReceiveRejected(_) => "receive policy rejected",
+        ForgeError::ResourceLimit(_) => "resource limit",
+        _ => "server error",
+    }
 }
 
 /// Isolated decoded-object transaction tied to one target repository.
@@ -366,6 +420,155 @@ impl<'repo> ReceiveTransaction<'repo> {
             new: update.new,
             published_objects: self.staged.len(),
         })
+    }
+
+    /// Validate and publish the complete staged graph, then apply **every**
+    /// requested ref change as one atomic transaction (the multi-ref push).
+    ///
+    /// The whole batch is accepted or rejected together, matching Git's
+    /// `--atomic` receive: object publication and connectivity are checked once
+    /// over the union of all new tips, then [`Refs::atomic_update`] commits or
+    /// rejects the refs in a single locked transaction.
+    ///
+    /// Return semantics separate two failure classes so the transport can build
+    /// an accurate report-status:
+    /// - `Err(..)` is a whole-graph problem (bad connectivity, disconnected
+    ///   objects, unreadable object) that the caller maps to the same reason on
+    ///   every ref, exactly as the single-ref [`finish`](Self::finish) does.
+    /// - `Ok(outcome)` with `committed == false` is a per-ref rejection: the
+    ///   offending ref(s) carry a specific reason and the rest carry a generic
+    ///   "atomic transaction failed", and **no** ref moved.
+    pub fn finish_atomic(self, updates: Vec<AtomicRefUpdate>) -> Result<ReceiveAtomicOutcome> {
+        if let Some(reason) = &self.pack_import_failed {
+            return Err(ForgeError::ReceiveRejected(format!(
+                "an earlier pack import failed after staging began: {reason}"
+            )));
+        }
+        if updates.is_empty() {
+            return Err(ForgeError::ReceiveRejected(
+                "atomic receive requires at least one ref command".into(),
+            ));
+        }
+        for update in &updates {
+            validate_refname(&update.name)?;
+            if update.new.is_none() && update.expected_old.is_none() {
+                return Err(ForgeError::ReceiveRejected(format!(
+                    "deletion of {} must specify the expected current value",
+                    update.name
+                )));
+            }
+        }
+
+        let reader = OverlayReader {
+            quarantine: &self.quarantine_odb,
+            target: self.repository.odb(),
+            staged: &self.staged,
+        };
+
+        // Connectivity is checked once over the union of every non-delete tip.
+        // A push that stages objects unreachable from any surviving tip is a
+        // whole-graph rejection, just like the single-ref path.
+        let tips: Vec<ObjectId> = updates.iter().filter_map(|update| update.new).collect();
+        if !tips.is_empty() {
+            let report = check_connectivity(&reader, &tips, self.limits.connectivity)?;
+            if !self.staged.iter().all(|oid| report.reachable.contains(oid)) {
+                return Err(ForgeError::ReceiveRejected(
+                    "quarantine contains objects disconnected from every proposed ref tip".into(),
+                ));
+            }
+        } else if !self.staged.is_empty() {
+            return Err(ForgeError::ReceiveRejected(
+                "received objects but no ref update would make them reachable".into(),
+            ));
+        }
+
+        // Per-ref semantic checks (branch tip must be a commit; fast-forward
+        // unless the server allows a rewind). These are per-ref because one bad
+        // ref must not blame the others for its specific reason.
+        let mut errors: Vec<Option<String>> = vec![None; updates.len()];
+        let mut any_error = false;
+        for (index, update) in updates.iter().enumerate() {
+            let Some(new) = update.new else { continue };
+            if update.name.starts_with("refs/heads/") {
+                match reader.read_object(&new)? {
+                    Object::Commit(_) => {}
+                    _ => {
+                        errors[index] = Some("branch tip is not a commit".into());
+                        any_error = true;
+                        continue;
+                    }
+                }
+            }
+            if let Some(old) = update.expected_old {
+                if !update.allow_non_fast_forward
+                    && !is_ancestor(&reader, old, new, self.limits.connectivity)?
+                {
+                    errors[index] = Some("non-fast-forward".into());
+                    any_error = true;
+                }
+            }
+        }
+        if any_error {
+            return Ok(ReceiveAtomicOutcome {
+                results: build_results(&updates, errors),
+                published_objects: 0,
+                committed: false,
+            });
+        }
+
+        // Publish immutable objects first. If the ref transaction then loses a
+        // race, only unreachable objects remain — never a moved ref.
+        for oid in &self.staged {
+            let (object_type, payload) = self.quarantine_odb.read_raw(oid)?;
+            let published = self.repository.odb().write(object_type, &payload)?;
+            if published != *oid {
+                return Err(ForgeError::HashMismatch {
+                    looked_up: oid.to_hex(),
+                    computed: published.to_hex(),
+                });
+            }
+        }
+
+        let commands: Vec<RefCommand> = updates
+            .iter()
+            .map(|update| RefCommand {
+                name: update.name.clone(),
+                change: match update.new {
+                    Some(new) => RefChange::Update {
+                        expected: update.expected_old,
+                        new,
+                    },
+                    None => RefChange::Delete {
+                        old: update
+                            .expected_old
+                            .expect("delete validated to carry an old value"),
+                    },
+                },
+            })
+            .collect();
+
+        match self.repository.refs().atomic_update(&commands) {
+            Ok(()) => Ok(ReceiveAtomicOutcome {
+                results: build_results(&updates, vec![None; updates.len()]),
+                published_objects: self.staged.len(),
+                committed: true,
+            }),
+            Err(error) => {
+                let reason = atomic_ref_public_reason(&error.source);
+                for (index, update) in updates.iter().enumerate() {
+                    errors[index] = Some(if update.name == error.name {
+                        reason.to_string()
+                    } else {
+                        "atomic transaction failed".to_string()
+                    });
+                }
+                Ok(ReceiveAtomicOutcome {
+                    results: build_results(&updates, errors),
+                    published_objects: 0,
+                    committed: false,
+                })
+            }
+        }
     }
 
     pub fn staged_objects(&self) -> usize {

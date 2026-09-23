@@ -83,7 +83,10 @@ pub fn update_server_info(repo: &Repository) -> Result<()> {
 
     let objects_info = git_dir.join("objects").join("info");
     std::fs::create_dir_all(&objects_info)?;
-    write_atomic(&objects_info.join("packs"), objects_info_packs(repo)?.as_bytes())?;
+    write_atomic(
+        &objects_info.join("packs"),
+        objects_info_packs(repo)?.as_bytes(),
+    )?;
     Ok(())
 }
 
@@ -152,7 +155,10 @@ mod tests {
             .unwrap();
 
         let advertised = dumb_info_refs(&repo).unwrap();
-        assert_eq!(advertised, format!("{}\trefs/heads/main\n", commit.to_hex()));
+        assert_eq!(
+            advertised,
+            format!("{}\trefs/heads/main\n", commit.to_hex())
+        );
 
         // update_server_info writes the same content to disk.
         update_server_info(&repo).unwrap();
