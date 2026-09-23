@@ -23,6 +23,19 @@ use uuid::Uuid;
 
 use crate::transport::TransportError;
 
+/// Provider idempotency key for attempt `attempt` (0-based) of a payment:
+/// `payment-<id>` for the first attempt, `payment-<id>-<n>` for retries. A
+/// replay of the same attempt reuses the key (deduplicated by the provider); a
+/// legitimate retry of a declined charge gets a fresh key, because providers
+/// cache 4xx results (e.g. Stripe `card_declined`) under a key for 24h.
+pub fn idempotency_key(payment_id: &Uuid, attempt: u32) -> String {
+    if attempt == 0 {
+        format!("payment-{payment_id}")
+    } else {
+        format!("payment-{payment_id}-{attempt}")
+    }
+}
+
 /// A request to charge an invoice.
 #[derive(Debug, Clone)]
 pub struct PaymentRequest {

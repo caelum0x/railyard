@@ -34,7 +34,10 @@ pub use payments::stripe_webhook::{
     DEFAULT_TOLERANCE_SECS,
 };
 pub use payments::{PayableStatus, PaymentError, PaymentOutcome, PaymentProvider, PaymentRequest};
-pub use transport::{HttpResponse, HttpTransport, MockTransport, TransportError};
+pub use transport::{
+    default_transport, DefaultTransport, DisabledTransport, HttpResponse, HttpTransport,
+    MockTransport, TransportError, LIVE,
+};
 #[cfg(feature = "live")]
 pub use transport::ReqwestTransport;
 pub use webhooks::catalog::WebhookKind;

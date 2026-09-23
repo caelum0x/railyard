@@ -201,6 +201,13 @@ pub async fn create_one_off_invoice(
         &json!({ "number": invoice.number, "total_amount_cents": invoice.total_amount_cents }),
     ).await;
 
+    crate::emit::webhook(
+        &st.db,
+        org,
+        rago_integrations::webhooks::WebhookKind::InvoiceOneOffCreated,
+        ser::invoice(&invoice, &fees),
+    )
+    .await;
     send_invoice_finalized(&st, &invoice, &fees, customer.email.as_deref()).await;
 
     Ok(Json(json!({ "invoice": ser::invoice(&invoice, &fees) })))
@@ -210,7 +217,10 @@ pub async fn create_one_off_invoice(
 /// transport (`InvoiceMailer#finalized`). Best-effort: a mail failure never
 /// fails the billing request.
 pub async fn send_invoice_finalized(st: &AppState, invoice: &Invoice, fees: &[Fee], to: Option<&str>) {
-    let to = to.unwrap_or("billing@customer.example");
+    let Some(to) = to.filter(|t| t.contains('@')) else {
+        tracing::info!(invoice_id = %invoice.id, "invoice email skipped: customer has no email address");
+        return;
+    };
     let email = builders::invoice_finalized_email(invoice, fees, to);
     if st.mailer.send(&email).await.is_ok() {
         crate::observability::incr("emails_sent");
@@ -219,8 +229,16 @@ pub async fn send_invoice_finalized(st: &AppState, invoice: &Invoice, fees: &[Fe
 
 /// `GET /emails` — captured emails (verification only; only populated when the
 /// capture transport is active, i.e. non-`live` builds). Not part of Lago's
-/// surface.
+/// surface. The capture buffer is process-wide (not tenant-scoped), so the
+/// route is disabled unless the operator opts in with
+/// `RAGO_EXPOSE_CAPTURED_EMAILS=true` on a single-tenant/dev deployment.
 pub async fn list_captured_emails(State(st): State<AppState>, _auth: Authed) -> ApiResult<Json<Value>> {
+    let enabled = std::env::var("RAGO_EXPOSE_CAPTURED_EMAILS")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+    if !enabled {
+        return Err(ApiError::NotFound("email".into()));
+    }
     let sent = st.capture.as_ref().map(|c| c.sent()).unwrap_or_default();
     let emails: Vec<Value> = sent.iter().map(|e| json!({
         "to": e.to, "from": e.from, "subject": e.subject,
@@ -374,7 +392,7 @@ pub async fn create_data_export(
     let org = auth.organization.id;
     let p = wrapped(&body, "data_export");
     let resource_type = req_s(p, "resource_type")?;
-    if !matches!(resource_type.as_str(), "invoices" | "events" | "customers") {
+    if !matches!(resource_type.as_str(), "invoices" | "events" | "customers" | "credit_notes") {
         return Err(ApiError::validation("resource_type", "value_is_invalid"));
     }
     let id = Uuid::new_v4();

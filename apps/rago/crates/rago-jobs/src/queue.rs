@@ -14,11 +14,15 @@ use serde_json::{json, Value};
 use std::str::FromStr;
 use uuid::Uuid;
 
-use crate::scheduler::bill_subscription_external;
+use crate::scheduler::bill_and_collect_external;
 use crate::JobError;
 
-/// Job type: bill a subscription.
+/// Job type: bill a subscription (invoice + webhooks + payment collection).
 pub const JOB_BILL_SUBSCRIPTION: &str = "bill_subscription";
+/// Job type: generate a dashboard-requested data export.
+pub const JOB_DATA_EXPORT_GENERATE: &str = "data_exports.generate";
+/// Job type: collect (charge) one invoice — the operator "retry payment" action.
+pub const JOB_COLLECT_INVOICE: &str = "invoices.collect";
 
 /// ActiveJob-style backoff for the `attempts`-th failure (deterministic).
 pub fn backoff_secs(attempts: i32) -> i64 {
@@ -108,7 +112,74 @@ async fn dispatch(db: &Db, job_type: &str, payload: &Value, attempts: i32) -> Re
                 .and_then(Value::as_str)
                 .and_then(|s| NaiveDate::from_str(s).ok())
                 .ok_or_else(|| JobError::Payment("bad billing_date".into()))?;
-            bill_subscription_external(db, org, ext, date).await?;
+            // Full pipeline: invoice → invoice.created/fee.created webhooks →
+            // collect payment through the org's provider.
+            let transport = rago_integrations::default_transport();
+            let outcome = bill_and_collect_external(db, &transport, org, ext, date).await?;
+            tracing::info!(
+                invoice_id = %outcome.invoice_id,
+                created = outcome.created,
+                collection = ?outcome.collection,
+                "bill_subscription job done"
+            );
+            Ok(())
+        }
+        JOB_DATA_EXPORT_GENERATE => {
+            let export_id = uuid_field(payload, "data_export_id")?;
+            let (org, resource_type) = db
+                .data_export_owner(export_id)
+                .await?
+                .ok_or_else(|| JobError::Integration("data_export_not_found".into()))?;
+            if let Err(e) = crate::data_export::process(db, export_id, org, &resource_type).await {
+                db.fail_data_export(export_id).await?;
+                return Err(e);
+            }
+            Ok(())
+        }
+        crate::integrations_sync::JOB_SYNC_INVOICE => {
+            let invoice_id = uuid_field(payload, "invoice_id")?;
+            let org = invoice_org(db, invoice_id).await?;
+            let transport = rago_integrations::default_transport();
+            crate::integrations_sync::sync_invoice_accounting(db, &transport, org, invoice_id).await?;
+            Ok(())
+        }
+        crate::integrations_sync::JOB_SYNC_CREDIT_NOTE => {
+            let cn_id = uuid_field(payload, "credit_note_id")?;
+            let org = db
+                .find_credit_note(cn_id)
+                .await?
+                .map(|c| c.organization_id)
+                .ok_or_else(|| JobError::Integration("credit_note_not_found".into()))?;
+            let transport = rago_integrations::default_transport();
+            crate::integrations_sync::sync_credit_note_accounting(db, &transport, org, cn_id).await?;
+            Ok(())
+        }
+        crate::integrations_sync::JOB_TAX_VOIDING => {
+            let invoice_id = uuid_field(payload, "invoice_id")?;
+            let org = invoice_org(db, invoice_id).await?;
+            let transport = rago_integrations::default_transport();
+            crate::integrations_sync::void_invoice_taxes(db, &transport, org, invoice_id).await?;
+            Ok(())
+        }
+        crate::integrations_sync::JOB_CREDIT_NOTE_TAX_REPORTING => {
+            let cn_id = uuid_field(payload, "credit_note_id")?;
+            let org = db
+                .find_credit_note(cn_id)
+                .await?
+                .map(|c| c.organization_id)
+                .ok_or_else(|| JobError::Integration("credit_note_not_found".into()))?;
+            let transport = rago_integrations::default_transport();
+            crate::integrations_sync::report_credit_note_taxes(db, &transport, org, cn_id).await?;
+            Ok(())
+        }
+        JOB_COLLECT_INVOICE => {
+            let invoice_id = uuid_field(payload, "invoice_id")?;
+            let invoice = db
+                .find_invoice(invoice_id)
+                .await?
+                .ok_or_else(|| JobError::Integration("invoice_not_found".into()))?;
+            let transport = rago_integrations::default_transport();
+            crate::collection::collect_invoice(db, &transport, &invoice).await?;
             Ok(())
         }
         crate::data_export::JOB_DATA_EXPORT => {
@@ -133,9 +204,26 @@ async fn dispatch(db: &Db, job_type: &str, payload: &Value, attempts: i32) -> Re
     }
 }
 
-/// Re-deliver webhooks in `retrying` state that are due, using the injected
-/// transport. Succeeded → `succeeded`; still failing → `retrying` with backoff,
-/// or `failed` once the retry limit is reached.
+fn uuid_field(payload: &Value, key: &str) -> Result<Uuid, JobError> {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .ok_or_else(|| JobError::Integration(format!("bad {key}")))
+}
+
+async fn invoice_org(db: &Db, invoice_id: Uuid) -> Result<Uuid, JobError> {
+    db.find_invoice(invoice_id)
+        .await?
+        .map(|i| i.organization_id)
+        .ok_or_else(|| JobError::Integration("invoice_not_found".into()))
+}
+
+/// Deliver due webhook work items — freshly queued `pending` rows and
+/// `retrying` rows whose backoff elapsed — over the injected transport, signed
+/// with the organization's own HMAC key. Succeeded → `succeeded`; still failing
+/// → `retrying` with backoff, or `failed` once the retry limit is reached. The
+/// linked delivery-feed row is updated with each outcome.
 pub async fn redeliver_due_webhooks<T: HttpTransport>(
     db: &Db,
     transport: &T,
@@ -143,10 +231,7 @@ pub async fn redeliver_due_webhooks<T: HttpTransport>(
     let due = db.due_retrying_webhooks(Utc::now().naive_utc()).await?;
     let mut delivered = 0;
     for w in due {
-        let hmac_key = db
-            .organization_hmac_key(w.organization_id)
-            .await?
-            .unwrap_or_else(|| "rago-default-key".into());
+        let hmac_key = db.ensure_organization_hmac_key(w.organization_id).await?;
 
         // Rebuild a Webhook carrying the persisted state so `deliver` updates it.
         let mut webhook = Webhook {
@@ -175,7 +260,18 @@ pub async fn redeliver_due_webhooks<T: HttpTransport>(
             next_retry,
         )
         .await?;
-        if webhook.status == rago_integrations::webhooks::WebhookStatus::Succeeded {
+        let succeeded = webhook.status == rago_integrations::webhooks::WebhookStatus::Succeeded;
+        let _ = db
+            .update_webhook_delivery_for_webhook(
+                webhook.id,
+                webhook.status.as_str(),
+                webhook.http_status,
+                webhook.retries + i32::from(succeeded),
+                if succeeded { None } else { webhook.response.as_deref() },
+                succeeded,
+            )
+            .await;
+        if succeeded {
             delivered += 1;
         }
     }

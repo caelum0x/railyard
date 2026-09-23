@@ -1450,12 +1450,14 @@ impl Db {
 
     // ---- webhook re-delivery ---------------------------------------------
 
-    /// Webhooks in `retrying` state whose next retry is due.
+    /// Webhook work items due for delivery: freshly materialized `pending`
+    /// rows and `retrying` rows whose backoff has elapsed.
     pub async fn due_retrying_webhooks(&self, now: NaiveDateTime) -> Result<Vec<RetryingWebhook>> {
         let rows = sqlx::query(
             "SELECT id, organization_id, webhook_type, object_type, endpoint, payload, retries \
-             FROM webhooks WHERE status = 'retrying' AND (next_retry_at IS NULL OR next_retry_at <= $1) \
-             ORDER BY created_at ASC LIMIT 50",
+             FROM webhooks WHERE status IN ('pending', 'retrying') \
+               AND (next_retry_at IS NULL OR next_retry_at <= $1) \
+             ORDER BY created_at ASC LIMIT 200",
         )
         .bind(now)
         .fetch_all(&self.pool)

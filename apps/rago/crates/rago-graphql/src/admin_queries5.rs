@@ -1,9 +1,7 @@
 //! GraphQL admin read queries — slice 5. Quotes/orders, AI conversations, data
-//! exports, and the `data_api_*` analytics queries. The `data_api_*` fields that
-//! Rago can compute from persisted invoice/fee/wallet data return real numbers;
-//! the usage-snapshot-dependent ones return honest-empty (they require the
-//! daily-usage snapshots produced by the deferred `ComputeAllDailyUsages` clock
-//! job — noted as an infra dependency).
+//! exports, and the `data_api_*` analytics queries — computed from persisted
+//! invoices, fees and wallets, and from the `daily_usages` snapshots the
+//! `compute_daily_usage` clock job (run by `rago-server`) maintains.
 
 use async_graphql::{Context, Object, Result, ID};
 use uuid::Uuid;
@@ -17,6 +15,12 @@ fn uuid(id: &ID) -> Result<Uuid> {
 
 fn points(rows: Vec<rago_db::AnalyticsPoint>) -> Vec<DataApiPoint> {
     rows.into_iter().map(|p| DataApiPoint { key: p.month, currency: p.currency, amount_cents: p.amount_cents, count: p.count }).collect()
+}
+
+fn data_points(rows: Vec<rago_db::data_api::DataPoint>) -> Vec<DataApiPoint> {
+    rows.into_iter()
+        .map(|(key, currency, amount_cents, count)| DataApiPoint { key, currency, amount_cents, count })
+        .collect()
 }
 
 /// Admin query root — slice 5 (merged into the schema's `Query`).
@@ -111,35 +115,34 @@ impl AdminQuery5 {
             .collect())
     }
 
-    // The following require per-plan/per-customer daily-usage snapshots
-    // (ComputeAllDailyUsages — a deferred clock job). They return honest-empty
-    // until that infra lands, rather than fabricated numbers.
+    // Breakdowns by plan / customer and usage from the `daily_usages`
+    // snapshots maintained by the `compute_daily_usage` clock job.
     async fn data_api_mrrs_plans(&self, ctx: &Context<'_>) -> Result<Vec<DataApiPoint>> {
-        require_org(ctx)?;
-        Ok(Vec::new())
+        let org = require_org(ctx)?;
+        Ok(data_points(db(ctx).data_api_mrrs_by_plan(org.id).await?))
     }
     async fn data_api_revenue_streams_customers(&self, ctx: &Context<'_>) -> Result<Vec<DataApiPoint>> {
-        require_org(ctx)?;
-        Ok(Vec::new())
+        let org = require_org(ctx)?;
+        Ok(data_points(db(ctx).data_api_revenue_by_customer(org.id).await?))
     }
     async fn data_api_revenue_streams_plans(&self, ctx: &Context<'_>) -> Result<Vec<DataApiPoint>> {
-        require_org(ctx)?;
-        Ok(Vec::new())
+        let org = require_org(ctx)?;
+        Ok(data_points(db(ctx).data_api_revenue_by_plan(org.id).await?))
     }
     async fn data_api_usages(&self, ctx: &Context<'_>) -> Result<Vec<DataApiPoint>> {
-        require_org(ctx)?;
-        Ok(Vec::new())
+        let org = require_org(ctx)?;
+        Ok(data_points(db(ctx).data_api_usage_by_day(org.id).await?))
     }
     async fn data_api_usages_aggregated_amounts(&self, ctx: &Context<'_>) -> Result<Vec<DataApiPoint>> {
-        require_org(ctx)?;
-        Ok(Vec::new())
+        let org = require_org(ctx)?;
+        Ok(data_points(db(ctx).data_api_usage_by_subscription(org.id).await?))
     }
     async fn data_api_usages_forecasted(&self, ctx: &Context<'_>) -> Result<Vec<DataApiPoint>> {
-        require_org(ctx)?;
-        Ok(Vec::new())
+        let org = require_org(ctx)?;
+        Ok(data_points(db(ctx).data_api_usage_forecast(org.id).await?))
     }
     async fn data_api_usages_invoiced(&self, ctx: &Context<'_>) -> Result<Vec<DataApiPoint>> {
-        require_org(ctx)?;
-        Ok(Vec::new())
+        let org = require_org(ctx)?;
+        Ok(data_points(db(ctx).data_api_invoiced_usage(org.id).await?))
     }
 }

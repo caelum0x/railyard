@@ -15,8 +15,6 @@ use rago_core::enums::PaymentStatus;
 use rago_integrations::payments::stripe_webhook::{
     parse_event, verify_signature, IncomingStatus, DEFAULT_TOLERANCE_SECS,
 };
-use rago_integrations::webhooks::{deliver, Webhook};
-use rago_integrations::MockTransport;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -161,31 +159,41 @@ async fn sync_payment_status(
         return (StatusCode::OK, "ignored (terminal payment status)".into());
     }
 
-    let _ = state.db.update_payment_status_by_provider_id(provider_payment_id, provider_status).await;
-    let _ = state.db.update_invoice_payment_status(invoice_id, payable_status.as_i32()).await;
+    if let Err(e) = state.db.update_payment_status_by_provider_id(provider_payment_id, provider_status).await {
+        tracing::error!(error = %e, provider_payment_id, "webhook: payment status update failed");
+        // 5xx so the provider retries the event.
+        return (StatusCode::INTERNAL_SERVER_ERROR, "db error".into());
+    }
+    if let Err(e) = state.db.update_invoice_payment_status(invoice_id, payable_status.as_i32()).await {
+        tracing::error!(error = %e, %invoice_id, "webhook: invoice payment status update failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, "db error".into());
+    }
 
-    if let Ok(Some(invoice)) = state.db.find_invoice(invoice_id).await {
-        let hmac_key = state.db.organization_hmac_key(org_id).await.ok().flatten()
-            .unwrap_or_else(|| "rago-default-key".into());
-        let endpoint = state.db.webhook_endpoint(org_id).await.ok().flatten()
-            .unwrap_or_else(|| "https://example.test/hooks".into());
-        let object = json!({
-            "lago_id": invoice.id,
-            "number": invoice.number,
-            "payment_status": payable_status.as_str(),
-            "total_amount_cents": invoice.total_amount_cents,
-        });
-        let mut webhook = Webhook::build(org_id, &endpoint, "invoice.payment_status_updated", "invoice", object);
-        let transport = MockTransport::always(200, "{}");
-        loop {
-            if !deliver(&transport, &mut webhook, &hmac_key).await {
-                break;
-            }
+    let invoice = match state.db.find_invoice(invoice_id).await {
+        Ok(i) => i,
+        Err(e) => {
+            tracing::error!(error = %e, %invoice_id, "webhook: invoice reload failed");
+            None
         }
-        let _ = state.db.upsert_webhook(
-            webhook.id, webhook.organization_id, &webhook.webhook_type, &webhook.object_type,
-            &webhook.endpoint, &webhook.payload, webhook.status.as_str(), webhook.http_status, webhook.retries,
-        ).await;
+    };
+    if let Some(invoice) = invoice {
+        // Queue the outbound `invoice.payment_status_updated` for every
+        // configured endpoint; the delivery worker signs it with the org's own
+        // HMAC key and retries with backoff.
+        crate::emit::webhook(
+            &state.db,
+            org_id,
+            rago_integrations::webhooks::WebhookKind::InvoicePaymentStatusUpdated,
+            json!({
+                "lago_id": invoice.id,
+                "number": invoice.number,
+                "status": invoice.status.as_str(),
+                "payment_status": payable_status.as_str(),
+                "currency": invoice.currency,
+                "total_amount_cents": invoice.total_amount_cents,
+            }),
+        )
+        .await;
 
         // Provider-path lifecycle webhooks at the real settlement trigger:
         // `payment.succeeded` on a successful capture, or

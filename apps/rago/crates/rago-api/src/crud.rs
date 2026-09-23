@@ -90,30 +90,57 @@ pub async fn customer_wallets(
     Ok(Json(json!({ "wallets": out })))
 }
 
-/// `GET /customers/:external_id/portal_url` — honest partial: the customer
-/// portal is provider-backed (owner-gated keys), so the URL is `null` until a
-/// live provider is wired, mirroring the GraphQL surface.
+/// Map a collection-layer result (`Ok(Err(code))` = configuration/state
+/// problem) to the REST envelope.
+fn provider_url_result(
+    field: &str,
+    r: Result<Result<String, &'static str>, rago_jobs::JobError>,
+) -> ApiResult<String> {
+    match r {
+        Ok(Ok(url)) => Ok(url),
+        Ok(Err(code)) => Err(ApiError::validation(field, code)),
+        Err(rago_jobs::JobError::Db(e)) => Err(ApiError::from(e)),
+        Err(e) => Err(ApiError::Validation(json!({ field: [e.to_string()] }))),
+    }
+}
+
+/// `GET /customers/:external_id/portal_url` — a Stripe Billing Portal session
+/// where the customer manages payment methods (the Stripe customer is created
+/// on first use).
 pub async fn customer_portal_url(
     State(st): State<AppState>,
     auth: Authed,
     Path(external_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let _ = customer_or_404(&st, auth.organization.id, &external_id).await?;
-    Ok(Json(json!({ "customer": { "portal_url": Value::Null } })))
+    let c = customer_or_404(&st, auth.organization.id, &external_id).await?;
+    let transport = rago_integrations::default_transport();
+    let url = provider_url_result(
+        "portal_url",
+        rago_jobs::collection::portal_url(&st.db, &transport, &c).await,
+    )?;
+    Ok(Json(json!({ "customer": { "portal_url": url } })))
 }
 
-/// `POST /customers/:external_id/checkout_url` — honest partial: null pending a
-/// live payment provider.
+/// `POST /customers/:external_id/checkout_url` — a Stripe Checkout (setup
+/// mode) URL where the customer saves a payment method; emits
+/// `customer.checkout_url_generated`.
 pub async fn customer_checkout_url(
     State(st): State<AppState>,
     auth: Authed,
     Path(external_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let c = customer_or_404(&st, auth.organization.id, &external_id).await?;
+    let transport = rago_integrations::default_transport();
+    let url = provider_url_result(
+        "checkout_url",
+        rago_jobs::collection::checkout_url(&st.db, &transport, &c).await,
+    )?;
     Ok(Json(json!({
         "customer": {
+            "lago_customer_id": c.id,
             "external_customer_id": c.external_id,
-            "checkout_url": Value::Null,
+            "payment_provider": "stripe",
+            "checkout_url": url,
         }
     })))
 }
@@ -357,32 +384,31 @@ pub async fn destroy_billable_metric(
 }
 
 /// `POST /billable_metrics/evaluate_expression` — evaluate a custom-aggregation
-/// expression against a sample event. Honest partial: the full expression engine
-/// is not ported yet, so this validates the payload shape and echoes the sampled
-/// numeric field (Lago `BillableMetrics::EvaluateExpressionService`). Returns a
-/// clear validation error rather than a fabricated result when no field resolves.
+/// expression against a sample event (`BillableMetrics::EvaluateExpressionService`)
+/// with the ported Lago expression engine (`rago_billing::expression`).
+///
+/// Body: `{ expression, event: { code, timestamp, properties } }`.
 pub async fn evaluate_expression(
     State(_st): State<AppState>,
     _auth: Authed,
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
+    use rago_billing::expression::{ExprError, Expression};
     let p = wrapped(&body, "billable_metric");
-    let expression = req_s(p, "expression")?;
-    let event = p.get("event").cloned().unwrap_or_else(|| json!({}));
-    // Resolve `event.properties.<field>` when the expression is a bare field
-    // reference; otherwise report that evaluation is not yet supported.
-    let value = event
-        .get("properties")
-        .and_then(|props| {
-            expression
-                .rsplit('.')
-                .next()
-                .and_then(|field| props.get(field.trim()))
-                .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
-        });
-    match value {
-        Some(v) => Ok(Json(json!({ "expression_result": v.to_string() }))),
-        None => Err(ApiError::validation("expression", "expression_engine_not_supported")),
+    let expression = req_s(p, "expression").or_else(|_| req_s(&body, "expression"))?;
+    let event = p
+        .get("event")
+        .or_else(|| body.get("event"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let parsed = Expression::parse(&expression)
+        .map_err(|e| ApiError::Validation(json!({ "expression": [e.to_string()] })))?;
+    match parsed.evaluate(&event) {
+        Ok(v) => Ok(Json(json!({ "expression_result": { "value": v.to_string() } }))),
+        Err(ExprError::MissingVariable(name)) => {
+            Err(ApiError::Validation(json!({ "event": [format!("missing_property: {name}")] })))
+        }
+        Err(e) => Err(ApiError::Validation(json!({ "expression": [e.to_string()] }))),
     }
 }
 
@@ -572,6 +598,13 @@ pub async fn update_wallet(
         .await?
         .ok_or_else(|| ApiError::NotFound("wallet".into()))?;
     let ext = st.db.customer_external_id(w.customer_id).await?.unwrap_or_default();
+    crate::emit::webhook(
+        &st.db,
+        w.organization_id,
+        rago_integrations::webhooks::WebhookKind::WalletUpdated,
+        ser::wallet(&w, &ext),
+    )
+    .await;
     Ok(Json(json!({ "wallet": ser::wallet(&w, &ext) })))
 }
 

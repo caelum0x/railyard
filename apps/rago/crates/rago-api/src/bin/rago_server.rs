@@ -41,6 +41,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(not(feature = "live"))]
     let state = AppState::new(db.clone());
 
+    if !rago_integrations::LIVE {
+        tracing::warn!(
+            "rago-server built without `--features live`: payment collection, provider \
+             integrations and outbound webhook delivery are disabled (calls fail and are recorded as such)"
+        );
+    }
+
     // Background scheduler/worker daemon.
     let worker_db = db.clone();
     let daemon = tokio::spawn(async move {
@@ -52,10 +59,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
+        let transport = rago_integrations::default_transport();
+        let mut clock_prev = chrono::Utc::now();
         loop {
-            if let Err(e) = tick(&worker_db, billing_hour).await {
+            let now = chrono::Utc::now();
+            if let Err(e) = tick(&worker_db, &transport, billing_hour, clock_prev, now).await {
                 tracing::error!(error = %e, "daemon tick failed");
             }
+            clock_prev = now;
             tokio::time::sleep(Duration::from_secs(interval)).await;
         }
     });
@@ -73,46 +84,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// One daemon tick: crons + dunning + drain job queue + billing cycle +
-/// webhook re-delivery.
-async fn tick(db: &Db, billing_hour: u32) -> Result<(), Box<dyn std::error::Error>> {
-    use chrono::{Timelike, Utc};
+/// One daemon tick: subscription crons, the clock registry (finalize invoices,
+/// wallet top-ups / expiry, coupon expiry, usage snapshots, ...), dunning, the
+/// once-a-day billing cycle (claimed in Postgres so it is enqueued exactly once
+/// per day across replicas), the durable job queue (billing → invoice →
+/// webhooks → payment collection), and outbound webhook delivery.
+async fn tick<T: rago_integrations::HttpTransport>(
+    db: &Db,
+    transport: &T,
+    billing_hour: u32,
+    clock_prev: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use chrono::Timelike;
 
     let crons = rago_jobs::run_subscription_crons(db).await?;
-    let dunning_transport = webhook_transport();
+    let clock = rago_jobs::run_due_clocks(db, clock_prev, now).await?;
     let dunning_cfg = rago_jobs::DunningConfig::from_env();
-    let dunning = rago_jobs::run_dunning(db, &dunning_transport, &dunning_cfg).await?;
-    let dunned = dunning.invoices_marked_overdue;
-    let jobs = rago_jobs::drain(db, "rago-server").await?;
+    let dunning = rago_jobs::run_dunning(db, transport, &dunning_cfg).await?;
 
-    // Enqueue + run the billing cycle once at the configured hour.
-    if Utc::now().hour() == billing_hour {
-        let today = Utc::now().date_naive();
-        let _ = rago_jobs::enqueue_billing_cycle(db, today, false).await?;
-        let _ = rago_jobs::drain(db, "rago-server").await?;
+    // Enqueue the billing cycle once per day at (or after) the configured hour.
+    let mut billing_enqueued = 0usize;
+    if now.hour() >= billing_hour {
+        let today = now.date_naive();
+        if db.claim_daily_run("billing_cycle", today).await? {
+            billing_enqueued = rago_jobs::enqueue_billing_cycle(db, today, false).await?.len();
+        }
     }
-
-    let transport = webhook_transport();
-    let hooks = rago_jobs::redeliver_due_webhooks(db, &transport).await?;
+    let jobs = rago_jobs::drain(db, "rago-server").await?;
+    let hooks = rago_jobs::redeliver_due_webhooks(db, transport).await?;
 
     tracing::info!(
         activated = crons.activated,
         terminated = crons.terminated,
-        dunned,
+        clock_jobs = clock.ran.len(),
+        dunned = dunning.invoices_marked_overdue,
+        payment_requests = dunning.payment_requests_created,
+        billing_enqueued,
         jobs,
         hooks,
         "daemon tick"
     );
     Ok(())
-}
-
-/// The outbound-webhook re-delivery transport: real reqwest under `--features
-/// live`, otherwise an in-memory transport (no network).
-#[cfg(feature = "live")]
-fn webhook_transport() -> rago_integrations::ReqwestTransport {
-    rago_integrations::ReqwestTransport::default()
-}
-#[cfg(not(feature = "live"))]
-fn webhook_transport() -> rago_integrations::MockTransport {
-    rago_integrations::MockTransport::always(200, "{}")
 }

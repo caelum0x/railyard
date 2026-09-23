@@ -30,9 +30,11 @@ pub mod reads;
 pub mod phase14;
 pub mod phase15;
 pub mod resources;
+pub mod sdk_parity;
 pub mod serializers;
 pub mod state;
 pub mod subs;
+pub mod tenancy;
 pub mod usage;
 pub mod webhooks;
 
@@ -54,6 +56,14 @@ pub use state::AppState;
 pub fn router(state: AppState) -> Router {
     let v1 = Router::new()
         .route("/events", post(handlers::create_event).get(breadth::list_events))
+        .route("/events/:transaction_id", get(sdk_parity::show_event))
+        .route("/fees", get(sdk_parity::list_fees))
+        .route("/fees/:id", get(sdk_parity::show_fee).put(sdk_parity::update_fee).delete(sdk_parity::destroy_fee))
+        .route("/customers/:external_id/applied_coupons/:id", axum::routing::delete(sdk_parity::destroy_applied_coupon))
+        .route("/invoices/preview", post(sdk_parity::preview_invoice))
+        .route("/dunning_campaigns/:code", get(sdk_parity::show_dunning_campaign).put(sdk_parity::update_dunning_campaign).delete(sdk_parity::destroy_dunning_campaign))
+        .route("/wallets/:id/recurring_rules", post(breadth::create_wallet_recurring_rule).get(sdk_parity::list_wallet_recurring_rules))
+        .route("/webhook_deliveries/:id/retry", post(sdk_parity::retry_webhook_delivery))
         .route("/customers", post(handlers::create_customer).get(handlers::list_customers))
         .route("/customers/:external_id", get(handlers::show_customer).delete(crud::destroy_customer))
         .route("/customers/:external_id/subscriptions", get(crud::customer_subscriptions))
@@ -90,14 +100,14 @@ pub fn router(state: AppState) -> Router {
         .route("/invoices", get(breadth::list_invoices).post(breadth::create_one_off_invoice))
         .route("/add_ons", post(breadth::create_add_on).get(crud::list_add_ons))
         .route("/add_ons/:code", get(crud::show_add_on).put(crud::update_add_on).delete(crud::destroy_add_on))
-        .route("/quotes", post(breadth::create_quote))
+        .route("/quotes", post(breadth::create_quote).get(sdk_parity::list_quotes))
+        .route("/quotes/:id", get(sdk_parity::show_quote))
         .route("/quotes/:id/accept", post(breadth::accept_quote))
-        .route("/wallets/:id/recurring_rules", post(breadth::create_wallet_recurring_rule))
         .route("/data_exports", post(breadth::create_data_export))
         .route("/data_exports/:id", get(breadth::show_data_export))
         .route("/data_exports/:id/download", get(breadth::download_data_export))
         .route("/emails", get(breadth::list_captured_emails))
-        .route("/invoices/:id", get(handlers::show_invoice))
+        .route("/invoices/:id", get(handlers::show_invoice).put(sdk_parity::update_invoice))
         .route("/invoices/:id/download", get(handlers::download_invoice_pdf))
         .route("/invoices/:id/download.xml", get(handlers::download_invoice_xml))
         .route("/invoices/:id/apply_provider_taxes", post(integrations::apply_provider_taxes_to_invoice))
@@ -113,7 +123,7 @@ pub fn router(state: AppState) -> Router {
         .route("/invoices/:id/payment_url", post(subs::invoice_payment_url))
         .route("/activity_logs", get(handlers::list_activity_logs))
         .route("/credit_notes", post(handlers::create_credit_note).get(subs::list_credit_notes))
-        .route("/wallets", post(handlers::create_wallet).get(crud::list_wallets))
+        .route("/wallets", post(handlers::create_wallet).get(sdk_parity::list_wallets))
         .route("/wallets/:id", get(handlers::show_wallet).put(crud::update_wallet).delete(crud::terminate_wallet))
         .route("/wallets/:id/transactions", get(reads::wallet_transactions))
         .route("/wallet_transactions", post(handlers::create_wallet_transaction))
@@ -129,7 +139,7 @@ pub fn router(state: AppState) -> Router {
         .route("/invoices/:id/receipt", get(phase14::download_payment_receipt_pdf))
         .route("/invoices/:id/sync_accounting", post(phase14::sync_invoice_accounting))
         .route("/customers/:external_id/sync_crm", post(phase14::sync_customer_crm))
-        .route("/integrations", post(phase14::create_integration))
+        .route("/integrations", post(phase14::create_integration).get(phase14::list_integrations))
         .route("/integrations/:id/refresh", post(phase14::refresh_integration))
         .route("/customers/:external_customer_id/lifetime_usage", get(phase15::lifetime_usage))
         .route("/dunning_campaigns", post(phase15::create_dunning_campaign).get(phase15::list_dunning_campaigns))
@@ -181,9 +191,16 @@ pub fn router(state: AppState) -> Router {
         .route("/plans/:code/applied_rate_cards", post(catalog_v2::create_applied_rate_card).get(catalog_v2::list_applied_rate_cards))
         .route("/applied_rate_cards/:id/rate_phases", post(catalog_v2::create_rate_phase).get(catalog_v2::list_rate_phases));
 
+    // Tenant isolation: reject any request referencing another org's record ids.
+    let v1 = v1.layer(axum::middleware::from_fn_with_state(state.clone(), tenancy::guard));
+    let v2 = v2.layer(axum::middleware::from_fn_with_state(state.clone(), tenancy::guard));
+
     Router::new()
         .route("/health", get(health))
         .route("/admin", get(admin_page))
+        .route("/admin/core.js", get(admin_core_js))
+        .route("/admin/views.js", get(admin_views_js))
+        .route("/admin/views2.js", get(admin_views2_js))
         .route("/metrics", get(observability::metrics_handler))
         .route(
             "/graphql",
@@ -204,14 +221,35 @@ async fn health() -> Json<Value> {
     Json(json!({ "status": "ok", "service": "rago-api" }))
 }
 
-/// `GET /admin` — a self-contained operator console (static HTML + vanilla JS,
-/// no build step). The page is served unauthenticated, but every data request
-/// it makes carries the operator's `Authorization: Bearer <api-key>` against the
-/// same authenticated `/api/v1` endpoints — there is no server-side data bypass.
-/// It only surfaces what those real endpoints return: customers, subscriptions,
-/// invoices, plans, and registered webhook endpoints.
+/// `GET /admin` — the operator console (static HTML + vanilla JS, no build
+/// step): overview analytics, customers, subscriptions, plans and metrics,
+/// invoices with their actions, credit notes, wallets, coupons, add-ons, taxes,
+/// webhooks, dunning, events, exports and settings. The page and scripts are
+/// served unauthenticated, but every data request carries the operator's
+/// `Authorization: Bearer <api-key>` against the same authenticated API — there
+/// is no server-side data bypass.
 async fn admin_page() -> axum::response::Html<&'static str> {
     axum::response::Html(include_str!("../assets/admin.html"))
+}
+
+/// A static console script (embedded at build time; no build step).
+fn admin_js(body: &'static str) -> impl axum::response::IntoResponse {
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "application/javascript; charset=utf-8"),
+            (axum::http::header::CACHE_CONTROL, "no-cache"),
+        ],
+        body,
+    )
+}
+async fn admin_core_js() -> impl axum::response::IntoResponse {
+    admin_js(include_str!("../assets/admin-core.js"))
+}
+async fn admin_views_js() -> impl axum::response::IntoResponse {
+    admin_js(include_str!("../assets/admin-views.js"))
+}
+async fn admin_views2_js() -> impl axum::response::IntoResponse {
+    admin_js(include_str!("../assets/admin-views2.js"))
 }
 
 // --- fees/estimate: drives the billing engine without persistence -----------
@@ -244,6 +282,7 @@ pub struct EstimateResponse {
 }
 
 async fn estimate_fee(
+    _auth: auth::Authed,
     Json(req): Json<EstimateRequest>,
 ) -> Result<Json<EstimateResponse>, error::ApiError> {
     let aggregation_type = AggregationType::try_from(req.aggregation_type)

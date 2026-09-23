@@ -3,7 +3,7 @@
 
 use rago_core::models::Invoice;
 use rago_db::Db;
-use rago_integrations::payments::{PaymentProvider, PaymentRequest};
+use rago_integrations::payments::{PaymentError, PaymentOutcome, PaymentProvider, PaymentRequest};
 use rago_integrations::{HttpTransport, PayableStatus, StripeProvider};
 use uuid::Uuid;
 
@@ -35,16 +35,12 @@ fn advisory_lock_key(invoice_id: Uuid) -> i64 {
     i64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
 }
 
-/// Charge `invoice` via Stripe (over the injected `transport`), record the
-/// payment, and update the invoice `payment_status`. Returns the mapped
-/// [`PayableStatus`].
-///
-/// Concurrency: the "already charged?" check and the provider call are guarded
-/// by a Postgres advisory lock keyed on the invoice id. Without it two workers
-/// running the dunning sweep at once could both read "no prior payment" and
-/// both call Stripe before either records a row — a double charge. The lock
-/// serializes them per invoice; a worker that cannot take the lock (another is
-/// mid-charge) skips with `Pending` rather than racing.
+/// Charge `invoice` via Stripe (over the injected `transport`) with no stored
+/// payment method, record the payment, and update the invoice
+/// `payment_status`. Kept for callers that manage the Stripe customer
+/// themselves; production collection goes through
+/// [`crate::collection::collect_invoice`], which resolves the org's provider,
+/// the customer's provider account and saved payment method first.
 pub async fn charge_invoice<T: HttpTransport>(
     db: &Db,
     transport: &T,
@@ -52,6 +48,39 @@ pub async fn charge_invoice<T: HttpTransport>(
     invoice: &Invoice,
     provider_customer_id: &str,
 ) -> Result<PayableStatus, JobError> {
+    charge_invoice_with(db, invoice, provider_customer_id, None, |attempt| {
+        Box::new(StripeProvider::new(stripe_secret_key, transport).with_attempt(attempt))
+    })
+    .await
+}
+
+/// Charge `invoice` through the provider built by `make_provider(attempt)`.
+///
+/// Concurrency: the "already charged?" check and the provider call are guarded
+/// by a Postgres advisory lock keyed on the invoice id. Without it two workers
+/// running the dunning sweep at once could both read "no prior payment" and
+/// both call the provider before either records a row — a double charge. The
+/// lock serializes them per invoice; a worker that cannot take the lock
+/// (another is mid-charge) skips with `Pending` rather than racing.
+///
+/// Outcomes:
+/// * a provider decline (card declined, no mandate, refused) is a normal
+///   business result: the attempt is recorded `failed`, the invoice
+///   `payment_status` becomes `failed` (so dunning picks it up) and
+///   `Ok(Failed)` is returned — it never aborts the caller's batch;
+/// * a transport/protocol error (outcome unknown) returns `Err` without
+///   recording anything, so the next run replays the SAME attempt under the
+///   same idempotency key and the provider deduplicates it.
+pub async fn charge_invoice_with<'a, F>(
+    db: &Db,
+    invoice: &Invoice,
+    provider_customer_id: &str,
+    mandate_id: Option<&str>,
+    make_provider: F,
+) -> Result<PayableStatus, JobError>
+where
+    F: Fn(u32) -> Box<dyn PaymentProvider + 'a>,
+{
     let key = advisory_lock_key(invoice.id);
     let lock = match db.try_advisory_lock(key).await? {
         Some(l) => l,
@@ -59,45 +88,43 @@ pub async fn charge_invoice<T: HttpTransport>(
         None => return Ok(PayableStatus::Pending),
     };
     let result =
-        charge_invoice_locked(db, transport, stripe_secret_key, invoice, provider_customer_id)
-            .await;
+        charge_invoice_locked(db, invoice, provider_customer_id, mandate_id, make_provider).await;
     // Always release, even on error, so the lock never leaks on the pooled conn.
     lock.release().await?;
     result
 }
 
 /// The charge critical section, run while holding the per-invoice advisory lock
-/// (see [`charge_invoice`]).
-async fn charge_invoice_locked<T: HttpTransport>(
+/// (see [`charge_invoice_with`]).
+async fn charge_invoice_locked<'a, F>(
     db: &Db,
-    transport: &T,
-    stripe_secret_key: &str,
     invoice: &Invoice,
     provider_customer_id: &str,
-) -> Result<PayableStatus, JobError> {
+    mandate_id: Option<&str>,
+    make_provider: F,
+) -> Result<PayableStatus, JobError>
+where
+    F: Fn(u32) -> Box<dyn PaymentProvider + 'a>,
+{
     let payment_id = deterministic_payment_id(invoice.id);
 
-    // App-level re-charge guard. The stable Stripe idempotency key only dedupes
-    // within Stripe's ~24h idempotency window — a billing re-run later than
-    // that would mint a brand-new PaymentIntent for an invoice that was already
-    // charged. If a payment for this invoice is already recorded, never call
-    // the provider again unless the recorded attempt FAILED (a failed charge is
-    // legitimately retried by dunning; anything else — succeeded, pending,
-    // refunded — must not be re-charged).
-    if let Some((_, _, status, _, _)) = db
-        .list_payments(invoice.id)
-        .await?
-        .into_iter()
-        .find(|row| row.0 == payment_id)
-    {
-        match status.as_str() {
-            "failed" => {} // dunning retry allowed
+    // App-level re-charge guard. The provider idempotency key only dedupes
+    // within its window (~24h for Stripe) — a billing re-run later than that
+    // would mint a brand-new charge for an invoice that was already charged.
+    // Never call the provider again unless the recorded attempt FAILED (a
+    // failed charge is legitimately retried; anything else — succeeded,
+    // pending, refunded — must not be re-charged). Each retry of a failed
+    // attempt uses the next attempt number, i.e. a fresh idempotency key.
+    let attempt: u32 = match db.payment_attempt_state(payment_id).await? {
+        None => 0,
+        Some(state) => match state.status.as_str() {
+            "failed" => (state.attempts.max(0) as u32) + 1,
             "succeeded" => return Ok(PayableStatus::Succeeded),
             _ => return Ok(PayableStatus::Pending),
-        }
-    }
+        },
+    };
 
-    let provider = StripeProvider::new(stripe_secret_key, transport);
+    let provider = make_provider(attempt);
 
     let req = PaymentRequest {
         payment_id,
@@ -107,30 +134,44 @@ async fn charge_invoice_locked<T: HttpTransport>(
         amount_cents: invoice.total_amount_cents,
         currency: invoice.currency().code(),
         reference: invoice.number.clone(),
-        provider_mandate_id: None,
+        provider_mandate_id: mandate_id.map(str::to_string),
     };
 
-    let outcome = provider
-        .create_payment(&req)
-        .await
-        .map_err(|e| JobError::Payment(e.to_string()))?;
+    let (outcome, last_error) = match provider.create_payment(&req).await {
+        Ok(o) => (o, None),
+        Err(PaymentError::Provider { code, message }) => (
+            PaymentOutcome {
+                provider_payment_id: String::new(),
+                provider_status: code.clone().unwrap_or_else(|| "provider_error".into()),
+                payable_status: PayableStatus::Failed,
+            },
+            Some(message),
+        ),
+        Err(e) => return Err(JobError::Payment(e.to_string())),
+    };
 
     let status_str = match outcome.payable_status {
         PayableStatus::Succeeded => "succeeded",
         PayableStatus::Failed => "failed",
         PayableStatus::Pending => "pending",
     };
+    let provider_payment_id =
+        (!outcome.provider_payment_id.is_empty()).then_some(outcome.provider_payment_id.as_str());
 
-    db.insert_payment(
-        req.payment_id,
+    db.record_payment_attempt(
+        payment_id,
         invoice.organization_id,
         invoice.id,
         provider.payment_type(),
-        Some(&outcome.provider_payment_id),
+        provider_payment_id,
         Some(&outcome.provider_status),
         status_str,
         invoice.total_amount_cents,
         &invoice.currency().code(),
+        attempt as i32,
+        last_error.as_deref().or_else(|| {
+            (outcome.payable_status == PayableStatus::Failed).then_some(outcome.provider_status.as_str())
+        }),
     )
     .await?;
 
@@ -139,6 +180,44 @@ async fn charge_invoice_locked<T: HttpTransport>(
     }
 
     Ok(outcome.payable_status)
+}
+
+/// Record a failed attempt that never reached the provider (e.g. the customer
+/// has no payment method on file), so the invoice enters dunning and the
+/// operator sees why. Respects the same never-re-charge guard: an already
+/// succeeded/pending payment is left untouched.
+pub async fn record_uncollectable_attempt(
+    db: &Db,
+    invoice: &Invoice,
+    provider: &str,
+    reason: &str,
+) -> Result<(), JobError> {
+    let payment_id = deterministic_payment_id(invoice.id);
+    let attempt = match db.payment_attempt_state(payment_id).await? {
+        None => 0,
+        Some(s) if s.status == "failed" => s.attempts + 1,
+        Some(_) => return Ok(()),
+    };
+    db.record_payment_attempt(
+        payment_id,
+        invoice.organization_id,
+        invoice.id,
+        provider,
+        None,
+        Some(reason),
+        "failed",
+        invoice.total_amount_cents,
+        &invoice.currency().code(),
+        attempt,
+        Some(reason),
+    )
+    .await?;
+    db.update_invoice_payment_status(
+        invoice.id,
+        rago_core::enums::PaymentStatus::Failed.as_i32(),
+    )
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]

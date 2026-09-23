@@ -26,18 +26,18 @@
 //! | billable_metric.deleted **[LIVE]** | rago-graphql admin_mutations.rs |
 //! | dunning_campaign.finished **[LIVE]** | rago-jobs dunning.rs (`process_dunning_campaigns`) |
 //! | invoice.created **[LIVE]** | rago-jobs clock/invoices.rs (`finalize_invoices`) + scheduler.rs |
-//! | invoice.one_off_created | no-op until one-off invoice create path |
+//! | invoice.one_off_created **[LIVE]** | rago-api breadth.rs (`create_one_off_invoice`) |
 //! | invoice.paid_credit_added | no-op until `Credits::AppliedPrepaidCreditService` |
 //! | invoice.generated | no-op until PDF generation path |
 //! | invoice.drafted **[LIVE]** | rago-jobs clock/invoices.rs (`refresh_draft_invoices`) |
 //! | invoice.ready_to_finalize | no-op until tax pull / finalize path |
-//! | invoice.voided | no-op until void service |
+//! | invoice.voided **[LIVE]** | rago-api subs.rs (`void_invoice`) |
 //! | invoice.deleted | no-op until invoice delete service |
-//! | invoice.payment_dispute_lost | no-op until dispute service |
-//! | invoice.payment_status_updated **[LIVE]** | rago-jobs scheduler.rs (billing charge) + rago-api webhooks.rs (Stripe webhook) |
+//! | invoice.payment_dispute_lost **[LIVE]** | rago-api subs.rs (`lose_dispute`) |
+//! | invoice.payment_status_updated **[LIVE]** | rago-jobs collection.rs (every charge) + rago-api webhooks.rs (provider webhooks) |
 //! | invoice.payment_overdue **[LIVE]** | rago-jobs clock/invoices.rs (`mark_invoices_as_payment_overdue`) |
-//! | invoice.payment_failure | no-op until payment failure delivery path |
-//! | invoice.resynced | no-op until accounting sync path |
+//! | invoice.payment_failure **[LIVE]** | rago-jobs collection.rs (decline / no payment method) + rago-api webhooks.rs |
+//! | invoice.resynced **[LIVE]** | rago-jobs integrations_sync.rs (`sync_invoice_accounting`) |
 //! | event.error | no-op until event post-process path |
 //! | events.errors | no-op until event validation path |
 //! | fee.created **[LIVE]** | rago-jobs scheduler.rs (billing cycle per-fee) |
@@ -48,9 +48,9 @@
 //! | customer.accounting_provider_error | no-op until accounting sync error |
 //! | customer.crm_provider_created | no-op until CRM sync |
 //! | customer.crm_provider_error | no-op until CRM sync error |
-//! | customer.payment_provider_created | no-op until provider-customer create |
+//! | customer.payment_provider_created **[LIVE]** | rago-jobs collection.rs (Stripe customer created) |
 //! | customer.payment_provider_error | no-op until provider-customer error |
-//! | customer.checkout_url_generated | no-op until checkout URL service |
+//! | customer.checkout_url_generated **[LIVE]** | rago-jobs collection.rs (`checkout_url`) |
 //! | customer.tax_provider_error | no-op until tax provider customer error |
 //! | customer.vies_check | no-op until EU auto-taxes VIES path |
 //! | credit_note.created **[LIVE]** | rago-api handlers.rs + rago-graphql admin_mutations.rs |
@@ -64,8 +64,8 @@
 //! | order_form.expired | no-op until order_forms schema (schema-deferred) |
 //! | order_form.voided **[LIVE]** | rago-graphql admin_mutations5.rs (`void_order_form`) |
 //! | payment.requires_action | no-op until 3DS / SCA payment flow |
-//! | payment.succeeded | no-op until provider payment success path |
-//! | payment_provider.error | no-op until provider error delivery path |
+//! | payment.succeeded **[LIVE]** | rago-jobs collection.rs + rago-api webhooks.rs |
+//! | payment_provider.error **[LIVE]** | rago-api webhooks.rs (provider decline event) |
 //! | payment_receipt.created | no-op until payment_receipts schema (schema-deferred) |
 //! | payment_receipt.generated | no-op until payment_receipts schema (schema-deferred) |
 //! | payment_request.created **[LIVE]** | rago-jobs dunning.rs (`create_and_charge_payment_request`) |
@@ -88,8 +88,8 @@
 //! | subscription.trial_ended **[LIVE]** | rago-jobs clock/subscriptions.rs (`free_trial_biller`) |
 //! | subscription.updated **[LIVE]** | rago-graphql admin_mutations.rs |
 //! | subscription.usage_threshold_reached | no-op until `UsageMonitoring::CheckThresholdsService` |
-//! | wallet.created | no-op until wallet create service |
-//! | wallet.updated | no-op until wallet update service |
+//! | wallet.created **[LIVE]** | rago-api handlers.rs (`create_wallet`) |
+//! | wallet.updated **[LIVE]** | rago-api crud.rs (`update_wallet`) |
 //! | wallet.terminated **[LIVE]** | rago-jobs clock/wallets.rs (`terminate_wallets`) |
 //! | wallet.depleted_ongoing_balance **[LIVE]** | rago-jobs clock/wallets.rs (`refresh_wallets_ongoing_balance`) |
 //! | wallet_transaction.created **[LIVE]** | rago-jobs clock/wallets.rs (`create_interval_wallet_transactions`) |
@@ -143,53 +143,61 @@ pub const JOB_EMITTED_WEBHOOKS: &[WebhookKind] = &[
 /// Faithful to Lago: a `SendWebhookJob` materializes one `Webhook` per
 /// configured `webhook_endpoint`. With no endpoint configured the org receives
 /// nothing, so this is a **no-op** (returns `Ok(false)`) rather than writing an
-/// undeliverable row. When an endpoint exists, the row is stored `pending` with
-/// the full signed-ready envelope built by [`WebhookKind::build`], and the
-/// delivery worker completes it.
+/// undeliverable row. For each endpoint a work item is stored `pending` with the
+/// full signed-ready envelope built by [`WebhookKind::build`], plus a linked row
+/// in the operator-facing deliveries feed; the delivery worker
+/// ([`crate::queue::redeliver_due_webhooks`]) sends it, retries it with backoff,
+/// and updates both.
 ///
-/// Returns `true` when a webhook row was written, `false` on the no-endpoint
-/// no-op.
+/// Returns `true` when at least one webhook row was written, `false` on the
+/// no-endpoint no-op.
 pub async fn record_webhook(
     db: &Db,
     organization_id: Uuid,
     kind: WebhookKind,
     object: Value,
 ) -> Result<bool, JobError> {
-    let Some((endpoint_id, endpoint)) = db.first_webhook_endpoint_id(organization_id).await? else {
+    let endpoints = db.webhook_endpoints_for_org(organization_id).await?;
+    if endpoints.is_empty() {
         return Ok(false);
-    };
+    }
 
-    let webhook = kind.build(organization_id, endpoint, object);
-    db.upsert_webhook(
-        webhook.id,
-        webhook.organization_id,
-        &webhook.webhook_type,
-        &webhook.object_type,
-        &webhook.endpoint,
-        &webhook.payload,
-        "pending",
-        None,
-        0,
-    )
-    .await?;
+    for (endpoint_id, endpoint) in endpoints {
+        let webhook = kind.build(organization_id, endpoint, object.clone());
+        db.upsert_webhook(
+            webhook.id,
+            webhook.organization_id,
+            &webhook.webhook_type,
+            &webhook.object_type,
+            &webhook.endpoint,
+            &webhook.payload,
+            "pending",
+            None,
+            0,
+        )
+        .await?;
 
-    // Append a row to the operator-facing deliveries feed. The work item was just
-    // materialized `pending` (attempt 0, not yet delivered); the delivery worker
-    // records the terminal attempt separately (see `webhook_delivery`).
-    let _ = db
-        .record_webhook_delivery(rago_db::NewWebhookDelivery {
-            organization_id,
-            endpoint_id: Some(endpoint_id),
-            endpoint: &webhook.endpoint,
-            event_type: &webhook.webhook_type,
-            object_type: Some(&webhook.object_type),
-            payload: &webhook.payload,
-            status: "pending",
-            http_status: None,
-            attempts: 0,
-            last_error: None,
-            delivered_at: None,
-        })
-        .await;
+        // Operator-facing feed row, linked to the work item so the delivery
+        // worker can report the real outcome on it. Best-effort: the work item
+        // above is what gets delivered.
+        if let Ok(delivery_id) = db
+            .record_webhook_delivery(rago_db::NewWebhookDelivery {
+                organization_id,
+                endpoint_id: Some(endpoint_id),
+                endpoint: &webhook.endpoint,
+                event_type: &webhook.webhook_type,
+                object_type: Some(&webhook.object_type),
+                payload: &webhook.payload,
+                status: "pending",
+                http_status: None,
+                attempts: 0,
+                last_error: None,
+                delivered_at: None,
+            })
+            .await
+        {
+            let _ = db.link_webhook_delivery(delivery_id, webhook.id).await;
+        }
+    }
     Ok(true)
 }

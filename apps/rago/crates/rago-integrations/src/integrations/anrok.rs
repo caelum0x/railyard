@@ -33,6 +33,63 @@ impl<T: HttpTransport> AnrokTaxProvider<T> {
     fn action_url(&self) -> String {
         format!("{}/v1/anrok/finalized_invoices", self.base_url.trim_end_matches('/'))
     }
+
+    fn headers(&self) -> Vec<(String, String)> {
+        vec![
+            ("Authorization".to_string(), format!("Bearer {}", self.api_key)),
+            ("Content-Type".to_string(), "application/json".to_string()),
+        ]
+    }
+
+    /// `Integrations::Aggregator::Taxes::Invoices::CreateVoidService` — void the
+    /// invoice's transaction at Anrok (`.../v1/anrok/void_invoices`).
+    pub async fn void_invoice(&self, invoice_id: &str) -> Result<(), IntegrationError> {
+        let url = format!("{}/v1/anrok/void_invoices", self.base_url.trim_end_matches('/'));
+        let body = json!([{ "id": invoice_id }]).to_string();
+        let resp = self.transport.post(&url, &self.headers(), body).await?;
+        if !resp.is_success() {
+            let json: Value = serde_json::from_str(&resp.body).unwrap_or(Value::Null);
+            return Err(IntegrationError::Provider {
+                code: json.get("code").and_then(Value::as_str).map(str::to_string),
+                message: json
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("anrok void error")
+                    .to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// `Integrations::Aggregator::Taxes::CreditNotes::CreateService` — report a
+    /// credit note to Anrok as a finalized negative transaction. `req.fees`
+    /// carry the credited amounts (sent negated).
+    pub async fn report_credit_note(&self, req: &TaxRequest) -> Result<(), IntegrationError> {
+        let body = json!([{
+            "id": format!("cn_{}", req.invoice_id),
+            "currency": req.currency,
+            "contact": { "external_id": req.customer_external_id },
+            "fees": req.fees.iter().map(|f| json!({
+                "item_id": f.item_id,
+                "item_code": f.item_code,
+                "amount_cents": -f.amount_cents.abs(),
+            })).collect::<Vec<_>>(),
+        }])
+        .to_string();
+        let resp = self.transport.post(&self.action_url(), &self.headers(), body).await?;
+        if !resp.is_success() {
+            let json: Value = serde_json::from_str(&resp.body).unwrap_or(Value::Null);
+            return Err(IntegrationError::Provider {
+                code: json.get("code").and_then(Value::as_str).map(str::to_string),
+                message: json
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("anrok credit note error")
+                    .to_string(),
+            });
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]

@@ -26,6 +26,7 @@ pub struct AdyenProvider<T: HttpTransport> {
     api_key: String,
     merchant_account: String,
     transport: T,
+    attempt: u32,
 }
 
 impl<T: HttpTransport> AdyenProvider<T> {
@@ -38,7 +39,15 @@ impl<T: HttpTransport> AdyenProvider<T> {
             api_key: api_key.into(),
             merchant_account: merchant_account.into(),
             transport,
+            attempt: 0,
         }
+    }
+
+    /// Use attempt `n` of this payment in the idempotency key (`0` = first), so
+    /// a retry of a failed payment is not replayed from the provider's cache.
+    pub fn with_attempt(mut self, attempt: u32) -> Self {
+        self.attempt = attempt;
+        self
     }
 
     /// `AdyenProvider#determine_payment_status`.
@@ -65,7 +74,7 @@ impl<T: HttpTransport> PaymentProvider for AdyenProvider<T> {
         let headers = vec![
             ("X-API-Key".to_string(), self.api_key.clone()),
             ("Content-Type".to_string(), "application/json".to_string()),
-            ("Idempotency-Key".to_string(), format!("payment-{}", req.payment_id)),
+            ("Idempotency-Key".to_string(), super::idempotency_key(&req.payment_id, self.attempt)),
         ];
         let body = json!({
             "amount": { "value": req.amount_cents, "currency": req.currency.to_uppercase() },

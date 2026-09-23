@@ -39,7 +39,63 @@ pub trait HttpTransport: Send + Sync {
         headers: &[(String, String)],
         body: String,
     ) -> Result<HttpResponse, TransportError>;
+
+    /// GET `url` (used for provider lookups such as listing a Stripe customer's
+    /// payment methods). Transports that only script POSTs inherit this default,
+    /// which reports the capability as unavailable.
+    async fn get(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+    ) -> Result<HttpResponse, TransportError> {
+        let _ = (url, headers);
+        Err(TransportError::Io("GET is not supported by this transport".into()))
+    }
 }
+
+/// The transport used when outbound HTTP is not compiled in (builds without the
+/// `live` feature). Every call fails loudly instead of pretending to succeed,
+/// so a non-live deployment never marks a charge or a webhook as delivered.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DisabledTransport;
+
+const DISABLED_MSG: &str =
+    "outbound HTTP is disabled in this build (rebuild rago with `--features live`)";
+
+#[async_trait]
+impl HttpTransport for DisabledTransport {
+    async fn post(
+        &self,
+        _url: &str,
+        _headers: &[(String, String)],
+        _body: String,
+    ) -> Result<HttpResponse, TransportError> {
+        Err(TransportError::Io(DISABLED_MSG.into()))
+    }
+
+    async fn get(
+        &self,
+        _url: &str,
+        _headers: &[(String, String)],
+    ) -> Result<HttpResponse, TransportError> {
+        Err(TransportError::Io(DISABLED_MSG.into()))
+    }
+}
+
+/// The production transport for this build: real reqwest under `live`.
+#[cfg(feature = "live")]
+pub type DefaultTransport = ReqwestTransport;
+/// The production transport for this build: disabled without `live`.
+#[cfg(not(feature = "live"))]
+pub type DefaultTransport = DisabledTransport;
+
+/// Construct the build's production transport.
+pub fn default_transport() -> DefaultTransport {
+    DefaultTransport::default()
+}
+
+/// Whether this build can reach external services.
+pub const LIVE: bool = cfg!(feature = "live");
 
 /// A shared reference to a transport is itself a transport, so one transport
 /// instance can back both the payment provider and the webhook deliverer.
@@ -52,6 +108,14 @@ impl<T: HttpTransport + ?Sized> HttpTransport for &T {
         body: String,
     ) -> Result<HttpResponse, TransportError> {
         (**self).post(url, headers, body).await
+    }
+
+    async fn get(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+    ) -> Result<HttpResponse, TransportError> {
+        (**self).get(url, headers).await
     }
 }
 
@@ -126,6 +190,14 @@ impl HttpTransport for MockTransport {
             queue.remove(0)
         }
     }
+
+    async fn get(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+    ) -> Result<HttpResponse, TransportError> {
+        self.post(url, headers, String::new()).await
+    }
 }
 
 impl Clone for TransportError {
@@ -161,6 +233,27 @@ impl HttpTransport for ReqwestTransport {
         body: String,
     ) -> Result<HttpResponse, TransportError> {
         let mut req = self.client.post(url).body(body);
+        for (k, v) in headers {
+            req = req.header(k, v);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| TransportError::Io(e.to_string()))?;
+        let status = resp.status().as_u16();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| TransportError::Io(e.to_string()))?;
+        Ok(HttpResponse { status, body })
+    }
+
+    async fn get(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+    ) -> Result<HttpResponse, TransportError> {
+        let mut req = self.client.get(url);
         for (k, v) in headers {
             req = req.header(k, v);
         }

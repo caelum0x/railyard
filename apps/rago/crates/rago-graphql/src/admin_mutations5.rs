@@ -2,11 +2,13 @@
 //! assistant, data exports, SSO login shapes, EntraId integration, and
 //! tax-provider retries.
 //!
-//! Honest-remote policy: the AI/finance resolvers persist the conversation +
-//! message rows but do NOT fabricate an LLM reply (no provider key → no
-//! assistant message; status `not_configured`). SSO login returns a structured
-//! `idp_not_configured` error rather than faking an IdP round-trip. Sync/export/
-//! tax-retry mutations enqueue the real durable job.
+//! The AI/finance resolvers answer through the configured OpenAI-compatible
+//! endpoint (`rago_jobs::assistant`); without `RAGO_ASSISTANT_API_KEY` they
+//! persist the question with status `not_configured` and never fabricate a
+//! reply. SSO login exchanges the code with the configured IdP
+//! (`rago_jobs::sso`) and signs in an existing user; an unconfigured IdP is a
+//! structured `idp_not_configured` error. Sync/export/tax-retry mutations
+//! enqueue the durable jobs the worker runs.
 
 use async_graphql::{Context, Object, Result, ID};
 use chrono::Utc;
@@ -155,10 +157,10 @@ impl AdminMutation5 {
 
     // ---- AI + finance assistant -----------------------------------------
 
-    /// `CreateAiConversation` — append the user message to a conversation.
-    /// Persists the conversation + user message; the assistant reply is produced
-    /// by the streaming LLM job, which is owner-gated (needs a provider key), so
-    /// no assistant message is fabricated here.
+    /// `CreateAiConversation` — append the user message to a conversation and,
+    /// when the assistant is configured (`RAGO_ASSISTANT_API_KEY`), the
+    /// assistant's reply grounded in the org's billing figures. Without a key
+    /// no reply is fabricated; the conversation holds the user message only.
     async fn create_ai_conversation(&self, ctx: &Context<'_>, message: String, conversation_id: Option<ID>) -> Result<AiConversation> {
         let org = require_org(ctx)?;
         let conv_id = match &conversation_id {
@@ -170,24 +172,45 @@ impl AdminMutation5 {
             }
         };
         db(ctx).insert_ai_message(Uuid::new_v4(), org.id, conv_id, "user", &message).await?;
+        if rago_jobs::assistant::is_configured() {
+            let history: Vec<(String, String)> = db(ctx)
+                .list_ai_messages(conv_id)
+                .await?
+                .into_iter()
+                .map(|(_, role, content)| (role, content))
+                .collect();
+            let transport = rago_integrations::default_transport();
+            let reply = rago_jobs::assistant::answer(db(ctx), &transport, org.id, &history)
+                .await
+                .map_err(|e| async_graphql::Error::new(format!("assistant_error: {e}")))?;
+            db(ctx).insert_ai_message(Uuid::new_v4(), org.id, conv_id, "assistant", &reply).await?;
+        }
         let conv = db(ctx).find_ai_conversation(conv_id).await?.ok_or_else(|| async_graphql::Error::new("conversation_not_found"))?;
         let messages = db(ctx).list_ai_messages(conv_id).await?.into_iter().map(Into::into).collect();
         Ok(AiConversation { id: conv.id.into(), name: conv.name, messages })
     }
 
-    /// `AskFinanceAssistant` — persist the question. The LLM answer requires a
-    /// provider key (owner-gated); absent one the status is `not_configured` and
-    /// the answer is `null` — never a fabricated answer.
+    /// `AskFinanceAssistant` — answer the question with the configured
+    /// assistant (status `answered`), record a provider failure as `failed`, or
+    /// `not_configured` without a key — never a fabricated answer.
     async fn ask_finance_assistant(&self, ctx: &Context<'_>, question: String, session_id: Option<ID>) -> Result<FinanceAnswer> {
         let org = require_org(ctx)?;
         let session = match &session_id {
             Some(s) => uuid(s)?,
             None => Uuid::new_v4(),
         };
-        let configured = std::env::var("RAGO_ASSISTANT_API_KEY").map(|v| !v.is_empty()).unwrap_or(false);
-        let status = if configured { "pending" } else { "not_configured" };
-        db(ctx).insert_finance_assistant_message(Uuid::new_v4(), org.id, session, &question, None, status).await?;
-        Ok(FinanceAnswer { session_id: session.into(), question, answer: None, status: status.to_string() })
+        let (answer, status) = if rago_jobs::assistant::is_configured() {
+            let transport = rago_integrations::default_transport();
+            let history = vec![("user".to_string(), question.clone())];
+            match rago_jobs::assistant::answer(db(ctx), &transport, org.id, &history).await {
+                Ok(a) => (Some(a), "answered"),
+                Err(e) => (Some(format!("The assistant could not answer: {e}")), "failed"),
+            }
+        } else {
+            (None, "not_configured")
+        };
+        db(ctx).insert_finance_assistant_message(Uuid::new_v4(), org.id, session, &question, answer.as_deref(), status).await?;
+        Ok(FinanceAnswer { session_id: session.into(), question, answer, status: status.to_string() })
     }
 
     /// `ExportFinanceAssistantResult` — enqueue an export of a session's answers.
@@ -195,6 +218,7 @@ impl AdminMutation5 {
         let org = require_org(ctx)?;
         let id = Uuid::new_v4();
         db(ctx).insert_data_export_filtered(id, org.id, "finance_assistant", "csv", &json!({ "session_id": session_id.as_str() })).await?;
+        db(ctx).enqueue_job(rago_jobs::JOB_DATA_EXPORT_GENERATE, &json!({ "data_export_id": id }), Utc::now().naive_utc(), 5).await?;
         Ok(DataExport { id: id.into(), resource_type: "finance_assistant".into(), format: "csv".into(), status: "pending".into(), row_count: 0 })
     }
 
@@ -215,21 +239,20 @@ impl AdminMutation5 {
     /// `OktaLogin` — exchanges the auth code with the configured Okta tenant.
     /// Without a configured IdP this returns a structured `idp_not_configured`
     /// error rather than faking an IdP round-trip.
-    async fn okta_login(&self, _ctx: &Context<'_>, code: String, state: String) -> Result<crate::types_admin4::LoginPayload> {
-        let _ = (code, state);
-        Self::sso("okta")
+    async fn okta_login(&self, ctx: &Context<'_>, code: String, state: String) -> Result<crate::types_admin4::LoginPayload> {
+        let _ = state;
+        Self::sso(ctx, "okta", &code).await
     }
 
     /// `GoogleLoginUser`.
-    async fn google_login(&self, _ctx: &Context<'_>, code: String) -> Result<crate::types_admin4::LoginPayload> {
-        let _ = code;
-        Self::sso("google")
+    async fn google_login(&self, ctx: &Context<'_>, code: String) -> Result<crate::types_admin4::LoginPayload> {
+        Self::sso(ctx, "google", &code).await
     }
 
     /// `EntraIdLogin`.
-    async fn entra_id_login(&self, _ctx: &Context<'_>, code: String, state: String) -> Result<crate::types_admin4::LoginPayload> {
-        let _ = (code, state);
-        Self::sso("entra_id")
+    async fn entra_id_login(&self, ctx: &Context<'_>, code: String, state: String) -> Result<crate::types_admin4::LoginPayload> {
+        let _ = state;
+        Self::sso(ctx, "entra_id", &code).await
     }
 
     /// `CreateEntraIdIntegration` — persist the EntraId (Azure AD) config row.
@@ -275,14 +298,24 @@ impl AdminMutation5 {
 }
 
 impl AdminMutation5 {
-    fn sso(provider: &str) -> Result<crate::types_admin4::LoginPayload> {
+    /// OAuth code exchange with the IdP → verified email → existing user →
+    /// session JWT (same token `loginUser` issues). SSO never creates users.
+    async fn sso(ctx: &Context<'_>, provider: &str, code: &str) -> Result<crate::types_admin4::LoginPayload> {
         if idp_unconfigured(provider) {
             return Err(async_graphql::Error::new("idp_not_configured"));
         }
-        // A configured IdP would exchange the code here (rago-integrations,
-        // owner-credentialed). Until that transport is wired, surface the same
-        // honest error rather than a fabricated session.
-        Err(async_graphql::Error::new("idp_not_configured"))
+        let transport = rago_integrations::default_transport();
+        let email = rago_jobs::sso::verified_email(&transport, provider, code)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let (user_id, user_email, _) = db(ctx)
+            .find_user_by_email(&email)
+            .await?
+            .ok_or_else(|| async_graphql::Error::new("user_not_found"))?;
+        Ok(crate::types_admin4::LoginPayload {
+            token: crate::auth::issue_jwt(user_id),
+            user: crate::types_admin4::User { id: user_id.into(), email: user_email },
+        })
     }
 
     async fn data_export(&self, ctx: &Context<'_>, resource_type: &str, format: Option<String>, filters: Option<async_graphql::Json<serde_json::Value>>) -> Result<DataExport> {

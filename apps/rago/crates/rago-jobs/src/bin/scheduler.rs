@@ -5,16 +5,18 @@
 //! * `DATABASE_URL`      — Postgres.
 //! * `RAGO_BILLING_DATE` — `YYYY-MM-DD` cycle date (default: first of next month).
 //! * `RAGO_FORCE_BILL=1` — bill all active subscriptions regardless of due date.
-//! * `RAGO_STRIPE_SECRET`— provider key (owner-gated; the live network call is
-//!   behind the transport's `live` feature — this build uses the in-memory
-//!   transport, which returns a scripted `succeeded` PaymentIntent).
+//! * `RAGO_CHARGE=0`     — invoice only, do not collect payment.
 //! * `RAGO_ONCE=1`       — run a single cycle and exit (default loops daily).
+//!
+//! Payment providers and credentials are resolved per organization (dashboard
+//! `payment_providers`, else `RAGO_STRIPE_SECRET_KEY` & co.). Outbound calls
+//! use the build's transport: real HTTP with `--features live`, otherwise a
+//! disabled transport that fails loudly (nothing is marked paid or delivered).
 
 use std::str::FromStr;
 
 use chrono::NaiveDate;
 use rago_db::Db;
-use rago_integrations::MockTransport;
 use rago_jobs::scheduler::{first_of_next_month, run_billing_cycle, today, SchedulerConfig};
 
 #[tokio::main]
@@ -37,30 +39,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let force = std::env::var("RAGO_FORCE_BILL").as_deref() == Ok("1");
 
     let cfg = SchedulerConfig {
-        stripe_secret_key: std::env::var("RAGO_STRIPE_SECRET")
-            .unwrap_or_else(|_| "sk_test_mock".into()),
-        default_webhook_endpoint: Some(
-            std::env::var("RAGO_WEBHOOK_URL")
-                .unwrap_or_else(|_| "https://example.test/hooks".into()),
-        ),
-        charge_customers: true,
-        provider_customer_id: std::env::var("RAGO_PROVIDER_CUSTOMER")
-            .unwrap_or_else(|_| "cus_demo".into()),
+        charge_customers: std::env::var("RAGO_CHARGE").as_deref() != Ok("0"),
     };
-
-    // In-memory transport that both Stripe and the webhook deliverer talk to.
-    // A live reqwest transport (feature `live`, owner-gated) would replace this.
-    let transport = MockTransport::always(200, r#"{"id":"pi_mock_1","status":"succeeded"}"#);
+    let transport = rago_integrations::default_transport();
+    if !rago_integrations::LIVE {
+        tracing::warn!("built without `live`: provider charges and webhook deliveries will fail until rebuilt with --features live");
+    }
 
     let run_once = std::env::var("RAGO_ONCE").as_deref() == Ok("1");
     loop {
         tracing::info!(%billing_date, force, "running billing cycle");
         let report = run_billing_cycle(&db, &transport, &cfg, billing_date, force).await?;
+        // Deliver the webhooks the cycle queued.
+        let delivered = rago_jobs::redeliver_due_webhooks(&db, &transport).await?;
         tracing::info!(
             invoices = report.billed_invoices.len(),
             payments_succeeded = report.payments_succeeded,
             payments_failed = report.payments_failed,
+            payments_skipped = report.payments_skipped,
+            errors = report.errors,
             webhooks = report.webhooks_written,
+            delivered,
             "billing cycle complete"
         );
         println!(

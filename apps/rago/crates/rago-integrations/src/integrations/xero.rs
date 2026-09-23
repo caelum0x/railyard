@@ -24,6 +24,48 @@ impl<T: HttpTransport> XeroProvider<T> {
             transport,
         }
     }
+
+    /// `Integrations::Aggregator::CreditNotes::CreateService` (Xero path) — sync
+    /// a credit note as an `ACCRECCREDIT` document (`.../v1/xero/creditnotes`).
+    /// `note.number` is the credit-note number, `note.invoice_id` the credit
+    /// note's Lago id.
+    pub async fn sync_credit_note(&self, note: &AccountingInvoice) -> Result<SyncResult, IntegrationError> {
+        let url = format!("{}/v1/xero/creditnotes", self.base_url.trim_end_matches('/'));
+        let headers = vec![
+            ("Authorization".to_string(), format!("Bearer {}", self.api_key)),
+            ("Content-Type".to_string(), "application/json".to_string()),
+        ];
+        let body = json!({
+            "Type": "ACCRECCREDIT",
+            "CreditNoteNumber": note.number,
+            "CurrencyCode": note.currency,
+            "Contact": { "ContactNumber": note.customer_external_id },
+            "Total": note.total_amount_cents,
+            "Status": "AUTHORISED",
+            "lago_id": note.invoice_id,
+        })
+        .to_string();
+        let resp = self.transport.post(&url, &headers, body).await?;
+        let json: Value =
+            serde_json::from_str(&resp.body).map_err(|e| IntegrationError::InvalidResponse(e.to_string()))?;
+        if !resp.is_success() {
+            return Err(IntegrationError::Provider {
+                code: json.get("code").and_then(Value::as_str).map(str::to_string),
+                message: json.get("error").and_then(Value::as_str).unwrap_or("xero error").to_string(),
+            });
+        }
+        let external_id = json
+            .get("succeededId")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                json.pointer("/CreditNotes/0/CreditNoteID")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| IntegrationError::InvalidResponse("missing CreditNoteID".into()))?;
+        Ok(SyncResult { external_id })
+    }
 }
 
 #[async_trait]

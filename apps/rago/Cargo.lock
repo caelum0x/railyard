@@ -2378,16 +2378,20 @@ dependencies = [
 name = "rago-db"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "rago-billing",
  "rago-core",
+ "ring",
  "rust_decimal",
  "rust_decimal_macros",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -2416,6 +2420,7 @@ dependencies = [
  "rago-core",
  "rago-db",
  "rago-integrations",
+ "rago-jobs",
  "rust_decimal",
  "rust_decimal_macros",
  "serde_json",

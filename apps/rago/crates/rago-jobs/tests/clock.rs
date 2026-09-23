@@ -574,12 +574,7 @@ async fn billing_cycle_emits_invoice_created_and_fee_created(pool: PgPool) {
 
     let db = rago_db::Db::new(pool.clone());
     let transport = MockTransport::always(200, "{}");
-    let cfg = SchedulerConfig {
-        stripe_secret_key: "sk_test".into(),
-        default_webhook_endpoint: None,
-        charge_customers: false,
-        provider_customer_id: String::new(),
-    };
+    let cfg = SchedulerConfig { charge_customers: false };
     let report = run_billing_cycle(&db, &transport, &cfg, Utc::now().date_naive(), true)
         .await
         .unwrap();

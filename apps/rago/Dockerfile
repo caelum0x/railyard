@@ -2,9 +2,10 @@
 FROM rust:1-bookworm AS build
 WORKDIR /app
 COPY . .
-# Build the consolidated supervising binary (API + worker daemon).
-# Add `--features live` here to bake in the real reqwest/SMTP transports.
-RUN cargo build --release --bin rago-server
+# Build the consolidated supervising binary (API + worker daemon) with the
+# live transports: real HTTP for payment providers, integrations and outbound
+# webhooks, and real SMTP. Without `live` every outbound call fails loudly.
+RUN cargo build --release --features live --bin rago-server
 
 # ---- Runtime stage ---------------------------------------------------------
 FROM debian:bookworm-slim

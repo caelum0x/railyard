@@ -156,6 +156,7 @@ pub fn fee(f: &Fee) -> Value {
 pub fn invoice(i: &Invoice, fees: &[Fee]) -> Value {
     json!({
         "lago_id": i.id,
+        "lago_customer_id": i.customer_id,
         "sequential_id": i.sequential_id,
         "number": i.number,
         "issuing_date": i.issuing_date.map(|d| d.format("%Y-%m-%d").to_string()),

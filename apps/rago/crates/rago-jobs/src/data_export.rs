@@ -29,8 +29,21 @@ fn csv_row(cells: &[String]) -> String {
 
 const EXPORT_LIMIT: i64 = 100_000;
 
+/// Accept the dashboard's singular / Lago-style names (`invoice`, `customer`,
+/// `credit_note`, `event`) as well as the plural REST names.
+fn normalize_resource_type(r: &str) -> &str {
+    match r {
+        "invoice" => "invoices",
+        "customer" => "customers",
+        "event" => "events",
+        "credit_note" => "credit_notes",
+        other => other,
+    }
+}
+
 /// Build the CSV for `resource_type` and return `(csv, data_row_count)`.
 pub async fn build_csv(db: &Db, org: Uuid, resource_type: &str) -> Result<(String, i32), JobError> {
+    let resource_type = normalize_resource_type(resource_type);
     let mut lines: Vec<String> = Vec::new();
     let count;
     match resource_type {
@@ -88,7 +101,27 @@ pub async fn build_csv(db: &Db, org: Uuid, resource_type: &str) -> Result<(Strin
                 ]));
             }
         }
-        other => return Err(JobError::Payment(format!("unknown export resource_type: {other}"))),
+        "credit_notes" => {
+            lines.push(csv_row(&[
+                "number".into(), "invoice_id".into(), "currency".into(),
+                "credit_amount_cents".into(), "refund_amount_cents".into(),
+                "total_amount_cents".into(), "issuing_date".into(),
+            ]));
+            let notes = db.credit_notes_for_org(org, EXPORT_LIMIT, 0).await?;
+            count = notes.len() as i32;
+            for cn in &notes {
+                lines.push(csv_row(&[
+                    cn.number.clone(),
+                    cn.invoice_id.to_string(),
+                    cn.total_amount_currency.clone(),
+                    cn.credit_amount_cents.to_string(),
+                    cn.refund_amount_cents.to_string(),
+                    cn.total_amount_cents.to_string(),
+                    cn.issuing_date.to_string(),
+                ]));
+            }
+        }
+        other => return Err(JobError::Integration(format!("unknown export resource_type: {other}"))),
     }
     // Trailing newline (POSIX text file).
     let mut csv = lines.join("\n");
@@ -96,9 +129,31 @@ pub async fn build_csv(db: &Db, org: Uuid, resource_type: &str) -> Result<(Strin
     Ok((csv, count))
 }
 
+/// Build the CSV of a finance-assistant session (`filters.session_id`).
+pub async fn build_finance_assistant_csv(db: &Db, org: Uuid, filters: &serde_json::Value) -> Result<(String, i32), JobError> {
+    let session = filters
+        .get("session_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .ok_or_else(|| JobError::Integration("finance_assistant export requires filters.session_id".into()))?;
+    let rows = db.finance_assistant_session(org, session).await?;
+    let mut lines = vec![csv_row(&["asked_at".into(), "question".into(), "answer".into(), "status".into()])];
+    for (q, a, status, at) in &rows {
+        lines.push(csv_row(&[at.to_string(), q.clone(), a.clone().unwrap_or_default(), status.clone()]));
+    }
+    let mut csv = lines.join("\n");
+    csv.push('\n');
+    Ok((csv, rows.len() as i32))
+}
+
 /// Process one enqueued export: build the CSV and store it on the row.
 pub async fn process(db: &Db, export_id: Uuid, org: Uuid, resource_type: &str) -> Result<(), JobError> {
-    let (csv, rows) = build_csv(db, org, resource_type).await?;
+    let (csv, rows) = if resource_type == "finance_assistant" {
+        let filters = db.data_export_filters(export_id).await?;
+        build_finance_assistant_csv(db, org, &filters).await?
+    } else {
+        build_csv(db, org, resource_type).await?
+    };
     db.complete_data_export(export_id, &csv, rows).await?;
     Ok(())
 }

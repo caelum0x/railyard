@@ -41,6 +41,8 @@ tracing-subscriber.workspace = true
 sqlx.workspace = true
 
 [features]
+# Real outbound HTTP (provider charges + webhook delivery) for the job binaries.
+live = ["rago-integrations/live"]
 # Opt-in Postgres-backed #[sqlx::test] suites (need DATABASE_URL; see README
 # "Running the tests"). Plain `cargo test` skips them.
 pg-tests = []

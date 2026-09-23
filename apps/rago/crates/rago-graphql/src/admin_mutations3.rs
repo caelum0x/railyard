@@ -35,6 +35,25 @@ fn mask(secret: &Option<String>) -> Option<String> {
     })
 }
 
+/// Seal and store a provider secret submitted from the dashboard (the display
+/// column keeps only `****last4`). Fails with a clear configuration error when
+/// `RAGO_ENCRYPTION_KEY` is not set, rather than dropping the credential.
+async fn persist_secret(ctx: &Context<'_>, provider_id: &ID, secret: &Option<String>) -> Result<()> {
+    let Some(secret) = secret.as_deref().filter(|v| !v.is_empty()) else {
+        return Ok(());
+    };
+    let id = uuid(provider_id)?;
+    db(ctx)
+        .store_payment_provider_secret(id, secret)
+        .await
+        .map_err(|e| async_graphql::Error::new(match e {
+            rago_db::StoreSecretError::Secret(rago_db::secrets::SecretError::KeyMissing) => {
+                "encryption_key_missing: set RAGO_ENCRYPTION_KEY to store provider credentials".to_string()
+            }
+            other => other.to_string(),
+        }))
+}
+
 /// Admin CRUD mutation root — slice 3 (merged into the schema's `Mutation`).
 #[derive(Default)]
 pub struct AdminMutation3;
@@ -53,7 +72,9 @@ impl AdminMutation3 {
         let row = db(ctx)
             .upsert_payment_provider(org.id, "stripe", &input.code, Some(&input.name), mask(&input.secret_key).as_deref(), input.success_redirect_url.as_deref(), &settings)
             .await?;
-        Ok(row.into())
+        let provider: PaymentProvider = row.into();
+        persist_secret(ctx, &provider.id, &input.secret_key).await?;
+        Ok(provider)
     }
     async fn update_stripe_payment_provider(&self, ctx: &Context<'_>, input: StripePaymentProviderInput) -> Result<PaymentProvider> {
         self.add_stripe_payment_provider(ctx, input).await
@@ -70,7 +91,9 @@ impl AdminMutation3 {
         let row = db(ctx)
             .upsert_payment_provider(org.id, "adyen", &input.code, Some(&input.name), mask(&input.api_key).as_deref(), input.success_redirect_url.as_deref(), &settings)
             .await?;
-        Ok(row.into())
+        let provider: PaymentProvider = row.into();
+        persist_secret(ctx, &provider.id, &input.api_key).await?;
+        Ok(provider)
     }
     async fn update_adyen_payment_provider(&self, ctx: &Context<'_>, input: AdyenPaymentProviderInput) -> Result<PaymentProvider> {
         self.add_adyen_payment_provider(ctx, input).await
@@ -82,7 +105,9 @@ impl AdminMutation3 {
         let row = db(ctx)
             .upsert_payment_provider(org.id, "gocardless", &input.code, Some(&input.name), mask(&input.access_code).as_deref(), input.success_redirect_url.as_deref(), &json!({}))
             .await?;
-        Ok(row.into())
+        let provider: PaymentProvider = row.into();
+        persist_secret(ctx, &provider.id, &input.access_code).await?;
+        Ok(provider)
     }
     async fn update_gocardless_payment_provider(&self, ctx: &Context<'_>, input: GocardlessPaymentProviderInput) -> Result<PaymentProvider> {
         self.add_gocardless_payment_provider(ctx, input).await
@@ -95,7 +120,9 @@ impl AdminMutation3 {
         let row = db(ctx)
             .upsert_payment_provider(org.id, "cashfree", &input.code, Some(&input.name), mask(&input.client_secret).as_deref(), input.success_redirect_url.as_deref(), &settings)
             .await?;
-        Ok(row.into())
+        let provider: PaymentProvider = row.into();
+        persist_secret(ctx, &provider.id, &input.client_secret).await?;
+        Ok(provider)
     }
 
     /// `AddFlutterwavePaymentProvider`.
@@ -104,7 +131,9 @@ impl AdminMutation3 {
         let row = db(ctx)
             .upsert_payment_provider(org.id, "flutterwave", &input.code, Some(&input.name), mask(&input.secret_key).as_deref(), input.success_redirect_url.as_deref(), &json!({}))
             .await?;
-        Ok(row.into())
+        let provider: PaymentProvider = row.into();
+        persist_secret(ctx, &provider.id, &input.secret_key).await?;
+        Ok(provider)
     }
 
     /// `AddMoneyhashPaymentProvider`.
@@ -114,7 +143,9 @@ impl AdminMutation3 {
         let row = db(ctx)
             .upsert_payment_provider(org.id, "moneyhash", &input.code, Some(&input.name), mask(&input.api_key).as_deref(), input.success_redirect_url.as_deref(), &settings)
             .await?;
-        Ok(row.into())
+        let provider: PaymentProvider = row.into();
+        persist_secret(ctx, &provider.id, &input.api_key).await?;
+        Ok(provider)
     }
 
     /// `DestroyPaymentProvider`.
@@ -194,13 +225,17 @@ impl AdminMutation3 {
     /// `null` (the live call runs in rago-integrations with owner credentials).
     async fn generate_checkout_url(&self, ctx: &Context<'_>, customer_id: ID) -> Result<CheckoutUrl> {
         let org = require_org(ctx)?;
-        db(ctx)
+        let customer = db(ctx)
             .find_customer(uuid(&customer_id)?)
             .await?
             .filter(|c| c.organization_id == org.id)
             .ok_or_else(|| async_graphql::Error::new("customer_not_found"))?;
-        let _provider = db(ctx).default_payment_provider(org.id).await?;
-        Ok(CheckoutUrl { checkout_url: None })
+        let transport = rago_integrations::default_transport();
+        match rago_jobs::collection::checkout_url(db(ctx), &transport, &customer).await {
+            Ok(Ok(url)) => Ok(CheckoutUrl { checkout_url: Some(url) }),
+            Ok(Err(code)) => Err(async_graphql::Error::new(code)),
+            Err(e) => Err(async_graphql::Error::new(e.to_string())),
+        }
     }
 
     // ---- payments + payment requests ------------------------------------

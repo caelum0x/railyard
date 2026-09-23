@@ -4,352 +4,166 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex" />
-<title>Rago Admin</title>
+<title>Rago Billing</title>
 <style>
   :root {
-    --bg: #0f1117; --panel: #181b24; --border: #262b38; --fg: #e6e8ee;
-    --muted: #8b91a1; --accent: #6ea8fe; --danger: #f2668b; --ok: #55c98a;
-    --row: #1e222d;
+    --bg: #0f1117; --panel: #171a23; --panel2: #1c202b; --border: #272c39; --fg: #e6e8ee;
+    --muted: #8b91a1; --accent: #6ea8fe; --accent-fg: #0b1020; --danger: #f2668b;
+    --ok: #55c98a; --warn: #f0b95b; --row: #1e222d; --radius: 8px;
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--fg);
     font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
-  header {
-    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--border);
-    position: sticky; top: 0; z-index: 10;
-  }
-  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
-  header .spacer { flex: 1; }
-  input, button, select {
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .icon { width: 16px; height: 16px; flex: none; vertical-align: -3px; }
+  input, button, select, textarea {
     font: inherit; color: var(--fg); background: var(--row);
     border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
   }
-  input { min-width: 280px; }
-  button { cursor: pointer; }
-  button.primary { background: var(--accent); color: #0b1020; border-color: var(--accent); font-weight: 600; }
-  button:hover { filter: brightness(1.08); }
+  textarea { width: 100%; min-height: 90px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  button:disabled { opacity: .55; cursor: default; }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+  button.danger { color: var(--danger); border-color: #5a2a3a; }
+  button.ghost { background: transparent; }
+  button:hover:not(:disabled) { filter: brightness(1.1); }
+
+  .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+  aside {
+    background: var(--panel); border-right: 1px solid var(--border); padding: 14px 10px;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  aside .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; padding: 4px 10px 14px; letter-spacing: .3px; }
+  aside .group { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .6px; padding: 12px 10px 4px; }
+  aside a.nav {
+    display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 6px;
+    color: var(--muted); text-decoration: none;
+  }
+  aside a.nav:hover { background: var(--row); color: var(--fg); }
+  aside a.nav.active { background: var(--panel2); color: var(--fg); border: 1px solid var(--border); }
+  .topbar {
+    display: flex; align-items: center; gap: 12px; padding: 12px 24px; border-bottom: 1px solid var(--border);
+    background: var(--panel); position: sticky; top: 0; z-index: 5;
+  }
+  .topbar .spacer { flex: 1; }
   #status { font-size: 12px; color: var(--muted); }
   #status.err { color: var(--danger); }
   #status.ok { color: var(--ok); }
-  nav {
-    display: flex; gap: 4px; padding: 12px 20px 0; flex-wrap: wrap;
-  }
-  nav button {
-    background: transparent; border: 1px solid transparent; border-bottom: none;
-    border-radius: 6px 6px 0 0; color: var(--muted); padding: 8px 14px;
-  }
-  nav button.active { color: var(--fg); background: var(--panel); border-color: var(--border); }
-  main { padding: 0 20px 40px; }
-  .card {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 0 8px 8px 8px;
-    overflow: auto;
-  }
+  main { padding: 20px 24px 60px; max-width: 1400px; }
+  .page-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .page-head h2 { margin: 0; font-size: 20px; }
+  .page-head .sub { color: var(--muted); font-size: 13px; }
+  .page-head .spacer { flex: 1; }
+  .crumb { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 16px; }
+  .card > h3 { margin: 0; padding: 12px 16px; font-size: 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  .card > h3 .spacer { flex: 1; }
+  .card .body { padding: 14px 16px; }
+  .scroll { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; }
-  th, td {
-    text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--border);
-    white-space: nowrap; font-variant-numeric: tabular-nums;
-  }
-  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .5px; }
+  tbody tr.clickable { cursor: pointer; }
   tbody tr:hover { background: var(--row); }
-  td.mono, th.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
-  .badge {
-    display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 12px;
-    background: var(--row); border: 1px solid var(--border);
-  }
+  td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  td.num, th.num { text-align: right; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 12px; background: var(--row); border: 1px solid var(--border); }
+  .badge.ok { color: var(--ok); border-color: #1f4a35; }
+  .badge.err { color: var(--danger); border-color: #5a2a3a; }
+  .badge.warn { color: var(--warn); border-color: #5a4a22; }
   .empty, .loading { padding: 28px; color: var(--muted); text-align: center; }
-  .gate { max-width: 460px; margin: 80px auto; text-align: center; }
-  .gate p { color: var(--muted); }
-  .toolbar { display: flex; align-items: center; gap: 10px; padding: 12px 0; }
-  .count { color: var(--muted); font-size: 12px; }
+  .error-box { padding: 14px 16px; color: var(--danger); }
+  .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  .toolbar .spacer { flex: 1; }
+  .pager { display: flex; align-items: center; gap: 8px; padding: 10px 16px; color: var(--muted); font-size: 12.5px; }
+  .pager .spacer { flex: 1; }
+  .kv { display: grid; grid-template-columns: 180px 1fr; gap: 6px 16px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+  .kpi .label { color: var(--muted); font-size: 12px; }
+  .kpi .value { font-size: 22px; font-weight: 650; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .kpi .hint { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .bars { display: flex; align-items: flex-end; gap: 6px; height: 160px; padding: 10px 4px 0; }
+  .bars .bar { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 18px; }
+  .bars .fill { width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 1px; }
+  .bars .lbl { font-size: 10.5px; color: var(--muted); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .overlay { position: fixed; inset: 0; background: rgba(5, 7, 12, .66); display: flex; align-items: flex-start; justify-content: center; padding: 60px 16px; z-index: 50; overflow-y: auto; }
+  .modal { width: 100%; max-width: 620px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  .modal header { display: flex; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .modal header h3 { margin: 0; font-size: 15px; flex: 1; }
+  .modal .content { padding: 16px 18px; display: grid; gap: 12px; }
+  .modal footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); }
+  .field label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
+  .field input, .field select { width: 100%; }
+  .field .help { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .field.check label { display: flex; align-items: center; gap: 8px; color: var(--fg); }
+  .field.check input { width: auto; }
+  .form-error { color: var(--danger); font-size: 13px; white-space: pre-wrap; }
+  .toast-wrap { position: fixed; right: 18px; bottom: 18px; display: grid; gap: 8px; z-index: 60; }
+  .toast { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; max-width: 420px; display: flex; gap: 8px; align-items: flex-start; }
+  .toast.err { border-color: #5a2a3a; }
+  .toast.ok { border-color: #1f4a35; }
+  pre.json { margin: 0; padding: 12px 16px; overflow: auto; max-height: 360px; font-size: 12px; background: var(--row); border-radius: 6px; }
+
+  .gate { max-width: 460px; margin: 12vh auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 26px; }
+  .gate h1 { margin: 0 0 6px; font-size: 20px; display: flex; gap: 8px; align-items: center; }
+  .gate p { color: var(--muted); margin: 0 0 16px; }
+  .gate input { width: 100%; margin-bottom: 10px; }
+  .gate button { width: 100%; justify-content: center; }
+  .muted { color: var(--muted); }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   code { background: var(--row); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+    aside { position: static; height: auto; }
+    .kv { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>Rago Admin</h1>
-  <input id="key" type="password" placeholder="Bearer API key" autocomplete="off" />
-  <button id="connect" class="primary">Connect</button>
-  <button id="logout" style="display:none">Sign out</button>
-  <div class="spacer"></div>
-  <span id="status">Not connected</span>
-</header>
-
-<div id="gate" class="gate">
-  <p>Enter an organization API key to load live billing data.<br />
-  Requests use <code>Authorization: Bearer &lt;key&gt;</code> against the same Rago API that serves this page.</p>
+<div id="gate" class="gate" style="display:none">
+  <h1 id="gate-title">Rago Billing</h1>
+  <p>Sign in with an organization API key. Every request is sent as
+  <code>Authorization: Bearer &lt;key&gt;</code> to this Rago server's API.</p>
+  <form id="gate-form">
+    <label for="key" class="sr">API key</label>
+    <input id="key" type="password" placeholder="Organization API key" autocomplete="off" required />
+    <button class="primary" type="submit">Connect</button>
+    <div id="gate-error" class="form-error" role="alert"></div>
+  </form>
 </div>
 
-<div id="app" style="display:none">
-  <nav id="tabs"></nav>
-  <main>
-    <div class="toolbar">
-      <button id="refresh">Refresh</button>
-      <input id="param" style="display:none" autocomplete="off" />
-      <span id="count" class="count"></span>
+<div id="app" class="layout" style="display:none">
+  <aside>
+    <div class="brand" id="brand"></div>
+    <nav id="nav" aria-label="Sections"></nav>
+  </aside>
+  <div>
+    <div class="topbar">
+      <span id="org-name" class="mono"></span>
+      <div class="spacer"></div>
+      <span id="status" role="status"></span>
+      <button id="logout" class="ghost" type="button"></button>
     </div>
-    <div id="view" class="card"><div class="loading">Loading…</div></div>
-  </main>
+    <main id="view" tabindex="-1"></main>
+  </div>
 </div>
+<div id="overlay-root"></div>
+<div class="toast-wrap" id="toasts" aria-live="polite"></div>
 
-<script>
-"use strict";
-(function () {
-  const KEY_STORE = "rago_admin_key";
-  const el = (id) => document.getElementById(id);
-  const statusEl = el("status");
-
-  function setStatus(msg, kind) {
-    statusEl.textContent = msg;
-    statusEl.className = kind || "";
-  }
-
-  function getKey() { return sessionStorage.getItem(KEY_STORE) || ""; }
-  function setKey(k) {
-    if (k) sessionStorage.setItem(KEY_STORE, k);
-    else sessionStorage.removeItem(KEY_STORE);
-  }
-
-  // Escape everything user/data-derived before it touches innerHTML.
-  function esc(v) {
-    if (v === null || v === undefined) return "";
-    return String(v).replace(/[&<>"']/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  }
-
-  function money(cents, currency) {
-    if (cents === null || cents === undefined) return "";
-    const n = Number(cents) / 100;
-    if (Number.isNaN(n)) return esc(cents);
-    return (currency ? esc(currency) + " " : "") + n.toFixed(2);
-  }
-
-  function badge(text) {
-    return '<span class="badge">' + esc(text) + "</span>";
-  }
-
-  async function api(path) {
-    const res = await fetch(path, {
-      headers: { "Authorization": "Bearer " + getKey(), "Accept": "application/json" },
-    });
-    if (res.status === 401) throw new Error("Unauthorized — check the API key.");
-    if (!res.ok) throw new Error("HTTP " + res.status + " on " + path);
-    return res.json();
-  }
-
-  // Each tab: label, the REST endpoint, the JSON root array, columns.
-  const TABS = [
-    {
-      id: "customers", label: "Customers",
-      path: "/api/v1/customers?per_page=50", root: "customers",
-      cols: [
-        { h: "External ID", f: (r) => esc(r.external_id), mono: true },
-        { h: "Name", f: (r) => esc(r.name) },
-        { h: "Email", f: (r) => esc(r.email) },
-        { h: "Currency", f: (r) => badge(r.currency || "—") },
-        { h: "Lago ID", f: (r) => esc(r.lago_id), mono: true },
-      ],
-    },
-    {
-      id: "subscriptions", label: "Subscriptions",
-      path: "/api/v1/subscriptions?per_page=50", root: "subscriptions",
-      cols: [
-        { h: "External ID", f: (r) => esc(r.external_id), mono: true },
-        { h: "Customer", f: (r) => esc(r.external_customer_id), mono: true },
-        { h: "Plan", f: (r) => esc(r.plan_code) },
-        { h: "Amount", f: (r) => money(r.plan_amount_cents, r.plan_amount_currency) },
-        { h: "Status", f: (r) => badge(r.status) },
-        { h: "Started", f: (r) => esc((r.started_at || "").slice(0, 10)) },
-      ],
-    },
-    {
-      id: "invoices", label: "Invoices",
-      path: "/api/v1/invoices?per_page=50", root: "invoices",
-      cols: [
-        { h: "Number", f: (r) => esc(r.number), mono: true },
-        { h: "Total", f: (r) => money(r.total_amount_cents, r.currency) },
-        { h: "Status", f: (r) => badge(r.status) },
-        { h: "Payment", f: (r) => badge(r.payment_status) },
-        { h: "Lago ID", f: (r) => esc(r.lago_id), mono: true },
-      ],
-    },
-    {
-      id: "plans", label: "Plans",
-      path: "/api/v1/plans?per_page=50", root: "plans",
-      cols: [
-        { h: "Code", f: (r) => esc(r.code), mono: true },
-        { h: "Name", f: (r) => esc(r.name) },
-        { h: "Interval", f: (r) => badge(r.interval || "—") },
-        { h: "Amount", f: (r) => money(r.amount_cents, r.amount_currency) },
-        { h: "Trial (days)", f: (r) => esc(r.trial_period) },
-      ],
-    },
-    {
-      id: "webhook_endpoints", label: "Webhook Endpoints",
-      path: "/api/v1/webhook_endpoints", root: "webhook_endpoints",
-      cols: [
-        { h: "URL", f: (r) => esc(r.webhook_url), mono: true },
-        { h: "Signature", f: (r) => badge(r.signature_algo) },
-        { h: "Lago ID", f: (r) => esc(r.lago_id), mono: true },
-      ],
-    },
-    {
-      id: "webhook_deliveries", label: "Webhook Deliveries",
-      path: "/api/v1/webhook_deliveries?per_page=50", root: "webhook_deliveries",
-      cols: [
-        { h: "Event", f: (r) => esc(r.event_type), mono: true },
-        { h: "Status", f: (r) => badge(r.status) },
-        { h: "HTTP", f: (r) => esc(r.http_status) },
-        { h: "Attempts", f: (r) => esc(r.attempts) },
-        { h: "Endpoint", f: (r) => esc(r.endpoint), mono: true },
-        { h: "Last error", f: (r) => esc(r.last_error) },
-        { h: "Created", f: (r) => esc((r.created_at || "").slice(0, 19)) },
-      ],
-    },
-    {
-      id: "credit_notes", label: "Credit Notes",
-      path: "/api/v1/credit_notes?per_page=50", root: "credit_notes",
-      cols: [
-        { h: "Number", f: (r) => esc(r.number), mono: true },
-        { h: "Reason", f: (r) => esc(r.reason) },
-        { h: "Total", f: (r) => money(r.total_amount_cents, r.currency) },
-        { h: "Balance", f: (r) => money(r.balance_amount_cents, r.currency) },
-        { h: "Refund", f: (r) => money(r.refund_amount_cents, r.currency) },
-        { h: "Invoice", f: (r) => esc(r.lago_invoice_id), mono: true },
-      ],
-    },
-    {
-      id: "wallet_transactions", label: "Wallet Transactions",
-      // Drill-down: enter a wallet Lago ID to load its credit/debit ledger.
-      param: {
-        placeholder: "Wallet Lago ID…",
-        build: (v) => "/api/v1/wallets/" + encodeURIComponent(v) + "/transactions?per_page=50",
-      },
-      root: "wallet_transactions",
-      cols: [
-        { h: "Type", f: (r) => badge(r.transaction_type) },
-        { h: "Status", f: (r) => badge(r.status) },
-        { h: "Amount", f: (r) => esc(r.amount) },
-        { h: "Credits", f: (r) => esc(r.credit_amount) },
-        { h: "Invoice", f: (r) => esc(r.lago_invoice_id), mono: true },
-        { h: "Settled", f: (r) => esc((r.settled_at || "").slice(0, 19)) },
-        { h: "Created", f: (r) => esc((r.created_at || "").slice(0, 19)) },
-      ],
-    },
-    {
-      id: "dunning", label: "Dunning",
-      path: "/api/v1/dunning?per_page=50", root: "dunning",
-      cols: [
-        { h: "Invoice", f: (r) => esc(r.invoice_number), mono: true },
-        { h: "Customer", f: (r) => esc(r.external_customer_id), mono: true },
-        { h: "Overdue", f: (r) => money(r.total_amount_cents, r.currency) },
-        { h: "Due", f: (r) => esc(r.payment_due_date) },
-        { h: "Last attempt", f: (r) => esc((r.last_dunning_campaign_attempt_at || "").slice(0, 19)) },
-        { h: "Excluded", f: (r) => badge(r.exclude_from_dunning_campaign ? "yes" : "no") },
-      ],
-    },
-  ];
-
-  let active = TABS[0];
-
-  function syncParamInput() {
-    const p = el("param");
-    if (active.param) {
-      p.style.display = "";
-      p.placeholder = active.param.placeholder;
-      p.value = "";
-    } else {
-      p.style.display = "none";
-    }
-  }
-
-  function renderTabs() {
-    const nav = el("tabs");
-    nav.innerHTML = "";
-    TABS.forEach((t) => {
-      const b = document.createElement("button");
-      b.textContent = t.label;
-      b.className = t.id === active.id ? "active" : "";
-      b.onclick = () => { active = t; renderTabs(); syncParamInput(); load(); };
-      nav.appendChild(b);
-    });
-  }
-
-  function renderRows(rows) {
-    const view = el("view");
-    if (!Array.isArray(rows) || rows.length === 0) {
-      view.innerHTML = '<div class="empty">No ' + esc(active.label.toLowerCase()) + " found.</div>";
-      el("count").textContent = "0 rows";
-      return;
-    }
-    const head = active.cols.map((c) =>
-      '<th' + (c.mono ? ' class="mono"' : "") + ">" + esc(c.h) + "</th>").join("");
-    const body = rows.map((r) =>
-      "<tr>" + active.cols.map((c) =>
-        "<td" + (c.mono ? ' class="mono"' : "") + ">" + c.f(r) + "</td>").join("") + "</tr>").join("");
-    view.innerHTML = "<table><thead><tr>" + head + "</tr></thead><tbody>" + body + "</tbody></table>";
-    el("count").textContent = rows.length + " row" + (rows.length === 1 ? "" : "s");
-  }
-
-  async function load() {
-    let path = active.path;
-    if (active.param) {
-      const v = el("param").value.trim();
-      if (!v) {
-        el("view").innerHTML = '<div class="empty">Enter a ' + esc(active.param.placeholder) + "</div>";
-        el("count").textContent = "";
-        setStatus("Connected", "ok");
-        return;
-      }
-      path = active.param.build(v);
-    }
-    el("view").innerHTML = '<div class="loading">Loading…</div>';
-    el("count").textContent = "";
-    try {
-      const data = await api(path);
-      renderRows(data[active.root]);
-      const meta = data.meta;
-      setStatus(meta && meta.total_count != null
-        ? "Connected · " + meta.total_count + " total" : "Connected", "ok");
-    } catch (e) {
-      el("view").innerHTML = '<div class="empty">' + esc(e.message) + "</div>";
-      setStatus(e.message, "err");
-      if (/Unauthorized/.test(e.message)) showGate();
-    }
-  }
-
-  function showApp() {
-    el("gate").style.display = "none";
-    el("app").style.display = "";
-    el("logout").style.display = "";
-    renderTabs();
-    syncParamInput();
-    load();
-  }
-
-  function showGate() {
-    el("app").style.display = "none";
-    el("gate").style.display = "";
-    el("logout").style.display = "none";
-    el("key").value = "";
-  }
-
-  el("connect").onclick = () => {
-    const k = el("key").value.trim();
-    if (!k) { setStatus("Enter an API key.", "err"); return; }
-    setKey(k);
-    setStatus("Connecting…");
-    showApp();
-  };
-  el("key").addEventListener("keydown", (e) => { if (e.key === "Enter") el("connect").click(); });
-  el("logout").onclick = () => { setKey(""); setStatus("Not connected"); showGate(); };
-  el("refresh").onclick = load;
-  el("param").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
-
-  if (getKey()) showApp(); else showGate();
-})();
-</script>
+<script src="/admin/core.js"></script>
+<script src="/admin/views.js"></script>
+<script src="/admin/views2.js"></script>
 </body>
 </html>

@@ -5,9 +5,8 @@
 //!
 //! Every handler reuses an existing [`rago_db::Db`] op — the same update / void /
 //! finalize logic the GraphQL admin surface calls. Provider-backed actions
-//! (retry_payment, payment_url, sync_salesforce_id) are honest partials: they
-//! return the resource with the field `null`/`pending` until live keys are wired,
-//! matching the GraphQL surface — no fabricated success.
+//! (retry_payment, payment_url) go through [`rago_jobs::collection`] against the
+//! organization's configured payment provider.
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
@@ -325,10 +324,16 @@ pub async fn resend_credit_note_email(
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     let cn = st.db.find_credit_note(id).await?.ok_or_else(|| ApiError::NotFound("credit_note".into()))?;
-    let to = st.db.customer_external_id(cn.customer_id).await?.unwrap_or_default();
-    let email = rago_mail::builders::credit_note_email(&cn, if to.is_empty() { "billing@customer.example" } else { &to });
-    let _ = st.mailer.send(&email).await;
-    Ok(Json(json!({ "credit_note": { "lago_id": cn.id, "email_resent": true } })))
+    let to = st
+        .db
+        .find_customer(cn.customer_id)
+        .await?
+        .and_then(|c| c.email)
+        .filter(|e| e.contains('@'))
+        .ok_or_else(|| ApiError::validation("customer", "email_missing"))?;
+    let email = rago_mail::builders::credit_note_email(&cn, &to);
+    let sent = st.mailer.send(&email).await.is_ok();
+    Ok(Json(json!({ "credit_note": { "lago_id": cn.id, "email_resent": sent } })))
 }
 
 /// `POST /credit_notes/:id/download_xml` — the credit-note e-invoice XML
@@ -374,7 +379,26 @@ pub async fn void_invoice(
     let _ = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
     st.db.void_invoice(id).await?;
     let inv = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
-    Ok(Json(invoice_response(&st, inv).await?))
+    let body = invoice_response(&st, inv.clone()).await?;
+    crate::emit::webhook(
+        &st.db,
+        inv.organization_id,
+        rago_integrations::webhooks::WebhookKind::InvoiceVoided,
+        body["invoice"].clone(),
+    )
+    .await;
+    // Void the transaction at the tax provider when one is connected.
+    if st.db.find_connection_by_provider(inv.organization_id, "anrok").await?.is_some() {
+        st.db
+            .enqueue_job(
+                rago_jobs::integrations_sync::JOB_TAX_VOIDING,
+                &json!({ "invoice_id": inv.id }),
+                chrono::Utc::now().naive_utc(),
+                5,
+            )
+            .await?;
+    }
+    Ok(Json(body))
 }
 
 /// `PUT /invoices/:id/finalize` — finalize a draft invoice.
@@ -404,7 +428,15 @@ pub async fn lose_dispute(
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     let inv = st.db.lose_invoice_dispute(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
-    Ok(Json(invoice_response(&st, inv).await?))
+    let body = invoice_response(&st, inv.clone()).await?;
+    crate::emit::webhook(
+        &st.db,
+        inv.organization_id,
+        rago_integrations::webhooks::WebhookKind::InvoicePaymentDisputeLost,
+        json!({ "invoice": body["invoice"].clone(), "provider_error": Value::Null }),
+    )
+    .await;
+    Ok(Json(body))
 }
 
 /// `POST /invoices/:id/resend_email` — best-effort resend of the finalized email.
@@ -423,46 +455,118 @@ pub async fn resend_invoice_email(
     Ok(Json(json!({ "invoice": { "lago_id": inv.id, "email_resent": true } })))
 }
 
-/// `PUT /invoices/:id/sync_salesforce_id` — honest partial: records the intent;
-/// the provider-backed sync id is `null` until a live CRM connection is wired.
+/// `PUT /invoices/:id/sync_salesforce_id` — record the Salesforce id of an
+/// invoice (`{ invoice: { external_id } }`) as the integration mapping on the
+/// org's Salesforce connection.
 pub async fn sync_salesforce_id(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Path(id): Path<Uuid>,
+    Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
-    let inv = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
-    Ok(Json(json!({ "invoice": { "lago_id": inv.id, "external_salesforce_id": Value::Null } })))
+    let org = auth.organization.id;
+    let inv = st
+        .db
+        .find_invoice(id)
+        .await?
+        .filter(|i| i.organization_id == org)
+        .ok_or_else(|| ApiError::NotFound("invoice".into()))?;
+    let p = wrapped(&body, "invoice");
+    let external_id = req_s(p, "external_id")?;
+    let (connection_id, _) = st
+        .db
+        .find_connection_by_provider(org, "salesforce")
+        .await?
+        .ok_or_else(|| ApiError::validation("integration", "salesforce_not_connected"))?;
+    st.db
+        .insert_integration_mapping(Uuid::new_v4(), org, connection_id, "invoice", inv.id, &external_id)
+        .await?;
+    Ok(Json(json!({ "invoice": { "lago_id": inv.id, "external_salesforce_id": external_id } })))
 }
 
-/// `POST /invoices/:id/retry` — honest partial: re-finalize path is provider-
-/// gated; returns the current invoice state without fabricating a payment.
+/// `POST /invoices/:id/retry` — retry a `failed` invoice (tax/finalization
+/// failure) by finalizing it again; any other state is returned unchanged.
 pub async fn retry_invoice(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let inv = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
+    let inv = st
+        .db
+        .find_invoice(id)
+        .await?
+        .filter(|i| i.organization_id == auth.organization.id)
+        .ok_or_else(|| ApiError::NotFound("invoice".into()))?;
+    let inv = if matches!(inv.status, rago_core::enums::InvoiceStatus::Failed) {
+        st.db.finalize_invoice(id).await?.unwrap_or(inv)
+    } else {
+        inv
+    };
     Ok(Json(invoice_response(&st, inv).await?))
 }
 
-/// `POST /invoices/:id/retry_payment` — honest partial: null pending provider.
+/// `POST /invoices/:id/retry_payment` — collect the invoice now through the
+/// organization's payment provider (a retry of a failed charge uses a fresh
+/// idempotency key; an already-paid invoice is never charged again).
 pub async fn retry_payment(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let inv = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
-    Ok(Json(json!({ "invoice": { "lago_id": inv.id, "payment_status": inv.payment_status.as_str(), "retried": false } })))
+    let inv = st
+        .db
+        .find_invoice(id)
+        .await?
+        .filter(|i| i.organization_id == auth.organization.id)
+        .ok_or_else(|| ApiError::NotFound("invoice".into()))?;
+    let transport = rago_integrations::default_transport();
+    let outcome = rago_jobs::collect_invoice(&st.db, &transport, &inv).await.map_err(|e| match e {
+        rago_jobs::JobError::Db(db) => ApiError::from(db),
+        other => ApiError::Validation(json!({ "payment": [other.to_string()] })),
+    })?;
+    let (retried, result) = match &outcome {
+        rago_jobs::CollectOutcome::Charged(status) => (
+            true,
+            match status {
+                rago_integrations::PayableStatus::Succeeded => "succeeded",
+                rago_integrations::PayableStatus::Failed => "failed",
+                rago_integrations::PayableStatus::Pending => "pending",
+            },
+        ),
+        rago_jobs::CollectOutcome::Skipped(reason) => (false, reason.code()),
+    };
+    let refreshed = st.db.find_invoice(id).await?.unwrap_or(inv);
+    Ok(Json(json!({
+        "invoice": {
+            "lago_id": refreshed.id,
+            "payment_status": refreshed.payment_status.as_str(),
+            "retried": retried,
+            "result": result,
+        }
+    })))
 }
 
-/// `POST /invoices/:id/payment_url` — honest partial: null pending provider.
+/// `POST /invoices/:id/payment_url` — a one-time Stripe Checkout link to pay
+/// the invoice.
 pub async fn invoice_payment_url(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let inv = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
-    Ok(Json(json!({ "invoice_payment_details": { "lago_invoice_id": inv.id, "payment_url": Value::Null } })))
+    let inv = st
+        .db
+        .find_invoice(id)
+        .await?
+        .filter(|i| i.organization_id == auth.organization.id)
+        .ok_or_else(|| ApiError::NotFound("invoice".into()))?;
+    let transport = rago_integrations::default_transport();
+    let url = match rago_jobs::collection::invoice_payment_url(&st.db, &transport, &inv).await {
+        Ok(Ok(url)) => url,
+        Ok(Err(code)) => return Err(ApiError::validation("payment_url", code)),
+        Err(rago_jobs::JobError::Db(e)) => return Err(ApiError::from(e)),
+        Err(e) => return Err(ApiError::Validation(json!({ "payment_url": [e.to_string()] }))),
+    };
+    Ok(Json(json!({ "invoice_payment_details": { "lago_invoice_id": inv.id, "payment_url": url } })))
 }
 
 fn refund_status_i32(s: String) -> Option<i32> {

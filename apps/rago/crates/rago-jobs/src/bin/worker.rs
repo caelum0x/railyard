@@ -14,7 +14,6 @@ use std::str::FromStr;
 
 use chrono::NaiveDate;
 use rago_db::Db;
-use rago_integrations::MockTransport;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -79,12 +78,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         "redeliver" => {
-            let transport = MockTransport::always(200, "{}");
+            let transport = rago_integrations::default_transport();
             let n = rago_jobs::redeliver_due_webhooks(&db, &transport).await?;
             println!("REDELIVERED {n} webhooks");
         }
         "dunning" => {
-            let transport = MockTransport::always(200, "{}");
+            let transport = rago_integrations::default_transport();
             let cfg = rago_jobs::DunningConfig::from_env();
             let r = rago_jobs::run_dunning(&db, &transport, &cfg).await?;
             println!(
@@ -103,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(5u64);
-            let transport = MockTransport::always(200, "{}");
+            let transport = rago_integrations::default_transport();
             let dunning_cfg = rago_jobs::DunningConfig::from_env();
             tracing::info!(interval, "worker daemon started");
             loop {

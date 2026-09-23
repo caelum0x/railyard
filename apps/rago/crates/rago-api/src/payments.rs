@@ -255,19 +255,20 @@ fn explicit_invoice_ids(p: &Value) -> Option<Vec<Uuid>> {
 
 #[derive(Debug, Deserialize)]
 pub struct PaymentRequestIndexQuery {
-    pub external_customer_id: String,
+    pub external_customer_id: Option<String>,
 }
 
-/// `GET /payment_requests?external_customer_id=`.
+/// `GET /payment_requests[?external_customer_id=]` — a customer's payment
+/// requests, or the organization's latest 200.
 pub async fn list_payment_requests(
     State(st): State<AppState>,
     auth: Authed,
     Query(q): Query<PaymentRequestIndexQuery>,
 ) -> ApiResult<Json<Value>> {
-    let rows = st
-        .db
-        .list_payment_requests(auth.organization.id, &q.external_customer_id)
-        .await?;
+    let rows = match q.external_customer_id.as_deref().filter(|e| !e.is_empty()) {
+        Some(ext) => st.db.list_payment_requests(auth.organization.id, ext).await?,
+        None => st.db.list_org_payment_requests(auth.organization.id, 200).await?,
+    };
     Ok(Json(
         json!({ "payment_requests": rows.iter().map(payment_request_json).collect::<Vec<_>>() }),
     ))

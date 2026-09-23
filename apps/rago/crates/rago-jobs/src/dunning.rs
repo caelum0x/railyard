@@ -13,7 +13,7 @@
 //! The pure decision logic (which currencies fire, attempt advancement,
 //! finish transition, net amount) lives in [`rago_billing::dunning`]; this
 //! module supplies the DB-loaded inputs and performs the side effects. Charging
-//! reuses [`crate::payments::charge_invoice`], so the deterministic-payment-id
+//! reuses [`crate::collection::collect_invoice`], so the deterministic-payment-id
 //! and never-re-charge-a-non-failed-payment invariants are preserved.
 
 use chrono::{DateTime, Utc};
@@ -26,48 +26,33 @@ use rago_integrations::HttpTransport;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::payments::charge_invoice;
-use crate::webhook_delivery::emit_webhook;
+use crate::collection::{collect_invoice, CollectOutcome};
+use crate::webhook_emit::record_webhook;
 use crate::JobError;
 
 /// Configuration for a dunning sweep.
 pub struct DunningConfig {
-    /// Provider secret key (owner-gated; only signs the request — the live
-    /// network call is behind the transport's `live` feature).
-    pub stripe_secret_key: String,
-    /// Payment provider code to charge through (matches
-    /// `payment_provider_customers.provider`).
-    pub provider: String,
-    /// Fallback provider customer id when a customer has no linked one. When
-    /// `None`, an unlinkable customer is NOT charged (fail-closed: never
-    /// fabricate a charge against an unknown provider customer).
-    pub provider_customer_fallback: Option<String>,
-    /// Fallback webhook endpoint when an org has none configured.
-    pub default_webhook_endpoint: Option<String>,
+    /// Whether to collect the overdue invoices of a fired payment request.
+    /// Provider, credentials and provider customer are resolved per
+    /// organization/customer by [`crate::collection`] — there is no shared
+    /// fallback customer or key.
+    pub charge: bool,
 }
 
 impl DunningConfig {
-    /// A no-charge config (records requests + webhooks only). Useful in the
-    /// worker default where provider credentials are owner-gated.
-    pub fn record_only(default_webhook_endpoint: Option<String>) -> Self {
-        Self {
-            stripe_secret_key: String::new(),
-            provider: "stripe".into(),
-            provider_customer_fallback: None,
-            default_webhook_endpoint,
-        }
+    /// A no-charge config (records payment requests + webhooks only).
+    pub fn record_only() -> Self {
+        Self { charge: false }
     }
 
-    /// Build a config from the environment. With no `RAGO_STRIPE_SECRET_KEY`
-    /// present this is effectively record-only (no charge) — charging is
-    /// owner-gated behind the provider secret + the transport's `live` feature.
+    /// Build a config from the environment: charging is on unless
+    /// `RAGO_DUNNING_CHARGE=false`.
     pub fn from_env() -> Self {
-        Self {
-            stripe_secret_key: std::env::var("RAGO_STRIPE_SECRET_KEY").unwrap_or_default(),
-            provider: std::env::var("RAGO_PAYMENT_PROVIDER").unwrap_or_else(|_| "stripe".into()),
-            provider_customer_fallback: std::env::var("RAGO_PROVIDER_CUSTOMER_ID").ok(),
-            default_webhook_endpoint: std::env::var("RAGO_DEFAULT_WEBHOOK_ENDPOINT").ok(),
-        }
+        let off = matches!(
+            std::env::var("RAGO_DUNNING_CHARGE").as_deref(),
+            Ok("false") | Ok("0")
+        );
+        Self { charge: !off }
     }
 }
 
@@ -92,14 +77,6 @@ pub async fn process_dunning_campaigns<T: HttpTransport>(
 
     for org in db.dunning_organizations().await? {
         let org_default = db.org_default_dunning_campaign(org).await?;
-        let endpoint = db
-            .webhook_endpoint(org)
-            .await?
-            .or_else(|| cfg.default_webhook_endpoint.clone());
-        let hmac_key = db
-            .organization_hmac_key(org)
-            .await?
-            .unwrap_or_else(|| "rago-default-key".into());
 
         for candidate in db.dunning_candidates(org).await? {
             // Resolve the applicable campaign: customer override → org default.
@@ -155,7 +132,7 @@ pub async fn process_dunning_campaigns<T: HttpTransport>(
             .await?;
 
             for fired in &decision.fired {
-                if let Some((_request_id, charged)) = create_and_charge_payment_request(
+                match create_and_charge_payment_request(
                     db,
                     transport,
                     cfg,
@@ -163,34 +140,35 @@ pub async fn process_dunning_campaigns<T: HttpTransport>(
                     &candidate,
                     &campaign,
                     &fired.currency,
-                    endpoint.as_deref(),
-                    &hmac_key,
                 )
-                .await?
+                .await
                 {
-                    report.payment_requests_created += 1;
-                    report.invoices_charged += charged;
+                    Ok(Some((_request_id, charged))) => {
+                        report.payment_requests_created += 1;
+                        report.invoices_charged += charged;
+                    }
+                    Ok(None) => {}
+                    Err(e) => tracing::error!(
+                        organization_id = %org,
+                        customer_id = %candidate.customer_id,
+                        error = %e,
+                        "dunning attempt failed; continuing sweep"
+                    ),
                 }
             }
 
             if decision.finished {
-                if let Some(ep) = endpoint.as_deref() {
-                    emit_webhook(
-                        db,
-                        transport,
-                        org,
-                        ep,
-                        &hmac_key,
-                        WebhookKind::DunningCampaignFinished.webhook_type(),
-                        WebhookKind::DunningCampaignFinished.object_type(),
-                        json!({
-                            "lago_customer_id": candidate.customer_id,
-                            "external_id": candidate.external_id,
-                            "dunning_campaign_code": campaign.code,
-                        }),
-                    )
-                    .await?;
-                }
+                record_webhook(
+                    db,
+                    org,
+                    WebhookKind::DunningCampaignFinished,
+                    json!({
+                        "lago_customer_id": candidate.customer_id,
+                        "external_id": candidate.external_id,
+                        "dunning_campaign_code": campaign.code,
+                    }),
+                )
+                .await?;
                 report.campaigns_finished += 1;
             }
         }
@@ -226,8 +204,6 @@ async fn create_and_charge_payment_request<T: HttpTransport>(
     candidate: &DunningCandidate,
     campaign: &DunningCampaignPolicy,
     currency: &str,
-    endpoint: Option<&str>,
-    hmac_key: &str,
 ) -> Result<Option<(Uuid, u64)>, JobError> {
     let rows = db
         .overdue_invoices_for_currency(org, candidate.customer_id, currency)
@@ -266,44 +242,39 @@ async fn create_and_charge_payment_request<T: HttpTransport>(
             .await?;
     }
 
-    // payment_request.created webhook (immediate delivery over the transport).
-    if let Some(ep) = endpoint {
-        emit_webhook(
-            db,
-            transport,
-            org,
-            ep,
-            hmac_key,
-            WebhookKind::PaymentRequestCreated.webhook_type(),
-            WebhookKind::PaymentRequestCreated.object_type(),
-            json!({
-                "lago_id": request_id,
-                "external_customer_id": candidate.external_id,
-                "email": candidate.email,
-                "amount_cents": plan.amount_cents,
-                "amount_currency": plan.currency,
-                "payment_status": "pending",
-                "lago_invoice_ids": plan.invoice_ids,
-            }),
-        )
-        .await?;
-    }
+    // payment_request.created webhook (queued for the delivery worker).
+    record_webhook(
+        db,
+        org,
+        WebhookKind::PaymentRequestCreated,
+        json!({
+            "lago_id": request_id,
+            "external_customer_id": candidate.external_id,
+            "email": candidate.email,
+            "amount_cents": plan.amount_cents,
+            "amount_currency": plan.currency,
+            "payment_status": "pending",
+            "lago_invoice_ids": plan.invoice_ids,
+        }),
+    )
+    .await?;
 
-    // Charge each overdue invoice through the deterministic-id path. The
-    // per-invoice guard (never re-charge a non-failed payment) means a re-run
-    // records no duplicate charge.
+    // Collect each overdue invoice through the org's provider. The per-invoice
+    // guard (never re-charge a non-failed payment) means a re-run records no
+    // duplicate charge; each retry of a declined payment uses a fresh
+    // idempotency key. One invoice's outage never blocks the others.
     let mut charged = 0u64;
-    let provider_customer_id = db
-        .provider_customer_id(candidate.customer_id, &cfg.provider)
-        .await?
-        .or_else(|| cfg.provider_customer_fallback.clone());
-    if let Some(pcid) = provider_customer_id {
-        if !cfg.stripe_secret_key.is_empty() {
-            for invoice_id in &plan.invoice_ids {
-                if let Some(invoice) = db.find_invoice(*invoice_id).await? {
-                    charge_invoice(db, transport, &cfg.stripe_secret_key, &invoice, &pcid).await?;
-                    charged += 1;
-                }
+    if cfg.charge {
+        for invoice_id in &plan.invoice_ids {
+            let Some(invoice) = db.find_invoice(*invoice_id).await? else { continue };
+            match collect_invoice(db, transport, &invoice).await {
+                Ok(CollectOutcome::Charged(_)) => charged += 1,
+                Ok(CollectOutcome::Skipped(reason)) => tracing::info!(
+                    invoice_id = %invoice.id,
+                    reason = reason.code(),
+                    "dunning: invoice not charged"
+                ),
+                Err(e) => tracing::error!(invoice_id = %invoice.id, error = %e, "dunning: collection error"),
             }
         }
     }

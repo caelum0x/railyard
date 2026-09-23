@@ -1,18 +1,14 @@
 //! Phase-14 handlers — integration connection OAuth lifecycle, accounting/CRM
 //! sync, usage-monitoring alerts, and credit-note / payment-receipt PDFs.
 //!
-//! All provider network calls go through the injectable transport
-//! (`rago_integrations`), driven here by injected responses (live provider keys
-//! are owner-gated), so the full round-trip (request shape → parse → persist)
-//! runs against real Postgres.
+//! All provider network calls go through the build's transport (real HTTP
+//! under the `live` feature). Missing provider configuration is reported as a
+//! 422 naming the missing setting — never a fabricated provider response.
 
 use axum::extract::{Path, State};
 use axum::Json;
 use chrono::{Duration, Utc};
-use rago_integrations::{
-    AccountingInvoice, AccountingProvider, CrmCustomer, CrmProvider, MockTransport, OAuthClient,
-    OAuthConfig, SalesforceProvider, XeroProvider,
-};
+use rago_integrations::{OAuthClient, OAuthConfig};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -23,12 +19,53 @@ use crate::state::AppState;
 
 // ---- integration connection OAuth lifecycle --------------------------------
 
+/// OAuth client configuration for integration connections. All four values are
+/// required; a missing one is reported as a configuration error.
+fn oauth_config(with_redirect: bool) -> Result<OAuthConfig, ApiError> {
+    fn need(name: &'static str) -> Result<String, ApiError> {
+        std::env::var(name)
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .ok_or_else(|| ApiError::Validation(json!({ "oauth": [format!("not_configured: {name}")] })))
+    }
+    Ok(OAuthConfig {
+        token_url: need("RAGO_OAUTH_TOKEN_URL")?,
+        client_id: need("RAGO_OAUTH_CLIENT_ID")?,
+        client_secret: need("RAGO_OAUTH_CLIENT_SECRET")?,
+        redirect_uri: if with_redirect { need("RAGO_OAUTH_REDIRECT_URI")? } else { String::new() },
+    })
+}
+
+/// `GET /integrations` — the organization's integration connections (tokens
+/// are never returned).
+pub async fn list_integrations(
+    State(st): State<AppState>,
+    auth: Authed,
+) -> ApiResult<Json<Value>> {
+    let rows = st.db.integration_connections_overview(auth.organization.id).await?;
+    let out: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, itype, provider_code, name, has_access, has_refresh, expires_at)| {
+            json!({
+                "lago_id": id,
+                "integration_type": itype,
+                "provider_code": provider_code,
+                "name": name,
+                "has_access_token": has_access,
+                "has_refresh_token": has_refresh,
+                "expires_at": expires_at.map(|t| t.and_utc().to_rfc3339()),
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "integrations": out })))
+}
+
 /// `POST /integrations` — create + authorize an integration connection.
 ///
 /// Body: `{ integration: { integration_type, provider_code, code, name? } }`.
-/// The authorization `code` is exchanged for OAuth tokens through the injectable
-/// transport (an injected token response stands in for the owner-gated live
-/// provider), then the connection (with tokens) is persisted.
+/// The authorization `code` is exchanged for OAuth tokens at the configured
+/// token endpoint (`RAGO_OAUTH_*`), then the connection (with tokens) is
+/// persisted.
 pub async fn create_integration(
     State(st): State<AppState>,
     auth: Authed,
@@ -40,19 +77,7 @@ pub async fn create_integration(
     let provider_code = req_s(p, "provider_code")?;
     let code = req_s(p, "code")?;
 
-    let config = OAuthConfig {
-        token_url: std::env::var("RAGO_OAUTH_TOKEN_URL")
-            .unwrap_or_else(|_| format!("https://{provider_code}.example/oauth/token")),
-        client_id: std::env::var("RAGO_OAUTH_CLIENT_ID").unwrap_or_else(|_| "client_test".into()),
-        client_secret: std::env::var("RAGO_OAUTH_CLIENT_SECRET").unwrap_or_else(|_| "secret_test".into()),
-        redirect_uri: std::env::var("RAGO_OAUTH_REDIRECT_URI")
-            .unwrap_or_else(|_| "https://app.rago.example/oauth/callback".into()),
-    };
-    // Injected token-exchange response (a live deployment injects reqwest).
-    let token_response = std::env::var("RAGO_OAUTH_EXCHANGE_RESPONSE").unwrap_or_else(|_| {
-        json!({ "access_token": "at-live-001", "refresh_token": "rt-live-001", "expires_in": 3600, "token_type": "Bearer" }).to_string()
-    });
-    let client = OAuthClient::new(config, MockTransport::always(200, token_response));
+    let client = OAuthClient::new(oauth_config(true)?, rago_integrations::default_transport());
     let tokens = client
         .exchange_code(&code)
         .await
@@ -90,27 +115,20 @@ pub async fn create_integration(
 /// using its stored refresh token (OAuth `refresh_token` grant).
 pub async fn refresh_integration(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let (_id, _itype, provider_code, _access, refresh, _exp) = st
+    if !st.db.not_foreign(auth.organization.id, id).await? {
+        return Err(ApiError::NotFound("integration".into()));
+    }
+    let (_id, _itype, _provider_code, _access, refresh, _exp) = st
         .db
         .find_integration_connection(id)
         .await?
         .ok_or_else(|| ApiError::NotFound("integration".into()))?;
     let refresh_token = refresh.ok_or_else(|| ApiError::validation("refresh_token", "value_is_missing"))?;
 
-    let config = OAuthConfig {
-        token_url: std::env::var("RAGO_OAUTH_TOKEN_URL")
-            .unwrap_or_else(|_| format!("https://{provider_code}.example/oauth/token")),
-        client_id: std::env::var("RAGO_OAUTH_CLIENT_ID").unwrap_or_else(|_| "client_test".into()),
-        client_secret: std::env::var("RAGO_OAUTH_CLIENT_SECRET").unwrap_or_else(|_| "secret_test".into()),
-        redirect_uri: String::new(),
-    };
-    let token_response = std::env::var("RAGO_OAUTH_REFRESH_RESPONSE").unwrap_or_else(|_| {
-        json!({ "access_token": "at-live-002", "expires_in": 3600, "token_type": "Bearer" }).to_string()
-    });
-    let client = OAuthClient::new(config, MockTransport::always(200, token_response));
+    let client = OAuthClient::new(oauth_config(false)?, rago_integrations::default_transport());
     let tokens = client
         .refresh(&refresh_token)
         .await
@@ -128,50 +146,23 @@ pub async fn refresh_integration(
 
 // ---- accounting sync (Xero) ------------------------------------------------
 
-/// `POST /invoices/:id/sync_accounting?connection_id=` — sync a finalized
-/// invoice to the connected accounting system (Xero) and store the mapping.
+/// `POST /invoices/:id/sync_accounting` — sync a finalized invoice to the
+/// connected accounting system (Xero) and store the mapping.
 pub async fn sync_invoice_accounting(
     State(st): State<AppState>,
     auth: Authed,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let org = auth.organization.id;
-    let invoice = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
-    let external_customer_id = match invoice.customer_id {
-        Some(cid) => st.db.customer_external_id(cid).await?.unwrap_or_default(),
-        None => String::new(),
-    };
-    let connection = st.db.find_connection_by_provider(org, "xero").await?;
-    let connection_id = connection.as_ref().map(|(cid, _)| *cid);
-    let access_token = connection.and_then(|(_, at)| at).unwrap_or_else(|| "xero_test".into());
-
-    let acc = AccountingInvoice {
-        invoice_id: invoice.id.to_string(),
-        number: invoice.number.clone(),
-        currency: invoice.currency().code(),
-        total_amount_cents: invoice.total_amount_cents,
-        customer_external_id: external_customer_id,
-    };
-    let response = std::env::var("RAGO_XERO_RESPONSE")
-        .unwrap_or_else(|_| json!({ "succeededId": "XERO-INV-001" }).to_string());
-    let provider = XeroProvider::new(
-        std::env::var("RAGO_ACCOUNTING_BASE_URL").unwrap_or_else(|_| "https://aggregator.example".into()),
-        access_token,
-        MockTransport::always(200, response),
-    );
-    let result = provider
-        .sync_invoice(&acc)
-        .await
-        .map_err(|e| ApiError::Validation(json!({ "accounting_integration": [e.to_string()] })))?;
-
-    if let Some(cid) = connection_id {
-        st.db.insert_integration_mapping(Uuid::new_v4(), org, cid, "invoice", invoice.id, &result.external_id).await?;
-    }
+    let transport = rago_integrations::default_transport();
+    let external_id =
+        rago_jobs::integrations_sync::sync_invoice_accounting(&st.db, &transport, auth.organization.id, id)
+            .await
+            .map_err(|e| crate::integrations::integration_error("accounting_integration", e))?;
     Ok(Json(json!({
         "integration_invoice": {
-            "lago_invoice_id": invoice.id,
+            "lago_invoice_id": id,
             "provider": "xero",
-            "external_id": result.external_id,
+            "external_id": external_id,
         }
     })))
 }
@@ -191,37 +182,16 @@ pub async fn sync_customer_crm(
         .find_customer_by_external_id(org, &external_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("customer".into()))?;
-    let connection = st.db.find_connection_by_provider(org, "salesforce").await?;
-    let connection_id = connection.as_ref().map(|(cid, _)| *cid);
-    let access_token = connection.and_then(|(_, at)| at).unwrap_or_else(|| "salesforce_test".into());
-
-    let crm = CrmCustomer {
-        customer_id: customer.id.to_string(),
-        external_id: customer.external_id.clone(),
-        name: customer.name.clone(),
-        email: customer.email.clone(),
-    };
-    let response = std::env::var("RAGO_SALESFORCE_RESPONSE")
-        .unwrap_or_else(|_| json!({ "id": "003SF00001", "success": true }).to_string());
-    let provider = SalesforceProvider::new(
-        std::env::var("RAGO_CRM_BASE_URL").unwrap_or_else(|_| "https://aggregator.example".into()),
-        access_token,
-        MockTransport::always(200, response),
-    );
-    let result = provider
-        .sync_customer(&crm)
+    let transport = rago_integrations::default_transport();
+    let crm_id = rago_jobs::integrations_sync::sync_customer_crm(&st.db, &transport, org, &customer)
         .await
-        .map_err(|e| ApiError::Validation(json!({ "crm_integration": [e.to_string()] })))?;
-
-    if let Some(cid) = connection_id {
-        st.db.insert_integration_mapping(Uuid::new_v4(), org, cid, "customer", customer.id, &result.external_id).await?;
-    }
+        .map_err(|e| crate::integrations::integration_error("crm_integration", e))?;
     Ok(Json(json!({
         "integration_customer": {
             "lago_customer_id": customer.id,
             "external_customer_id": customer.external_id,
             "provider": "salesforce",
-            "external_id": result.external_id,
+            "external_id": crm_id,
         }
     })))
 }

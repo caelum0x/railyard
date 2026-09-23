@@ -492,10 +492,24 @@ impl Mutation {
     /// runtime re-attempts the charge (Lago enqueues `Invoices::Payments::
     /// RetryService`; the actual charge is performed by the payments job).
     async fn retry_invoice_payment(&self, ctx: &Context<'_>, id: async_graphql::ID) -> Result<Invoice> {
-        let _org = require_org(ctx)?;
+        let org = require_org(ctx)?;
         let uuid = Uuid::parse_str(id.as_str()).map_err(|_| async_graphql::Error::new("invalid_id"))?;
         db(ctx)
+            .find_invoice(uuid)
+            .await?
+            .filter(|i| i.organization_id == org.id)
+            .ok_or_else(|| async_graphql::Error::new("invoice_not_found"))?;
+        db(ctx)
             .update_invoice_payment_status(uuid, PaymentStatus::Pending.as_i32())
+            .await?;
+        // The worker collects it through the org's provider on its next tick.
+        db(ctx)
+            .enqueue_job(
+                rago_jobs::JOB_COLLECT_INVOICE,
+                &serde_json::json!({ "invoice_id": uuid }),
+                chrono::Utc::now().naive_utc(),
+                3,
+            )
             .await?;
         let invoice = db(ctx)
             .find_invoice(uuid)

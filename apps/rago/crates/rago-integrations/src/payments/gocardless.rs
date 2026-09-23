@@ -24,6 +24,7 @@ const FAILED_STATUSES: &[&str] = &["cancelled", "customer_approval_denied", "fai
 pub struct GocardlessProvider<T: HttpTransport> {
     access_token: String,
     transport: T,
+    attempt: u32,
 }
 
 impl<T: HttpTransport> GocardlessProvider<T> {
@@ -31,7 +32,15 @@ impl<T: HttpTransport> GocardlessProvider<T> {
         Self {
             access_token: access_token.into(),
             transport,
+            attempt: 0,
         }
+    }
+
+    /// Use attempt `n` of this payment in the idempotency key (`0` = first), so
+    /// a retry of a failed payment is not replayed from the provider's cache.
+    pub fn with_attempt(mut self, attempt: u32) -> Self {
+        self.attempt = attempt;
+        self
     }
 
     /// `GocardlessProvider#determine_payment_status`.
@@ -65,7 +74,7 @@ impl<T: HttpTransport> PaymentProvider for GocardlessProvider<T> {
             ("Authorization".to_string(), format!("Bearer {}", self.access_token)),
             ("GoCardless-Version".to_string(), GOCARDLESS_VERSION.to_string()),
             ("Content-Type".to_string(), "application/json".to_string()),
-            ("Idempotency-Key".to_string(), format!("payment-{}", req.payment_id)),
+            ("Idempotency-Key".to_string(), super::idempotency_key(&req.payment_id, self.attempt)),
         ];
         let body = json!({
             "payments": {

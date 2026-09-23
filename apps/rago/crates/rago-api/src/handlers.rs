@@ -391,53 +391,7 @@ pub async fn bill_subscription(
         .find_subscription_by_external_id(auth.organization.id, &external_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("subscription".into()))?;
-    let plan = st.db.find_plan(sub.plan_id).await?;
-    let currency = plan.currency();
-    let charges = st.db.charges_for_plan(plan.id).await?;
-
-    // Current calendar-month billing period.
-    let sub_at = sub.subscription_at.unwrap_or_else(now).date_naive();
-    let today = now().date_naive();
-    let dates = MonthlyDates {
-        subscription_at: sub_at,
-        billing_at: chrono::NaiveDate::from_ymd_opt(today.year_next_month().0, today.year_next_month().1, 1).unwrap(),
-        anniversary: matches!(sub.billing_time, BillingTime::Anniversary),
-        pay_in_advance: plan.pay_in_advance,
-        current_usage: false,
-    };
-    let b = dates.boundaries();
-    let from = b.from_date.and_hms_opt(0, 0, 0).unwrap();
-    let to = b.to_date.and_hms_opt(23, 59, 59).unwrap();
-
-    // Load metrics + events per charge.
-    let mut loaded: Vec<(BillableMetric, Charge, Vec<Event>)> = Vec::new();
-    for charge in &charges {
-        let Some(mid) = charge.billable_metric_id else { continue };
-        let metric = st.db.find_billable_metric(mid).await?;
-        let events = st
-            .db
-            .events_for_external_subscription(auth.organization.id, &sub.external_id, &metric.code, from, to)
-            .await?;
-        loaded.push((metric, charge.clone(), events));
-    }
-    let charge_inputs: Vec<ChargeInput> = loaded
-        .iter()
-        .map(|(m, c, e)| ChargeInput { metric: m, charge: c, events: e })
-        .collect();
-
-    // Organization taxes apply to the subscription + charge fees.
-    let taxes = st.db.organization_taxes(auth.organization.id).await?;
-    let mut invoice = blank_invoice(&sub, &currency);
-    let fees = generate_subscription_invoice(
-        &mut invoice,
-        &plan,
-        &sub,
-        &dates,
-        Proration::Full,
-        &charge_inputs,
-        &taxes,
-        &[],
-    )?;
+    let (invoice, fees) = compute_subscription_invoice(&st, &sub).await?;
 
     st.db.insert_invoice(&invoice).await?;
     for fee in &fees {
@@ -549,6 +503,13 @@ pub async fn create_wallet(
         updated_at: now(),
     };
     st.db.insert_wallet(&wallet).await?;
+    crate::emit::webhook(
+        &st.db,
+        wallet.organization_id,
+        rago_integrations::webhooks::WebhookKind::WalletCreated,
+        ser::wallet(&wallet, &external_customer_id_for_wallet(&st, wallet.customer_id).await),
+    )
+    .await;
 
     // Optional initial grant/purchase via `paid_credits` / `granted_credits`.
     let cur = Currency::new(&currency);
@@ -1165,4 +1126,68 @@ pub async fn list_activity_logs(
         "activity_logs": collection,
         "meta": crate::pagination::meta(pg.page(), pg.per_page(), total),
     })))
+}
+
+/// External id of a wallet's customer (empty when unknown) for payloads.
+async fn external_customer_id_for_wallet(st: &AppState, customer_id: Uuid) -> String {
+    st.db.customer_external_id(customer_id).await.ok().flatten().unwrap_or_default()
+}
+
+/// Compute (without persisting) the current-period invoice of `sub`: the
+/// subscription fee plus every charge over the period's events, taxed with the
+/// organization's taxes. Shared by billing (`POST /subscriptions/:id/invoices`,
+/// which persists it) and `POST /invoices/preview` (which does not).
+pub(crate) async fn compute_subscription_invoice(
+    st: &AppState,
+    sub: &Subscription,
+) -> ApiResult<(Invoice, Vec<Fee>)> {
+    let plan = st.db.find_plan(sub.plan_id).await?;
+    let currency = plan.currency();
+    let charges = st.db.charges_for_plan(plan.id).await?;
+
+    // Current calendar-month billing period.
+    let sub_at = sub.subscription_at.unwrap_or_else(now).date_naive();
+    let today = now().date_naive();
+    let dates = MonthlyDates {
+        subscription_at: sub_at,
+        billing_at: chrono::NaiveDate::from_ymd_opt(today.year_next_month().0, today.year_next_month().1, 1).unwrap(),
+        anniversary: matches!(sub.billing_time, BillingTime::Anniversary),
+        pay_in_advance: plan.pay_in_advance,
+        current_usage: false,
+    };
+    let b = dates.boundaries();
+    let from = b.from_date.and_hms_opt(0, 0, 0).unwrap();
+    let to = b.to_date.and_hms_opt(23, 59, 59).unwrap();
+
+    // Load metrics + events per charge.
+    let mut loaded: Vec<(BillableMetric, Charge, Vec<Event>)> = Vec::new();
+    for charge in &charges {
+        let Some(mid) = charge.billable_metric_id else { continue };
+        let metric = st.db.find_billable_metric(mid).await?;
+        let events = st
+            .db
+            .events_for_external_subscription(sub.organization_id, &sub.external_id, &metric.code, from, to)
+            .await?;
+        loaded.push((metric, charge.clone(), events));
+    }
+    let charge_inputs: Vec<ChargeInput> = loaded
+        .iter()
+        .map(|(m, c, e)| ChargeInput { metric: m, charge: c, events: e })
+        .collect();
+
+    // Organization taxes apply to the subscription + charge fees.
+    let taxes = st.db.organization_taxes(sub.organization_id).await?;
+    let mut invoice = blank_invoice(sub, &currency);
+    let fees = generate_subscription_invoice(
+        &mut invoice,
+        &plan,
+        sub,
+        &dates,
+        Proration::Full,
+        &charge_inputs,
+        &taxes,
+        &[],
+    )?;
+
+    Ok((invoice, fees))
 }

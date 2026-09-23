@@ -29,9 +29,12 @@ export DATABASE_URL=postgres://postgres:postgres@localhost:5432/rago
 cargo run --release --bin rago-server
 ```
 
-`rago-server` boots the REST + GraphQL API **and** the scheduler/worker daemon
-(subscription crons, dunning, the durable job queue, the daily billing cycle,
-and webhook re-delivery) in a single process. Embedded migrations run
+`rago-server` boots the REST + GraphQL API, the operator console at `/admin`,
+**and** the scheduler/worker daemon in a single process: subscription crons,
+the clock registry (invoice finalization, wallet top-ups/expiry, coupon expiry,
+usage snapshots), dunning, the once-a-day billing cycle (bill → invoice →
+webhooks → payment collection through each organization's provider), the
+durable job queue, and outbound webhook delivery. Embedded migrations run
 automatically on startup.
 
 ### Option C — separate processes
@@ -42,21 +45,26 @@ cargo run --release --bin rago-worker      # durable worker / CLI (work, crons, 
 cargo run --release --bin rago-scheduler   # billing scheduler
 ```
 
-## Live transports (owner-gated)
+## Live transports
 
 Every external call — payments (Stripe / GoCardless / Adyen), outbound
-webhooks, tax/accounting/CRM aggregators, integration OAuth, and email — goes
-through an **injectable transport**. The default build uses in-memory /
-capture transports (verified against real provider request/response shapes);
-the real `reqwest` HTTP transport and SMTP email transport are compiled in with:
+webhooks, tax/accounting/CRM aggregators, integration OAuth, SSO, the finance
+assistant, and email — goes through an **injectable transport**. Production
+builds use the real `reqwest` HTTP and SMTP transports:
 
 ```bash
-cargo build --release --features live --bin rago-server
+cargo build --release --features live --bin rago-server   # what the Dockerfile builds
 ```
 
-With `--features live`, drop the provider keys / SMTP credentials into the
-environment (see `.env.example`) and Rago talks to the real services — **no code
-change**.
+A build without `live` uses a *disabled* transport: outbound calls fail and are
+recorded as failures (nothing is ever marked paid or delivered without a real
+call). Tests inject scripted in-memory transports.
+
+Payment providers are configured per organization from the console (Settings →
+Connect Stripe); secrets are sealed with `RAGO_ENCRYPTION_KEY`. Single-tenant
+deployments can instead set `RAGO_STRIPE_SECRET_KEY` (see `.env.example`).
+Each customer gets their own Stripe customer on first charge, and charges use
+their saved payment method (collected via the customer's checkout link).
 
 ## Configuration
 

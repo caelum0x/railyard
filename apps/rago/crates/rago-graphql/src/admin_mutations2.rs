@@ -156,6 +156,16 @@ impl AdminMutation2 {
     /// reset failed payments on finalized invoices back to pending.
     async fn retry_all_invoice_payments(&self, ctx: &Context<'_>) -> Result<InvoiceCollection> {
         let org = require_org(ctx)?;
+        // Queue a collection attempt for every finalized invoice whose payment
+        // failed; the worker charges each through the org's provider.
+        let failed = db(ctx)
+            .list_invoices(org.id, Some(InvoiceStatus::Finalized.as_i32()), Some(PaymentStatus::Failed.as_i32()), None, None, 500, 0)
+            .await?;
+        for inv in &failed {
+            db(ctx)
+                .enqueue_job(rago_jobs::JOB_COLLECT_INVOICE, &serde_json::json!({ "invoice_id": inv.id }), chrono::Utc::now().naive_utc(), 3)
+                .await?;
+        }
         db(ctx).reset_failed_invoice_payments(org.id).await?;
         let invoices = db(ctx)
             .list_invoices(org.id, Some(InvoiceStatus::Finalized.as_i32()), Some(PaymentStatus::Pending.as_i32()), None, None, 100, 0)
@@ -209,20 +219,22 @@ impl AdminMutation2 {
         load_invoice(ctx, invoice).await
     }
 
-    /// `GeneratePaymentUrl` (`Mutations::Invoices::GeneratePaymentUrl`) — the
-    /// checkout URL is minted by the org's configured payment provider. This
-    /// resolver does the real config lookup; the URL itself comes from the
-    /// provider's live API (rago-integrations, owner-credentialed), so absent a
-    /// configured provider it is honestly `null` — never a fabricated URL.
+    /// `GeneratePaymentUrl` (`Mutations::Invoices::GeneratePaymentUrl`) — a
+    /// one-time Checkout link minted by the org's configured payment provider.
+    /// Configuration problems surface as a GraphQL error naming what is missing.
     async fn generate_payment_url(&self, ctx: &Context<'_>, invoice_id: ID) -> Result<PaymentUrl> {
         let org = require_org(ctx)?;
-        db(ctx)
+        let invoice = db(ctx)
             .find_invoice(uuid(&invoice_id)?)
             .await?
             .filter(|i| i.organization_id == org.id)
             .ok_or_else(|| async_graphql::Error::new("invoice_not_found"))?;
-        let _provider = db(ctx).default_payment_provider(org.id).await?;
-        Ok(PaymentUrl { payment_url: None })
+        let transport = rago_integrations::default_transport();
+        match rago_jobs::collection::invoice_payment_url(db(ctx), &transport, &invoice).await {
+            Ok(Ok(url)) => Ok(PaymentUrl { payment_url: Some(url) }),
+            Ok(Err(code)) => Err(async_graphql::Error::new(code)),
+            Err(e) => Err(async_graphql::Error::new(e.to_string())),
+        }
     }
 
     // ---- usage-monitoring alerts ----------------------------------------

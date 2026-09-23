@@ -20,21 +20,23 @@ use rago_integrations::{HttpTransport, PayableStatus};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::payments::charge_invoice;
-use crate::webhook_delivery::emit_webhook;
+use crate::collection::{collect_invoice, CollectOutcome};
+use crate::webhook_emit::record_webhook;
 use crate::JobError;
 
 /// Scheduler configuration.
 pub struct SchedulerConfig {
-    /// Provider secret key (owner-gated; only used to sign the request — the
-    /// live network call is behind the transport's `live` feature).
-    pub stripe_secret_key: String,
-    /// Fallback webhook endpoint when the organization has none configured.
-    pub default_webhook_endpoint: Option<String>,
-    /// Whether to attempt payment after invoicing.
+    /// Whether to collect payment after invoicing. The provider, its
+    /// credentials and each customer's provider account are resolved per
+    /// organization (see [`crate::collection`]); nothing here is shared across
+    /// tenants.
     pub charge_customers: bool,
-    /// Provider customer id to charge (until payment_provider_customers is wired).
-    pub provider_customer_id: String,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self { charge_customers: true }
+    }
 }
 
 /// What a billing cycle produced.
@@ -43,12 +45,18 @@ pub struct CycleReport {
     pub billed_invoices: Vec<Uuid>,
     pub payments_succeeded: usize,
     pub payments_failed: usize,
+    pub payments_skipped: usize,
     pub webhooks_written: usize,
+    /// Subscriptions whose billing or collection errored (logged; the cycle
+    /// continues with the next subscription).
+    pub errors: usize,
 }
 
 /// Run one billing cycle for `billing_date`. When `force` is set, every active
 /// subscription is billed regardless of its due date (used for on-demand runs);
-/// otherwise only subscriptions due on `billing_date` are billed.
+/// otherwise only subscriptions due on `billing_date` are billed. A failure on
+/// one subscription (billing error, provider outage) is logged and counted but
+/// never stops the cycle for the remaining subscriptions.
 pub async fn run_billing_cycle<T: HttpTransport>(
     db: &Db,
     transport: &T,
@@ -74,111 +82,109 @@ pub async fn run_billing_cycle<T: HttpTransport>(
             continue;
         }
 
-        // Bill the just-closed period.
-        let (invoice, fees) =
-            bill_one(db, &subscription, &plan, interval, anniversary, billing_date).await?;
-        report.billed_invoices.push(invoice.id);
-
-        let hmac_key = db
-            .organization_hmac_key(subscription.organization_id)
-            .await?
-            .unwrap_or_else(|| "rago-default-key".into());
-        let endpoint = db
-            .webhook_endpoint(subscription.organization_id)
-            .await?
-            .or_else(|| cfg.default_webhook_endpoint.clone());
-
-        // invoice.created webhook, then one fee.created per assembled fee
-        // (mirrors `Invoices::SubscriptionService`, which fires
-        // `fee.created` alongside the invoice webhook).
-        if let Some(ref ep) = endpoint {
-            emit_webhook(
-                db,
-                transport,
-                subscription.organization_id,
-                ep,
-                &hmac_key,
-                WebhookKind::InvoiceCreated.webhook_type(),
-                WebhookKind::InvoiceCreated.object_type(),
-                invoice_webhook_object(&invoice),
-            )
-            .await?;
-            report.webhooks_written += 1;
-
-            for fee in &fees {
-                emit_webhook(
-                    db,
-                    transport,
-                    subscription.organization_id,
-                    ep,
-                    &hmac_key,
-                    WebhookKind::FeeCreated.webhook_type(),
-                    WebhookKind::FeeCreated.object_type(),
-                    fee_webhook_object(fee, &invoice),
-                )
-                .await?;
-                report.webhooks_written += 1;
-            }
-        }
-
-        // Charge + payment-status webhook.
-        if cfg.charge_customers && invoice.total_amount_cents > 0 {
-            // Resolve the linked provider customer id; fall back to the config
-            // default and lazily link it so it persists for later cycles.
-            let provider_customer_id = match db
-                .provider_customer_id(subscription.customer_id, "stripe")
-                .await?
-            {
-                Some(id) => id,
-                None => {
-                    db.upsert_provider_customer(
-                        subscription.organization_id,
-                        subscription.customer_id,
-                        "stripe",
-                        &cfg.provider_customer_id,
-                    )
-                    .await?;
-                    cfg.provider_customer_id.clone()
+        match bill_and_collect(db, transport, &subscription, &plan, interval, anniversary, billing_date, cfg.charge_customers).await {
+            Ok(outcome) => {
+                report.billed_invoices.push(outcome.invoice_id);
+                report.webhooks_written += outcome.webhooks_written;
+                match outcome.collection {
+                    Some(CollectOutcome::Charged(PayableStatus::Succeeded)) => report.payments_succeeded += 1,
+                    Some(CollectOutcome::Charged(PayableStatus::Failed)) => report.payments_failed += 1,
+                    Some(CollectOutcome::Charged(PayableStatus::Pending)) => {}
+                    Some(CollectOutcome::Skipped(_)) => report.payments_skipped += 1,
+                    None => {}
                 }
-            };
-            let status = charge_invoice(
-                db,
-                transport,
-                &cfg.stripe_secret_key,
-                &invoice,
-                &provider_customer_id,
-            )
-            .await?;
-            match status {
-                PayableStatus::Succeeded => report.payments_succeeded += 1,
-                PayableStatus::Failed => report.payments_failed += 1,
-                PayableStatus::Pending => {}
             }
-
-            if let Some(ref ep) = endpoint {
-                let mut paid = invoice.clone();
-                paid.payment_status = match status {
-                    PayableStatus::Succeeded => PaymentStatus::Succeeded,
-                    PayableStatus::Failed => PaymentStatus::Failed,
-                    PayableStatus::Pending => PaymentStatus::Pending,
-                };
-                emit_webhook(
-                    db,
-                    transport,
-                    subscription.organization_id,
-                    ep,
-                    &hmac_key,
-                    WebhookKind::InvoicePaymentStatusUpdated.webhook_type(),
-                    WebhookKind::InvoicePaymentStatusUpdated.object_type(),
-                    invoice_webhook_object(&paid),
-                )
-                .await?;
-                report.webhooks_written += 1;
+            Err(e) => {
+                report.errors += 1;
+                tracing::error!(
+                    subscription_id = %subscription.id,
+                    organization_id = %subscription.organization_id,
+                    error = %e,
+                    "billing/collection failed for subscription; continuing cycle"
+                );
             }
         }
     }
 
     Ok(report)
+}
+
+/// The result of billing + collecting one subscription.
+#[derive(Debug)]
+pub struct BillOutcome {
+    pub invoice_id: Uuid,
+    /// `true` when this run created the invoice (vs. found it already billed).
+    pub created: bool,
+    pub webhooks_written: usize,
+    pub collection: Option<CollectOutcome>,
+}
+
+/// Bill one subscription for the period ending at `billing_date`, queue the
+/// `invoice.created` + `fee.created` webhooks (only when the invoice is new),
+/// then collect payment for it. Shared by the in-process cycle and the durable
+/// `bill_subscription` job so both do the full Lago pipeline.
+#[allow(clippy::too_many_arguments)]
+pub async fn bill_and_collect<T: HttpTransport>(
+    db: &Db,
+    transport: &T,
+    subscription: &Subscription,
+    plan: &rago_core::models::Plan,
+    interval: Interval,
+    anniversary: bool,
+    billing_date: NaiveDate,
+    charge: bool,
+) -> Result<BillOutcome, JobError> {
+    let (invoice, fees, created) =
+        bill_one(db, subscription, plan, interval, anniversary, billing_date).await?;
+
+    let mut webhooks_written = 0;
+    if created {
+        if record_webhook(
+            db,
+            subscription.organization_id,
+            WebhookKind::InvoiceCreated,
+            invoice_webhook_object(&invoice),
+        )
+        .await?
+        {
+            webhooks_written += 1;
+        }
+        for fee in &fees {
+            if record_webhook(
+                db,
+                subscription.organization_id,
+                WebhookKind::FeeCreated,
+                fee_webhook_object(fee, &invoice),
+            )
+            .await?
+            {
+                webhooks_written += 1;
+            }
+        }
+    }
+
+    // Collect. A re-run for an already-billed invoice only collects when no
+    // attempt was ever recorded (e.g. the earlier run hit an outage before
+    // reaching the provider); retries of declined charges belong to dunning /
+    // the operator, not to billing re-runs. The charge guard prevents any
+    // double charge either way.
+    let never_attempted = created
+        || db
+            .payment_attempt_state(crate::payments::deterministic_payment_id(invoice.id))
+            .await?
+            .is_none();
+    let collection = if charge && invoice.total_amount_cents > 0 && never_attempted {
+        Some(collect_invoice(db, transport, &invoice).await?)
+    } else {
+        None
+    };
+
+    Ok(BillOutcome {
+        invoice_id: invoice.id,
+        created,
+        webhooks_written,
+        collection,
+    })
 }
 
 /// Public entrypoint used by the durable-queue worker: bill a subscription
@@ -196,7 +202,27 @@ pub async fn bill_subscription_external(
     let plan = db.find_plan(sub.plan_id).await?;
     let interval = plan_interval(&plan.interval);
     let anniversary = matches!(sub.billing_time, rago_core::enums::BillingTime::Anniversary);
-    bill_one(db, &sub, &plan, interval, anniversary, billing_date).await
+    let (invoice, fees, _) = bill_one(db, &sub, &plan, interval, anniversary, billing_date).await?;
+    Ok((invoice, fees))
+}
+
+/// Durable-queue entrypoint: bill the subscription (resolved by external id),
+/// queue its webhooks, and collect payment — the full pipeline.
+pub async fn bill_and_collect_external<T: HttpTransport>(
+    db: &Db,
+    transport: &T,
+    organization_id: Uuid,
+    external_id: &str,
+    billing_date: NaiveDate,
+) -> Result<BillOutcome, JobError> {
+    let sub = db
+        .find_subscription_by_external_id(organization_id, external_id)
+        .await?
+        .ok_or_else(|| JobError::Payment("subscription_not_found".into()))?;
+    let plan = db.find_plan(sub.plan_id).await?;
+    let interval = plan_interval(&plan.interval);
+    let anniversary = matches!(sub.billing_time, rago_core::enums::BillingTime::Anniversary);
+    bill_and_collect(db, transport, &sub, &plan, interval, anniversary, billing_date, true).await
 }
 
 /// Bill a single subscription for the period ending at `billing_date`.
@@ -207,7 +233,7 @@ async fn bill_one(
     interval: Interval,
     anniversary: bool,
     billing_date: NaiveDate,
-) -> Result<(Invoice, Vec<Fee>), JobError> {
+) -> Result<(Invoice, Vec<Fee>, bool), JobError> {
     let currency = plan.currency();
     let sub_at = subscription
         .subscription_at
@@ -295,10 +321,10 @@ async fn bill_one(
         )
         .await?
     {
-        rago_db::BilledInvoice::Created => Ok((invoice, fees)),
+        rago_db::BilledInvoice::Created => Ok((invoice, fees, true)),
         rago_db::BilledInvoice::AlreadyBilled(existing) => {
             let existing_fees = db.fees_for_invoice(existing.id).await?;
-            Ok((existing, existing_fees))
+            Ok((existing, existing_fees, false))
         }
     }
 }

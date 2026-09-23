@@ -122,12 +122,7 @@ async fn campaign_with_threshold(
 }
 
 fn charging_cfg() -> DunningConfig {
-    DunningConfig {
-        stripe_secret_key: "sk_test_x".into(),
-        provider: "stripe".into(),
-        provider_customer_fallback: Some("cus_fallback".into()),
-        default_webhook_endpoint: None,
-    }
+    DunningConfig { charge: true }
 }
 
 async fn payment_request_count(db: &Db, org: Uuid) -> i64 {

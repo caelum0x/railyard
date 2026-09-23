@@ -96,6 +96,7 @@ mod tests {
             consumed_credits: Decimal::ZERO,
             balance_cents: 5000,
             balance_currency: currency.to_string(),
+            allowed_fee_types: Vec::new(),
             consumed_amount_cents: 0,
             ongoing_balance_cents: 0,
             ongoing_usage_balance_cents: 0,

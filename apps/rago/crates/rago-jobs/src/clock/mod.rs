@@ -279,8 +279,12 @@ pub async fn run_due(
     let mut report = ClockReport::default();
     for job in ALL_JOBS {
         if job.cadence().is_due(prev, now) {
-            let affected = job.run(db).await?;
-            report.ran.push(JobOutcome { name: job.name(), affected });
+            // One failing job must not starve the others of their slot: log it
+            // and continue (it runs again at its next cadence).
+            match job.run(db).await {
+                Ok(affected) => report.ran.push(JobOutcome { name: job.name(), affected }),
+                Err(e) => tracing::error!(job = job.name(), error = %e, "clock job failed"),
+            }
         }
     }
     Ok(report)
