@@ -11,7 +11,7 @@
 
 use axum::{
     Router,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
 };
 use metrics_exporter_prometheus::PrometheusHandle;
 use tensorzero_core::endpoints::openai_compatible::build_openai_compatible_routes;
@@ -204,6 +204,27 @@ fn build_meta_observability_routes(
         .route(
             "/relay/billing/keys",
             get(crate::billing_summary::billing_keys_handler),
+        )
+        .route(
+            "/relay/billing/status",
+            get(crate::relay_access::billing_status_handler),
+        )
+        .route(
+            "/relay/billing/wallet",
+            get(crate::relay_access::wallet_balance_handler),
+        )
+        .route(
+            "/relay/billing/budgets",
+            get(crate::billing_summary::list_budgets_handler),
+        )
+        .route(
+            "/relay/billing/budgets/{key_id}",
+            put(crate::billing_summary::upsert_budget_handler)
+                .delete(crate::billing_summary::delete_budget_handler),
+        )
+        .route(
+            "/v1/relay/provider_health",
+            get(crate::provider_status::provider_health_handler),
         )
         .route(
             "/v1/billing/cost-events",

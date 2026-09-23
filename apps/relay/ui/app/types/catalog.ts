@@ -45,3 +45,43 @@ export interface CatalogSnapshot {
   generated_at_ms: number;
   models: CatalogModel[];
 }
+
+/** Mirrors `relay_catalog::PriceQuote` returned by `POST /v1/relay/quotes`. */
+export interface PriceQuote {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  amount_micros: number;
+  pricing: ModelPrice;
+  catalog_revision: string;
+}
+
+/** Mirrors `provider_status::ProviderRouteStatus`. */
+export interface ProviderRouteStatus {
+  provider: string;
+  priority: number;
+  circuit: "closed" | "open" | "half_open";
+  circuit_cooldown_ms?: number;
+  ewma_latency_ms: number;
+  ewma_ttft_ms: number;
+  error_rate: number;
+  total_attempts: number;
+  failed_attempts: number;
+  observed: boolean;
+}
+
+/** Mirrors `provider_status::ModelRoutingStatus`. */
+export interface ModelRoutingStatus {
+  model: string;
+  hedging_enabled: boolean;
+  hedge_max_concurrency: number;
+  has_fallback: boolean;
+  providers: ProviderRouteStatus[];
+}
+
+/** Mirrors `provider_status::ProviderHealthReport`. */
+export interface ProviderHealthReport {
+  generated_at_ms: number;
+  models: ModelRoutingStatus[];
+  unrouted: ProviderRouteStatus[];
+}

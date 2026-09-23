@@ -89,3 +89,111 @@ export interface KeySpendSeries {
   principal: string;
   points: KeySpendPoint[];
 }
+
+/** Aggregation scope for billing reads. `all` requires an operator key. */
+export type BillingScope = "own" | "all";
+
+/** Mirrors `relay_access::CostFeedStatus`. */
+export interface CostFeedStatus {
+  configured: boolean;
+  format?: "raw" | "rago";
+  target_host?: string;
+  billable_metric_code?: string;
+}
+
+/** Mirrors `relay_access::RelayBillingStatusResponse` (`GET /relay/billing/status`). */
+export interface BillingStatus {
+  billing_enabled: boolean;
+  metering_enabled: boolean;
+  auth_enabled: boolean;
+  postgres_configured: boolean;
+  budgets_enforced: boolean;
+  cost_feed: CostFeedStatus;
+  principal?: string;
+  operator: boolean;
+  operator_keys_configured: boolean;
+  warnings: string[];
+}
+
+export type CostEventState = "pending" | "published" | "dead_lettered";
+
+export type InferenceRoute =
+  | "unknown"
+  | "native_inference"
+  | "open_ai_chat_completions"
+  | "open_ai_embeddings"
+  | "batch_inference";
+
+/** Mirrors `relay_cost_feed::CostEvent`. */
+export interface CostEvent {
+  schema_version: number;
+  event_id: string;
+  request_id: string;
+  owner_principal: string;
+  model: string;
+  route: InferenceRoute;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    provider_cost_micros?: number;
+  };
+  authorized_micros: number;
+  charged_micros: number;
+  provider_cost_micros?: number;
+  overage_capped: boolean;
+  /** `metered:<request_id>` for postpaid meter-only events. */
+  receipt_hash: string;
+  settled_at_ms: number;
+}
+
+/** Mirrors `relay_cost_feed::PendingCostEvent`. */
+export interface CostEventRecord {
+  event: CostEvent;
+  attempts: number;
+  next_attempt_at_ms: number;
+  lease_owner: string | null;
+  lease_expires_at_ms: number | null;
+  published_at_ms: number | null;
+  dead_lettered_at_ms: number | null;
+  last_error: string | null;
+}
+
+/** Mirrors `relay_cost_feed::CostEventPage`. */
+export interface CostEventPage {
+  items: CostEventRecord[];
+  next_cursor: string | null;
+}
+
+/** Mirrors `relay_storage_postgres::KeyBudgetStatus`. */
+export interface KeyBudget {
+  owner_principal: string;
+  monthly_limit_micros: number;
+  month_to_date_micros: number;
+  remaining_micros: number;
+  exceeded: boolean;
+  note?: string;
+  updated_by: string;
+  updated_at_ms: number;
+}
+
+export function costEventState(record: CostEventRecord): CostEventState {
+  if (record.dead_lettered_at_ms != null) {
+    return "dead_lettered";
+  }
+  if (record.published_at_ms != null) {
+    return "published";
+  }
+  return "pending";
+}
+
+export function isMeteredEvent(event: CostEvent): boolean {
+  return event.receipt_hash.startsWith("metered:");
+}
+
+/** Mirrors `relay_access::WalletBalanceResponse` (`GET /relay/billing/wallet`). */
+export interface WalletBalance {
+  principal: string;
+  billing_enabled: boolean;
+  available_micros?: number;
+}

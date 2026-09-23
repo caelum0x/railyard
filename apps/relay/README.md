@@ -192,6 +192,35 @@ request. Without a URL, rows remain pending in `relay_cost_events`. Delivery
 uses bounded HTTP timeouts, disables redirects, leases rows with `SKIP LOCKED`,
 backs off failed attempts, and dead-letters after the configured attempt limit.
 
+### Postpaid metering, Rago invoicing, and spend caps
+
+Consumers that invoice their own tenants (for example AutoGTM via Rago) run
+Relay in **postpaid meter-only** mode instead of prepaid Mint billing:
+
+| Variable | Purpose |
+| --- | --- |
+| `RELAY_METERING_ENABLED` | Truthy records every successful authenticated inference as a durable `metered:` cost event priced from the catalog, with no AITP challenge or Mint hold. Requires `[gateway.auth]` and Postgres (startup fails closed otherwise). Ignored when `RELAY_BILLING_ENABLED` is set, which already emits captured events. |
+| `RELAY_COST_FEED_FORMAT` | `raw` (default, Relay `CostEvent` JSON) or `rago`. |
+| `RELAY_COST_FEED_URL` | Delivery endpoint. For `rago`, the Rago origin (e.g. `https://rago.internal`); `/api/v1/events` is appended. |
+| `RELAY_COST_FEED_BEARER` | Bearer token; for `rago` this is the Rago API key (required). |
+| `RELAY_RAGO_METRIC_CODE` | Rago billable metric code (default `relay_llm_usage`). Configure it as a `sum_agg` over `charged_micros` (retail spend) or `total_tokens`. |
+| `RELAY_RAGO_SUBSCRIPTION_PREFIX` | Prefix for the Rago `external_subscription_id`, which defaults to `<prefix><api key public id>`. |
+| `RELAY_RAGO_SUBSCRIPTION_MAP` | Optional JSON object mapping API-key public ids to explicit Rago subscription ids. |
+| `RELAY_OPERATOR_KEY_IDS` | Comma-separated API-key public ids allowed to aggregate spend across all keys (`?scope=all`), replay any dead letter, and manage spend caps. List the UI's `TENSORZERO_API_KEY` here. |
+
+In `rago` format each event is posted as a Lago-compatible usage event whose
+`transaction_id` is the Relay event id, so redelivery is idempotent (Rago's
+duplicate-transaction 422 is treated as delivered). Properties carry the model,
+route, token counts, `charged_micros`, and `charged_usd`.
+
+Per-key monthly spend caps live in `relay_key_budgets` and are managed from the
+UI's **Spend Caps** page or `PUT/DELETE /relay/billing/budgets/{key_id}`. When a
+key's month-to-date (UTC) charged spend reaches its cap, billable requests get
+HTTP 429 `relay_spend_cap_exceeded` before any provider or Mint I/O, in both
+billing modes. `GET /relay/billing/status` reports the active mode, feed target,
+and any configuration gaps; `GET /v1/relay/provider_health` reports routing and
+circuit-breaker state per model.
+
 The current dependency and completion graph is maintained in
 [`docs/RELAY-ENGINEERING-GRAPH.md`](docs/RELAY-ENGINEERING-GRAPH.md).
 The exact code-complete versus live-infrastructure boundary is recorded in

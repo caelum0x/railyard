@@ -3,6 +3,19 @@
 # product catalog is promoted. Secrets are resolved only from the environment.
 [gateway]
 bind_address = "0.0.0.0:3000"
+# Relay is independent of TensorZero's hosted services (see OWNERSHIP.md): never
+# send pseudonymous usage analytics to howdy.tensorzero.com.
+disable_pseudonymous_usage_analytics = true
+
+# Gateway API-key authentication. Required for every Relay money/metering path:
+# `RELAY_BILLING_ENABLED` and `RELAY_METERING_ENABLED` both abort startup without
+# it, and the billing dashboard resolves spend by the calling key. Keys live in
+# Postgres (`TENSORZERO_POSTGRES_URL`) and are created from the UI's API Keys
+# page or `gateway --create-api-key`. Give the UI its own key via
+# `TENSORZERO_API_KEY` and list that key's public id in `RELAY_OPERATOR_KEY_IDS`
+# so the dashboard can aggregate spend across all keys.
+[gateway.auth]
+enabled = true
 
 [gateway.observability]
 enabled = true
@@ -72,6 +85,12 @@ api_key_location = "env::OPENAI_API_KEY"
 # └────────────────────────────────────────────────────────────────────────────┘
 
 # General-purpose chat entry point.
+#
+# FAILOVER. `default` (OpenAI) serves all sampled traffic. `anthropic` has no
+# `weight`, which makes it a TensorZero fallback variant: it is tried only when
+# the sampled variant fails (provider outage, exhausted retries, open circuit),
+# so an OpenAI incident degrades to Claude instead of failing every request.
+# Billing is per function selector, so the retail price does not change.
 [functions.chat]
 type = "chat"
 
@@ -79,6 +98,10 @@ type = "chat"
 type = "chat_completion"
 model = "gpt-4o-mini"
 weight = 1.0
+
+[functions.chat.variants.anthropic]
+type = "chat_completion"
+model = "claude-sonnet"
 
 # Passport-conditioned TEXT generation (scripts, captions, hooks, brand-voice
 # copy). This is the modality Relay can serve end-to-end today: the passport
@@ -96,9 +119,10 @@ weight = 1.0
 # and a variant below whose name is the lowercased provider id.
 #
 # `openai` also carries weight = 1.0 so a passport_text call that does NOT pin a
-# variant still resolves (to the historical default model); the other routed
-# variants are weight = 0.0 (reachable only by explicit provider pin, never by
-# random sampling). Billing prices are per function selector
+# variant still resolves (to the historical default model). `anthropic` has no
+# weight: it is never sampled, stays reachable by explicit provider pin, and
+# doubles as the failover variant when the sampled OpenAI variant fails.
+# Billing prices are per function selector
 # (`tensorzero::function_name::passport_text`), so every provider variant bills
 # at the one operator-published passport_text price regardless of model.
 [functions.passport_text]
@@ -114,7 +138,6 @@ weight = 1.0
 [functions.passport_text.variants.anthropic]
 type = "chat_completion"
 model = "claude-sonnet"
-weight = 0.0
 
 # NON-TEXT MODALITIES (image / voice / video).
 #

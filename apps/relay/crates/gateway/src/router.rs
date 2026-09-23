@@ -136,7 +136,24 @@ pub async fn build_axum_router(
         });
     }
 
-    if crate::billing::billing_enabled() {
+    let billing_on = crate::billing::billing_enabled();
+    let metering_on = !billing_on && crate::metering::metering_enabled();
+    let postgres_pool = app_state.postgres_connection_info().get_pool().cloned();
+    let runtime_status = crate::relay_access::RelayRuntimeStatus {
+        billing_enabled: billing_on,
+        metering_enabled: metering_on,
+        auth_enabled: config.gateway.auth.enabled,
+        postgres_configured: postgres_pool.is_some(),
+        budgets_enforced: (billing_on || metering_on) && postgres_pool.is_some(),
+        cost_feed: crate::cost_feed::cost_feed_status(),
+    };
+    if billing_on && crate::metering::metering_enabled() {
+        tracing::info!(
+            "RELAY_METERING_ENABLED is ignored while RELAY_BILLING_ENABLED is set; Mint-settled billing already emits cost events"
+        );
+    }
+
+    if billing_on {
         if !config.gateway.auth.enabled {
             return Err(billing_config_error(
                 "RELAY_BILLING_ENABLED requires gateway authentication; unauthenticated inference cannot resolve a payer",
@@ -144,6 +161,7 @@ pub async fn build_axum_router(
         }
         let ledger: Arc<dyn relay_billing::BillingLedger> = build_billing_ledger()?;
         relay_health = relay_health.with_billing(ledger.clone());
+        router = router.layer(Extension(crate::relay_access::WalletLedger(ledger.clone())));
         validate_configured_catalog_routes(&catalog_runtime.service, &config).await?;
         // Model-aware pricing: a per-model price table seeded from the real
         // provider list-price catalog (`relay_billing::catalog`), so each model is
@@ -293,7 +311,31 @@ pub async fn build_axum_router(
             crate::billing::billing_middleware,
         ));
     }
-    router = router.layer(Extension(relay_health));
+    if metering_on {
+        router = build_metering_layer(
+            router,
+            &catalog_runtime,
+            &config,
+            postgres_pool.clone(),
+            &app_state,
+            &shutdown_token,
+        )
+        .await?;
+    }
+    // Per-key spend caps wrap the billing/metering layer (outer) but stay
+    // inside auth, so the capped principal is already resolved and a capped key
+    // never reaches AITP, Mint, or a provider.
+    if let (true, Some(pool)) = (runtime_status.budgets_enforced, postgres_pool) {
+        router = router.layer(middleware::from_fn_with_state(
+            crate::metering::SpendCapState::new(
+                relay_storage_postgres::PostgresKeyBudgetStore::new(pool),
+            ),
+            crate::metering::spend_cap_middleware,
+        ));
+    }
+    router = router
+        .layer(Extension(relay_health))
+        .layer(Extension(runtime_status));
 
     if config.gateway.auth.enabled {
         let state = TensorzeroAuthMiddlewareState::new(TensorzeroAuthMiddlewareStateInner {
@@ -337,6 +379,64 @@ pub async fn build_axum_router(
         ))
         .with_state(app_state.clone());
     Ok((final_router, in_flight_requests_data))
+}
+
+/// Wire postpaid meter-only usage recording (`RELAY_METERING_ENABLED`).
+///
+/// Fail-closed like billing: metering without authentication cannot attribute
+/// usage to an API key, and without Postgres there is no durable outbox.
+#[expect(
+    clippy::disallowed_types,
+    reason = "metering wiring reads deferred tasks from SwappableAppStateData"
+)]
+async fn build_metering_layer(
+    router: Router<SwappableAppStateData>,
+    catalog_runtime: &CatalogRuntime,
+    config: &tensorzero_core::config::Config,
+    pool: Option<sqlx::PgPool>,
+    app_state: &SwappableAppStateData,
+    shutdown_token: &CancellationToken,
+) -> Result<Router<SwappableAppStateData>, Error> {
+    if !config.gateway.auth.enabled {
+        return Err(billing_config_error(
+            "RELAY_METERING_ENABLED requires gateway authentication; set `[gateway.auth] enabled = true` so usage is attributed to an API key",
+        ));
+    }
+    let pool = pool.ok_or_else(|| {
+        billing_config_error(
+            "RELAY_METERING_ENABLED requires Postgres for the durable cost-event outbox",
+        )
+    })?;
+    relay_storage_postgres::migrate(&pool)
+        .await
+        .map_err(|error| {
+            billing_config_error(format!(
+                "failed to apply the Relay metering schema: {error}"
+            ))
+        })?;
+    validate_configured_catalog_routes(&catalog_runtime.service, config).await?;
+    crate::cost_feed::start_if_configured(
+        pool.clone(),
+        app_state.deferred_tasks.clone(),
+        shutdown_token.clone(),
+    )
+    .map_err(|error| {
+        billing_config_error(format!("failed to initialize Relay cost feed: {error}"))
+    })?;
+    let default_price = crate::billing::default_model_price();
+    let prices = Arc::new(
+        catalog_runtime
+            .service
+            .billing_price_table(catalog_runtime.default_price.unwrap_or(default_price))
+            .await,
+    );
+    let store: Arc<dyn relay_cost_feed::CostEventStore> =
+        Arc::new(crate::cost_feed::PostgresCostEventStore::new(pool));
+    tracing::info!("Relay postpaid metering enabled; usage is recorded without Mint holds");
+    Ok(router.layer(middleware::from_fn_with_state(
+        crate::metering::MeteringState::new(store, prices, app_state.deferred_tasks.clone()),
+        crate::metering::metering_middleware,
+    )))
 }
 
 async fn validate_configured_catalog_routes(

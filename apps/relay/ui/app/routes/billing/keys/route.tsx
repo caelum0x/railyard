@@ -2,6 +2,7 @@ import type { Route } from "./+types/route";
 import { Suspense, useMemo } from "react";
 import {
   Await,
+  Link,
   useAsyncError,
   useLocation,
   type RouteHandle,
@@ -25,7 +26,13 @@ import { Skeleton } from "~/components/ui/skeleton";
 import { LayoutErrorBoundary, PageErrorContent } from "~/components/ui/error";
 import { requireValidApiKeyIfEnabled } from "~/utils/auth.server";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
-import type { KeySpendPoint, KeySpendSeries } from "~/types/billing";
+import type {
+  BillingScope,
+  BillingStatus,
+  KeySpendPoint,
+  KeySpendSeries,
+} from "~/types/billing";
+import { ScopeToggle, scopeFromUrl } from "~/components/billing/BillingShared";
 
 const MICROS_PER_USD = 1_000_000;
 
@@ -33,14 +40,19 @@ export const handle: RouteHandle = {
   crumb: () => ["Billing", "API Keys"],
 };
 
-export async function loader() {
+export async function loader({ request }: Route.LoaderArgs) {
   await requireValidApiKeyIfEnabled();
+  const scope = scopeFromUrl(request.url);
+  const client = getTensorZeroClient();
 
   // Deferred: the gateway buckets the durable cost-event table into per-key,
   // per-day spend points and streams them in via `Await`.
-  const series = getTensorZeroClient().getBillingKeySpend();
+  const page = Promise.all([
+    client.getBillingKeySpend({ scope }),
+    client.getBillingStatus().catch((): BillingStatus | null => null),
+  ]);
 
-  return { series };
+  return { page, scope };
 }
 
 function formatUsd(micros: number): string {
@@ -130,7 +142,15 @@ function EmptyRow({ colSpan, message }: { colSpan: number; message: string }) {
   );
 }
 
-function KeysContent({ series }: { series: KeySpendSeries }) {
+function KeysContent({
+  series,
+  status,
+  scope,
+}: {
+  series: KeySpendSeries;
+  status: BillingStatus | null;
+  scope: BillingScope;
+}) {
   const { points } = series;
   const totals = useMemo(() => rollupByKey(points), [points]);
   const sortedPoints = useMemo(
@@ -141,6 +161,15 @@ function KeysContent({ series }: { series: KeySpendSeries }) {
   return (
     <>
       <KeysPageHeader />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <ScopeToggle scope={scope} operator={status?.operator ?? false} />
+        <Link
+          to={scope === "all" ? "/billing/budgets?scope=all" : "/billing/budgets"}
+          className="text-fg-secondary hover:text-fg-primary text-sm underline-offset-4 hover:underline"
+        >
+          Manage monthly spend caps
+        </Link>
+      </div>
       <SectionsGroup>
         <SectionLayout>
           <SectionHeader heading="Spend by key" />
@@ -217,14 +246,16 @@ function KeysContent({ series }: { series: KeySpendSeries }) {
 }
 
 export default function BillingKeysPage({ loaderData }: Route.ComponentProps) {
-  const { series } = loaderData;
+  const { page, scope } = loaderData;
   const location = useLocation();
 
   return (
     <PageLayout>
       <Suspense key={location.key} fallback={<KeysSkeleton />}>
-        <Await resolve={series} errorElement={<KeysErrorState />}>
-          {(resolved) => <KeysContent series={resolved} />}
+        <Await resolve={page} errorElement={<KeysErrorState />}>
+          {([series, status]) => (
+            <KeysContent series={series} status={status} scope={scope} />
+          )}
         </Await>
       </Suspense>
     </PageLayout>

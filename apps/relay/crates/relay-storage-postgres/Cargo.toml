@@ -16,6 +16,7 @@ relay-contract = { path = "../relay-contract" }
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 

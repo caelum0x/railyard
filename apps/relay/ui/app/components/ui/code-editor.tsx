@@ -6,6 +6,7 @@ import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
 import { StreamLanguage } from "@codemirror/language";
 import { jinja2 } from "@codemirror/legacy-modes/mode/jinja2";
+import { toml } from "@codemirror/legacy-modes/mode/toml";
 import { githubLightInit } from "@uiw/codemirror-theme-github";
 import { EditorView } from "@codemirror/view";
 import { search } from "@codemirror/search";
@@ -28,7 +29,7 @@ import {
 import type { JsonValue } from "~/types/tensorzero";
 import debounce from "lodash-es/debounce";
 
-export type Language = "json" | "markdown" | "jinja2" | "text";
+export type Language = "json" | "markdown" | "jinja2" | "toml" | "text";
 
 /** Try to format the given string/object if it's JSON. Passthrough gracefully if it's not JSON. */
 export function useFormattedJson(initialValue: string | JsonValue): string {
@@ -94,6 +95,7 @@ const LANGUAGE_EXTENSIONS = {
   json: [json()],
   markdown: [markdown()],
   jinja2: [StreamLanguage.define(jinja2)],
+  toml: [StreamLanguage.define(toml)],
   text: [],
 } as const;
 
@@ -125,7 +127,7 @@ const THEME_MONO = githubLightInit({
   },
 });
 
-// Cache for extension combinations (max 16 combinations: 4 languages × 2 wordWrap × 2 readOnly)
+// Cache for extension combinations (max 20 combinations: 5 languages × 2 wordWrap × 2 readOnly)
 const extensionCache = new Map<string, Extension[]>();
 
 function getExtensions(
@@ -171,6 +173,7 @@ const LANGUAGE_LABELS = {
   json: "JSON",
   markdown: "Markdown",
   jinja2: "Template",
+  toml: "TOML",
   text: "Text",
 } as const satisfies {
   [language: string]: string;

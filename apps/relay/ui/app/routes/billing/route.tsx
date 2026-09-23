@@ -1,6 +1,12 @@
 import type { Route } from "./+types/route";
 import { Suspense } from "react";
-import { Await, useAsyncError, useLocation, type RouteHandle } from "react-router";
+import {
+  Await,
+  Link,
+  useAsyncError,
+  useLocation,
+  type RouteHandle,
+} from "react-router";
 import {
   PageHeader,
   PageLayout,
@@ -20,58 +26,86 @@ import { Skeleton } from "~/components/ui/skeleton";
 import { LayoutErrorBoundary, PageErrorContent } from "~/components/ui/error";
 import { requireValidApiKeyIfEnabled } from "~/utils/auth.server";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
-import type { BillingSummary } from "~/types/billing";
+import type {
+  BillingScope,
+  BillingStatus,
+  BillingSummary,
+  WalletBalance,
+} from "~/types/billing";
+import {
+  BillingStatusBanner,
+  ScopeToggle,
+  StatCard,
+  formatCount,
+  formatTimestamp,
+  formatUsd,
+  scopeFromUrl,
+} from "~/components/billing/BillingShared";
 
-const MICROS_PER_USD = 1_000_000;
 const SETTLEMENT_HISTORY_LIMIT = 50;
 
 export const handle: RouteHandle = {
   crumb: () => ["Billing"],
 };
 
-export async function loader() {
+export async function loader({ request }: Route.LoaderArgs) {
   await requireValidApiKeyIfEnabled();
+  const scope = scopeFromUrl(request.url);
+  const client = getTensorZeroClient();
 
   // Deferred: the summary is aggregated by the gateway from the durable
   // cost-event and settlement-evidence tables and streamed in via `Await`.
-  const summary = getTensorZeroClient().getBillingSummary({
-    settlements: SETTLEMENT_HISTORY_LIMIT,
-  });
+  // The status explains how billing is wired so an unconfigured gateway is
+  // distinguishable from one that simply has no spend yet.
+  const status: Promise<BillingStatus | null> = client
+    .getBillingStatus()
+    .catch(() => null);
+  const page = Promise.all([
+    client.getBillingSummary({ settlements: SETTLEMENT_HISTORY_LIMIT, scope }),
+    status,
+    client.getWalletBalance().catch((): WalletBalance | null => null),
+  ]);
 
-  return { summary };
-}
-
-function formatUsd(micros: number): string {
-  return (micros / MICROS_PER_USD).toLocaleString(undefined, {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  });
-}
-
-function formatCount(value: number): string {
-  return value.toLocaleString();
-}
-
-function formatTimestamp(ms: number | undefined): string {
-  if (ms == null) {
-    return "—";
-  }
-  return new Date(ms).toLocaleString();
+  return { page, status, scope };
 }
 
 function BillingPageHeader() {
   return <PageHeader heading="Billing" />;
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+const BILLING_LINKS = [
+  { to: "/billing/keys", label: "API key spend" },
+  { to: "/billing/budgets", label: "Spend caps" },
+  { to: "/billing/events", label: "Cost events" },
+  { to: "/billing/settlements", label: "Settlements" },
+  { to: "/usage/export", label: "Usage export" },
+] as const;
+
+function BillingToolbar({
+  status,
+  scope,
+}: {
+  status: BillingStatus;
+  scope: BillingScope;
+}) {
+  const suffix = scope === "all" ? "?scope=all" : "";
   return (
-    <div className="border-border bg-bg-secondary flex flex-col gap-1 rounded-md border p-4">
-      <span className="text-fg-tertiary text-xs font-medium tracking-wide uppercase">
-        {label}
-      </span>
-      <span className="text-fg-primary text-xl font-medium">{value}</span>
+    <div className="flex flex-col gap-3">
+      <BillingStatusBanner status={status} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <ScopeToggle scope={scope} operator={status.operator} />
+        <nav className="flex flex-wrap gap-4 text-sm">
+          {BILLING_LINKS.map((link) => (
+            <Link
+              key={link.to}
+              to={`${link.to}${suffix}`}
+              className="text-fg-secondary hover:text-fg-primary underline-offset-4 hover:underline"
+            >
+              {link.label}
+            </Link>
+          ))}
+        </nav>
+      </div>
     </div>
   );
 }
@@ -92,12 +126,23 @@ function BillingSkeleton() {
   );
 }
 
-function BillingErrorState() {
+function BillingErrorState({
+  status,
+}: {
+  status: Promise<BillingStatus | null>;
+}) {
   const error = useAsyncError();
   return (
     <>
       <BillingPageHeader />
       <SectionLayout>
+        <Suspense fallback={null}>
+          <Await resolve={status} errorElement={null}>
+            {(resolved) =>
+              resolved ? <BillingStatusBanner status={resolved} /> : null
+            }
+          </Await>
+        </Suspense>
         <PageErrorContent error={error} />
       </SectionLayout>
     </>
@@ -114,19 +159,47 @@ function EmptyRow({ colSpan, message }: { colSpan: number; message: string }) {
   );
 }
 
-function BillingContent({ summary }: { summary: BillingSummary }) {
+function BillingContent({
+  summary,
+  status,
+  scope,
+  wallet: walletBalance,
+}: {
+  summary: BillingSummary;
+  status: BillingStatus | null;
+  scope: BillingScope;
+  wallet: WalletBalance | null;
+}) {
   const { wallet, totals, by_key, by_model, recent_settlements } = summary;
+  const emptyMessage =
+    status && !status.billing_enabled && !status.metering_enabled
+      ? "Usage is not being recorded. Enable RELAY_METERING_ENABLED or RELAY_BILLING_ENABLED on the gateway."
+      : "No spend recorded yet.";
+  const prepaid = status?.billing_enabled ?? true;
 
   return (
     <>
       <BillingPageHeader />
+      {status && <BillingToolbar status={status} scope={scope} />}
       <SectionsGroup>
         <SectionLayout>
-          <SectionHeader heading="Wallet" />
+          <SectionHeader heading={prepaid ? "Wallet" : "Spend"} />
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            {walletBalance?.available_micros != null && (
+              <StatCard
+                label="Mint available balance"
+                value={formatUsd(walletBalance.available_micros)}
+                hint={`Payer account for ${walletBalance.principal}`}
+              />
+            )}
             <StatCard
               label="Total charged"
               value={formatUsd(wallet.total_charged_micros)}
+              hint={
+                prepaid
+                  ? undefined
+                  : "Postpaid: invoiced by the cost-feed consumer"
+              }
             />
             <StatCard
               label="Total settled"
@@ -185,7 +258,7 @@ function BillingContent({ summary }: { summary: BillingSummary }) {
             </TableHeader>
             <TableBody>
               {by_key.length === 0 ? (
-                <EmptyRow colSpan={3} message="No spend recorded yet." />
+                <EmptyRow colSpan={3} message={emptyMessage} />
               ) : (
                 by_key.map((row) => (
                   <TableRow key={row.key}>
@@ -216,7 +289,7 @@ function BillingContent({ summary }: { summary: BillingSummary }) {
             </TableHeader>
             <TableBody>
               {by_model.length === 0 ? (
-                <EmptyRow colSpan={4} message="No spend recorded yet." />
+                <EmptyRow colSpan={4} message={emptyMessage} />
               ) : (
                 by_model.map((row) => (
                   <TableRow key={row.model}>
@@ -250,7 +323,14 @@ function BillingContent({ summary }: { summary: BillingSummary }) {
             </TableHeader>
             <TableBody>
               {recent_settlements.length === 0 ? (
-                <EmptyRow colSpan={4} message="No settlements recorded yet." />
+                <EmptyRow
+                  colSpan={4}
+                  message={
+                    prepaid
+                      ? "No settlements recorded yet."
+                      : "Postpaid metering does not create Mint settlements."
+                  }
+                />
               ) : (
                 recent_settlements.map((row) => (
                   <TableRow key={row.request_id}>
@@ -276,14 +356,24 @@ function BillingContent({ summary }: { summary: BillingSummary }) {
 }
 
 export default function BillingPage({ loaderData }: Route.ComponentProps) {
-  const { summary } = loaderData;
+  const { page, status, scope } = loaderData;
   const location = useLocation();
 
   return (
     <PageLayout>
       <Suspense key={location.key} fallback={<BillingSkeleton />}>
-        <Await resolve={summary} errorElement={<BillingErrorState />}>
-          {(resolved) => <BillingContent summary={resolved} />}
+        <Await
+          resolve={page}
+          errorElement={<BillingErrorState status={status} />}
+        >
+          {([resolvedSummary, resolvedStatus, resolvedWallet]) => (
+            <BillingContent
+              summary={resolvedSummary}
+              status={resolvedStatus}
+              scope={scope}
+              wallet={resolvedWallet}
+            />
+          )}
         </Await>
       </Suspense>
     </PageLayout>

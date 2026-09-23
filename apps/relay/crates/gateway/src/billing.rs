@@ -66,7 +66,7 @@ use crate::settlement_outbox::{BatchClaim, DurableBillingCoordinator};
 /// Maximum non-streaming response body we will buffer to read the `usage`
 /// object (16 MiB). Larger bodies fall back to a release (no charge) rather
 /// than risk unbounded buffering.
-const MAX_RESPONSE_CAPTURE_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_RESPONSE_CAPTURE_BYTES: usize = 16 * 1024 * 1024;
 
 /// Maximum request body accepted by the gateway and therefore by request
 /// pricing. Keep this identical to the router's `DefaultBodyLimit`: paid
@@ -133,9 +133,9 @@ impl EstimatePolicy {
 
 /// Request-derived inputs used to size the authorization before inference.
 #[derive(Debug, Clone)]
-struct RequestPricing {
-    model: ModelId,
-    route: InferenceRoute,
+pub(crate) struct RequestPricing {
+    pub(crate) model: ModelId,
+    pub(crate) route: InferenceRoute,
     /// A conservative prompt ceiling derived from the request byte length. A
     /// tokenizer cannot emit more tokens than source bytes for valid UTF-8 JSON.
     prompt_token_ceiling: u32,
@@ -1146,7 +1146,7 @@ impl futures::Stream for GuardedBody {
 /// Parse the LAST `data:` line in an SSE event that carries a `usage` object
 /// into a billed [`Usage`] plus [`ModelId`]. `[DONE]` sentinels and usage-less
 /// frames yield `None`.
-fn extract_usage_from_event(
+pub(crate) fn extract_usage_from_event(
     event: &str,
     prices: &PriceTable,
     requested_model: &ModelId,
@@ -1172,7 +1172,7 @@ fn extract_usage_from_event(
 /// TensorZero encodes provider failures as ordinary SSE JSON followed by
 /// `[DONE]`; detect them at the application layer so clean EOF cannot turn a
 /// failed generation into a maximum capture.
-fn event_has_error(event: &str) -> bool {
+pub(crate) fn event_has_error(event: &str) -> bool {
     event.lines().any(|line| {
         let Some(payload) = line.trim_start().strip_prefix("data:") else {
             return false;
@@ -1315,7 +1315,7 @@ fn release_hold_detached(
 /// passport-conditioned generation surface (which reuses the native inference
 /// handler), and the OpenAI-compatible chat/completions/responses/embeddings
 /// endpoints.
-fn is_billable_path(path: &str) -> bool {
+pub(crate) fn is_billable_path(path: &str) -> bool {
     path.ends_with("/inference")
         || path.ends_with("/v1/passport/generate")
         || path.ends_with("/chat/completions")
@@ -1324,7 +1324,7 @@ fn is_billable_path(path: &str) -> bool {
         || path.ends_with("/embeddings")
 }
 
-fn is_batch_start(method: &Method, path: &str) -> bool {
+pub(crate) fn is_batch_start(method: &Method, path: &str) -> bool {
     method == Method::POST && path.ends_with("/batch_inference")
 }
 
@@ -1370,7 +1370,7 @@ fn account_from_request(request: &Request) -> Option<AccountId> {
 }
 
 /// True when the response is a Server-Sent-Events stream.
-fn is_event_stream(response: &Response) -> bool {
+pub(crate) fn is_event_stream(response: &Response) -> bool {
     response
         .headers()
         .get(axum::http::header::CONTENT_TYPE)
@@ -1386,7 +1386,7 @@ fn parse_usage_and_model(bytes: &[u8], prices: &PriceTable) -> Option<(Usage, Mo
     parse_usage_and_model_with_fallback(bytes, prices, None)
 }
 
-fn parse_usage_and_model_with_fallback(
+pub(crate) fn parse_usage_and_model_with_fallback(
     bytes: &[u8],
     prices: &PriceTable,
     fallback_model: Option<&ModelId>,
@@ -1494,7 +1494,7 @@ async fn buffer_request_pricing(request: Request) -> Result<(Request, RequestPri
     buffer_request_pricing_with_policy(request, EstimatePolicy::default()).await
 }
 
-async fn buffer_request_pricing_with_policy(
+pub(crate) async fn buffer_request_pricing_with_policy(
     request: Request,
     policy: EstimatePolicy,
 ) -> Result<(Request, RequestPricing), Response> {
@@ -1530,9 +1530,16 @@ async fn buffer_request_pricing_with_policy(
             completion_token_ceiling(value)
         }
     });
+    // Only the OpenAI-compatible completions surfaces accept `stream_options`.
+    // The native `/inference` payload denies unknown fields and always emits a
+    // terminal usage chunk, so injecting the option there would reject the
+    // request with a 400.
+    let accepts_stream_options =
+        path.ends_with("/chat/completions") || path.ends_with("/completions");
     let mut streaming = false;
     if let Some(object) = value.as_mut().and_then(|v| v.as_object_mut()) {
-        streaming = object.get("stream").and_then(|v| v.as_bool()) == Some(true);
+        streaming =
+            accepts_stream_options && object.get("stream").and_then(|v| v.as_bool()) == Some(true);
         if streaming {
             let stream_options = object.entry("stream_options").or_insert_with(|| json!({}));
             if let Some(options) = stream_options.as_object_mut() {

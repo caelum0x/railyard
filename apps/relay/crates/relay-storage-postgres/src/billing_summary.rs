@@ -3,7 +3,8 @@
 //! Rolls up the durable `relay_cost_events` outbox and
 //! `relay_settlement_evidence` tables into a [`BillingSummary`] for a single
 //! authenticated principal. Every query is principal-scoped so the summary can
-//! never surface another tenant's spend.
+//! never surface another tenant's spend — except the explicit operator scope
+//! (`None`), which the gateway only grants to configured operator keys.
 
 use relay_contract::{
     BillingSummary, KeySpend, KeySpendPoint, Microdollars, ModelSpend, SettlementDetail,
@@ -16,6 +17,8 @@ use uuid::Uuid;
 pub const DEFAULT_SETTLEMENT_HISTORY_LIMIT: i64 = 50;
 /// Upper bound on the settlement-history window so the query stays cheap.
 pub const MAX_SETTLEMENT_HISTORY_LIMIT: i64 = 500;
+/// Principal label reported for operator-scope (all API keys) aggregates.
+pub const OPERATOR_SCOPE_PRINCIPAL: &str = "*";
 
 #[derive(Clone)]
 pub struct PostgresBillingSummaryStore {
@@ -32,7 +35,7 @@ impl PostgresBillingSummaryStore {
     /// `settlement_limit` is clamped to `[1, MAX_SETTLEMENT_HISTORY_LIMIT]`.
     pub async fn summary(
         &self,
-        owner_principal: &str,
+        owner_principal: Option<&str>,
         settlement_limit: i64,
     ) -> Result<BillingSummary, sqlx::Error> {
         let settlement_limit = settlement_limit.clamp(1, MAX_SETTLEMENT_HISTORY_LIMIT);
@@ -47,7 +50,7 @@ impl PostgresBillingSummaryStore {
              COALESCE(SUM((event->'usage'->>'input_tokens')::bigint),0)::bigint AS input_tokens, \
              COALESCE(SUM((event->'usage'->>'output_tokens')::bigint),0)::bigint AS output_tokens, \
              COALESCE(SUM((event->'usage'->>'total_tokens')::bigint),0)::bigint AS total_tokens \
-             FROM relay_cost_events WHERE owner_principal=$1",
+             FROM relay_cost_events WHERE ($1::text IS NULL OR owner_principal=$1)",
         )
         .bind(owner_principal)
         .fetch_one(&self.pool)
@@ -69,7 +72,7 @@ impl PostgresBillingSummaryStore {
              COUNT(*)::bigint AS settlement_count, \
              COALESCE(SUM((receipt->>'amount_micros')::bigint),0)::bigint AS settled_total, \
              MAX(settled_at_ms) AS last_settled_at_ms \
-             FROM relay_settlement_evidence WHERE principal=$1",
+             FROM relay_settlement_evidence WHERE ($1::text IS NULL OR principal=$1)",
         )
         .bind(owner_principal)
         .fetch_one(&self.pool)
@@ -88,7 +91,7 @@ impl PostgresBillingSummaryStore {
             "SELECT owner_principal AS key, \
              COALESCE(SUM((event->>'charged_micros')::bigint),0)::bigint AS charged, \
              COUNT(*)::bigint AS event_count \
-             FROM relay_cost_events WHERE owner_principal=$1 \
+             FROM relay_cost_events WHERE ($1::text IS NULL OR owner_principal=$1) \
              GROUP BY owner_principal ORDER BY charged DESC",
         )
         .bind(owner_principal)
@@ -109,7 +112,7 @@ impl PostgresBillingSummaryStore {
              COALESCE(SUM((event->>'charged_micros')::bigint),0)::bigint AS charged, \
              COALESCE(SUM((event->'usage'->>'total_tokens')::bigint),0)::bigint AS total_tokens, \
              COUNT(*)::bigint AS event_count \
-             FROM relay_cost_events WHERE owner_principal=$1 \
+             FROM relay_cost_events WHERE ($1::text IS NULL OR owner_principal=$1) \
              GROUP BY event->>'model' ORDER BY charged DESC",
         )
         .bind(owner_principal)
@@ -132,7 +135,7 @@ impl PostgresBillingSummaryStore {
             "SELECT request_id, \
              COALESCE((receipt->>'amount_micros')::bigint,0)::bigint AS amount, \
              settled_at_ms, verified_at_ms \
-             FROM relay_settlement_evidence WHERE principal=$1 \
+             FROM relay_settlement_evidence WHERE ($1::text IS NULL OR principal=$1) \
              ORDER BY settled_at_ms DESC LIMIT $2",
         )
         .bind(owner_principal)
@@ -151,7 +154,9 @@ impl PostgresBillingSummaryStore {
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
 
         Ok(BillingSummary {
-            principal: owner_principal.to_string(),
+            principal: owner_principal
+                .unwrap_or(OPERATOR_SCOPE_PRINCIPAL)
+                .to_string(),
             wallet,
             totals,
             by_key,
@@ -167,7 +172,7 @@ impl PostgresBillingSummaryStore {
     /// `[1, MAX_SETTLEMENT_HISTORY_LIMIT]`.
     pub async fn settlements(
         &self,
-        owner_principal: &str,
+        owner_principal: Option<&str>,
         limit: i64,
     ) -> Result<Vec<SettlementDetail>, sqlx::Error> {
         let limit = limit.clamp(1, MAX_SETTLEMENT_HISTORY_LIMIT);
@@ -177,7 +182,7 @@ impl PostgresBillingSummaryStore {
              settled_at_ms, verified_at_ms, \
              (attestation IS NOT NULL) AS has_attestation, \
              receipt::text AS receipt_json \
-             FROM relay_settlement_evidence WHERE principal=$1 \
+             FROM relay_settlement_evidence WHERE ($1::text IS NULL OR principal=$1) \
              ORDER BY settled_at_ms DESC LIMIT $2",
         )
         .bind(owner_principal)
@@ -206,7 +211,7 @@ impl PostgresBillingSummaryStore {
     /// returned oldest-first so the dashboard can plot a spend trend.
     pub async fn key_spend_timeseries(
         &self,
-        owner_principal: &str,
+        owner_principal: Option<&str>,
     ) -> Result<Vec<KeySpendPoint>, sqlx::Error> {
         sqlx::query(
             "SELECT owner_principal AS key, \
@@ -214,7 +219,7 @@ impl PostgresBillingSummaryStore {
              COALESCE(SUM((event->>'charged_micros')::bigint),0)::bigint AS charged, \
              COALESCE(SUM((event->'usage'->>'total_tokens')::bigint),0)::bigint AS total_tokens, \
              COUNT(*)::bigint AS event_count \
-             FROM relay_cost_events WHERE owner_principal=$1 \
+             FROM relay_cost_events WHERE ($1::text IS NULL OR owner_principal=$1) \
              GROUP BY owner_principal, date_trunc('day', created_at) \
              ORDER BY bucket_start_ms ASC",
         )

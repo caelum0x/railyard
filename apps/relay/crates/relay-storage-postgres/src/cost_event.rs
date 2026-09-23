@@ -49,20 +49,7 @@ impl CostEventStore for PostgresCostEventStore {
     }
 
     async fn get(&self, owner_principal: &str, event_id: Uuid) -> Result<Option<PendingCostEvent>> {
-        let row = sqlx::query(
-            "SELECT event,attempt_count, \
-             (extract(epoch FROM next_attempt_at)*1000)::bigint AS next_attempt_at_ms, \
-             lease_owner,(extract(epoch FROM lease_until)*1000)::bigint AS lease_expires_at_ms, \
-             (extract(epoch FROM published_at)*1000)::bigint AS published_at_ms, \
-             (extract(epoch FROM dead_lettered_at)*1000)::bigint AS dead_lettered_at_ms,last_error \
-             FROM relay_cost_events WHERE event_id=$1 AND owner_principal=$2",
-        )
-        .bind(event_id)
-        .bind(owner_principal)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_error)?;
-        row.as_ref().map(decode_pending).transpose()
+        self.get_scoped(Some(owner_principal), event_id).await
     }
 
     async fn list(
@@ -70,40 +57,7 @@ impl CostEventStore for PostgresCostEventStore {
         owner_principal: &str,
         query: CostEventListQuery,
     ) -> Result<CostEventPage> {
-        let query = query.validate()?;
-        let limit = i64::try_from(query.limit).map_err(|_| CostFeedError::Overflow)?;
-        let state = query.state.map(|state| state.as_str());
-        let rows = sqlx::query(
-            "SELECT event,attempt_count, \
-             (extract(epoch FROM next_attempt_at)*1000)::bigint AS next_attempt_at_ms, \
-             lease_owner,(extract(epoch FROM lease_until)*1000)::bigint AS lease_expires_at_ms, \
-             (extract(epoch FROM published_at)*1000)::bigint AS published_at_ms, \
-             (extract(epoch FROM dead_lettered_at)*1000)::bigint AS dead_lettered_at_ms,last_error \
-             FROM relay_cost_events WHERE owner_principal=$1 \
-             AND ($2::uuid IS NULL OR event_id < $2) \
-             AND ($3::text IS NULL \
-               OR ($3='pending' AND published_at IS NULL AND dead_lettered_at IS NULL) \
-               OR ($3='published' AND published_at IS NOT NULL) \
-               OR ($3='dead_lettered' AND dead_lettered_at IS NOT NULL)) \
-             ORDER BY event_id DESC LIMIT $4",
-        )
-        .bind(owner_principal)
-        .bind(query.before)
-        .bind(state)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_error)?;
-        let items = rows
-            .iter()
-            .map(decode_pending)
-            .collect::<Result<Vec<_>>>()?;
-        let next_cursor = if items.len() == query.limit {
-            items.last().map(|pending| pending.event.event_id)
-        } else {
-            None
-        };
-        Ok(CostEventPage { items, next_cursor })
+        self.list_scoped(Some(owner_principal), query).await
     }
 
     async fn replay_dead_letter(
@@ -112,32 +66,24 @@ impl CostEventStore for PostgresCostEventStore {
         event_id: Uuid,
         now_ms: i64,
     ) -> Result<PendingCostEvent> {
-        let row = sqlx::query(
-            "UPDATE relay_cost_events SET attempt_count=0, \
-             next_attempt_at=to_timestamp($3::double precision / 1000.0), \
-             lease_owner=NULL,lease_until=NULL,dead_lettered_at=NULL,last_error=NULL,updated_at=NOW() \
-             WHERE event_id=$1 AND owner_principal=$2 AND published_at IS NULL \
-             AND dead_lettered_at IS NOT NULL \
-             RETURNING event,attempt_count, \
-             (extract(epoch FROM next_attempt_at)*1000)::bigint AS next_attempt_at_ms, \
-             lease_owner,(extract(epoch FROM lease_until)*1000)::bigint AS lease_expires_at_ms, \
-             (extract(epoch FROM published_at)*1000)::bigint AS published_at_ms, \
-             (extract(epoch FROM dead_lettered_at)*1000)::bigint AS dead_lettered_at_ms,last_error",
-        )
-        .bind(event_id)
-        .bind(owner_principal)
-        .bind(now_ms)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_error)?;
-        if let Some(row) = row.as_ref() {
-            return decode_pending(row);
-        }
-        if self.get(owner_principal, event_id).await?.is_some() {
-            Err(CostFeedError::NotReplayable)
-        } else {
-            Err(CostFeedError::NotFound)
-        }
+        self.replay_scoped(Some(owner_principal), event_id, now_ms)
+            .await
+    }
+
+    async fn list_all(&self, query: CostEventListQuery) -> Result<CostEventPage> {
+        self.list_scoped(None, query).await
+    }
+
+    async fn get_any(&self, event_id: Uuid) -> Result<Option<PendingCostEvent>> {
+        self.get_scoped(None, event_id).await
+    }
+
+    async fn replay_dead_letter_any(
+        &self,
+        event_id: Uuid,
+        now_ms: i64,
+    ) -> Result<PendingCostEvent> {
+        self.replay_scoped(None, event_id, now_ms).await
     }
 
     async fn claim(
@@ -235,6 +181,107 @@ impl CostEventStore for PostgresCostEventStore {
         .await
         .map_err(db_error)?;
         require_one(result.rows_affected())
+    }
+}
+
+impl PostgresCostEventStore {
+    /// Look up one event. `None` is the operator scope (every principal).
+    async fn get_scoped(
+        &self,
+        owner_principal: Option<&str>,
+        event_id: Uuid,
+    ) -> Result<Option<PendingCostEvent>> {
+        let row = sqlx::query(
+            "SELECT event,attempt_count, \
+             (extract(epoch FROM next_attempt_at)*1000)::bigint AS next_attempt_at_ms, \
+             lease_owner,(extract(epoch FROM lease_until)*1000)::bigint AS lease_expires_at_ms, \
+             (extract(epoch FROM published_at)*1000)::bigint AS published_at_ms, \
+             (extract(epoch FROM dead_lettered_at)*1000)::bigint AS dead_lettered_at_ms,last_error \
+             FROM relay_cost_events WHERE event_id=$1 AND ($2::text IS NULL OR owner_principal=$2)",
+        )
+        .bind(event_id)
+        .bind(owner_principal)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_error)?;
+        row.as_ref().map(decode_pending).transpose()
+    }
+
+    /// List events newest-first. `None` is the operator scope.
+    async fn list_scoped(
+        &self,
+        owner_principal: Option<&str>,
+        query: CostEventListQuery,
+    ) -> Result<CostEventPage> {
+        let query = query.validate()?;
+        let limit = i64::try_from(query.limit).map_err(|_| CostFeedError::Overflow)?;
+        let state = query.state.map(|state| state.as_str());
+        let rows = sqlx::query(
+            "SELECT event,attempt_count, \
+             (extract(epoch FROM next_attempt_at)*1000)::bigint AS next_attempt_at_ms, \
+             lease_owner,(extract(epoch FROM lease_until)*1000)::bigint AS lease_expires_at_ms, \
+             (extract(epoch FROM published_at)*1000)::bigint AS published_at_ms, \
+             (extract(epoch FROM dead_lettered_at)*1000)::bigint AS dead_lettered_at_ms,last_error \
+             FROM relay_cost_events WHERE ($1::text IS NULL OR owner_principal=$1) \
+             AND ($2::uuid IS NULL OR event_id < $2) \
+             AND ($3::text IS NULL \
+               OR ($3='pending' AND published_at IS NULL AND dead_lettered_at IS NULL) \
+               OR ($3='published' AND published_at IS NOT NULL) \
+               OR ($3='dead_lettered' AND dead_lettered_at IS NOT NULL)) \
+             ORDER BY event_id DESC LIMIT $4",
+        )
+        .bind(owner_principal)
+        .bind(query.before)
+        .bind(state)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+        let items = rows
+            .iter()
+            .map(decode_pending)
+            .collect::<Result<Vec<_>>>()?;
+        let next_cursor = if items.len() == query.limit {
+            items.last().map(|pending| pending.event.event_id)
+        } else {
+            None
+        };
+        Ok(CostEventPage { items, next_cursor })
+    }
+
+    /// Re-arm a dead letter for delivery. `None` is the operator scope.
+    async fn replay_scoped(
+        &self,
+        owner_principal: Option<&str>,
+        event_id: Uuid,
+        now_ms: i64,
+    ) -> Result<PendingCostEvent> {
+        let row = sqlx::query(
+            "UPDATE relay_cost_events SET attempt_count=0, \
+             next_attempt_at=to_timestamp($3::double precision / 1000.0), \
+             lease_owner=NULL,lease_until=NULL,dead_lettered_at=NULL,last_error=NULL,updated_at=NOW() \
+             WHERE event_id=$1 AND ($2::text IS NULL OR owner_principal=$2) AND published_at IS NULL \
+             AND dead_lettered_at IS NOT NULL \
+             RETURNING event,attempt_count, \
+             (extract(epoch FROM next_attempt_at)*1000)::bigint AS next_attempt_at_ms, \
+             lease_owner,(extract(epoch FROM lease_until)*1000)::bigint AS lease_expires_at_ms, \
+             (extract(epoch FROM published_at)*1000)::bigint AS published_at_ms, \
+             (extract(epoch FROM dead_lettered_at)*1000)::bigint AS dead_lettered_at_ms,last_error",
+        )
+        .bind(event_id)
+        .bind(owner_principal)
+        .bind(now_ms)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_error)?;
+        if let Some(row) = row.as_ref() {
+            return decode_pending(row);
+        }
+        if self.get_scoped(owner_principal, event_id).await?.is_some() {
+            Err(CostFeedError::NotReplayable)
+        } else {
+            Err(CostFeedError::NotFound)
+        }
     }
 }
 

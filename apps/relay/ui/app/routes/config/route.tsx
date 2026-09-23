@@ -472,8 +472,7 @@ export default function ConfigEditorRoute({
           >
             <CodeEditor
               ariaLabel="Editable config TOML"
-              // TODO: add TOML support
-              allowedLanguages={["text"]}
+              allowedLanguages={["toml"]}
               value={toml}
               onChange={setToml}
               readOnly={isReadOnly}

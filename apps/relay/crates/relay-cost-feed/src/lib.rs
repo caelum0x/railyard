@@ -7,7 +7,7 @@ mod store;
 mod worker;
 
 pub use error::{CostFeedError, Result};
-pub use model::{CostEvent, CostEventValidationError, InferenceRoute};
+pub use model::{CostEvent, CostEventValidationError, InferenceRoute, METERED_RECEIPT_PREFIX};
 pub use publisher::{CostEventPublisher, NoopPublisher};
 pub use store::{
     CostEventListQuery, CostEventPage, CostEventState, CostEventStore, DEFAULT_LIST_LIMIT,

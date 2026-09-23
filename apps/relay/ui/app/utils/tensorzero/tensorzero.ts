@@ -7,11 +7,22 @@ TODO(shuyangli): Figure out a way to generate the HTTP client, possibly from Sch
 import { z } from "zod";
 import { BaseTensorZeroClient } from "./base-client";
 import type {
+  BillingScope,
+  BillingStatus,
   BillingSummary,
+  CostEventPage,
+  CostEventRecord,
+  CostEventState,
+  KeyBudget,
   KeySpendSeries,
   SettlementHistory,
+  WalletBalance,
 } from "~/types/billing";
-import type { CatalogSnapshot } from "~/types/catalog";
+import type {
+  CatalogSnapshot,
+  PriceQuote,
+  ProviderHealthReport,
+} from "~/types/catalog";
 import { ZodJsonValueSchema } from "~/utils/clickhouse/common";
 import { logger } from "~/utils/logger";
 import type {
@@ -554,10 +565,14 @@ export class TensorZeroClient extends BaseTensorZeroClient {
    */
   async getBillingSummary(options?: {
     settlements?: number;
+    scope?: BillingScope;
   }): Promise<BillingSummary> {
     const searchParams = new URLSearchParams();
     if (options?.settlements != null) {
       searchParams.append("settlements", String(options.settlements));
+    }
+    if (options?.scope === "all") {
+      searchParams.append("scope", "all");
     }
     const queryString = searchParams.toString();
     const endpoint = `/relay/billing/summary${queryString ? `?${queryString}` : ""}`;
@@ -580,10 +595,14 @@ export class TensorZeroClient extends BaseTensorZeroClient {
    */
   async getBillingSettlements(options?: {
     settlements?: number;
+    scope?: BillingScope;
   }): Promise<SettlementHistory> {
     const searchParams = new URLSearchParams();
     if (options?.settlements != null) {
       searchParams.append("settlements", String(options.settlements));
+    }
+    if (options?.scope === "all") {
+      searchParams.append("scope", "all");
     }
     const queryString = searchParams.toString();
     const endpoint = `/relay/billing/settlements${queryString ? `?${queryString}` : ""}`;
@@ -603,8 +622,14 @@ export class TensorZeroClient extends BaseTensorZeroClient {
    * @returns A promise that resolves with the per-key spend series.
    * @throws Error if the request fails.
    */
-  async getBillingKeySpend(): Promise<KeySpendSeries> {
-    const response = await this.fetch("/relay/billing/keys", { method: "GET" });
+  async getBillingKeySpend(options?: {
+    scope?: BillingScope;
+  }): Promise<KeySpendSeries> {
+    const endpoint =
+      options?.scope === "all"
+        ? "/relay/billing/keys?scope=all"
+        : "/relay/billing/keys";
+    const response = await this.fetch(endpoint, { method: "GET" });
     if (!response.ok) {
       const message = await this.getErrorText(response);
       this.handleHttpError({ message, response });
@@ -626,6 +651,166 @@ export class TensorZeroClient extends BaseTensorZeroClient {
       this.handleHttpError({ message, response });
     }
     const envelope = (await response.json()) as { data: CatalogSnapshot };
+    return envelope.data;
+  }
+
+  /**
+   * Gets the gateway's billing wiring (prepaid billing, postpaid metering,
+   * auth, Postgres, cost-feed target) plus whether the UI's key is an operator.
+   * Used to explain unconfigured deployments instead of rendering zeros.
+   */
+  async getBillingStatus(): Promise<BillingStatus> {
+    return this.getRelayData<BillingStatus>("/relay/billing/status");
+  }
+
+  /**
+   * Gets the live Mint balance of the calling key's payer account. Only
+   * populated in prepaid (Mint-settled) mode.
+   */
+  async getWalletBalance(): Promise<WalletBalance> {
+    return this.getRelayData<WalletBalance>("/relay/billing/wallet");
+  }
+
+  /**
+   * Lists durable cost events (the metering outbox), newest first.
+   * @param options.state - Optional delivery-state filter.
+   * @param options.before - Cursor: only events older than this event id.
+   * @param options.limit - Page size (1-100).
+   * @param options.scope - `all` for every API key (operator keys only).
+   */
+  async listCostEvents(options?: {
+    state?: CostEventState;
+    before?: string;
+    limit?: number;
+    scope?: BillingScope;
+  }): Promise<CostEventPage> {
+    const searchParams = new URLSearchParams();
+    if (options?.state) {
+      searchParams.append("state", options.state);
+    }
+    if (options?.before) {
+      searchParams.append("before", options.before);
+    }
+    if (options?.limit != null) {
+      searchParams.append("limit", String(options.limit));
+    }
+    if (options?.scope === "all") {
+      searchParams.append("scope", "all");
+    }
+    const queryString = searchParams.toString();
+    return this.getRelayData<CostEventPage>(
+      `/v1/billing/cost-events${queryString ? `?${queryString}` : ""}`,
+    );
+  }
+
+  /**
+   * Re-arms a dead-lettered cost event for delivery to the cost feed.
+   */
+  async replayCostEvent(
+    eventId: string,
+    options?: { scope?: BillingScope },
+  ): Promise<CostEventRecord> {
+    const scope = options?.scope === "all" ? "?scope=all" : "";
+    const response = await this.fetch(
+      `/v1/billing/cost-events/${encodeURIComponent(eventId)}/replay${scope}`,
+      { method: "POST" },
+    );
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    const envelope = (await response.json()) as { data: CostEventRecord };
+    return envelope.data;
+  }
+
+  /**
+   * Lists per-key monthly spend caps with month-to-date consumption.
+   */
+  async listBudgets(options?: { scope?: BillingScope }): Promise<KeyBudget[]> {
+    return this.getRelayData<KeyBudget[]>(
+      options?.scope === "all"
+        ? "/relay/billing/budgets?scope=all"
+        : "/relay/billing/budgets",
+    );
+  }
+
+  /**
+   * Creates or replaces an API key's monthly spend cap (operator keys only).
+   */
+  async upsertBudget(
+    keyId: string,
+    request: { monthly_limit_micros: number; note?: string | null },
+  ): Promise<KeyBudget> {
+    const response = await this.fetch(
+      `/relay/billing/budgets/${encodeURIComponent(keyId)}`,
+      { method: "PUT", body: JSON.stringify(request) },
+    );
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    const envelope = (await response.json()) as { data: KeyBudget };
+    return envelope.data;
+  }
+
+  /**
+   * Removes an API key's monthly spend cap (operator keys only).
+   */
+  async deleteBudget(keyId: string): Promise<void> {
+    const response = await this.fetch(
+      `/relay/billing/budgets/${encodeURIComponent(keyId)}`,
+      { method: "DELETE" },
+    );
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+  }
+
+  /**
+   * Prices a hypothetical request against the live Relay catalog.
+   */
+  async getRelayQuote(request: {
+    model: string;
+    input_tokens: number;
+    output_tokens: number;
+  }): Promise<PriceQuote> {
+    const response = await this.fetch("/v1/relay/quotes", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    const envelope = (await response.json()) as { data: PriceQuote };
+    return envelope.data;
+  }
+
+  /**
+   * Gets configured model routing joined with live provider health
+   * (latency, error rate, circuit-breaker state).
+   */
+  async getProviderHealth(): Promise<ProviderHealthReport> {
+    return this.getRelayData<ProviderHealthReport>("/v1/relay/provider_health");
+  }
+
+  /**
+   * Checks gateway readiness via its `/health` endpoint.
+   */
+  async gatewayHealth(): Promise<{ ok: boolean; status: number; body: string }> {
+    const response = await this.fetch("/health", { method: "GET" });
+    const body = await response.text();
+    return { ok: response.ok, status: response.status, body };
+  }
+
+  private async getRelayData<T>(endpoint: string): Promise<T> {
+    const response = await this.fetch(endpoint, { method: "GET" });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    const envelope = (await response.json()) as { data: T };
     return envelope.data;
   }
 

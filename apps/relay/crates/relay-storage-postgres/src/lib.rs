@@ -5,6 +5,7 @@
 //! pulling in the gateway's V8/TypeScript toolchain.
 
 mod billing_summary;
+mod budget;
 mod challenge;
 mod cost_event;
 mod evidence;
@@ -13,7 +14,12 @@ mod provider_health;
 mod settlement_outbox;
 
 pub use billing_summary::{
-    DEFAULT_SETTLEMENT_HISTORY_LIMIT, MAX_SETTLEMENT_HISTORY_LIMIT, PostgresBillingSummaryStore,
+    DEFAULT_SETTLEMENT_HISTORY_LIMIT, MAX_SETTLEMENT_HISTORY_LIMIT, OPERATOR_SCOPE_PRINCIPAL,
+    PostgresBillingSummaryStore,
+};
+pub use budget::{
+    BudgetDecision, KeyBudgetError, KeyBudgetInput, KeyBudgetStatus, MAX_BUDGET_NOTE_CHARS,
+    PostgresKeyBudgetStore,
 };
 pub use challenge::PostgresChallengeStore;
 pub use cost_event::PostgresCostEventStore;

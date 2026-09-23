@@ -15,8 +15,11 @@ import {
   SidebarExpand,
 } from "~/components/icons/Icons";
 import {
+  Activity,
   Download,
   FileCode2,
+  Gauge,
+  Inbox,
   KeyRound,
   LayoutGrid,
   Plus,
@@ -85,6 +88,11 @@ const navigation: NavigationSection[] = [
         url: "/models",
         icon: LayoutGrid,
       },
+      {
+        title: "Provider Health",
+        url: "/providers",
+        icon: Activity,
+      },
     ],
   },
   {
@@ -104,6 +112,16 @@ const navigation: NavigationSection[] = [
         title: "API Key Spend",
         url: "/billing/keys",
         icon: KeyRound,
+      },
+      {
+        title: "Spend Caps",
+        url: "/billing/budgets",
+        icon: Gauge,
+      },
+      {
+        title: "Cost Events",
+        url: "/billing/events",
+        icon: Inbox,
       },
       {
         title: "Usage Export",

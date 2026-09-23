@@ -8,19 +8,23 @@ import {
   Episodes,
   Functions,
   SupervisedFineTuning,
-  Blog,
-  Discord,
-  Slack,
   GitHub,
-  Globe,
   Documentation,
   Dataset,
+  Cost,
   GridCheck,
   SequenceChecks,
   Playground,
   Model,
 } from "~/components/icons/Icons";
-import { KeyRound } from "lucide-react";
+import {
+  Activity,
+  Download,
+  Gauge,
+  Inbox,
+  KeyRound,
+  LayoutGrid,
+} from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -126,6 +130,25 @@ function FooterLink({ source, icon: Icon, children }: FooterLinkProps) {
   );
 }
 
+function InternalLink({
+  to,
+  icon: Icon,
+  children,
+}: {
+  to: string;
+  icon: React.ComponentType<{ className?: string }>;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link to={to} className="group flex w-fit items-center">
+      <Icon className="text-fg-muted mr-2 h-4 w-4 transition-colors group-hover:text-orange-600" />
+      <span className="text-fg-secondary text-sm transition-colors group-hover:text-orange-600">
+        {children}
+      </span>
+    </Link>
+  );
+}
+
 export async function loader() {
   const httpClient = getTensorZeroClient();
 
@@ -193,6 +216,46 @@ export async function loader() {
     (numModelsUsed) => `${numModelsUsed} models used`,
   );
 
+  const billingDesc = httpClient
+    .getBillingSummary({ settlements: 1 })
+    .then((summary) => {
+      const usd = (summary.totals.charged_micros / 1_000_000).toLocaleString(
+        undefined,
+        { style: "currency", currency: "USD" },
+      );
+      return `${usd} charged, ${summary.wallet.cost_event_count.toLocaleString()} events`;
+    });
+
+  const catalogDesc = httpClient
+    .getRelayCatalog()
+    .then(
+      (catalog) =>
+        `${catalog.models.filter((model) => model.enabled).length} priced models`,
+    );
+
+  const providerHealthDesc = httpClient.getProviderHealth().then((report) => {
+    const open = report.models
+      .flatMap((model) => model.providers)
+      .filter((route) => route.circuit === "open").length;
+    return open > 0
+      ? `${open} open circuit${open === 1 ? "" : "s"}`
+      : "All providers healthy";
+  });
+
+  const costEventsDesc = httpClient
+    .listCostEvents({ state: "dead_lettered", limit: 100 })
+    .then((page) =>
+      page.items.length === 0
+        ? "No failed deliveries"
+        : `${page.items.length}${page.next_cursor ? "+" : ""} dead-lettered`,
+    );
+
+  const budgetsDesc = httpClient
+    .listBudgets()
+    .then((budgets) =>
+      budgets.length === 0 ? "No cap on this key" : `${budgets.length} cap set`,
+    );
+
   return {
     totalInferencesDesc,
     numFunctionsDesc,
@@ -202,6 +265,11 @@ export async function loader() {
     inferenceEvaluationsDesc,
     dynamicEvaluationsDesc,
     numModelsUsedDesc,
+    billingDesc,
+    catalogDesc,
+    providerHealthDesc,
+    costEventsDesc,
+    budgetsDesc,
   };
 }
 
@@ -215,12 +283,73 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     inferenceEvaluationsDesc,
     dynamicEvaluationsDesc,
     numModelsUsedDesc,
+    billingDesc,
+    catalogDesc,
+    providerHealthDesc,
+    costEventsDesc,
+    budgetsDesc,
   } = loaderData;
 
   return (
     <PageLayout>
       <div className="mx-auto flex w-full max-w-240 flex-col gap-12">
         <h1 className="text-2xl font-medium">Overview</h1>
+
+        <div className="grid w-full grid-cols-1 gap-x-6 gap-y-12 md:grid-cols-2 lg:grid-cols-3">
+          <div id="gateway" className="flex w-full flex-col gap-2">
+            <h2 className="text-md text-fg-secondary font-medium">Gateway</h2>
+            <div className="flex flex-col gap-2">
+              <DirectoryCard
+                source="/models"
+                icon={LayoutGrid}
+                title="Model Catalog"
+                description={catalogDesc}
+              />
+              <DirectoryCard
+                source="/providers"
+                icon={Activity}
+                title="Provider Health"
+                description={providerHealthDesc}
+              />
+            </div>
+          </div>
+
+          <div id="billing" className="flex w-full flex-col gap-2">
+            <h2 className="text-md text-fg-secondary font-medium">Billing</h2>
+            <div className="flex flex-col gap-2">
+              <DirectoryCard
+                source="/billing"
+                icon={Cost}
+                title="Billing"
+                description={billingDesc}
+              />
+              <DirectoryCard
+                source="/billing/budgets"
+                icon={Gauge}
+                title="Spend Caps"
+                description={budgetsDesc}
+              />
+            </div>
+          </div>
+
+          <div id="metering" className="flex w-full flex-col gap-2">
+            <h2 className="text-md text-fg-secondary font-medium">Metering</h2>
+            <div className="flex flex-col gap-2">
+              <DirectoryCard
+                source="/billing/events"
+                icon={Inbox}
+                title="Cost Events"
+                description={costEventsDesc}
+              />
+              <DirectoryCard
+                source="/usage/export"
+                icon={Download}
+                title="Usage Export"
+                description="CSV by request, day, or model"
+              />
+            </div>
+          </div>
+        </div>
 
         <div className="grid w-full grid-cols-1 gap-x-6 gap-y-12 md:grid-cols-2 lg:grid-cols-3">
           <div id="observability" className="flex w-full flex-col gap-2">
@@ -324,53 +453,44 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         <div className="grid w-full grid-cols-1 gap-x-6 gap-y-12 md:grid-cols-2 lg:grid-cols-3">
           <div className="w-full">
             <h3 className="text-fg-tertiary mb-4 text-sm font-medium">
-              Learn more
+              Operate Relay
             </h3>
             <div className="flex flex-col gap-3">
-              <FooterLink
-                source="https://www.tensorzero.com/docs"
-                icon={Documentation}
-              >
-                Docs
-              </FooterLink>
+              <InternalLink to="/billing" icon={Cost}>
+                Billing status and spend
+              </InternalLink>
+              <InternalLink to="/providers" icon={Activity}>
+                Provider routing and health
+              </InternalLink>
+            </div>
+          </div>
+          <div className="w-full">
+            <h3 className="text-fg-tertiary mb-4 text-sm font-medium">
+              Access
+            </h3>
+            <div className="flex flex-col gap-3">
+              <InternalLink to="/api-keys" icon={KeyRound}>
+                Create and revoke gateway API keys
+              </InternalLink>
+              <InternalLink to="/billing/budgets" icon={Gauge}>
+                Per-key monthly spend caps
+              </InternalLink>
+            </div>
+          </div>
+          <div className="w-full">
+            <h3 className="text-fg-tertiary mb-4 text-sm font-medium">
+              Open source
+            </h3>
+            <div className="flex flex-col gap-3">
               <FooterLink
                 source="https://github.com/tensorzero/tensorzero"
                 icon={GitHub}
               >
-                GitHub
+                Built on TensorZero (Apache-2.0)
               </FooterLink>
-            </div>
-          </div>
-          <div className="w-full">
-            <h3 className="text-fg-tertiary mb-4 text-sm font-medium">
-              Ask a question
-            </h3>
-            <div className="flex flex-col gap-3">
-              <FooterLink
-                source="https://www.tensorzero.com/slack"
-                icon={Slack}
-              >
-                Slack
-              </FooterLink>
-              <FooterLink
-                source="https://www.tensorzero.com/discord"
-                icon={Discord}
-              >
-                Discord
-              </FooterLink>
-            </div>
-          </div>
-          <div className="w-full">
-            <h3 className="text-fg-tertiary mb-4 text-sm font-medium">
-              Explore TensorZero
-            </h3>
-            <div className="flex flex-col gap-3">
-              <FooterLink source="https://www.tensorzero.com/" icon={Globe}>
-                Website
-              </FooterLink>
-              <FooterLink source="https://www.tensorzero.com/blog" icon={Blog}>
-                Blog
-              </FooterLink>
+              <InternalLink to="/models" icon={Documentation}>
+                Model catalog and pricing
+              </InternalLink>
             </div>
           </div>
         </div>

@@ -21,7 +21,8 @@ import { Input } from "~/components/ui/input";
 import { LayoutErrorBoundary } from "~/components/ui/error";
 import { requireValidApiKeyIfEnabled } from "~/utils/auth.server";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
-import type { KeySpendPoint } from "~/types/billing";
+import type { BillingStatus, KeySpendPoint } from "~/types/billing";
+import { ScopeToggle, scopeFromUrl } from "~/components/billing/BillingShared";
 
 const MICROS_PER_USD = 1_000_000;
 const DEFAULT_RANGE_DAYS = 30;
@@ -30,17 +31,19 @@ export const handle: RouteHandle = {
   crumb: () => ["Usage", "Export"],
 };
 
-export async function loader() {
+export async function loader({ request }: Route.LoaderArgs) {
   await requireValidApiKeyIfEnabled();
+  const scope = scopeFromUrl(request.url);
   const client = getTensorZeroClient();
   // Both the aggregated summary and the per-day key-spend series feed the
   // client-side CSV export; the summary carries the model/wallet rollup while
   // the series is what the selected date range filters.
-  const [summary, keySpend] = await Promise.all([
-    client.getBillingSummary({ settlements: 500 }),
-    client.getBillingKeySpend(),
+  const [summary, keySpend, status] = await Promise.all([
+    client.getBillingSummary({ settlements: 500, scope }),
+    client.getBillingKeySpend({ scope }),
+    client.getBillingStatus().catch((): BillingStatus | null => null),
   ]);
-  return { summary, keySpend };
+  return { summary, keySpend, status, scope };
 }
 
 function toUsd(micros: number): number {
@@ -123,7 +126,7 @@ function pointInRange(
 }
 
 export default function UsageExportPage({ loaderData }: Route.ComponentProps) {
-  const { summary, keySpend } = loaderData;
+  const { summary, keySpend, status, scope } = loaderData;
 
   const now = useMemo(() => new Date(), []);
   const defaultFrom = useMemo(() => {
@@ -158,6 +161,13 @@ export default function UsageExportPage({ loaderData }: Route.ComponentProps) {
   }, [rangePoints]);
 
   const rangeLabel = `${from || "start"}_to_${to || "now"}`;
+  const eventsExportHref = (() => {
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    if (scope === "all") params.set("scope", "all");
+    return `/usage/export/events.csv?${params.toString()}`;
+  })();
 
   const handleDailyExport = () => {
     const csv = toCsv(
@@ -212,6 +222,7 @@ export default function UsageExportPage({ loaderData }: Route.ComponentProps) {
   return (
     <PageLayout>
       <PageHeader heading="Usage & Cost Export" />
+      <ScopeToggle scope={scope} operator={status?.operator ?? false} />
       <SectionsGroup>
         <SectionLayout>
           <SectionHeader heading="Date range" />
@@ -246,8 +257,24 @@ export default function UsageExportPage({ loaderData }: Route.ComponentProps) {
               The start date must be on or before the end date.
             </p>
           )}
+          <p className="text-fg-tertiary text-sm">
+            The per-request CSV is generated on the server from every durable
+            cost event in the range (UTC days), including postpaid metered
+            usage. Daily and model CSVs use the aggregated spend rollups;
+            settlements cover the most recent 500 Mint receipts.
+          </p>
           <div className="flex flex-wrap gap-2">
+            {rangeValid ? (
+              <Button asChild>
+                <a href={eventsExportHref} download>
+                  Download per-request CSV
+                </a>
+              </Button>
+            ) : (
+              <Button disabled>Download per-request CSV</Button>
+            )}
             <Button
+              variant="outline"
               onClick={handleDailyExport}
               disabled={!rangeValid || rangePoints.length === 0}
             >

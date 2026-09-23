@@ -27,6 +27,7 @@ import { LayoutErrorBoundary, PageErrorContent } from "~/components/ui/error";
 import { requireValidApiKeyIfEnabled } from "~/utils/auth.server";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
 import type { SettlementDetail, SettlementHistory } from "~/types/billing";
+import { scopeFromUrl } from "~/components/billing/BillingShared";
 
 const MICROS_PER_USD = 1_000_000;
 const SETTLEMENT_HISTORY_LIMIT = 200;
@@ -35,13 +36,15 @@ export const handle: RouteHandle = {
   crumb: () => ["Billing", "Settlements"],
 };
 
-export async function loader() {
+export async function loader({ request }: Route.LoaderArgs) {
   await requireValidApiKeyIfEnabled();
+  const scope = scopeFromUrl(request.url);
 
   // Deferred: the settlement-evidence detail rows are aggregated by the gateway
   // from the durable `relay_settlement_evidence` table and streamed via `Await`.
   const history = getTensorZeroClient().getBillingSettlements({
     settlements: SETTLEMENT_HISTORY_LIMIT,
+    scope,
   });
 
   return { history };

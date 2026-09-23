@@ -101,6 +101,29 @@ pub trait CostEventStore: Send + Sync {
         event_id: Uuid,
         now_ms: i64,
     ) -> Result<PendingCostEvent>;
+    /// Operator-scope listing across every principal. Stores that cannot
+    /// aggregate across tenants keep the fail-closed default.
+    async fn list_all(&self, _query: CostEventListQuery) -> Result<CostEventPage> {
+        Err(CostFeedError::Store(
+            "operator-wide cost-event listing is not supported by this store".into(),
+        ))
+    }
+    /// Operator-scope lookup of one event regardless of its owner.
+    async fn get_any(&self, _event_id: Uuid) -> Result<Option<PendingCostEvent>> {
+        Err(CostFeedError::Store(
+            "operator-wide cost-event lookup is not supported by this store".into(),
+        ))
+    }
+    /// Operator-scope dead-letter replay regardless of the event owner.
+    async fn replay_dead_letter_any(
+        &self,
+        _event_id: Uuid,
+        _now_ms: i64,
+    ) -> Result<PendingCostEvent> {
+        Err(CostFeedError::Store(
+            "operator-wide cost-event replay is not supported by this store".into(),
+        ))
+    }
     async fn claim(
         &self,
         worker_id: &str,

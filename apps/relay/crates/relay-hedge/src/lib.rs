@@ -40,5 +40,7 @@ pub use cost::{worst_case_cost_micros, worst_case_cost_micros_per_million};
 pub use health_store::InMemoryProviderHealth;
 pub use health_store::ProviderHealthSnapshot;
 pub use hedge::{race, Attempt, HedgeError, HedgeOutcome};
-pub use score::{CircuitState, EwmaScore, ScoreWeights, SloConfig};
+pub use score::{
+    CircuitSnapshot, CircuitState, EwmaScore, EwmaScoreSnapshot, ScoreWeights, SloConfig,
+};
 pub use slo::{NoOpProviderHealth, Outcome, ProviderHealth, ResultClass};

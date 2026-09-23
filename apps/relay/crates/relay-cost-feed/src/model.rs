@@ -6,6 +6,9 @@ use uuid::Uuid;
 
 use crate::COST_EVENT_SCHEMA_VERSION;
 
+/// Receipt-hash prefix marking meter-only (postpaid, unsettled) usage events.
+pub const METERED_RECEIPT_PREFIX: &str = "metered:";
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum InferenceRoute {
@@ -69,6 +72,45 @@ impl CostEvent {
             receipt_hash: receipt_hash.into(),
             settled_at_ms,
         }
+    }
+
+    /// Construct a METER-ONLY usage event for postpaid deployments.
+    ///
+    /// Meter-only mode records every successful inference priced at the
+    /// catalog retail rate WITHOUT an AITP authorization or Mint hold, so the
+    /// event is not backed by a signed settlement receipt. The receipt hash is
+    /// therefore a deterministic `metered:<request_id>` marker (see
+    /// [`CostEvent::is_metered`]), and the authorized amount equals the charge:
+    /// downstream invoicing (e.g. Rago) is the system of record for payment.
+    pub fn metered(
+        request_id: Uuid,
+        owner_principal: impl Into<String>,
+        model: impl Into<String>,
+        route: InferenceRoute,
+        usage: Usage,
+        charged_micros: Microdollars,
+        settled_at_ms: i64,
+    ) -> Self {
+        Self {
+            schema_version: COST_EVENT_SCHEMA_VERSION,
+            event_id: request_id,
+            request_id,
+            owner_principal: owner_principal.into(),
+            model: model.into(),
+            route,
+            usage,
+            authorized_micros: charged_micros,
+            charged_micros,
+            provider_cost_micros: usage.provider_cost_micros,
+            overage_capped: false,
+            receipt_hash: format!("{METERED_RECEIPT_PREFIX}{request_id}"),
+            settled_at_ms,
+        }
+    }
+
+    /// True when the event was recorded by meter-only mode (no Mint receipt).
+    pub fn is_metered(&self) -> bool {
+        self.receipt_hash.starts_with(METERED_RECEIPT_PREFIX)
     }
 
     pub fn validate(&self) -> std::result::Result<(), CostEventValidationError> {

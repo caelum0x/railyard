@@ -66,7 +66,14 @@ export class BaseTensorZeroClient {
     const responseText = await response.text();
     try {
       const parsed = JSON.parse(responseText);
-      return typeof parsed?.error === "string" ? parsed.error : responseText;
+      if (typeof parsed?.error === "string") {
+        return parsed.error;
+      }
+      // Relay endpoints use the `{ "error": { "message": ... } }` envelope.
+      if (typeof parsed?.error?.message === "string") {
+        return parsed.error.message;
+      }
+      return responseText;
     } catch {
       // Invalid JSON; return plain text from response
       return responseText;

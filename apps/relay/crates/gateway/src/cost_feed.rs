@@ -23,15 +23,31 @@ use uuid::Uuid;
 
 pub use relay_storage_postgres::PostgresCostEventStore;
 
+use crate::rago_feed::{RagoCostEventPublisher, RagoFeedConfig};
+use crate::relay_access::{BillingScope, CostFeedStatus, resolve_scope};
+
+/// Scope query shared by the cost-event outbox endpoints.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct CostEventScopeQuery {
+    #[serde(default)]
+    pub scope: BillingScope,
+}
+
 pub async fn inspect_cost_event_handler(
     Path(event_id): Path<Uuid>,
+    Query(scope): Query<CostEventScopeQuery>,
     Extension(store): Extension<Arc<dyn CostEventStore>>,
     principal: Option<Extension<RequestApiKeyExtension>>,
 ) -> Response {
-    let Some(Extension(principal)) = principal else {
-        return cost_event_error(StatusCode::UNAUTHORIZED, "authenticated principal required");
+    let owner = match resolve_scope(principal.as_ref().map(|p| &p.0), scope.scope) {
+        Ok(owner) => owner,
+        Err(response) => return response,
     };
-    match store.get(&principal.key_info.public_id, event_id).await {
+    let result = match owner.as_deref() {
+        Some(owner) => store.get(owner, event_id).await,
+        None => store.get_any(event_id).await,
+    };
+    match result {
         Ok(Some(event)) => Json(relay_contract::DataEnvelope { data: event }).into_response(),
         Ok(None) | Err(CostFeedError::NotFound) => {
             cost_event_error(StatusCode::NOT_FOUND, "cost event not found")
@@ -48,13 +64,19 @@ pub async fn inspect_cost_event_handler(
 
 pub async fn list_cost_events_handler(
     Query(query): Query<CostEventListQuery>,
+    Query(scope): Query<CostEventScopeQuery>,
     Extension(store): Extension<Arc<dyn CostEventStore>>,
     principal: Option<Extension<RequestApiKeyExtension>>,
 ) -> Response {
-    let Some(Extension(principal)) = principal else {
-        return cost_event_error(StatusCode::UNAUTHORIZED, "authenticated principal required");
+    let owner = match resolve_scope(principal.as_ref().map(|p| &p.0), scope.scope) {
+        Ok(owner) => owner,
+        Err(response) => return response,
     };
-    match store.list(&principal.key_info.public_id, query).await {
+    let result = match owner.as_deref() {
+        Some(owner) => store.list(owner, query).await,
+        None => store.list_all(query).await,
+    };
+    match result {
         Ok(page) => Json(relay_contract::DataEnvelope { data: page }).into_response(),
         Err(CostFeedError::InvalidQuery(message)) => {
             cost_event_error(StatusCode::BAD_REQUEST, &message)
@@ -71,20 +93,20 @@ pub async fn list_cost_events_handler(
 
 pub async fn replay_cost_event_handler(
     Path(event_id): Path<Uuid>,
+    Query(scope): Query<CostEventScopeQuery>,
     Extension(store): Extension<Arc<dyn CostEventStore>>,
     principal: Option<Extension<RequestApiKeyExtension>>,
 ) -> Response {
-    let Some(Extension(principal)) = principal else {
-        return cost_event_error(StatusCode::UNAUTHORIZED, "authenticated principal required");
+    let owner = match resolve_scope(principal.as_ref().map(|p| &p.0), scope.scope) {
+        Ok(owner) => owner,
+        Err(response) => return response,
     };
-    match store
-        .replay_dead_letter(
-            &principal.key_info.public_id,
-            event_id,
-            relay_billing::now_ms(),
-        )
-        .await
-    {
+    let now_ms = relay_billing::now_ms();
+    let result = match owner.as_deref() {
+        Some(owner) => store.replay_dead_letter(owner, event_id, now_ms).await,
+        None => store.replay_dead_letter_any(event_id, now_ms).await,
+    };
+    match result {
         Ok(event) => Json(relay_contract::DataEnvelope { data: event }).into_response(),
         Err(CostFeedError::NotFound) => {
             cost_event_error(StatusCode::NOT_FOUND, "cost event not found")
@@ -186,6 +208,70 @@ impl CostEventPublisher for WebhookCostEventPublisher {
     }
 }
 
+/// Cost-feed delivery format selected by `RELAY_COST_FEED_FORMAT`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CostFeedFormat {
+    /// Relay's own `CostEvent` JSON (default).
+    Raw,
+    /// Lago-compatible usage events for Rago's `POST /api/v1/events`.
+    Rago,
+}
+
+impl CostFeedFormat {
+    fn from_env() -> std::result::Result<Self, String> {
+        match std::env::var("RELAY_COST_FEED_FORMAT")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .as_deref()
+        {
+            None | Some("") | Some("raw") => Ok(Self::Raw),
+            Some("rago") | Some("lago") => Ok(Self::Rago),
+            Some(other) => Err(format!(
+                "RELAY_COST_FEED_FORMAT must be `raw` or `rago`, got `{other}`"
+            )),
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Raw => "raw",
+            Self::Rago => "rago",
+        }
+    }
+}
+
+fn cost_feed_url() -> Option<String> {
+    std::env::var("RELAY_COST_FEED_URL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// Describe the configured delivery target for the billing status endpoint.
+/// Only the host is surfaced; URLs and credentials never leave the gateway.
+pub fn cost_feed_status() -> CostFeedStatus {
+    let Some(url) = cost_feed_url() else {
+        return CostFeedStatus::unconfigured();
+    };
+    let format = CostFeedFormat::from_env().unwrap_or(CostFeedFormat::Raw);
+    let target_host = Url::parse(&url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string));
+    let billable_metric_code = (format == CostFeedFormat::Rago).then(|| {
+        std::env::var("RELAY_RAGO_METRIC_CODE")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| crate::rago_feed::DEFAULT_RAGO_METRIC_CODE.to_string())
+    });
+    CostFeedStatus {
+        configured: true,
+        format: Some(format.as_str().to_string()),
+        target_host,
+        billable_metric_code,
+    }
+}
+
 /// Start delivery only when an endpoint is configured. Without one, the
 /// transactionally-created outbox rows remain pending for a future consumer.
 pub fn start_if_configured(
@@ -193,18 +279,21 @@ pub fn start_if_configured(
     tasks: TaskTracker,
     shutdown: CancellationToken,
 ) -> std::result::Result<(), String> {
-    let Some(url) = std::env::var("RELAY_COST_FEED_URL")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    else {
+    let Some(url) = cost_feed_url() else {
         tracing::info!("RELAY_COST_FEED_URL is unset; durable cost events will remain pending");
         return Ok(());
     };
     let bearer = std::env::var("RELAY_COST_FEED_BEARER")
         .ok()
         .filter(|value| !value.is_empty());
-    let publisher = Arc::new(WebhookCostEventPublisher::new(&url, bearer)?);
+    let format = CostFeedFormat::from_env()?;
+    let publisher: Arc<dyn CostEventPublisher> = match format {
+        CostFeedFormat::Raw => Arc::new(WebhookCostEventPublisher::new(&url, bearer)?),
+        CostFeedFormat::Rago => Arc::new(RagoCostEventPublisher::new(RagoFeedConfig::from_env(
+            &url, bearer,
+        )?)?),
+    };
+    tracing::info!(format = format.as_str(), "Relay cost-feed delivery enabled");
     let worker = Arc::new(
         CostFeedWorker::new(
             format!("relay-{}", Uuid::now_v7()),
@@ -306,6 +395,7 @@ mod tests {
         store.append(event(event_id)).await.unwrap();
         let response = inspect_cost_event_handler(
             Path(event_id),
+            Query(CostEventScopeQuery::default()),
             Extension(store as Arc<dyn CostEventStore>),
             Some(Extension(principal())),
         )
@@ -328,6 +418,7 @@ mod tests {
                 before: None,
                 limit: 10,
             }),
+            Query(CostEventScopeQuery::default()),
             Extension(store as Arc<dyn CostEventStore>),
             Some(Extension(principal())),
         )
@@ -356,6 +447,7 @@ mod tests {
         let erased = store.clone() as Arc<dyn CostEventStore>;
         let response = replay_cost_event_handler(
             Path(event_id),
+            Query(CostEventScopeQuery::default()),
             Extension(erased.clone()),
             Some(Extension(principal())),
         )
@@ -371,7 +463,13 @@ mod tests {
                 .is_none()
         );
 
-        let response = inspect_cost_event_handler(Path(event_id), Extension(erased), None).await;
+        let response = inspect_cost_event_handler(
+            Path(event_id),
+            Query(CostEventScopeQuery::default()),
+            Extension(erased),
+            None,
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

@@ -193,6 +193,7 @@ export default [
 
   // Usage / cost export
   route("usage/export", "routes/usage/export/route.tsx"),
+  route("usage/export/events.csv", "routes/usage/export/events/route.ts"),
 
   // Optimization
   route(
@@ -207,6 +208,11 @@ export default [
   route("billing", "routes/billing/route.tsx"),
   route("billing/settlements", "routes/billing/settlements/route.tsx"),
   route("billing/keys", "routes/billing/keys/route.tsx"),
+  route("billing/budgets", "routes/billing/budgets/route.tsx"),
+  route("billing/events", "routes/billing/events/route.tsx"),
+
+  // Provider routing and health
+  route("providers", "routes/providers/route.tsx"),
 
   // Config editor
   route("config", "routes/config/route.tsx"),
