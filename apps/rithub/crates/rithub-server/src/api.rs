@@ -6,13 +6,17 @@
 //! row — so a freshly-created repo is immediately hostable over git HTTP.
 
 use axum::extract::{Path, State};
+use axum::http::StatusCode;
 use axum::Json;
 use rithub_core::{
-    generate_token, hash_token, validate_name, Membership, NewOrganization, NewRepository,
-    Organization, Repository, Role, SshKeyStore, Store, User,
+    generate_deploy_token, generate_token, hash_token, validate_name, DeployKey, DeployKeyStore,
+    Membership, NewOrganization, NewRepository, Organization, Repository, Role, SshKeyStore,
+    Store, Token, UpdateRepository, User,
 };
 use rithub_git::SeedFile;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
+use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::state::AppState;
@@ -77,6 +81,25 @@ pub async fn get_repo(
     Path((org_name, repo_name)): Path<(String, String)>,
 ) -> Result<Json<Repository>, AppError> {
     Ok(Json(state.store.get_repo(&org_name, &repo_name).await?))
+}
+
+/// `PATCH /api/orgs/{org}/repos/{repo}` — update mutable repository fields.
+///
+/// All body fields are optional. Only provided fields are changed; absent fields
+/// keep their current values. Renaming a repo updates the Postgres row's `name`
+/// column — the bare repo on disk is identified by `disk_path`, which never
+/// changes, so the git data is unaffected.
+pub async fn update_repo(
+    State(state): State<AppState>,
+    Path((org_name, repo_name)): Path<(String, String)>,
+    Json(input): Json<UpdateRepository>,
+) -> Result<Json<Repository>, AppError> {
+    // Validate the new name if one was provided.
+    if let Some(ref new_name) = input.name {
+        validate_name("repository", new_name)?;
+    }
+    let repo = state.store.get_repo(&org_name, &repo_name).await?;
+    Ok(Json(state.store.update_repo(repo.id, &input).await?))
 }
 
 /// Request body for seeding a commit.
@@ -174,6 +197,16 @@ pub struct NewToken {
     pub username: String,
     #[serde(default = "default_token_name")]
     pub name: String,
+    /// Optional list of scopes. Omit or pass `[]` for a full-access token.
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    /// Optional RFC-3339 expiry timestamp.
+    #[serde(
+        default,
+        with = "time::serde::rfc3339::option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at: Option<OffsetDateTime>,
 }
 
 fn default_token_name() -> String {
@@ -186,6 +219,7 @@ pub struct TokenResponse {
     pub token: String,
     pub name: String,
     pub username: String,
+    pub scopes: Vec<String>,
 }
 
 /// `POST /api/tokens` — mint a personal access token for a user. The plaintext
@@ -198,7 +232,13 @@ pub async fn create_token(
     let token = generate_token();
     state
         .store
-        .create_token(user.id, &input.name, &hash_token(&token))
+        .create_token(
+            user.id,
+            &input.name,
+            &hash_token(&token),
+            &input.scopes,
+            input.expires_at,
+        )
         .await?;
     crate::audit::record(
         &state,
@@ -214,7 +254,37 @@ pub async fn create_token(
         token,
         name: input.name,
         username: user.username,
+        scopes: input.scopes,
     }))
+}
+
+/// `GET /api/users/{username}/tokens` — list a user's tokens (no hashes).
+pub async fn list_tokens(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+) -> Result<Json<Vec<Token>>, AppError> {
+    let user = state.store.get_user(&username).await?;
+    Ok(Json(state.store.list_tokens(user.id).await?))
+}
+
+/// `DELETE /api/users/{username}/tokens/{token_id}` — revoke a token.
+pub async fn revoke_token(
+    State(state): State<AppState>,
+    Path((username, token_id)): Path<(String, Uuid)>,
+) -> Result<StatusCode, AppError> {
+    let user = state.store.get_user(&username).await?;
+    state.store.revoke_token(user.id, token_id).await?;
+    crate::audit::record(
+        &state,
+        None,
+        Some(user.id),
+        &user.username,
+        "token.revoked",
+        Some(&token_id.to_string()),
+        None,
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Request body for adding an org member.
@@ -336,4 +406,111 @@ pub async fn add_ssh_key(
     )
     .await;
     Ok(Json(serde_json::json!({ "username": user.username, "title": title })))
+}
+
+// --- deploy keys ------------------------------------------------------------
+
+/// Request body for creating a deploy key.
+#[derive(Debug, Deserialize)]
+pub struct NewDeployKey {
+    /// A full `authorized_keys` line, e.g. `ssh-ed25519 AAAA... comment`,
+    /// or just the base64 blob. The blob (second space-delimited field, or the
+    /// whole value if there are no spaces) is stored.
+    pub key: String,
+    #[serde(default = "default_deploy_key_title")]
+    pub title: String,
+    /// If `true` (the default) the key may only clone/fetch.
+    #[serde(default = "default_read_only")]
+    pub read_only: bool,
+}
+
+fn default_deploy_key_title() -> String {
+    "deploy key".to_string()
+}
+
+fn default_read_only() -> bool {
+    true
+}
+
+/// Response for a newly created deploy key. The `token` (for HTTP Basic auth)
+/// is shown exactly once; only its hash is stored.
+#[derive(Debug, Serialize)]
+pub struct DeployKeyResponse {
+    #[serde(flatten)]
+    pub key: DeployKey,
+    /// Bearer token for HTTP Basic auth (username = anything, password = token).
+    /// Shown once at creation and never returned again.
+    pub token: String,
+}
+
+/// `POST /api/orgs/{org}/repos/{repo}/keys` — create a deploy key.
+pub async fn create_deploy_key(
+    State(state): State<AppState>,
+    Path((org_name, repo_name)): Path<(String, String)>,
+    Json(input): Json<NewDeployKey>,
+) -> Result<Json<DeployKeyResponse>, AppError> {
+    let repo = state.store.get_repo(&org_name, &repo_name).await?;
+    // Accept both a full authorized_keys line and a bare base64 blob.
+    let blob = if input.key.contains(' ') {
+        input
+            .key
+            .split_whitespace()
+            .nth(1)
+            .ok_or_else(|| AppError::bad_request("malformed public key line"))?
+            .to_string()
+    } else {
+        input.key.clone()
+    };
+    let bearer = generate_deploy_token();
+    let dk = state
+        .store
+        .create_deploy_key(
+            repo.id,
+            &input.title,
+            &blob,
+            &hash_token(&bearer),
+            input.read_only,
+            None, // created_by: caller auth not yet wired at the API tier
+        )
+        .await?;
+    crate::audit::record(
+        &state,
+        Some(repo.id),
+        None,
+        "admin",
+        "deploy_key.created",
+        Some(&input.title),
+        Some(&format!("repo={org_name}/{repo_name} read_only={}", input.read_only)),
+    )
+    .await;
+    Ok(Json(DeployKeyResponse { key: dk, token: bearer }))
+}
+
+/// `GET /api/orgs/{org}/repos/{repo}/keys` — list deploy keys for a repository.
+pub async fn list_deploy_keys(
+    State(state): State<AppState>,
+    Path((org_name, repo_name)): Path<(String, String)>,
+) -> Result<Json<Vec<DeployKey>>, AppError> {
+    let repo = state.store.get_repo(&org_name, &repo_name).await?;
+    Ok(Json(state.store.list_deploy_keys(repo.id).await?))
+}
+
+/// `DELETE /api/orgs/{org}/repos/{repo}/keys/{key_id}` — delete a deploy key.
+pub async fn delete_deploy_key(
+    State(state): State<AppState>,
+    Path((org_name, repo_name, key_id)): Path<(String, String, Uuid)>,
+) -> Result<StatusCode, AppError> {
+    let repo = state.store.get_repo(&org_name, &repo_name).await?;
+    state.store.delete_deploy_key(repo.id, key_id).await?;
+    crate::audit::record(
+        &state,
+        Some(repo.id),
+        None,
+        "admin",
+        "deploy_key.deleted",
+        Some(&key_id.to_string()),
+        None,
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
 }

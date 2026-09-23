@@ -19,7 +19,7 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use rithub_core::{Repository as RepoMeta, ReviewStore, Store};
 
-use crate::auth::{authenticate, authorize_read, authorize_write};
+use crate::auth::{authenticate, authorize_read, authorize_write, Caller};
 use crate::state::AppState;
 
 /// `GET /{owner}/{repo}.git/{*path}` — smart advertisements + dumb serving.
@@ -36,15 +36,15 @@ pub async fn git_get(
         Ok(meta) => meta,
         Err(response) => return response,
     };
-    let user = match authenticate(&state, &headers).await {
-        Ok(user) => user,
+    let caller = match authenticate(&state, &headers).await {
+        Ok(caller) => caller,
         Err(response) => return response,
     };
 
     if path == "info/refs" {
         return match service_of(query.as_deref()) {
             Some("git-upload-pack") => {
-                if let Err(r) = authorize_read(&state, &meta, user.as_ref()).await {
+                if let Err(r) = authorize_read(&state, &meta, caller.as_ref()).await {
                     return r;
                 }
                 match state
@@ -56,7 +56,7 @@ pub async fn git_get(
                 }
             }
             Some("git-receive-pack") => {
-                if let Err(r) = authorize_write(&state, &meta, user.as_ref()).await {
+                if let Err(r) = authorize_write(&state, &meta, caller.as_ref()).await {
                     return r;
                 }
                 match state.host.receive_pack_advertise(&owner, repo_name) {
@@ -66,7 +66,7 @@ pub async fn git_get(
             }
             // No/unknown service → dumb advertisement (read).
             _ => {
-                if let Err(r) = authorize_read(&state, &meta, user.as_ref()).await {
+                if let Err(r) = authorize_read(&state, &meta, caller.as_ref()).await {
                     return r;
                 }
                 match state.host.info_refs(&owner, repo_name) {
@@ -78,7 +78,7 @@ pub async fn git_get(
     }
 
     // Everything else is a dumb read resource.
-    if let Err(r) = authorize_read(&state, &meta, user.as_ref()).await {
+    if let Err(r) = authorize_read(&state, &meta, caller.as_ref()).await {
         return r;
     }
     dumb_resource(&state, &owner, repo_name, &path)
@@ -99,14 +99,14 @@ pub async fn git_post(
         Ok(meta) => meta,
         Err(response) => return response,
     };
-    let user = match authenticate(&state, &headers).await {
-        Ok(user) => user,
+    let caller = match authenticate(&state, &headers).await {
+        Ok(caller) => caller,
         Err(response) => return response,
     };
 
     match path.as_str() {
         "git-upload-pack" => {
-            if let Err(r) = authorize_read(&state, &meta, user.as_ref()).await {
+            if let Err(r) = authorize_read(&state, &meta, caller.as_ref()).await {
                 return r;
             }
             match state
@@ -118,18 +118,19 @@ pub async fn git_post(
             }
         }
         "git-receive-pack" => {
-            if let Err(r) = authorize_write(&state, &meta, user.as_ref()).await {
+            if let Err(r) = authorize_write(&state, &meta, caller.as_ref()).await {
                 return r;
             }
             // Build the server-side push policy: which branches block direct
             // pushes, and whether this pusher (admin+) may bypass that.
+            // Deploy keys never bypass protected branches.
             let protected = state
                 .store
                 .list_push_protected_branches(meta.id)
                 .await
                 .unwrap_or_default();
             let can_push_protected = matches!(
-                crate::auth::effective_role(&state, &meta, user.as_ref()).await,
+                crate::auth::effective_role(&state, &meta, caller.as_ref()).await,
                 Some(role) if role >= rithub_core::RepoRole::Admin
             );
             let policy = rithub_git::PushPolicy {
@@ -138,7 +139,7 @@ pub async fn git_post(
             };
             match state.host.receive_pack(&owner, repo_name, &body, &policy) {
                 Ok(outcome) => {
-                    audit_push(&state, &meta, user.as_ref(), &outcome).await;
+                    audit_push(&state, &meta, caller.as_ref(), &outcome).await;
                     smart(outcome.response, "application/x-git-receive-pack-result")
                 }
                 // A malformed request body (bad framing) is the client's fault.
@@ -153,11 +154,11 @@ pub async fn git_post(
 async fn audit_push(
     state: &AppState,
     meta: &RepoMeta,
-    user: Option<&rithub_core::User>,
+    caller: Option<&Caller>,
     outcome: &rithub_git::ReceivePackOutcome,
 ) {
-    use rithub_core::{AuditStore, NewAuditEvent};
-    let actor_name = user.map(|u| u.username.as_str()).unwrap_or("anonymous");
+    let user = caller.and_then(Caller::user);
+    let actor_name = user.map(|u| u.username.as_str()).unwrap_or("deploy-key");
     let target = outcome.ref_updates.join(",");
     let (action, detail) = if outcome.rejected {
         ("push.rejected", outcome.reason.clone())
@@ -166,31 +167,42 @@ async fn audit_push(
     } else {
         return; // nothing happened (e.g. up-to-date); don't spam the log
     };
-    let _ = state
-        .store
-        .record_event(NewAuditEvent {
-            repo_id: Some(meta.id),
-            actor_id: user.map(|u| u.id),
-            actor_name,
-            action,
-            target: Some(&target),
-            detail: detail.as_deref(),
-        })
-        .await;
+    // Audit append via outbox (non-blocking, durable).
+    crate::audit::record(
+        state,
+        Some(meta.id),
+        user.map(|u| u.id),
+        actor_name,
+        action,
+        Some(&target),
+        detail.as_deref(),
+    )
+    .await;
 
-    // Deliver a signed webhook `push` event on a successful ref update.
+    // Enqueue a signed webhook `push` event job on a successful ref update.
     if action == "push" {
-        crate::webhooks::dispatch(
-            state,
-            meta.id,
-            "push",
-            serde_json::json!({
+        use rithub_core::{OutboxStore, KIND_WEBHOOK_DELIVERY};
+        let state2 = state.clone();
+        let repo_id = meta.id;
+        let repo_name = meta.name.clone();
+        let pusher = actor_name.to_string();
+        let refs = outcome.ref_updates.clone();
+        tokio::spawn(async move {
+            let payload = serde_json::json!({
+                "repo_id": repo_id,
                 "event": "push",
-                "repo": meta.name,
-                "pusher": actor_name,
-                "refs": outcome.ref_updates,
-            }),
-        );
+                "event_payload": {
+                    "event": "push",
+                    "repo": repo_name,
+                    "pusher": pusher,
+                    "refs": refs,
+                },
+            });
+            state2.store.enqueue_job(KIND_WEBHOOK_DELIVERY, payload)
+                .await
+                .inspect_err(|e| tracing::warn!(error = %e, "failed to enqueue push webhook job"))
+                .ok();
+        });
     }
 }
 

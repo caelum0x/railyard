@@ -53,6 +53,7 @@ pub struct PullRequest {
     /// Source repo for a cross-repo (fork) PR; `None` for a same-repo PR.
     pub head_repo_id: Option<Uuid>,
     pub merge_commit_sha: Option<String>,
+    pub milestone_id: Option<Uuid>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -60,6 +61,26 @@ pub struct PullRequest {
     #[serde(with = "time::serde::rfc3339::option")]
     pub merged_at: Option<OffsetDateTime>,
     pub merged_by: Option<Uuid>,
+}
+
+/// Input to update a pull request. All fields optional; absent fields unchanged.
+#[derive(Clone, Debug, Deserialize)]
+pub struct UpdatePr {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    /// New base branch (changes the merge target).
+    #[serde(default)]
+    pub base: Option<String>,
+    /// `"open"` to reopen a closed PR, `"closed"` to close an open one.
+    #[serde(default)]
+    pub state: Option<String>,
+    /// `true` means `milestone_id` should be written (even if NULL).
+    #[serde(skip)]
+    pub set_milestone: bool,
+    #[serde(skip)]
+    pub milestone_id: Option<Uuid>,
 }
 
 /// A comment on a pull request.
@@ -84,8 +105,8 @@ pub struct NewPullRequest {
 }
 
 const PR_COLUMNS: &str = "id, repo_id, number, title, body, state, author_id, base_branch, \
-    head_branch, base_sha, head_sha, head_repo_id, merge_commit_sha, created_at, updated_at, \
-    merged_at, merged_by";
+    head_branch, base_sha, head_sha, head_repo_id, merge_commit_sha, milestone_id, \
+    created_at, updated_at, merged_at, merged_by";
 
 fn pr_from_row(row: &sqlx::postgres::PgRow) -> PullRequest {
     PullRequest {
@@ -102,6 +123,7 @@ fn pr_from_row(row: &sqlx::postgres::PgRow) -> PullRequest {
         head_sha: row.get("head_sha"),
         head_repo_id: row.get("head_repo_id"),
         merge_commit_sha: row.get("merge_commit_sha"),
+        milestone_id: row.get("milestone_id"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         merged_at: row.get("merged_at"),
@@ -126,6 +148,10 @@ pub trait PullRequestStore {
     async fn get_pr(&self, repo_id: Uuid, number: i32) -> Result<PullRequest>;
     /// Close a PR without merging.
     async fn close_pr(&self, repo_id: Uuid, number: i32) -> Result<PullRequest>;
+    /// Reopen a previously closed (not merged) PR.
+    async fn reopen_pr(&self, repo_id: Uuid, number: i32) -> Result<PullRequest>;
+    /// Update mutable PR metadata (title, body, base branch, milestone).
+    async fn update_pr(&self, repo_id: Uuid, number: i32, input: &UpdatePr) -> Result<PullRequest>;
     /// Mark a PR merged, recording the merge commit and merger.
     async fn mark_merged(
         &self,
@@ -223,6 +249,43 @@ impl PullRequestStore for PgStore {
         ))
         .bind(repo_id)
         .bind(number)
+        .fetch_one(self.pool())
+        .await
+        .map_err(|e| CoreError::from_sqlx("pull request", &number.to_string(), e))?;
+        Ok(pr_from_row(&row))
+    }
+
+    async fn reopen_pr(&self, repo_id: Uuid, number: i32) -> Result<PullRequest> {
+        let row = sqlx::query(&format!(
+            "UPDATE pull_requests SET state = 'open', updated_at = now() \
+             WHERE repo_id = $1 AND number = $2 AND state = 'closed' RETURNING {PR_COLUMNS}"
+        ))
+        .bind(repo_id)
+        .bind(number)
+        .fetch_one(self.pool())
+        .await
+        .map_err(|e| CoreError::from_sqlx("pull request", &number.to_string(), e))?;
+        Ok(pr_from_row(&row))
+    }
+
+    async fn update_pr(&self, repo_id: Uuid, number: i32, input: &UpdatePr) -> Result<PullRequest> {
+        let row = sqlx::query(&format!(
+            "UPDATE pull_requests SET \
+                title        = COALESCE($3, title), \
+                body         = COALESCE($4, body), \
+                base_branch  = COALESCE($5, base_branch), \
+                milestone_id = CASE WHEN $6 THEN $7 ELSE milestone_id END, \
+                updated_at   = now() \
+             WHERE repo_id = $1 AND number = $2 \
+             RETURNING {PR_COLUMNS}"
+        ))
+        .bind(repo_id)
+        .bind(number)
+        .bind(&input.title)
+        .bind(&input.body)
+        .bind(&input.base)
+        .bind(input.set_milestone)
+        .bind(input.milestone_id)
         .fetch_one(self.pool())
         .await
         .map_err(|e| CoreError::from_sqlx("pull request", &number.to_string(), e))?;

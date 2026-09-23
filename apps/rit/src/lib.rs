@@ -57,8 +57,11 @@
 //! quarantine, connectivity, publication, and ref-policy ownership.
 
 pub mod blob;
+pub mod branch;
+pub mod checkout;
 pub mod commit;
 pub mod diff;
+pub mod diff_render;
 pub mod error;
 pub mod fsck;
 pub mod headers;
@@ -70,11 +73,14 @@ pub mod oid;
 pub mod pack;
 pub mod receive;
 pub mod receive_pack;
+pub mod reflog;
 pub mod refs;
 pub mod repo;
 pub mod server;
+pub mod show;
 pub mod signature;
 pub mod tag;
+pub mod tag_ops;
 pub mod tree;
 pub mod upload_pack;
 pub mod wire;
@@ -113,3 +119,11 @@ pub use wire::{
     PacketLine, PacketLineLimits, ReceivePackCommand, ReceivePackRequest, ReceiveStatus,
 };
 pub use worktree::{StatusEntry, WorktreeState};
+pub use branch::{BranchOp, dispatch_branch, cmd_branch_list, cmd_branch_create,
+                 cmd_branch_delete, cmd_branch_rename};
+pub use checkout::{cmd_switch, SwitchHead, SwitchResult};
+pub use diff_render::cmd_diff;
+pub use show::cmd_show;
+pub use tag_ops::{TagOp, dispatch_tag, cmd_tag_list, cmd_tag_create_lightweight,
+                  cmd_tag_create_annotated, cmd_tag_delete};
+pub use reflog::{ReflogEntry, read_reflog, append_reflog_file, log_path_for_ref, NULL_OID_HEX};

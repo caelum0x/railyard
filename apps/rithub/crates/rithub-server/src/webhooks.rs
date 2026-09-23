@@ -1,51 +1,34 @@
-//! Webhook delivery: HMAC-SHA256 signing + retrying HTTP POST, recorded in the
-//! delivery audit table.
+//! Webhook delivery: HMAC-SHA256 signing + retrying HTTP POST, recorded in
+//! the delivery audit table.
 //!
-//! Events are fired from the API handlers (issue.opened, pr.opened, pr.merged).
-//! Each active subscription for the event gets an independent delivery attempt
-//! in a background task, so a slow or failing receiver never blocks the request.
-//! The signature header (`X-Rithub-Signature-256: sha256=<hex>`) lets receivers
-//! verify authenticity — the same scheme GitHub uses.
+//! This module no longer fires deliveries inline from API handlers. Handlers
+//! enqueue a `webhook_delivery` job via [`rithub_core::OutboxStore::enqueue_job`]
+//! and the worker in `crate::jobs` calls [`deliver`] for each active
+//! subscription. This keeps slow/failing receivers off the hot request path
+//! and gives durable retries with backoff.
 //!
-//! `push` events and a durable retry/DLQ queue are deliberately out of this
-//! first cut (flagged for Phase 4); retries here are a small in-process loop.
+//! The signature header (`X-Rithub-Signature-256: sha256=<hex>`) matches the
+//! GitHub webhook HMAC scheme so existing receiver tooling works unchanged.
 
 use hmac::{Hmac, Mac};
 use rithub_core::{Webhook, WebhookStore};
 use sha2::Sha256;
-use uuid::Uuid;
 
 use crate::state::AppState;
 
 /// Signature header receivers check.
 const SIGNATURE_HEADER: &str = "X-Rithub-Signature-256";
-/// Event name header.
+/// Event-name header.
 const EVENT_HEADER: &str = "X-Rithub-Event";
-/// Max delivery attempts per subscription.
+/// Max delivery attempts per subscription (in the inline retry loop within one
+/// job execution — outer retries are handled by the outbox backoff).
 const MAX_ATTEMPTS: i32 = 3;
 
-/// Fire an event to every active subscription for `repo_id`. Non-blocking: each
-/// subscription is delivered in its own background task. `payload` is a JSON
-/// value describing the event.
-pub fn dispatch(state: &AppState, repo_id: Uuid, event: &'static str, payload: serde_json::Value) {
-    let state = state.clone();
-    let body = serde_json::to_vec(&payload).unwrap_or_default();
-    tokio::spawn(async move {
-        let hooks = match state.store.webhooks_for_event(repo_id, event).await {
-            Ok(hooks) => hooks,
-            Err(error) => {
-                tracing::warn!(%error, "failed to load webhooks for event");
-                return;
-            }
-        };
-        for hook in hooks {
-            deliver(&state, &hook, event, &body).await;
-        }
-    });
-}
-
-/// Attempt delivery to one subscription with bounded retries, then record it.
-async fn deliver(state: &AppState, hook: &Webhook, event: &str, body: &[u8]) {
+/// Attempt delivery to one subscription with a small bounded retry, then
+/// record the outcome in `webhook_deliveries`.
+///
+/// `pub(crate)` — called by the jobs worker, not by HTTP handlers.
+pub(crate) async fn deliver(state: &AppState, hook: &Webhook, event: &str, body: &[u8]) {
     let signature = sign(&hook.secret, body);
     let client = reqwest::Client::new();
 
@@ -76,7 +59,6 @@ async fn deliver(state: &AppState, hook: &Webhook, event: &str, body: &[u8]) {
             }
             Err(error) => last_error = Some(error.to_string()),
         }
-        // Small linear backoff between attempts.
         if attempts < MAX_ATTEMPTS {
             tokio::time::sleep(std::time::Duration::from_millis(200 * attempts as u64)).await;
         }

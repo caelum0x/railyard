@@ -261,6 +261,9 @@ impl Repository {
             Err(error) => return Err(error),
         };
         let tree = self.write_tree()?;
+        // Clone before moving into the Commit struct so we can use the fields
+        // for the reflog entry below.
+        let committer_for_log = committer.clone();
         let commit = Commit {
             tree,
             parents: expected.into_iter().collect(),
@@ -271,6 +274,30 @@ impl Repository {
         };
         let oid = self.odb.write(ObjectType::Commit, &commit.serialize())?;
         self.refs.compare_and_swap(&head_ref, expected, oid)?;
+        // Reflog: "commit (initial): <first line>" or "commit: <first line>".
+        let first_line = commit
+            .message_str()
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let reflog_msg = if expected.is_none() {
+            format!("commit (initial): {first_line}")
+        } else {
+            format!("commit: {first_line}")
+        };
+        // Reflog failure is non-fatal: the commit object + ref are already
+        // durably written, so we surface the error but don't roll back.
+        self.refs.append_reflog(
+            &head_ref,
+            expected,
+            oid,
+            &committer_for_log.name,
+            &committer_for_log.email,
+            committer_for_log.time,
+            &committer_for_log.tz,
+            &reflog_msg,
+        )?;
         Ok(oid)
     }
 
@@ -308,6 +335,9 @@ impl Repository {
             Object::Tree(_) => {}
             other => return Err(type_error(&tree, "tree", other)),
         }
+        // Clone before moving into Commit so committer fields are available
+        // for the reflog entry below.
+        let committer_for_log = committer.clone();
         let commit = Commit {
             tree,
             parents,
@@ -325,6 +355,27 @@ impl Repository {
                 Err(error) => return Err(error),
             };
             self.refs.compare_and_swap(refname, expected, oid)?;
+            // Reflog for the explicit ref update.
+            let first_line = std::str::from_utf8(message)
+                .ok()
+                .and_then(|s| s.lines().next())
+                .unwrap_or("")
+                .to_string();
+            let reflog_msg = if expected.is_none() {
+                format!("commit (initial): {first_line}")
+            } else {
+                format!("commit: {first_line}")
+            };
+            self.refs.append_reflog(
+                refname,
+                expected,
+                oid,
+                &committer_for_log.name,
+                &committer_for_log.email,
+                committer_for_log.time,
+                &committer_for_log.tz,
+                &reflog_msg,
+            )?;
         }
         Ok(oid)
     }
@@ -649,6 +700,315 @@ impl Repository {
         Err(ForgeError::InvalidRef(format!(
             "{oid} does not peel to a commit"
         )))
+    }
+
+    // --- branch operations ---------------------------------------------------
+
+    /// Create a new branch `name` pointing at `start_oid`.
+    ///
+    /// When `force` is false (the default) the branch must not already exist.
+    /// When `force` is true the branch is moved even if it already points
+    /// somewhere else (equivalent to `git branch -f`).
+    ///
+    /// Writes a reflog entry using the supplied actor identity and message.
+    pub fn branch_create(
+        &self,
+        name: &str,
+        start_oid: ObjectId,
+        force: bool,
+        actor_name: &str,
+        actor_email: &str,
+        timestamp: i64,
+        tz: &str,
+        message: &str,
+    ) -> Result<()> {
+        let refname = format!("refs/heads/{name}");
+        validate_refname(&refname)?;
+        let expected = match self.refs.resolve(&refname) {
+            Ok(oid) => {
+                if !force {
+                    return Err(ForgeError::InvalidRef(format!(
+                        "branch {name} already exists (use force to move it)"
+                    )));
+                }
+                Some(oid)
+            }
+            Err(ForgeError::InvalidRef(_)) => None,
+            Err(e) => return Err(e),
+        };
+        self.refs.compare_and_swap(&refname, expected, start_oid)?;
+        self.refs.append_reflog(
+            &refname,
+            expected,
+            start_oid,
+            actor_name,
+            actor_email,
+            timestamp,
+            tz,
+            message,
+        )?;
+        Ok(())
+    }
+
+    /// Delete branch `name`.
+    ///
+    /// When `force` is false (equivalent to `git branch -d`) the operation
+    /// fails if the branch tip is not an ancestor of HEAD (i.e. the branch
+    /// has unmerged commits).  When `force` is true (`git branch -D`) the
+    /// check is skipped.
+    ///
+    /// No reflog entry is written on deletion (git also leaves the log file
+    /// intact; it is pruned by `git reflog expire`).
+    pub fn branch_delete(&self, name: &str, force: bool) -> Result<()> {
+        let refname = format!("refs/heads/{name}");
+        validate_refname(&refname)?;
+        let tip = self.refs.resolve(&refname)?;
+
+        if !force {
+            // Safety check: branch tip must be reachable from HEAD.
+            if let Ok(head_oid) = self.refs.resolve_head() {
+                let merged = crate::fsck::is_ancestor(
+                    self.odb(),
+                    tip,
+                    head_oid,
+                    crate::fsck::ConnectivityLimits::default(),
+                )
+                .unwrap_or(false);
+                if !merged {
+                    return Err(ForgeError::NonFastForward {
+                        name: name.to_string(),
+                        old: tip.to_hex(),
+                        new: head_oid.to_hex(),
+                    });
+                }
+            }
+        }
+
+        // Guard: refuse to delete the currently-checked-out branch.
+        if let Ok(crate::RefTarget::Symbolic(head_target)) = self.refs.read_head() {
+            if head_target == refname {
+                return Err(ForgeError::InvalidRef(format!(
+                    "cannot delete branch {name}: it is currently checked out"
+                )));
+            }
+        }
+
+        self.refs.compare_and_delete(&refname, tip)?;
+        Ok(())
+    }
+
+    /// List all local branches as `(short_name, tip_oid, is_current)` triples,
+    /// sorted alphabetically by name.
+    ///
+    /// `is_current` is true when HEAD is a symbolic ref pointing at that branch.
+    pub fn branch_list(&self) -> Result<Vec<(String, ObjectId, bool)>> {
+        let current = match self.refs.read_head()? {
+            crate::RefTarget::Symbolic(name) => Some(name),
+            crate::RefTarget::Direct(_) => None,
+        };
+        let all = self.refs.list()?;
+        let mut branches: Vec<(String, ObjectId, bool)> = all
+            .into_iter()
+            .filter_map(|(refname, oid)| {
+                refname
+                    .strip_prefix("refs/heads/")
+                    .map(|short| {
+                        let is_current = current
+                            .as_deref()
+                            .map(|c| c == refname)
+                            .unwrap_or(false);
+                        (short.to_string(), oid, is_current)
+                    })
+            })
+            .collect();
+        branches.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(branches)
+    }
+
+    /// Rename branch `old_name` to `new_name`.
+    ///
+    /// When `force` is false the destination must not already exist.
+    /// Writes reflog entries on both the new branch and (if HEAD points at it)
+    /// on HEAD.
+    pub fn branch_rename(
+        &self,
+        old_name: &str,
+        new_name: &str,
+        force: bool,
+        actor_name: &str,
+        actor_email: &str,
+        timestamp: i64,
+        tz: &str,
+    ) -> Result<()> {
+        let old_ref = format!("refs/heads/{old_name}");
+        let new_ref = format!("refs/heads/{new_name}");
+        validate_refname(&old_ref)?;
+        validate_refname(&new_ref)?;
+        let tip = self.refs.resolve(&old_ref)?;
+
+        // Create the new ref first (CAS on "absent").
+        let new_expected = match self.refs.resolve(&new_ref) {
+            Ok(oid) => {
+                if !force {
+                    return Err(ForgeError::InvalidRef(format!(
+                        "branch {new_name} already exists (use force to overwrite)"
+                    )));
+                }
+                Some(oid)
+            }
+            Err(ForgeError::InvalidRef(_)) => None,
+            Err(e) => return Err(e),
+        };
+        self.refs.compare_and_swap(&new_ref, new_expected, tip)?;
+
+        let rename_msg = format!("branch: renamed refs/heads/{old_name} to refs/heads/{new_name}");
+        self.refs.append_reflog(
+            &new_ref,
+            None, // treat as creation of the new name
+            tip,
+            actor_name,
+            actor_email,
+            timestamp,
+            tz,
+            &rename_msg,
+        )?;
+
+        // If HEAD points at the old ref, update it to the new one.
+        if let Ok(crate::RefTarget::Symbolic(head_target)) = self.refs.read_head() {
+            if head_target == old_ref {
+                let head_path = self.git_dir.join("HEAD");
+                let lock_path = head_path.with_extension("lock");
+                let mut lock = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&lock_path)
+                    .map_err(|_| ForgeError::RefLocked("HEAD".into()))?;
+                let result = (|| {
+                    writeln!(lock, "ref: {new_ref}")?;
+                    lock.sync_all()?;
+                    std::fs::rename(&lock_path, &head_path)?;
+                    Ok::<_, ForgeError>(())
+                })();
+                if result.is_err() {
+                    let _ = std::fs::remove_file(&lock_path);
+                    result?;
+                }
+            }
+        }
+
+        // Remove the old ref.
+        self.refs.compare_and_delete(&old_ref, tip)?;
+        Ok(())
+    }
+
+    // --- tag operations ------------------------------------------------------
+
+    /// List all tags as `(name, oid)` pairs sorted alphabetically.
+    ///
+    /// `oid` is the tag object OID for annotated tags, or the commit/blob/tree
+    /// OID for lightweight tags (matching `git show-ref --tags`).
+    pub fn tag_list(&self) -> Result<Vec<(String, ObjectId)>> {
+        let all = self.refs.list()?;
+        let mut tags: Vec<(String, ObjectId)> = all
+            .into_iter()
+            .filter_map(|(refname, oid)| {
+                refname
+                    .strip_prefix("refs/tags/")
+                    .map(|short| (short.to_string(), oid))
+            })
+            .collect();
+        tags.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(tags)
+    }
+
+    /// Create a **lightweight** tag: a ref in `refs/tags/<name>` pointing
+    /// directly at `target_oid` (no tag object is written).
+    ///
+    /// When `force` is false the tag must not already exist.
+    pub fn tag_create_lightweight(
+        &self,
+        name: &str,
+        target_oid: ObjectId,
+        force: bool,
+    ) -> Result<()> {
+        let refname = format!("refs/tags/{name}");
+        validate_refname(&refname)?;
+        let expected = match self.refs.resolve(&refname) {
+            Ok(oid) => {
+                if !force {
+                    return Err(ForgeError::InvalidRef(format!(
+                        "tag {name} already exists (use force to replace)"
+                    )));
+                }
+                Some(oid)
+            }
+            Err(ForgeError::InvalidRef(_)) => None,
+            Err(e) => return Err(e),
+        };
+        self.refs.compare_and_swap(&refname, expected, target_oid)?;
+        Ok(())
+    }
+
+    /// Create an **annotated** tag: write a `tag` object pointing at
+    /// `target_oid`, then create a ref in `refs/tags/<name>` pointing at the
+    /// tag object.
+    ///
+    /// When `force` is false the tag must not already exist.
+    ///
+    /// Returns the OID of the written tag object.
+    pub fn tag_create_annotated(
+        &self,
+        name: &str,
+        target_oid: ObjectId,
+        target_type: crate::object::ObjectType,
+        message: &[u8],
+        tagger: Signature,
+        force: bool,
+    ) -> Result<ObjectId> {
+        let refname = format!("refs/tags/{name}");
+        validate_refname(&refname)?;
+
+        let tag_obj = crate::tag::Tag {
+            object: target_oid,
+            object_type: target_type,
+            tag: name.to_string(),
+            tagger: Some(tagger),
+            extra_headers: Vec::new(),
+            message: message.to_vec(),
+        };
+        let tag_oid = self.odb.write(ObjectType::Tag, &tag_obj.serialize())?;
+
+        let expected = match self.refs.resolve(&refname) {
+            Ok(oid) => {
+                if !force {
+                    return Err(ForgeError::InvalidRef(format!(
+                        "tag {name} already exists (use force to replace)"
+                    )));
+                }
+                Some(oid)
+            }
+            Err(ForgeError::InvalidRef(_)) => None,
+            Err(e) => return Err(e),
+        };
+        self.refs.compare_and_swap(&refname, expected, tag_oid)?;
+        Ok(tag_oid)
+    }
+
+    /// Delete tag `name`.
+    ///
+    /// When `force` is true the check that the ref currently exists is still
+    /// performed (you cannot delete what isn't there), but the merge-safety
+    /// check is bypassed.  For tags, force-delete (`git tag -d` always acts
+    /// like `-D`) is the default — the boolean is accepted for API symmetry
+    /// with `branch_delete`.
+    pub fn tag_delete(&self, name: &str) -> Result<()> {
+        let refname = format!("refs/tags/{name}");
+        validate_refname(&refname)?;
+        let tip = self.refs.resolve(&refname).map_err(|_| {
+            ForgeError::InvalidRef(format!("tag {name} not found"))
+        })?;
+        self.refs.compare_and_delete(&refname, tip)?;
+        Ok(())
     }
 
     /// `git log`: walk history from `start`, newest first by committer time.

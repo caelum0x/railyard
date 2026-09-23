@@ -44,12 +44,28 @@ pub struct Issue {
     pub body: Option<String>,
     pub state: IssueState,
     pub author_id: Option<Uuid>,
+    pub milestone_id: Option<Uuid>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339::option")]
     pub closed_at: Option<OffsetDateTime>,
+}
+
+/// Input to update an issue. All fields are optional; absent fields are unchanged.
+#[derive(Clone, Debug, Deserialize)]
+pub struct UpdateIssue {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    /// `true` means the `milestone_id` parameter should be written (even if NULL).
+    #[serde(skip)]
+    pub set_milestone: bool,
+    /// New milestone FK, or `None` to clear.
+    #[serde(skip)]
+    pub milestone_id: Option<Uuid>,
 }
 
 /// A comment on an issue.
@@ -89,6 +105,7 @@ fn issue_from_row(row: &sqlx::postgres::PgRow) -> Issue {
         body: row.get("body"),
         state: IssueState::parse(row.get::<String, _>("state").as_str()),
         author_id: row.get("author_id"),
+        milestone_id: row.get("milestone_id"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         closed_at: row.get("closed_at"),
@@ -109,6 +126,13 @@ pub trait IssueStore {
     /// Move an issue to a new state, stamping `closed_at` appropriately.
     async fn set_issue_state(&self, repo_id: Uuid, number: i32, state: IssueState)
         -> Result<Issue>;
+    /// Update mutable metadata fields on an issue (title, body, milestone).
+    async fn update_issue(
+        &self,
+        repo_id: Uuid,
+        number: i32,
+        input: &UpdateIssue,
+    ) -> Result<Issue>;
 
     async fn add_issue_comment(
         &self,
@@ -121,10 +145,19 @@ pub trait IssueStore {
     async fn create_label(&self, repo_id: Uuid, name: &str, color: &str) -> Result<Label>;
     async fn add_issue_label(&self, issue_id: Uuid, label_id: Uuid) -> Result<()>;
     async fn list_issue_labels(&self, issue_id: Uuid) -> Result<Vec<Label>>;
+    /// Replace all labels on an issue with the provided set (idempotent wipe+add).
+    async fn replace_issue_labels(&self, issue_id: Uuid, label_ids: &[Uuid]) -> Result<()>;
 
     async fn add_issue_assignee(&self, issue_id: Uuid, user_id: Uuid) -> Result<()>;
     async fn list_issue_assignees(&self, issue_id: Uuid) -> Result<Vec<User>>;
+    /// Replace all assignees on an issue with the provided set (idempotent wipe+add).
+    async fn replace_issue_assignees(&self, issue_id: Uuid, user_ids: &[Uuid]) -> Result<()>;
 }
+
+/// Column list kept in sync with [`issue_from_row`].
+const ISSUE_COLUMNS: &str =
+    "id, repo_id, number, title, body, state, author_id, milestone_id, \
+     created_at, updated_at, closed_at";
 
 impl IssueStore for PgStore {
     async fn create_issue(
@@ -135,12 +168,11 @@ impl IssueStore for PgStore {
     ) -> Result<Issue> {
         let mut tx = self.pool().begin().await.map_err(map_db)?;
         let number = next_repo_number(&mut tx, repo_id, "issues").await?;
-        let row = sqlx::query(
+        let row = sqlx::query(&format!(
             "INSERT INTO issues (repo_id, number, title, body, author_id) \
              VALUES ($1, $2, $3, $4, $5) \
-             RETURNING id, repo_id, number, title, body, state, author_id, \
-                       created_at, updated_at, closed_at",
-        )
+             RETURNING {ISSUE_COLUMNS}"
+        ))
         .bind(repo_id)
         .bind(number)
         .bind(&input.title)
@@ -154,8 +186,9 @@ impl IssueStore for PgStore {
     }
 
     async fn list_issues(&self, repo_id: Uuid, state: Option<IssueState>) -> Result<Vec<Issue>> {
-        let base = "SELECT id, repo_id, number, title, body, state, author_id, \
-                    created_at, updated_at, closed_at FROM issues WHERE repo_id = $1";
+        let base = format!(
+            "SELECT {ISSUE_COLUMNS} FROM issues WHERE repo_id = $1"
+        );
         let rows = match state {
             Some(state) => {
                 sqlx::query(&format!("{base} AND state = $2 ORDER BY number DESC"))
@@ -176,10 +209,9 @@ impl IssueStore for PgStore {
     }
 
     async fn get_issue(&self, repo_id: Uuid, number: i32) -> Result<Issue> {
-        let row = sqlx::query(
-            "SELECT id, repo_id, number, title, body, state, author_id, \
-             created_at, updated_at, closed_at FROM issues WHERE repo_id = $1 AND number = $2",
-        )
+        let row = sqlx::query(&format!(
+            "SELECT {ISSUE_COLUMNS} FROM issues WHERE repo_id = $1 AND number = $2"
+        ))
         .bind(repo_id)
         .bind(number)
         .fetch_one(self.pool())
@@ -194,16 +226,42 @@ impl IssueStore for PgStore {
         number: i32,
         state: IssueState,
     ) -> Result<Issue> {
-        let row = sqlx::query(
+        let row = sqlx::query(&format!(
             "UPDATE issues SET state = $3, updated_at = now(), \
                 closed_at = CASE WHEN $3 = 'closed' THEN now() ELSE NULL END \
              WHERE repo_id = $1 AND number = $2 \
-             RETURNING id, repo_id, number, title, body, state, author_id, \
-                       created_at, updated_at, closed_at",
-        )
+             RETURNING {ISSUE_COLUMNS}"
+        ))
         .bind(repo_id)
         .bind(number)
         .bind(state.as_str())
+        .fetch_one(self.pool())
+        .await
+        .map_err(|e| CoreError::from_sqlx("issue", &number.to_string(), e))?;
+        Ok(issue_from_row(&row))
+    }
+
+    async fn update_issue(
+        &self,
+        repo_id: Uuid,
+        number: i32,
+        input: &UpdateIssue,
+    ) -> Result<Issue> {
+        let row = sqlx::query(&format!(
+            "UPDATE issues SET \
+                title       = COALESCE($3, title), \
+                body        = COALESCE($4, body), \
+                milestone_id = CASE WHEN $5 THEN $6 ELSE milestone_id END, \
+                updated_at  = now() \
+             WHERE repo_id = $1 AND number = $2 \
+             RETURNING {ISSUE_COLUMNS}"
+        ))
+        .bind(repo_id)
+        .bind(number)
+        .bind(&input.title)
+        .bind(&input.body)
+        .bind(input.set_milestone)
+        .bind(input.milestone_id)
         .fetch_one(self.pool())
         .await
         .map_err(|e| CoreError::from_sqlx("issue", &number.to_string(), e))?;
@@ -342,6 +400,48 @@ impl IssueStore for PgStore {
                 created_at: row.get("created_at"),
             })
             .collect())
+    }
+
+    async fn replace_issue_assignees(&self, issue_id: Uuid, user_ids: &[Uuid]) -> Result<()> {
+        let mut tx = self.pool().begin().await.map_err(map_db)?;
+        sqlx::query("DELETE FROM issue_assignees WHERE issue_id = $1")
+            .bind(issue_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db)?;
+        for &uid in user_ids {
+            sqlx::query(
+                "INSERT INTO issue_assignees (issue_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            )
+            .bind(issue_id)
+            .bind(uid)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db)?;
+        }
+        tx.commit().await.map_err(map_db)?;
+        Ok(())
+    }
+
+    async fn replace_issue_labels(&self, issue_id: Uuid, label_ids: &[Uuid]) -> Result<()> {
+        let mut tx = self.pool().begin().await.map_err(map_db)?;
+        sqlx::query("DELETE FROM issue_labels WHERE issue_id = $1")
+            .bind(issue_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db)?;
+        for &lid in label_ids {
+            sqlx::query(
+                "INSERT INTO issue_labels (issue_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            )
+            .bind(issue_id)
+            .bind(lid)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db)?;
+        }
+        tx.commit().await.map_err(map_db)?;
+        Ok(())
     }
 }
 

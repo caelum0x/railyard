@@ -8,14 +8,26 @@
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-/// Human-recognizable prefix so a leaked token is easy to identify and revoke.
+/// Human-recognizable prefix so a leaked PAT is easy to identify and revoke.
 pub const TOKEN_PREFIX: &str = "rithub_pat_";
+
+/// Human-recognizable prefix for deploy-key bearer tokens.
+pub const DEPLOY_TOKEN_PREFIX: &str = "rithub_dk_";
 
 /// Generate a new personal access token (prefix + 256 bits of hex entropy).
 pub fn generate_token() -> String {
     // Two v4 UUIDs give 244 bits of randomness — ample for a bearer token.
     format!(
         "{TOKEN_PREFIX}{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    )
+}
+
+/// Generate a new deploy-key bearer token (same entropy, distinct prefix).
+pub fn generate_deploy_token() -> String {
+    format!(
+        "{DEPLOY_TOKEN_PREFIX}{}{}",
         Uuid::new_v4().simple(),
         Uuid::new_v4().simple()
     )

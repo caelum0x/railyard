@@ -7,8 +7,8 @@
 //! in-memory fake for tests, a different backend later) without touching callers.
 
 use crate::domain::{
-    Membership, NewOrganization, NewRepository, Organization, Repository, Role, Token, User,
-    Visibility,
+    Membership, NewOrganization, NewRepository, Organization, Repository, Role, Token,
+    UpdateRepository, User, Visibility,
 };
 use crate::error::{CoreError, Result};
 use sqlx::postgres::PgPool;
@@ -39,6 +39,8 @@ pub trait Store {
     async fn list_repos(&self, org: &Organization) -> Result<Vec<Repository>>;
     /// Fetch one repository by (org name, repo name).
     async fn get_repo(&self, org_name: &str, repo_name: &str) -> Result<Repository>;
+    /// Update mutable repository metadata. Only provided fields are changed.
+    async fn update_repo(&self, repo_id: Uuid, patch: &UpdateRepository) -> Result<Repository>;
 
     /// Create a user account.
     async fn create_user(&self, username: &str, email: &str) -> Result<User>;
@@ -51,9 +53,24 @@ pub trait Store {
     async fn get_membership(&self, user_id: Uuid, org_id: Uuid) -> Result<Option<Role>>;
 
     /// Create a personal access token for a user, storing only its hash.
-    async fn create_token(&self, user_id: Uuid, name: &str, token_hash: &str) -> Result<Token>;
-    /// Resolve a token hash to its owning user, or `None` if no token matches.
-    async fn find_user_by_token(&self, token_hash: &str) -> Result<Option<User>>;
+    /// `scopes` is the list of granted scopes; an empty slice means full access.
+    /// `expires_at` is the optional expiry time.
+    async fn create_token(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        token_hash: &str,
+        scopes: &[String],
+        expires_at: Option<OffsetDateTime>,
+    ) -> Result<Token>;
+    /// Resolve a **valid** (non-expired, non-revoked) token hash to its owning
+    /// user + token metadata, or `None` if no live token matches.
+    async fn find_user_by_token(&self, token_hash: &str) -> Result<Option<(User, Token)>>;
+    /// List all tokens for a user (including revoked ones), newest first.
+    async fn list_tokens(&self, user_id: Uuid) -> Result<Vec<Token>>;
+    /// Revoke a token owned by `user_id`. Returns `NotFound` if the token does
+    /// not exist or does not belong to that user.
+    async fn revoke_token(&self, user_id: Uuid, token_id: Uuid) -> Result<()>;
 }
 
 /// A Postgres-backed [`Store`].
@@ -96,6 +113,18 @@ fn repo_from_row(row: &sqlx::postgres::PgRow) -> Repository {
         default_branch: row.get("default_branch"),
         visibility: Visibility::parse(row.get::<String, _>("visibility").as_str()),
         disk_path: row.get("disk_path"),
+        created_at: row.get::<OffsetDateTime, _>("created_at"),
+    }
+}
+
+fn token_from_row(row: &sqlx::postgres::PgRow) -> Token {
+    Token {
+        id: row.get("id"),
+        user_id: row.get("user_id"),
+        name: row.get("name"),
+        scopes: row.get("scopes"),
+        expires_at: row.get("expires_at"),
+        revoked_at: row.get("revoked_at"),
         created_at: row.get::<OffsetDateTime, _>("created_at"),
     }
 }
@@ -193,6 +222,27 @@ impl Store for PgStore {
         Ok(repo_from_row(&row))
     }
 
+    async fn update_repo(&self, repo_id: Uuid, patch: &UpdateRepository) -> Result<Repository> {
+        let row = sqlx::query(&format!(
+            "UPDATE repositories SET \
+                name           = COALESCE($2, name), \
+                description    = COALESCE($3, description), \
+                default_branch = COALESCE($4, default_branch), \
+                visibility     = COALESCE($5, visibility) \
+             WHERE id = $1 \
+             RETURNING {REPO_COLUMNS}"
+        ))
+        .bind(repo_id)
+        .bind(&patch.name)
+        .bind(&patch.description)
+        .bind(&patch.default_branch)
+        .bind(patch.visibility.map(|v| v.as_str()))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| CoreError::from_sqlx("repository", &repo_id.to_string(), e))?;
+        Ok(repo_from_row(&row))
+    }
+
     async fn create_user(&self, username: &str, email: &str) -> Result<User> {
         let row = sqlx::query(
             "INSERT INTO users (username, email) VALUES ($1, $2) \
@@ -262,40 +312,95 @@ impl Store for PgStore {
         Ok(row.map(|r| Role::parse(r.get::<String, _>("role").as_str())))
     }
 
-    async fn create_token(&self, user_id: Uuid, name: &str, token_hash: &str) -> Result<Token> {
+    async fn create_token(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        token_hash: &str,
+        scopes: &[String],
+        expires_at: Option<OffsetDateTime>,
+    ) -> Result<Token> {
         let row = sqlx::query(
-            "INSERT INTO tokens (user_id, name, token_hash) VALUES ($1, $2, $3) \
-             RETURNING id, user_id, name, created_at",
+            "INSERT INTO tokens (user_id, name, token_hash, scopes, expires_at) \
+             VALUES ($1, $2, $3, $4, $5) \
+             RETURNING id, user_id, name, scopes, expires_at, revoked_at, created_at",
         )
         .bind(user_id)
         .bind(name)
         .bind(token_hash)
+        .bind(scopes)
+        .bind(expires_at)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| CoreError::from_sqlx("token", name, e))?;
-        Ok(Token {
-            id: row.get("id"),
-            user_id: row.get("user_id"),
-            name: row.get("name"),
-            created_at: row.get::<OffsetDateTime, _>("created_at"),
-        })
+        Ok(token_from_row(&row))
     }
 
-    async fn find_user_by_token(&self, token_hash: &str) -> Result<Option<User>> {
+    async fn find_user_by_token(&self, token_hash: &str) -> Result<Option<(User, Token)>> {
         let row = sqlx::query(
-            "SELECT u.id, u.username, u.email, u.created_at \
-             FROM tokens t JOIN users u ON u.id = t.user_id \
-             WHERE t.token_hash = $1",
+            "SELECT \
+               u.id AS u_id, u.username, u.email, u.created_at AS u_created_at, \
+               t.id AS t_id, t.user_id, t.name AS t_name, t.scopes, \
+               t.expires_at, t.revoked_at, t.created_at AS t_created_at \
+             FROM tokens t \
+             JOIN users u ON u.id = t.user_id \
+             WHERE t.token_hash = $1 \
+               AND t.revoked_at IS NULL \
+               AND (t.expires_at IS NULL OR t.expires_at > now())",
         )
         .bind(token_hash)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| CoreError::from_sqlx("token", "*", e))?;
-        Ok(row.map(|r| User {
-            id: r.get("id"),
-            username: r.get("username"),
-            email: r.get("email"),
-            created_at: r.get::<OffsetDateTime, _>("created_at"),
+
+        Ok(row.map(|r| {
+            let user = User {
+                id: r.get("u_id"),
+                username: r.get("username"),
+                email: r.get("email"),
+                created_at: r.get::<OffsetDateTime, _>("u_created_at"),
+            };
+            let token = Token {
+                id: r.get("t_id"),
+                user_id: r.get("user_id"),
+                name: r.get("t_name"),
+                scopes: r.get("scopes"),
+                expires_at: r.get("expires_at"),
+                revoked_at: r.get("revoked_at"),
+                created_at: r.get::<OffsetDateTime, _>("t_created_at"),
+            };
+            (user, token)
         }))
+    }
+
+    async fn list_tokens(&self, user_id: Uuid) -> Result<Vec<Token>> {
+        let rows = sqlx::query(
+            "SELECT id, user_id, name, scopes, expires_at, revoked_at, created_at \
+             FROM tokens WHERE user_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| CoreError::from_sqlx("token", "*", e))?;
+        Ok(rows.iter().map(token_from_row).collect())
+    }
+
+    async fn revoke_token(&self, user_id: Uuid, token_id: Uuid) -> Result<()> {
+        let result = sqlx::query(
+            "UPDATE tokens SET revoked_at = now() \
+             WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+        )
+        .bind(token_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| CoreError::from_sqlx("token", &token_id.to_string(), e))?;
+        if result.rows_affected() == 0 {
+            return Err(CoreError::NotFound {
+                kind: "token",
+                key: token_id.to_string(),
+            });
+        }
+        Ok(())
     }
 }

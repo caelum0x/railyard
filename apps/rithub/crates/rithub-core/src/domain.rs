@@ -77,6 +77,42 @@ pub struct Token {
     pub id: Uuid,
     pub user_id: Uuid,
     pub name: String,
+    /// Granted scopes. An empty list means the token is unrestricted (legacy /
+    /// full-access behaviour). Non-empty lists restrict the token to the named
+    /// scopes (e.g. `"repo:read"`, `"repo:write"`, `"admin"`).
+    pub scopes: Vec<String>,
+    /// Optional expiry. `None` means the token never expires.
+    #[serde(
+        with = "time::serde::rfc3339::option",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub expires_at: Option<OffsetDateTime>,
+    /// Revocation timestamp. `None` means the token is still active.
+    #[serde(
+        with = "time::serde::rfc3339::option",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub revoked_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+/// A deploy key: a repository-scoped credential that couples an SSH public key
+/// (for SSH transport auth) with a bearer token (for HTTP Basic auth). The
+/// bearer token plaintext is shown once at creation; only its hash is stored.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeployKey {
+    pub id: Uuid,
+    pub repo_id: Uuid,
+    pub title: String,
+    /// Base64 blob of the SSH public key (same format as `ssh_keys.key_blob`).
+    pub key_blob: String,
+    /// If `true` the key may only clone/fetch; pushes are rejected.
+    pub read_only: bool,
+    /// The user who created this deploy key, if still present.
+    pub created_by: Option<Uuid>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
 }
@@ -146,6 +182,24 @@ pub struct NewRepository {
     #[serde(default)]
     pub default_branch: Option<String>,
     /// Optional visibility (defaults to `public`).
+    #[serde(default)]
+    pub visibility: Option<Visibility>,
+}
+
+/// Input to update a repository. All fields are optional; absent fields unchanged.
+/// `description` uses COALESCE in SQL, so sending `""` clears it.
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct UpdateRepository {
+    /// New repository name (slug).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// New human-readable description.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// New default branch name.
+    #[serde(default)]
+    pub default_branch: Option<String>,
+    /// New visibility setting.
     #[serde(default)]
     pub visibility: Option<Visibility>,
 }

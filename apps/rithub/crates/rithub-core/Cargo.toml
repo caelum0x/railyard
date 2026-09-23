@@ -8,6 +8,7 @@ description = "rithub forge domain: users, organizations, repositories, permissi
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
 sqlx.workspace = true
 uuid.workspace = true
 time.workspace = true

@@ -10,8 +10,9 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use rit::object::Object;
 use rit::{
-    advertise_receive_pack, execute_receive_pack, parse_receive_pack_request, ObjectType,
-    PacketLineLimits, ReceiveLimits, ReceivePackCommand, ReceivePackPolicy, Repository, Signature,
+    advertise_receive_pack, cmd_diff, cmd_show, cmd_switch, dispatch_branch, dispatch_tag,
+    execute_receive_pack, parse_receive_pack_request, BranchOp, ObjectType, PacketLineLimits,
+    ReceiveLimits, ReceivePackCommand, ReceivePackPolicy, Repository, Signature, SwitchHead, TagOp,
     WorktreeState, RECEIVE_PACK_CAPABILITIES,
 };
 
@@ -54,6 +55,18 @@ enum Command {
     Commit(CommitArgs),
     /// Safely materialize a commit/tree snapshot and synchronize the index without moving HEAD.
     CheckoutTree(CheckoutTreeArgs),
+    /// List, create, delete, or rename local branches. Like `git branch`.
+    Branch(BranchArgs),
+    /// List, create, or delete tags (lightweight or annotated). Like `git tag`.
+    Tag(TagArgs),
+    /// Switch branches or restore a detached HEAD, updating the worktree. Like `git switch`.
+    Switch(SwitchArgs),
+    /// Switch to a branch or commit, optionally creating it. Like `git checkout`.
+    Checkout(CheckoutArgs),
+    /// Show changes between commits, the index, and the worktree. Like `git diff`.
+    Diff(DiffArgs),
+    /// Show an object (commit, tag, tree, or blob) with its diff. Like `git show`.
+    Show(ShowArgs),
     /// Restore tracked paths from the current index.
     Restore(RestoreArgs),
     /// Serve one stateful Git receive-pack session over stdin/stdout.
@@ -147,6 +160,84 @@ struct RestoreArgs {
 }
 
 #[derive(Args)]
+struct BranchArgs {
+    /// Delete a branch (must be fully merged unless forced). Like `git branch -d`.
+    #[arg(short = 'd', long = "delete")]
+    delete: bool,
+    /// Force-delete a branch even if unmerged. Like `git branch -D`.
+    #[arg(short = 'D')]
+    delete_force: bool,
+    /// Rename a branch: `<old> <new>`. Like `git branch -m`.
+    #[arg(short = 'm', long = "move")]
+    rename: bool,
+    /// Force create/rename over an existing branch. Like `git branch -f`.
+    #[arg(short = 'f', long = "force")]
+    force: bool,
+    /// Show the tip commit id and subject alongside each branch.
+    #[arg(short = 'v', long = "verbose")]
+    verbose: bool,
+    /// Branch names / start-point. Absent → list; one → create; two → create-at or rename.
+    names: Vec<String>,
+}
+
+#[derive(Args)]
+struct TagArgs {
+    /// Create an annotated tag object (requires `-m`). Like `git tag -a`.
+    #[arg(short = 'a', long = "annotate")]
+    annotate: bool,
+    /// Annotation message. Its presence implies an annotated tag.
+    #[arg(short = 'm', long = "message")]
+    message: Option<String>,
+    /// Delete the named tags. Like `git tag -d`.
+    #[arg(short = 'd', long = "delete")]
+    delete: bool,
+    /// Replace an existing tag with the same name. Like `git tag -f`.
+    #[arg(short = 'f', long = "force")]
+    force: bool,
+    /// List tags (default when no name is given). Like `git tag -l`.
+    #[arg(short = 'l', long = "list")]
+    list: bool,
+    /// When listing, print the first line of each tag's annotation. Like `git tag -n`.
+    #[arg(short = 'n')]
+    show_annotation: bool,
+    /// Tag name and optional target revision (defaults to HEAD).
+    names: Vec<String>,
+}
+
+#[derive(Args)]
+struct SwitchArgs {
+    /// Create a new branch at the current HEAD before switching. Like `git switch -c`.
+    #[arg(short = 'c', long = "create")]
+    create: bool,
+    /// Branch name, commit, or tag to switch to.
+    target: String,
+}
+
+#[derive(Args)]
+struct CheckoutArgs {
+    /// Create a new branch at the current HEAD before switching. Like `git checkout -b`.
+    #[arg(short = 'b')]
+    create: bool,
+    /// Branch name, commit, or tag to check out.
+    target: String,
+}
+
+#[derive(Args)]
+struct DiffArgs {
+    /// Compare the staged index against HEAD instead of the worktree.
+    #[arg(long = "cached", visible_alias = "staged")]
+    cached: bool,
+    /// Optional revisions: none (worktree/index), or two trees to compare.
+    revs: Vec<String>,
+}
+
+#[derive(Args)]
+struct ShowArgs {
+    /// Object to show (commit, tag, tree, or blob). Defaults to HEAD.
+    object: Option<String>,
+}
+
+#[derive(Args)]
 struct ReceivePackArgs {
     /// Exact bare repository/git directory supplied by Git's transport.
     git_dir: PathBuf,
@@ -184,6 +275,12 @@ fn run() -> Result<()> {
         Command::WriteTree => cmd_write_tree(&cli),
         Command::Commit(args) => cmd_commit(&cli, args),
         Command::CheckoutTree(args) => cmd_checkout_tree(&cli, args),
+        Command::Branch(args) => cmd_branch(&cli, args),
+        Command::Tag(args) => cmd_tag(&cli, args),
+        Command::Switch(args) => cmd_switch_cli(&cli, args),
+        Command::Checkout(args) => cmd_checkout(&cli, args),
+        Command::Diff(args) => cmd_diff_cli(&cli, args),
+        Command::Show(args) => cmd_show_cli(&cli, args),
         Command::Restore(args) => cmd_restore(&cli, args),
         Command::ReceivePack(args) => cmd_receive_pack(args),
         Command::UploadPack(args) => cmd_upload_pack(args),
@@ -513,15 +610,157 @@ fn cmd_write_tree(cli: &Cli) -> Result<()> {
 fn cmd_commit(cli: &Cli, args: &CommitArgs) -> Result<()> {
     let repo = Repository::discover(&cli.repo)
         .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
-    let (name, email) = git_identity(repo.git_dir())?;
+    let signature = current_signature(repo.git_dir())?;
+    let oid = repo.commit_index(&args.message, signature.clone(), signature)?;
+    println!("{oid}");
+    Ok(())
+}
+
+/// Build a [`Signature`] for the configured identity stamped at the current
+/// wall-clock time in UTC. Shared by `commit`, `branch`, and `tag` handlers.
+fn current_signature(git_dir: &std::path::Path) -> Result<Signature> {
+    let (name, email) = git_identity(git_dir)?;
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .context("system clock is before unix epoch")?
         .as_secs();
     let raw = format!("{name} <{email}> {seconds} +0000");
-    let signature = Signature::parse(&raw, "commit")?;
-    let oid = repo.commit_index(&args.message, signature.clone(), signature)?;
-    println!("{oid}");
+    Ok(Signature::parse(&raw, "commit")?)
+}
+
+fn cmd_branch(cli: &Cli, args: &BranchArgs) -> Result<()> {
+    let repo = Repository::discover(&cli.repo)
+        .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
+    let names: Vec<&str> = args.names.iter().map(String::as_str).collect();
+    let delete = args.delete || args.delete_force;
+
+    let op = if delete {
+        if names.is_empty() {
+            bail!("branch -d/-D requires at least one branch name");
+        }
+        BranchOp::Delete {
+            names,
+            force: args.delete_force,
+        }
+    } else if args.rename {
+        match names.as_slice() {
+            [new] => {
+                // `git branch -m <new>` renames the current branch.
+                let current = match repo.refs().read_head()? {
+                    rit::RefTarget::Symbolic(refname) => refname
+                        .strip_prefix("refs/heads/")
+                        .unwrap_or(&refname)
+                        .to_string(),
+                    rit::RefTarget::Direct(_) => {
+                        bail!("branch -m with one argument requires being on a branch (HEAD is detached)")
+                    }
+                };
+                let sig = current_signature(repo.git_dir())?;
+                return rit::cmd_branch_rename(&repo, &current, new, args.force, &sig);
+            }
+            [old, new] => BranchOp::Rename {
+                old,
+                new,
+                force: args.force,
+            },
+            _ => bail!("branch -m requires <old> <new> (or <new> to rename the current branch)"),
+        }
+    } else if names.is_empty() {
+        BranchOp::List {
+            verbose: args.verbose,
+        }
+    } else {
+        BranchOp::Create {
+            name: names[0],
+            start: names.get(1).copied(),
+            force: args.force,
+        }
+    };
+
+    let sig = current_signature(repo.git_dir())?;
+    dispatch_branch(&repo, op, &sig)
+}
+
+fn cmd_tag(cli: &Cli, args: &TagArgs) -> Result<()> {
+    let repo = Repository::discover(&cli.repo)
+        .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
+    let names: Vec<&str> = args.names.iter().map(String::as_str).collect();
+
+    let op = if args.delete {
+        if names.is_empty() {
+            bail!("tag -d requires at least one tag name");
+        }
+        TagOp::Delete { names }
+    } else if args.list || names.is_empty() {
+        TagOp::List {
+            show_annotation: args.show_annotation,
+        }
+    } else if args.annotate || args.message.is_some() {
+        let message = args
+            .message
+            .as_deref()
+            .context("annotated tag requires a message (-m)")?;
+        TagOp::CreateAnnotated {
+            name: names[0],
+            target: names.get(1).copied(),
+            message,
+            force: args.force,
+        }
+    } else {
+        TagOp::CreateLightweight {
+            name: names[0],
+            target: names.get(1).copied(),
+            force: args.force,
+        }
+    };
+
+    let sig = current_signature(repo.git_dir())?;
+    dispatch_tag(&repo, op, Some(&sig))
+}
+
+fn cmd_switch_cli(cli: &Cli, args: &SwitchArgs) -> Result<()> {
+    let repo = Repository::discover(&cli.repo)
+        .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
+    let result = cmd_switch(&repo, &args.target, args.create)?;
+    report_switch(&result);
+    Ok(())
+}
+
+fn cmd_checkout(cli: &Cli, args: &CheckoutArgs) -> Result<()> {
+    let repo = Repository::discover(&cli.repo)
+        .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
+    let result = cmd_switch(&repo, &args.target, args.create)?;
+    report_switch(&result);
+    Ok(())
+}
+
+/// Emit a `git switch`-style confirmation line for a completed switch.
+fn report_switch(result: &rit::SwitchResult) {
+    match &result.head {
+        SwitchHead::Symbolic(refname) => {
+            let short = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+            println!("Switched to branch '{short}'");
+        }
+        SwitchHead::Detached(oid) => {
+            println!("HEAD is now at {}", &oid.to_hex()[..7]);
+        }
+    }
+}
+
+fn cmd_diff_cli(cli: &Cli, args: &DiffArgs) -> Result<()> {
+    let repo = Repository::discover(&cli.repo)
+        .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
+    let revs: Vec<&str> = args.revs.iter().map(String::as_str).collect();
+    let mut out = std::io::stdout().lock();
+    cmd_diff(&repo, args.cached, &revs, &mut out)?;
+    Ok(())
+}
+
+fn cmd_show_cli(cli: &Cli, args: &ShowArgs) -> Result<()> {
+    let repo = Repository::discover(&cli.repo)
+        .with_context(|| format!("opening repo at {}", cli.repo.display()))?;
+    let mut out = std::io::stdout().lock();
+    cmd_show(&repo, args.object.as_deref(), &mut out)?;
     Ok(())
 }
 

@@ -17,7 +17,7 @@ pub(crate) async fn next_repo_number(
     repo_id: Uuid,
     table: &'static str,
 ) -> Result<i32> {
-    debug_assert!(matches!(table, "issues" | "pull_requests"));
+    debug_assert!(matches!(table, "issues" | "pull_requests" | "milestones"));
     // Serialize allocation for this repo.
     sqlx::query("SELECT id FROM repositories WHERE id = $1 FOR UPDATE")
         .bind(repo_id)

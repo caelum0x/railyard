@@ -5,7 +5,9 @@
 //! - a **forge JSON API** (`/api/...`) for organizations and repositories,
 //!   backed by Postgres via `rithub-core`;
 //! - a **dumb-HTTP git server** (`/{owner}/{repo}.git/...`) that hosts the
-//!   `rit`-backed bare repositories, so a stock `git clone`/`git fetch` works.
+//!   `rit`-backed bare repositories, so a stock `git clone`/`git fetch` works;
+//! - a **durable job worker** (tokio task) consuming `outbox_jobs` with
+//!   retry + backoff for webhooks, notifications, audit, and email.
 //!
 //! Configuration is via environment (fail-closed on missing required values):
 //!
@@ -14,6 +16,11 @@
 //! | `DATABASE_URL` | Postgres connection string | *required* |
 //! | `RITHUB_DATA_ROOT` | directory that holds bare repos | `./rithub-data` |
 //! | `RITHUB_BIND` | listen address | `127.0.0.1:8080` |
+//! | `SMTP_HOST` | outbound SMTP hostname | *(email disabled if absent)* |
+//! | `SMTP_PORT` | SMTP port | `587` |
+//! | `SMTP_USER` | SMTP username | *(required when SMTP_HOST is set)* |
+//! | `SMTP_PASS` | SMTP password | *(required when SMTP_HOST is set)* |
+//! | `SMTP_FROM` | From address | `rithub@<SMTP_HOST>` |
 
 mod api;
 mod audit;
@@ -22,6 +29,9 @@ mod collab_api;
 mod error;
 mod git_http;
 mod governance_api;
+mod jobs;
+mod jobs_api;
+mod milestones_api;
 mod releases_api;
 mod ssh;
 mod state;
@@ -32,17 +42,16 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use rithub_core::PgStore;
 use rithub_git::RepoHost;
 use sqlx::postgres::PgPoolOptions;
 use tower_http::trace::TraceLayer;
 
-use crate::state::AppState;
+use crate::state::{AppState, SmtpConfig};
 
-/// Max git request body (a pushed pack). Matches `rit`'s receive-pack pack cap
-/// so the transport buffer and the receiver agree; `rit` enforces the real limit.
+/// Max git request body (a pushed pack).
 const MAX_GIT_BODY_BYTES: usize = 1024 * 1024 * 1024;
 
 #[tokio::main]
@@ -59,7 +68,6 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&data_root)
         .with_context(|| format!("creating data root {}", data_root.display()))?;
 
-    // Connect and bring the schema up to date (embedded migrations).
     let pool = PgPoolOptions::new()
         .max_connections(8)
         .connect(&database_url)
@@ -70,17 +78,48 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("running database migrations")?;
 
-    let state = AppState::new(PgStore::new(pool), RepoHost::new(&data_root));
+    // Optional SMTP: configured when SMTP_HOST is present. Misconfigured SMTP
+    // (bad creds, unreachable host) is non-fatal at startup — email jobs will
+    // fail and retry until the config is corrected.
+    let smtp_config = SmtpConfig::from_env();
+    let mailer = smtp_config
+        .as_ref()
+        .and_then(|c| {
+            c.build_transport()
+                .inspect_err(|e| {
+                    tracing::warn!(error = %e, "SMTP transport build failed — email disabled");
+                })
+                .ok()
+        });
+    if smtp_config.is_some() && mailer.is_some() {
+        tracing::info!(host = %smtp_config.as_ref().unwrap().host, "SMTP transport ready");
+    } else if smtp_config.is_some() {
+        tracing::warn!("SMTP_HOST is set but transport build failed — check SMTP_* vars");
+    } else {
+        tracing::info!("SMTP not configured (SMTP_HOST unset) — email notifications disabled");
+    }
 
-    // Optional SSH transport: enabled when RITHUB_SSH_BIND is set. It serves the
-    // same repos with the same RBAC + protected-branch enforcement as HTTP.
+    let state = AppState::new(PgStore::new(pool), RepoHost::new(&data_root), mailer);
+
+    // SSH transport: enabled when RITHUB_SSH_BIND is set.
+    // The host key is persisted at $RITHUB_DATA_ROOT/ssh_host_key (ed25519,
+    // generated on first boot) so clients can pin the server's fingerprint.
     if let Ok(ssh_bind) = std::env::var("RITHUB_SSH_BIND") {
         let rit_bin = std::env::var("RITHUB_RIT_BIN").unwrap_or_else(|_| "rit".to_string());
         let ssh_state = state.clone();
+        let host_key_path = data_root.join("ssh_host_key");
         tokio::spawn(async move {
-            if let Err(error) = ssh::serve(ssh_state, ssh_bind, rit_bin).await {
+            if let Err(error) = ssh::serve(ssh_state, ssh_bind, rit_bin, &host_key_path).await {
                 tracing::error!(%error, "SSH transport stopped");
             }
+        });
+    }
+
+    // Durable job worker.
+    {
+        let worker_state = state.clone();
+        tokio::spawn(async move {
+            jobs::run_worker(worker_state).await;
         });
     }
 
@@ -98,10 +137,6 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Assemble the router. The forge API is namespaced under `/api`; the dumb git
-/// protocol is served by a catch-all under `/{owner}/{repo}/...`. axum's router
-/// gives static segments (`/api`, `/healthz`) precedence over the catch-all, so
-/// the two coexist without ambiguity.
 fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
@@ -111,13 +146,33 @@ fn build_router(state: AppState) -> Router {
             "/api/orgs/{org}/repos",
             post(api::create_repo).get(api::list_repos),
         )
-        .route("/api/orgs/{org}/repos/{repo}", get(api::get_repo))
+        .route(
+            "/api/orgs/{org}/repos/{repo}",
+            get(api::get_repo).patch(api::update_repo),
+        )
         .route("/api/orgs/{org}/repos/{repo}/seed", post(api::seed_repo))
         .route("/api/orgs/{org}/repos/{repo}/forks", post(api::create_fork))
         .route("/api/orgs/{org}/members", post(api::add_member))
         .route("/api/users", post(api::create_user))
         .route("/api/users/{username}/keys", post(api::add_ssh_key))
         .route("/api/tokens", post(api::create_token))
+        .route(
+            "/api/users/{username}/tokens",
+            get(api::list_tokens),
+        )
+        .route(
+            "/api/users/{username}/tokens/{token_id}",
+            delete(api::revoke_token),
+        )
+        // --- deploy keys ---
+        .route(
+            "/api/orgs/{org}/repos/{repo}/keys",
+            post(api::create_deploy_key).get(api::list_deploy_keys),
+        )
+        .route(
+            "/api/orgs/{org}/repos/{repo}/keys/{key_id}",
+            delete(api::delete_deploy_key),
+        )
         // --- collaboration: issues ---
         .route(
             "/api/orgs/{org}/repos/{repo}/issues",
@@ -125,7 +180,7 @@ fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/orgs/{org}/repos/{repo}/issues/{number}",
-            get(collab_api::get_issue),
+            get(collab_api::get_issue).patch(collab_api::update_issue),
         )
         .route(
             "/api/orgs/{org}/repos/{repo}/issues/{number}/close",
@@ -154,7 +209,7 @@ fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/orgs/{org}/repos/{repo}/pulls/{number}",
-            get(collab_api::get_pr),
+            get(collab_api::get_pr).patch(collab_api::update_pr),
         )
         .route(
             "/api/orgs/{org}/repos/{repo}/pulls/{number}/diff",
@@ -193,6 +248,17 @@ fn build_router(state: AppState) -> Router {
         .route(
             "/api/orgs/{org}/repos/{repo}/hooks",
             post(collab_api::create_hook).get(collab_api::list_hooks),
+        )
+        // --- milestones ---
+        .route(
+            "/api/orgs/{org}/repos/{repo}/milestones",
+            post(milestones_api::create_milestone).get(milestones_api::list_milestones),
+        )
+        .route(
+            "/api/orgs/{org}/repos/{repo}/milestones/{number}",
+            get(milestones_api::get_milestone)
+                .patch(milestones_api::update_milestone)
+                .delete(milestones_api::delete_milestone),
         )
         // --- releases (JSON API) ---
         .route(
@@ -236,6 +302,12 @@ fn build_router(state: AppState) -> Router {
             "/api/orgs/{org}/teams/{team}/repos",
             post(governance_api::grant_team_repo),
         )
+        // --- admin: job outbox ---
+        .route("/api/admin/jobs", get(jobs_api::list_jobs))
+        .route(
+            "/api/admin/jobs/{id}/redeliver",
+            post(jobs_api::redeliver_job),
+        )
         // Git smart + dumb HTTP: one catch-all per method.
         .route(
             "/{owner}/{repo}/{*path}",
@@ -248,7 +320,6 @@ fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Liveness probe.
 async fn healthz() -> &'static str {
     "ok"
 }
@@ -263,7 +334,6 @@ fn init_tracing() {
         .init();
 }
 
-/// Resolve on Ctrl-C so the server shuts down cleanly.
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
     tracing::info!("shutdown signal received");

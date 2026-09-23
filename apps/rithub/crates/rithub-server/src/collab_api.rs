@@ -6,20 +6,130 @@
 //! username in the request body (resolved to a user id). Wiring these to the
 //! authenticated Basic-auth identity is a later refinement; the plumbing is real
 //! today.
+//!
+//! All side effects (webhook delivery, notification fan-out, audit appends,
+//! email) are enqueued into `outbox_jobs` rather than executed inline. This
+//! keeps slow or failing receivers off the hot request path and gives durable
+//! retries with backoff via the `forge-jobs` worker.
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use rithub_core::{
-    Issue, IssueState, IssueStore, NewIssue, NewPullRequest, NewReviewComment, NewWebhook,
-    NotifyStore, PrState, PullRequest, PullRequestStore, Repository, Review, ReviewState,
-    ReviewStore, StatusStore, Store, Webhook, WebhookStore,
+    Issue, IssueState, IssueStore, MilestoneStore, NewIssue, NewPullRequest, NewReviewComment,
+    NewWebhook, OutboxStore, PrState, PullRequest, PullRequestStore, Repository, Review,
+    ReviewState, ReviewStore, StatusStore, Store, UpdateIssue, UpdatePr, Webhook, WebhookStore,
+    KIND_AUDIT_APPEND, KIND_EMAIL_NOTIFICATION, KIND_NOTIFICATION_FAN_OUT, KIND_WEBHOOK_DELIVERY,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::state::AppState;
-use crate::webhooks::dispatch;
+
+// ---------------------------------------------------------------------------
+// Outbox helpers: enqueue side effects without failing the request path.
+// ---------------------------------------------------------------------------
+
+/// Enqueue a webhook delivery job. Non-fatal: a failed enqueue is logged but
+/// never propagates back to the caller.
+fn enqueue_webhook(state: &AppState, repo_id: Uuid, event: &'static str, event_payload: serde_json::Value) {
+    let state = state.clone();
+    tokio::spawn(async move {
+        let payload = serde_json::json!({
+            "repo_id": repo_id,
+            "event": event,
+            "event_payload": event_payload,
+        });
+        state.store.enqueue_job(KIND_WEBHOOK_DELIVERY, payload)
+            .await
+            .inspect_err(|e| tracing::warn!(error = %e, "failed to enqueue webhook job"))
+            .ok();
+    });
+}
+
+/// Enqueue an in-app notification fan-out job.
+fn enqueue_notify(
+    state: &AppState,
+    repo_id: Uuid,
+    org_id: Uuid,
+    actor_id: Option<Uuid>,
+    kind: &'static str,
+    title: String,
+    link: Option<String>,
+) {
+    let state = state.clone();
+    tokio::spawn(async move {
+        let payload = serde_json::json!({
+            "repo_id": repo_id,
+            "org_id": org_id,
+            "actor_id": actor_id,
+            "kind": kind,
+            "title": title,
+            "link": link,
+        });
+        state.store.enqueue_job(KIND_NOTIFICATION_FAN_OUT, payload)
+            .await
+            .inspect_err(|e| tracing::warn!(error = %e, "failed to enqueue notification job"))
+            .ok();
+    });
+}
+
+/// Enqueue an email notification job (audience-scoped, same payload shape as
+/// `notification_fan_out` but routed to SMTP instead of in-app).
+fn enqueue_email(
+    state: &AppState,
+    repo_id: Uuid,
+    org_id: Uuid,
+    actor_id: Option<Uuid>,
+    subject: String,
+    body_text: String,
+) {
+    let state = state.clone();
+    tokio::spawn(async move {
+        let payload = serde_json::json!({
+            "repo_id": repo_id,
+            "org_id": org_id,
+            "actor_id": actor_id,
+            "subject": subject,
+            "body_text": body_text,
+        });
+        state.store.enqueue_job(KIND_EMAIL_NOTIFICATION, payload)
+            .await
+            .inspect_err(|e| tracing::warn!(error = %e, "failed to enqueue email job"))
+            .ok();
+    });
+}
+
+/// Enqueue an audit append job.
+fn enqueue_audit(
+    state: &AppState,
+    repo_id: Option<Uuid>,
+    actor_id: Option<Uuid>,
+    actor_name: &str,
+    action: &str,
+    target: Option<&str>,
+    detail: Option<&str>,
+) {
+    let state = state.clone();
+    let actor_name = actor_name.to_string();
+    let action = action.to_string();
+    let target = target.map(|s| s.to_string());
+    let detail = detail.map(|s| s.to_string());
+    tokio::spawn(async move {
+        let payload = serde_json::json!({
+            "repo_id": repo_id,
+            "actor_id": actor_id,
+            "actor_name": actor_name,
+            "action": action,
+            "target": target,
+            "detail": detail,
+        });
+        state.store.enqueue_job(KIND_AUDIT_APPEND, payload)
+            .await
+            .inspect_err(|e| tracing::warn!(error = %e, "failed to enqueue audit job"))
+            .ok();
+    });
+}
 
 // --- shared helpers ---------------------------------------------------------
 
@@ -98,7 +208,7 @@ pub async fn create_issue(
             },
         )
         .await?;
-    dispatch(
+    enqueue_webhook(
         &state,
         meta.id,
         "issue.opened",
@@ -107,6 +217,23 @@ pub async fn create_issue(
             "repo": format!("{org}/{repo}"),
             "issue": { "number": issue.number, "title": issue.title },
         }),
+    );
+    enqueue_notify(
+        &state,
+        meta.id,
+        meta.org_id,
+        author,
+        "issue.opened",
+        format!("Issue #{} opened: {}", issue.number, issue.title),
+        Some(format!("/{org}/{repo}/issues/{}", issue.number)),
+    );
+    enqueue_email(
+        &state,
+        meta.id,
+        meta.org_id,
+        author,
+        format!("[{org}/{repo}] Issue #{} opened: {}", issue.number, issue.title),
+        format!("A new issue was opened in {org}/{repo}.\n\n#{}: {}\n", issue.number, issue.title),
     );
     Ok(Json(issue))
 }
@@ -249,6 +376,111 @@ pub async fn assign_issue(
     Ok(Json(serde_json::json!({ "assignee": user.username })))
 }
 
+// --- PATCH /issues/{number} — update issue ----------------------------------
+
+/// Update request for an issue. All fields are optional.
+#[derive(Debug, Deserialize)]
+pub struct UpdateIssueInput {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    /// State transition: `"open"` or `"closed"`.
+    #[serde(default)]
+    pub state: Option<String>,
+    /// Milestone number to assign, or `0` to clear the milestone.
+    #[serde(default)]
+    pub milestone: Option<i32>,
+    /// Replaces the full assignee list when provided.
+    #[serde(default)]
+    pub assignees: Option<Vec<String>>,
+    /// Replaces the full label list when provided. Each entry is `{ label, color? }`.
+    #[serde(default)]
+    pub labels: Option<Vec<LabelInput>>,
+}
+
+pub async fn update_issue(
+    State(state): State<AppState>,
+    Path((org, repo, number)): Path<(String, String, i32)>,
+    Json(input): Json<UpdateIssueInput>,
+) -> Result<Json<IssueDetail>, AppError> {
+    let meta = repo_meta(&state, &org, &repo).await?;
+
+    // Resolve optional milestone number → id.
+    let (set_milestone, milestone_id) = match input.milestone {
+        None => (false, None),
+        Some(0) => (true, None), // explicit clear
+        Some(n) => {
+            let mid = state.store.get_milestone_id(meta.id, n).await?;
+            (true, Some(mid))
+        }
+    };
+
+    // Update core fields (title, body, milestone).
+    state
+        .store
+        .update_issue(
+            meta.id,
+            number,
+            &UpdateIssue {
+                title: input.title,
+                body: input.body,
+                set_milestone,
+                milestone_id,
+            },
+        )
+        .await?;
+
+    // State transition (close / reopen) — uses the existing stamped path.
+    if let Some(ref s) = input.state {
+        let target = IssueState::parse(s);
+        state.store.set_issue_state(meta.id, number, target).await?;
+    }
+
+    // Replace assignees if the caller provided a list.
+    if let Some(ref usernames) = input.assignees {
+        let mut ids = Vec::with_capacity(usernames.len());
+        for name in usernames {
+            ids.push(state.store.get_user(name).await?.id);
+        }
+        let issue = state.store.get_issue(meta.id, number).await?;
+        state.store.replace_issue_assignees(issue.id, &ids).await?;
+    }
+
+    // Replace labels if the caller provided a list.
+    if let Some(ref label_inputs) = input.labels {
+        let issue = state.store.get_issue(meta.id, number).await?;
+        let mut label_ids = Vec::with_capacity(label_inputs.len());
+        for li in label_inputs {
+            let color = li.color.as_deref().unwrap_or("cccccc");
+            let label = state.store.create_label(meta.id, &li.label, color).await?;
+            label_ids.push(label.id);
+        }
+        state
+            .store
+            .replace_issue_labels(issue.id, &label_ids)
+            .await?;
+    }
+
+    // Re-fetch the canonical view.
+    let issue = state.store.get_issue(meta.id, number).await?;
+    let labels = state.store.list_issue_labels(issue.id).await?;
+    let assignees = state
+        .store
+        .list_issue_assignees(issue.id)
+        .await?
+        .into_iter()
+        .map(|u| u.username)
+        .collect();
+    let comment_count = state.store.list_issue_comments(issue.id).await?.len();
+    Ok(Json(IssueDetail {
+        issue,
+        labels: labels.into_iter().map(|l| l.name).collect(),
+        assignees,
+        comment_count,
+    }))
+}
+
 // --- pull requests ----------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -334,7 +566,7 @@ pub async fn create_pr(
             .import_commit(&ho, &hn, &org, &repo, head_oid, &format!("refs/pull/{}/head", pr.number))
             .map_err(AppError::from)?;
     }
-    dispatch(
+    enqueue_webhook(
         &state,
         meta.id,
         "pr.opened",
@@ -345,17 +577,29 @@ pub async fn create_pr(
                               "head": pr.head_branch, "base": pr.base_branch },
         }),
     );
-    let _ = state
-        .store
-        .notify_repo_audience(
-            meta.id,
-            meta.org_id,
-            author,
-            "pr.opened",
-            &format!("PR #{} opened: {}", pr.number, pr.title),
-            Some(&format!("/{org}/{repo}/pulls/{}", pr.number)),
-        )
-        .await;
+    enqueue_notify(
+        &state,
+        meta.id,
+        meta.org_id,
+        author,
+        "pr.opened",
+        format!("PR #{} opened: {}", pr.number, pr.title),
+        Some(format!("/{org}/{repo}/pulls/{}", pr.number)),
+    );
+    enqueue_email(
+        &state,
+        meta.id,
+        meta.org_id,
+        author,
+        format!("[{org}/{repo}] PR #{} opened: {}", pr.number, pr.title),
+        format!(
+            "A new pull request was opened in {org}/{repo}.\n\nPR #{}: {}\n{head} → {base}\n",
+            pr.number,
+            pr.title,
+            head = pr.head_branch,
+            base = pr.base_branch,
+        ),
+    );
     Ok(Json(pr))
 }
 
@@ -541,6 +785,70 @@ pub async fn close_pr(
     Ok(Json(state.store.close_pr(meta.id, number).await?))
 }
 
+// --- PATCH /pulls/{number} — update PR -------------------------------------
+
+/// Update request for a pull request. All fields optional.
+#[derive(Debug, Deserialize)]
+pub struct UpdatePrInput {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    /// New base branch (changes the merge target; only meaningful while open).
+    #[serde(default)]
+    pub base: Option<String>,
+    /// State transition: `"open"` (reopen closed) or `"closed"` (close open).
+    #[serde(default)]
+    pub state: Option<String>,
+    /// Milestone number to assign, or `0` to clear.
+    #[serde(default)]
+    pub milestone: Option<i32>,
+}
+
+pub async fn update_pr(
+    State(state): State<AppState>,
+    Path((org, repo, number)): Path<(String, String, i32)>,
+    Json(input): Json<UpdatePrInput>,
+) -> Result<Json<PullRequest>, AppError> {
+    let meta = repo_meta(&state, &org, &repo).await?;
+
+    // Resolve optional milestone number → id.
+    let (set_milestone, milestone_id) = match input.milestone {
+        None => (false, None),
+        Some(0) => (true, None),
+        Some(n) => {
+            let mid = state.store.get_milestone_id(meta.id, n).await?;
+            (true, Some(mid))
+        }
+    };
+
+    // Update metadata fields.
+    state
+        .store
+        .update_pr(
+            meta.id,
+            number,
+            &UpdatePr {
+                title: input.title,
+                body: input.body,
+                base: input.base,
+                state: None, // handled below
+                set_milestone,
+                milestone_id,
+            },
+        )
+        .await?;
+
+    // State transition — cannot change a merged PR; reopen only works on closed.
+    let pr = match input.state.as_deref() {
+        Some("closed") => state.store.close_pr(meta.id, number).await?,
+        Some("open") => state.store.reopen_pr(meta.id, number).await?,
+        _ => state.store.get_pr(meta.id, number).await?,
+    };
+
+    Ok(Json(pr))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct MergeInput {
     #[serde(default)]
@@ -628,29 +936,38 @@ pub async fn merge_pr(
         .mark_merged(meta.id, number, &result.merge_commit_sha, merger)
         .await?;
 
-    crate::audit::record(
+    let merger_name = input.merger.as_deref().unwrap_or("rithub").to_string();
+    enqueue_audit(
         &state,
         Some(meta.id),
         merger,
-        input.merger.as_deref().unwrap_or("rithub"),
+        &merger_name,
         "pr.merged",
         Some(&format!("#{number}")),
         Some(&format!("{} into {}", pr.head_branch, pr.base_branch)),
-    )
-    .await;
-    let _ = state
-        .store
-        .notify_repo_audience(
-            meta.id,
-            meta.org_id,
-            merger,
-            "pr.merged",
-            &format!("PR #{number} merged: {}", pr.title),
-            Some(&format!("/{org}/{repo}/pulls/{number}")),
-        )
-        .await;
-
-    dispatch(
+    );
+    enqueue_notify(
+        &state,
+        meta.id,
+        meta.org_id,
+        merger,
+        "pr.merged",
+        format!("PR #{number} merged: {}", pr.title),
+        Some(format!("/{org}/{repo}/pulls/{number}")),
+    );
+    enqueue_email(
+        &state,
+        meta.id,
+        meta.org_id,
+        merger,
+        format!("[{org}/{repo}] PR #{number} merged: {}", pr.title),
+        format!(
+            "Pull request #{number} was merged into {base} in {org}/{repo}.\n\nMerge commit: {sha}\n",
+            base = pr.base_branch,
+            sha = result.merge_commit_sha,
+        ),
+    );
+    enqueue_webhook(
         &state,
         meta.id,
         "pr.merged",
@@ -705,18 +1022,28 @@ pub async fn create_review(
             &input.comments,
         )
         .await?;
-    // Notify the PR author (and audience) that a review was submitted.
-    let _ = state
-        .store
-        .notify_repo_audience(
-            meta.id,
-            meta.org_id,
-            reviewer,
-            "review",
-            &format!("Review ({}) on PR #{number}", review_state.as_str()),
-            Some(&format!("/{org}/{repo}/pulls/{number}")),
-        )
-        .await;
+    // Fan out in-app notification + email for the review event.
+    let review_title = format!("Review ({}) on PR #{number}", review_state.as_str());
+    enqueue_notify(
+        &state,
+        meta.id,
+        meta.org_id,
+        reviewer,
+        "review",
+        review_title.clone(),
+        Some(format!("/{org}/{repo}/pulls/{number}")),
+    );
+    enqueue_email(
+        &state,
+        meta.id,
+        meta.org_id,
+        reviewer,
+        format!("[{org}/{repo}] {review_title}"),
+        format!(
+            "A review was submitted on PR #{number} in {org}/{repo}.\n\nState: {}\n",
+            review_state.as_str(),
+        ),
+    );
     Ok(Json(review))
 }
 
@@ -774,7 +1101,7 @@ pub async fn set_protection(
             &input.required_checks,
         )
         .await?;
-    crate::audit::record(
+    enqueue_audit(
         &state,
         Some(meta.id),
         None,
@@ -787,8 +1114,7 @@ pub async fn set_protection(
             input.block_direct_push,
             input.required_checks.join(",")
         )),
-    )
-    .await;
+    );
     Ok(Json(serde_json::to_value(protection).unwrap()))
 }
 

@@ -195,7 +195,7 @@ pub fn read_session(headers: &HeaderMap) -> Option<Session> {
 pub async fn session_user(state: &AppState, headers: &HeaderMap) -> Option<User> {
     let session = read_session(headers)?;
     match state.store.find_user_by_token(&hash_token(&session.token)).await {
-        Ok(Some(user)) if user.username == session.username => Some(user),
+        Ok(Some((user, _token))) if user.username == session.username => Some(user),
         _ => None,
     }
 }
@@ -253,7 +253,7 @@ async fn login_submit(State(state): State<AppState>, Form(form): Form<LoginForm>
     // Validate the token really belongs to the username before setting a cookie.
     let valid = matches!(
         state.store.find_user_by_token(&hash_token(&form.token)).await,
-        Ok(Some(user)) if user.username == form.username
+        Ok(Some((user, _))) if user.username == form.username
     );
     if !valid {
         let body = "<div class=\"card\" style=\"max-width:420px\"><h1>Sign in</h1>\

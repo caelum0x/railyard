@@ -238,6 +238,51 @@ impl Refs {
         result
     }
 
+    /// Append one reflog entry to `.git/logs/<refname>` and, when this ref is
+    /// HEAD's current symbolic target, also to `.git/logs/HEAD`.
+    ///
+    /// `old` is `None` when the ref is being created (the all-zeros null OID is
+    /// written in that position).  Both log files are created with their parent
+    /// directories on first use; the write is fsynced before returning.
+    ///
+    /// This is intentionally a low-level primitive — callers supply the
+    /// identity and message so higher-level operations (commit, branch-create,
+    /// branch-rename, …) can record the appropriate context.
+    pub fn append_reflog(
+        &self,
+        refname: &str,
+        old: Option<ObjectId>,
+        new: ObjectId,
+        name: &str,
+        email: &str,
+        timestamp: i64,
+        tz: &str,
+        message: &str,
+    ) -> Result<()> {
+        use crate::reflog::{append_reflog_file, log_path_for_ref, ReflogEntry, NULL_OID_HEX};
+        let entry = ReflogEntry {
+            old_oid: old
+                .map(|oid| oid.to_hex())
+                .unwrap_or_else(|| NULL_OID_HEX.to_string()),
+            new_oid: new.to_hex(),
+            name: name.to_string(),
+            email: email.to_string(),
+            timestamp,
+            tz: tz.to_string(),
+            message: message.to_string(),
+        };
+        // Always write to the ref's own log file.
+        append_reflog_file(&log_path_for_ref(&self.git_dir, refname), &entry)?;
+        // When HEAD is a symbolic ref pointing at this ref, also update logs/HEAD
+        // so that `git reflog` (which reads logs/HEAD) sees the same history.
+        if let Ok(RefTarget::Symbolic(head_target)) = self.read_head() {
+            if head_target == refname {
+                append_reflog_file(&log_path_for_ref(&self.git_dir, "HEAD"), &entry)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Parse `.git/packed-refs` into a name -> oid map (peel lines ignored).
     fn read_packed_refs(&self) -> Result<HashMap<String, ObjectId>> {
         let path = self.git_dir.join("packed-refs");
