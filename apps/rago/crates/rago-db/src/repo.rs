@@ -802,6 +802,38 @@ impl Db {
         rows.iter().map(mapping::wallet).collect()
     }
 
+    /// A page of a wallet's transaction ledger (credits/debits), newest first.
+    /// Reads the existing `wallet_transactions` store — the same rows the
+    /// top-up + draw-down paths write.
+    pub async fn wallet_transactions_for_wallet(
+        &self,
+        wallet_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<WalletTransaction>> {
+        let rows = sqlx::query(
+            "SELECT * FROM wallet_transactions WHERE wallet_id = $1 \
+             ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+        )
+        .bind(wallet_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(mapping::wallet_transaction).collect()
+    }
+
+    /// Total transactions for a wallet (for pagination metadata).
+    pub async fn count_wallet_transactions(&self, wallet_id: Uuid) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*)::bigint AS n FROM wallet_transactions WHERE wallet_id = $1",
+        )
+        .bind(wallet_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.get::<i64, _>("n"))
+    }
+
     pub async fn insert_wallet_transaction(&self, t: &WalletTransaction) -> Result<()> {
         sqlx::query(
             "INSERT INTO wallet_transactions (id, organization_id, wallet_id, transaction_type, status, \

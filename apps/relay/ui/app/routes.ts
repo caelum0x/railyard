@@ -188,6 +188,12 @@ export default [
     route("models", "routes/observability/models/route.tsx"),
   ]),
 
+  // Model catalog
+  route("models", "routes/models/route.tsx"),
+
+  // Usage / cost export
+  route("usage/export", "routes/usage/export/route.tsx"),
+
   // Optimization
   route(
     "optimization/supervised-fine-tuning/:job_id?",
@@ -199,6 +205,8 @@ export default [
 
   // Billing
   route("billing", "routes/billing/route.tsx"),
+  route("billing/settlements", "routes/billing/settlements/route.tsx"),
+  route("billing/keys", "routes/billing/keys/route.tsx"),
 
   // Config editor
   route("config", "routes/config/route.tsx"),

@@ -690,6 +690,43 @@ impl Db {
         Ok(out)
     }
 
+    /// A page of an organization's credit notes, newest-first — the unfiltered
+    /// `/credit_notes` index (Lago `CreditNotesQuery` with no scope).
+    pub async fn credit_notes_for_org(
+        &self,
+        org: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<CreditNote>> {
+        let rows = sqlx::query(
+            "SELECT id FROM credit_notes WHERE organization_id = $1 \
+             ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+        )
+        .bind(org)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            if let Some(cn) = self.find_credit_note(r.get::<Uuid, _>("id")).await? {
+                out.push(cn);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Total credit notes for an organization (for pagination metadata).
+    pub async fn count_credit_notes_for_org(&self, org: Uuid) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*)::bigint AS n FROM credit_notes WHERE organization_id = $1",
+        )
+        .bind(org)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.get::<i64, _>("n"))
+    }
+
     // ---- wallets ---------------------------------------------------------
 
     /// `Wallets::UpdateService` — update a wallet's name / expiration / priority.

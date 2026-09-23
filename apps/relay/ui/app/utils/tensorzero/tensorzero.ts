@@ -6,7 +6,12 @@ TODO(shuyangli): Figure out a way to generate the HTTP client, possibly from Sch
 
 import { z } from "zod";
 import { BaseTensorZeroClient } from "./base-client";
-import type { BillingSummary } from "~/types/billing";
+import type {
+  BillingSummary,
+  KeySpendSeries,
+  SettlementHistory,
+} from "~/types/billing";
+import type { CatalogSnapshot } from "~/types/catalog";
 import { ZodJsonValueSchema } from "~/utils/clickhouse/common";
 import { logger } from "~/utils/logger";
 import type {
@@ -562,6 +567,65 @@ export class TensorZeroClient extends BaseTensorZeroClient {
       this.handleHttpError({ message, response });
     }
     const envelope = (await response.json()) as { data: BillingSummary };
+    return envelope.data;
+  }
+
+  /**
+   * Gets the authenticated principal's detailed settlement-evidence history:
+   * one row per signed settlement receipt, newest first, each carrying the
+   * immutable receipt JSON for proof-of-payment drill-down.
+   * @param options.settlements - Number of settlement receipts to return.
+   * @returns A promise that resolves with the settlement history.
+   * @throws Error if the request fails.
+   */
+  async getBillingSettlements(options?: {
+    settlements?: number;
+  }): Promise<SettlementHistory> {
+    const searchParams = new URLSearchParams();
+    if (options?.settlements != null) {
+      searchParams.append("settlements", String(options.settlements));
+    }
+    const queryString = searchParams.toString();
+    const endpoint = `/relay/billing/settlements${queryString ? `?${queryString}` : ""}`;
+    const response = await this.fetch(endpoint, { method: "GET" });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    const envelope = (await response.json()) as { data: SettlementHistory };
+    return envelope.data;
+  }
+
+  /**
+   * Gets the authenticated principal's per-API-key spend over time. Spend is
+   * bucketed into UTC calendar days from the durable cost-event table and
+   * returned oldest-first so the dashboard can plot a trend.
+   * @returns A promise that resolves with the per-key spend series.
+   * @throws Error if the request fails.
+   */
+  async getBillingKeySpend(): Promise<KeySpendSeries> {
+    const response = await this.fetch("/relay/billing/keys", { method: "GET" });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    const envelope = (await response.json()) as { data: KeySpendSeries };
+    return envelope.data;
+  }
+
+  /**
+   * Gets the Relay model catalog snapshot: the configured models and providers
+   * with their capabilities and pricing.
+   * @returns A promise that resolves with the catalog snapshot.
+   * @throws Error if the request fails.
+   */
+  async getRelayCatalog(): Promise<CatalogSnapshot> {
+    const response = await this.fetch("/v1/relay/catalog", { method: "GET" });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    const envelope = (await response.json()) as { data: CatalogSnapshot };
     return envelope.data;
   }
 

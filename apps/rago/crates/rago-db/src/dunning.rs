@@ -396,6 +396,80 @@ impl Db {
             .map(|r| r.get::<Uuid, _>("invoice_id"))
             .collect())
     }
+
+    /// The dunning read surface: every finalized, payment-overdue invoice for an
+    /// org joined to its customer's dunning state (attempt count, last attempt,
+    /// exclusion, applied campaign). Newest-first, paginated. Ports what the
+    /// dunning dashboard shows — overdue invoices + per-customer campaign/attempt
+    /// status — over the same tables the dunning sweep reads.
+    pub async fn overdue_dunning_overview(
+        &self,
+        org: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<DunningOverviewRow>> {
+        let rows = sqlx::query(
+            "SELECT i.id AS invoice_id, i.number, i.currency, i.total_amount_cents, \
+                    i.payment_due_date, i.customer_id, \
+                    c.external_id, c.email, c.exclude_from_dunning_campaign, \
+                    c.applied_dunning_campaign_id, c.last_dunning_campaign_attempt_at, \
+                    c.dunning_currency_attempts \
+             FROM invoices i \
+             JOIN customers c ON c.id = i.customer_id \
+             WHERE i.organization_id = $1 AND i.payment_overdue = true AND i.status = 1 \
+             ORDER BY i.payment_due_date ASC NULLS LAST, i.created_at ASC \
+             LIMIT $2 OFFSET $3",
+        )
+        .bind(org)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| DunningOverviewRow {
+                invoice_id: r.get("invoice_id"),
+                invoice_number: r.get("number"),
+                currency: r.try_get("currency").unwrap_or_default(),
+                total_amount_cents: r.get("total_amount_cents"),
+                payment_due_date: r.try_get("payment_due_date").ok().flatten(),
+                customer_id: r.get("customer_id"),
+                external_customer_id: r.get("external_id"),
+                customer_email: r.try_get("email").ok().flatten(),
+                exclude_from_dunning_campaign: r.get("exclude_from_dunning_campaign"),
+                applied_dunning_campaign_id: r
+                    .try_get("applied_dunning_campaign_id")
+                    .ok()
+                    .flatten(),
+                last_dunning_campaign_attempt_at: r
+                    .try_get("last_dunning_campaign_attempt_at")
+                    .ok()
+                    .flatten(),
+                dunning_currency_attempts: r
+                    .try_get("dunning_currency_attempts")
+                    .unwrap_or_else(|_| serde_json::json!({})),
+            })
+            .collect())
+    }
+
+}
+
+/// One row of the dunning overview: an overdue invoice + its customer's dunning
+/// campaign/attempt state.
+#[derive(Debug, Clone)]
+pub struct DunningOverviewRow {
+    pub invoice_id: Uuid,
+    pub invoice_number: String,
+    pub currency: String,
+    pub total_amount_cents: i64,
+    pub payment_due_date: Option<chrono::NaiveDate>,
+    pub customer_id: Uuid,
+    pub external_customer_id: String,
+    pub customer_email: Option<String>,
+    pub exclude_from_dunning_campaign: bool,
+    pub applied_dunning_campaign_id: Option<Uuid>,
+    pub last_dunning_campaign_attempt_at: Option<NaiveDateTime>,
+    pub dunning_currency_attempts: Value,
 }
 
 /// An overdue invoice row with its already-paid amount and credit-note offset.

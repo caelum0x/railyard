@@ -155,7 +155,7 @@ pub async fn record_webhook(
     kind: WebhookKind,
     object: Value,
 ) -> Result<bool, JobError> {
-    let Some(endpoint) = db.webhook_endpoint(organization_id).await? else {
+    let Some((endpoint_id, endpoint)) = db.first_webhook_endpoint_id(organization_id).await? else {
         return Ok(false);
     };
 
@@ -172,5 +172,24 @@ pub async fn record_webhook(
         0,
     )
     .await?;
+
+    // Append a row to the operator-facing deliveries feed. The work item was just
+    // materialized `pending` (attempt 0, not yet delivered); the delivery worker
+    // records the terminal attempt separately (see `webhook_delivery`).
+    let _ = db
+        .record_webhook_delivery(rago_db::NewWebhookDelivery {
+            organization_id,
+            endpoint_id: Some(endpoint_id),
+            endpoint: &webhook.endpoint,
+            event_type: &webhook.webhook_type,
+            object_type: Some(&webhook.object_type),
+            payload: &webhook.payload,
+            status: "pending",
+            http_status: None,
+            attempts: 0,
+            last_error: None,
+            delivered_at: None,
+        })
+        .await;
     Ok(true)
 }

@@ -198,6 +198,14 @@ fn build_meta_observability_routes(
             get(crate::billing_summary::billing_summary_handler),
         )
         .route(
+            "/relay/billing/settlements",
+            get(crate::billing_summary::billing_settlements_handler),
+        )
+        .route(
+            "/relay/billing/keys",
+            get(crate::billing_summary::billing_keys_handler),
+        )
+        .route(
             "/v1/billing/cost-events",
             get(crate::cost_feed::list_cost_events_handler),
         )

@@ -87,6 +87,7 @@
   <main>
     <div class="toolbar">
       <button id="refresh">Refresh</button>
+      <input id="param" style="display:none" autocomplete="off" />
       <span id="count" class="count"></span>
     </div>
     <div id="view" class="card"><div class="loading">Loading…</div></div>
@@ -194,9 +195,75 @@
         { h: "Lago ID", f: (r) => esc(r.lago_id), mono: true },
       ],
     },
+    {
+      id: "webhook_deliveries", label: "Webhook Deliveries",
+      path: "/api/v1/webhook_deliveries?per_page=50", root: "webhook_deliveries",
+      cols: [
+        { h: "Event", f: (r) => esc(r.event_type), mono: true },
+        { h: "Status", f: (r) => badge(r.status) },
+        { h: "HTTP", f: (r) => esc(r.http_status) },
+        { h: "Attempts", f: (r) => esc(r.attempts) },
+        { h: "Endpoint", f: (r) => esc(r.endpoint), mono: true },
+        { h: "Last error", f: (r) => esc(r.last_error) },
+        { h: "Created", f: (r) => esc((r.created_at || "").slice(0, 19)) },
+      ],
+    },
+    {
+      id: "credit_notes", label: "Credit Notes",
+      path: "/api/v1/credit_notes?per_page=50", root: "credit_notes",
+      cols: [
+        { h: "Number", f: (r) => esc(r.number), mono: true },
+        { h: "Reason", f: (r) => esc(r.reason) },
+        { h: "Total", f: (r) => money(r.total_amount_cents, r.currency) },
+        { h: "Balance", f: (r) => money(r.balance_amount_cents, r.currency) },
+        { h: "Refund", f: (r) => money(r.refund_amount_cents, r.currency) },
+        { h: "Invoice", f: (r) => esc(r.lago_invoice_id), mono: true },
+      ],
+    },
+    {
+      id: "wallet_transactions", label: "Wallet Transactions",
+      // Drill-down: enter a wallet Lago ID to load its credit/debit ledger.
+      param: {
+        placeholder: "Wallet Lago ID…",
+        build: (v) => "/api/v1/wallets/" + encodeURIComponent(v) + "/transactions?per_page=50",
+      },
+      root: "wallet_transactions",
+      cols: [
+        { h: "Type", f: (r) => badge(r.transaction_type) },
+        { h: "Status", f: (r) => badge(r.status) },
+        { h: "Amount", f: (r) => esc(r.amount) },
+        { h: "Credits", f: (r) => esc(r.credit_amount) },
+        { h: "Invoice", f: (r) => esc(r.lago_invoice_id), mono: true },
+        { h: "Settled", f: (r) => esc((r.settled_at || "").slice(0, 19)) },
+        { h: "Created", f: (r) => esc((r.created_at || "").slice(0, 19)) },
+      ],
+    },
+    {
+      id: "dunning", label: "Dunning",
+      path: "/api/v1/dunning?per_page=50", root: "dunning",
+      cols: [
+        { h: "Invoice", f: (r) => esc(r.invoice_number), mono: true },
+        { h: "Customer", f: (r) => esc(r.external_customer_id), mono: true },
+        { h: "Overdue", f: (r) => money(r.total_amount_cents, r.currency) },
+        { h: "Due", f: (r) => esc(r.payment_due_date) },
+        { h: "Last attempt", f: (r) => esc((r.last_dunning_campaign_attempt_at || "").slice(0, 19)) },
+        { h: "Excluded", f: (r) => badge(r.exclude_from_dunning_campaign ? "yes" : "no") },
+      ],
+    },
   ];
 
   let active = TABS[0];
+
+  function syncParamInput() {
+    const p = el("param");
+    if (active.param) {
+      p.style.display = "";
+      p.placeholder = active.param.placeholder;
+      p.value = "";
+    } else {
+      p.style.display = "none";
+    }
+  }
 
   function renderTabs() {
     const nav = el("tabs");
@@ -205,7 +272,7 @@
       const b = document.createElement("button");
       b.textContent = t.label;
       b.className = t.id === active.id ? "active" : "";
-      b.onclick = () => { active = t; renderTabs(); load(); };
+      b.onclick = () => { active = t; renderTabs(); syncParamInput(); load(); };
       nav.appendChild(b);
     });
   }
@@ -227,10 +294,21 @@
   }
 
   async function load() {
+    let path = active.path;
+    if (active.param) {
+      const v = el("param").value.trim();
+      if (!v) {
+        el("view").innerHTML = '<div class="empty">Enter a ' + esc(active.param.placeholder) + "</div>";
+        el("count").textContent = "";
+        setStatus("Connected", "ok");
+        return;
+      }
+      path = active.param.build(v);
+    }
     el("view").innerHTML = '<div class="loading">Loading…</div>';
     el("count").textContent = "";
     try {
-      const data = await api(active.path);
+      const data = await api(path);
       renderRows(data[active.root]);
       const meta = data.meta;
       setStatus(meta && meta.total_count != null
@@ -247,6 +325,7 @@
     el("app").style.display = "";
     el("logout").style.display = "";
     renderTabs();
+    syncParamInput();
     load();
   }
 
@@ -267,6 +346,7 @@
   el("key").addEventListener("keydown", (e) => { if (e.key === "Enter") el("connect").click(); });
   el("logout").onclick = () => { setKey(""); setStatus("Not connected"); showGate(); };
   el("refresh").onclick = load;
+  el("param").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
 
   if (getKey()) showApp(); else showGate();
 })();

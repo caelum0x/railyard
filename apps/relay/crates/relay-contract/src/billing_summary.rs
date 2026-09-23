@@ -80,3 +80,51 @@ pub struct BillingSummary {
     pub by_model: Vec<ModelSpend>,
     pub recent_settlements: Vec<SettlementRecord>,
 }
+
+/// One settlement receipt with full evidence detail, newest first. Returned by
+/// `GET /relay/billing/settlements` for the settlement-history drill-down.
+///
+/// The immutable signed receipt is carried verbatim as a JSON string
+/// (`receipt_json`) so the dashboard can render the exact evidence a caller can
+/// later present as proof of payment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SettlementDetail {
+    pub request_id: Uuid,
+    pub amount_micros: Microdollars,
+    pub settled_at_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub verified_at_ms: Option<i64>,
+    /// Whether a signed attestation is stored alongside the receipt.
+    pub has_attestation: bool,
+    /// The immutable signed settlement receipt, serialized as a JSON string.
+    pub receipt_json: String,
+}
+
+/// The principal's settlement-evidence detail list, newest first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SettlementHistory {
+    pub principal: String,
+    pub settlements: Vec<SettlementDetail>,
+}
+
+/// One `(key, day-bucket)` spend point for the per-API-key spend drill-down.
+///
+/// Buckets are UTC calendar days derived from each cost event's `created_at`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct KeySpendPoint {
+    pub key: String,
+    /// UTC day-bucket start as epoch milliseconds.
+    pub bucket_start_ms: i64,
+    pub charged_micros: Microdollars,
+    pub total_tokens: i64,
+    pub cost_event_count: i64,
+}
+
+/// Per-API-key spend over time for the authenticated principal. Returned by
+/// `GET /relay/billing/keys`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct KeySpendSeries {
+    pub principal: String,
+    pub points: Vec<KeySpendPoint>,
+}

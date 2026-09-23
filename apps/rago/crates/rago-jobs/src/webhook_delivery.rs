@@ -1,8 +1,9 @@
 //! `Webhooks::*` + `SendHttpService` runtime — build, sign, deliver (with
 //! retry/backoff), and persist an outbound webhook delivery record.
 
+use chrono::Utc;
 use rago_db::Db;
-use rago_integrations::webhooks::{deliver, Webhook};
+use rago_integrations::webhooks::{deliver, Webhook, WebhookStatus};
 use rago_integrations::HttpTransport;
 use serde_json::Value;
 use uuid::Uuid;
@@ -47,6 +48,30 @@ pub async fn emit_webhook<T: HttpTransport>(
         webhook.retries,
     )
     .await?;
+
+    // Append the terminal delivery attempt to the operator-facing feed. `retries`
+    // counts re-attempts, so total attempts made is `retries + 1`. On success we
+    // stamp `delivered_at`; otherwise the transport `response` is the last error.
+    let delivered = webhook.status == WebhookStatus::Succeeded;
+    let _ = db
+        .record_webhook_delivery(rago_db::NewWebhookDelivery {
+            organization_id: webhook.organization_id,
+            endpoint_id: None,
+            endpoint: &webhook.endpoint,
+            event_type: &webhook.webhook_type,
+            object_type: Some(&webhook.object_type),
+            payload: &webhook.payload,
+            status: webhook.status.as_str(),
+            http_status: webhook.http_status,
+            attempts: webhook.retries + 1,
+            last_error: if delivered {
+                None
+            } else {
+                webhook.response.as_deref()
+            },
+            delivered_at: delivered.then(|| Utc::now().naive_utc()),
+        })
+        .await;
 
     Ok(webhook)
 }

@@ -34,10 +34,7 @@ pub async fn billing_summary_handler(
     principal: Option<Extension<RequestApiKeyExtension>>,
 ) -> Response {
     let Some(Extension(principal)) = principal else {
-        return billing_summary_error(
-            StatusCode::UNAUTHORIZED,
-            "authenticated principal required",
-        );
+        return billing_summary_error(StatusCode::UNAUTHORIZED, "authenticated principal required");
     };
     let Some(pool) = postgres_connection_info.get_pool() else {
         return billing_summary_error(
@@ -56,6 +53,86 @@ pub async fn billing_summary_handler(
             billing_summary_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "billing summary is unavailable",
+            )
+        }
+    }
+}
+
+pub async fn billing_settlements_handler(
+    State(AppStateData {
+        postgres_connection_info,
+        ..
+    }): AppState,
+    Query(params): Query<BillingSummaryQuery>,
+    principal: Option<Extension<RequestApiKeyExtension>>,
+) -> Response {
+    let Some(Extension(principal)) = principal else {
+        return billing_summary_error(StatusCode::UNAUTHORIZED, "authenticated principal required");
+    };
+    let Some(pool) = postgres_connection_info.get_pool() else {
+        return billing_summary_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "billing settlements require Postgres",
+        );
+    };
+    let store = PostgresBillingSummaryStore::new(pool.clone());
+    let limit = params
+        .settlements
+        .unwrap_or(DEFAULT_SETTLEMENT_HISTORY_LIMIT);
+    match store
+        .settlements(&principal.key_info.public_id, limit)
+        .await
+    {
+        Ok(settlements) => Json(relay_contract::DataEnvelope {
+            data: relay_contract::SettlementHistory {
+                principal: principal.key_info.public_id.clone(),
+                settlements,
+            },
+        })
+        .into_response(),
+        Err(error) => {
+            tracing::error!(error = %error, "Relay settlement history aggregation failed");
+            billing_summary_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "settlement history is unavailable",
+            )
+        }
+    }
+}
+
+pub async fn billing_keys_handler(
+    State(AppStateData {
+        postgres_connection_info,
+        ..
+    }): AppState,
+    principal: Option<Extension<RequestApiKeyExtension>>,
+) -> Response {
+    let Some(Extension(principal)) = principal else {
+        return billing_summary_error(StatusCode::UNAUTHORIZED, "authenticated principal required");
+    };
+    let Some(pool) = postgres_connection_info.get_pool() else {
+        return billing_summary_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "billing key spend requires Postgres",
+        );
+    };
+    let store = PostgresBillingSummaryStore::new(pool.clone());
+    match store
+        .key_spend_timeseries(&principal.key_info.public_id)
+        .await
+    {
+        Ok(points) => Json(relay_contract::DataEnvelope {
+            data: relay_contract::KeySpendSeries {
+                principal: principal.key_info.public_id.clone(),
+                points,
+            },
+        })
+        .into_response(),
+        Err(error) => {
+            tracing::error!(error = %error, "Relay key spend aggregation failed");
+            billing_summary_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "key spend is unavailable",
             )
         }
     }

@@ -26,6 +26,7 @@ pub mod integrations;
 pub mod observability;
 pub mod pagination;
 pub mod payments;
+pub mod reads;
 pub mod phase14;
 pub mod phase15;
 pub mod resources;
@@ -114,6 +115,7 @@ pub fn router(state: AppState) -> Router {
         .route("/credit_notes", post(handlers::create_credit_note).get(subs::list_credit_notes))
         .route("/wallets", post(handlers::create_wallet).get(crud::list_wallets))
         .route("/wallets/:id", get(handlers::show_wallet).put(crud::update_wallet).delete(crud::terminate_wallet))
+        .route("/wallets/:id/transactions", get(reads::wallet_transactions))
         .route("/wallet_transactions", post(handlers::create_wallet_transaction))
         .route("/coupons", post(handlers::create_coupon).get(crud::list_coupons))
         .route("/coupons/:code", get(crud::show_coupon).put(crud::update_coupon).delete(crud::destroy_coupon))
@@ -137,6 +139,11 @@ pub fn router(state: AppState) -> Router {
         .route("/taxes/:code", get(resources::show_tax).put(resources::update_tax).delete(resources::destroy_tax))
         .route("/webhook_endpoints", post(resources::create_webhook_endpoint).get(resources::list_webhook_endpoints))
         .route("/webhook_endpoints/:id", get(resources::show_webhook_endpoint).put(resources::update_webhook_endpoint).delete(resources::destroy_webhook_endpoint))
+        // --- webhook deliveries feed (read surface)
+        .route("/webhook_deliveries", get(reads::list_webhook_deliveries))
+        .route("/webhook_deliveries/:id", get(reads::show_webhook_delivery))
+        // --- dunning overview (overdue invoices + campaign/attempt status)
+        .route("/dunning", get(reads::list_dunning))
         .route("/billing_entities", post(resources::create_billing_entity).get(resources::list_billing_entities))
         .route("/billing_entities/:code", get(resources::show_billing_entity).put(resources::update_billing_entity))
         .route("/organizations", get(resources::show_organization).put(resources::update_organization))

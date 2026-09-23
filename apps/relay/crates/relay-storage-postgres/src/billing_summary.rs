@@ -6,8 +6,8 @@
 //! never surface another tenant's spend.
 
 use relay_contract::{
-    BillingSummary, KeySpend, Microdollars, ModelSpend, SettlementRecord, SpendTotals,
-    WalletSummary,
+    BillingSummary, KeySpend, KeySpendPoint, Microdollars, ModelSpend, SettlementDetail,
+    SettlementRecord, SpendTotals, WalletSummary,
 };
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -158,5 +158,79 @@ impl PostgresBillingSummaryStore {
             by_model,
             recent_settlements,
         })
+    }
+
+    /// Detailed settlement-evidence history for the principal, newest first.
+    ///
+    /// Each row carries the immutable signed receipt (as a JSON string) so the
+    /// dashboard can render the exact proof of payment. `limit` is clamped to
+    /// `[1, MAX_SETTLEMENT_HISTORY_LIMIT]`.
+    pub async fn settlements(
+        &self,
+        owner_principal: &str,
+        limit: i64,
+    ) -> Result<Vec<SettlementDetail>, sqlx::Error> {
+        let limit = limit.clamp(1, MAX_SETTLEMENT_HISTORY_LIMIT);
+        sqlx::query(
+            "SELECT request_id, \
+             COALESCE((receipt->>'amount_micros')::bigint,0)::bigint AS amount, \
+             settled_at_ms, verified_at_ms, \
+             (attestation IS NOT NULL) AS has_attestation, \
+             receipt::text AS receipt_json \
+             FROM relay_settlement_evidence WHERE principal=$1 \
+             ORDER BY settled_at_ms DESC LIMIT $2",
+        )
+        .bind(owner_principal)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|row| {
+            Ok(SettlementDetail {
+                request_id: row.try_get::<Uuid, _>("request_id")?,
+                amount_micros: Microdollars::new(row.try_get::<i64, _>("amount")?),
+                settled_at_ms: row.try_get("settled_at_ms")?,
+                verified_at_ms: row.try_get("verified_at_ms")?,
+                has_attestation: row.try_get("has_attestation")?,
+                receipt_json: row
+                    .try_get::<Option<String>, _>("receipt_json")?
+                    .unwrap_or_default(),
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()
+    }
+
+    /// Per-API-key spend over time (UTC day buckets) for the principal.
+    ///
+    /// Buckets are derived from each cost event's `created_at` timestamp and
+    /// returned oldest-first so the dashboard can plot a spend trend.
+    pub async fn key_spend_timeseries(
+        &self,
+        owner_principal: &str,
+    ) -> Result<Vec<KeySpendPoint>, sqlx::Error> {
+        sqlx::query(
+            "SELECT owner_principal AS key, \
+             (EXTRACT(EPOCH FROM date_trunc('day', created_at)) * 1000)::bigint AS bucket_start_ms, \
+             COALESCE(SUM((event->>'charged_micros')::bigint),0)::bigint AS charged, \
+             COALESCE(SUM((event->'usage'->>'total_tokens')::bigint),0)::bigint AS total_tokens, \
+             COUNT(*)::bigint AS event_count \
+             FROM relay_cost_events WHERE owner_principal=$1 \
+             GROUP BY owner_principal, date_trunc('day', created_at) \
+             ORDER BY bucket_start_ms ASC",
+        )
+        .bind(owner_principal)
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|row| {
+            Ok(KeySpendPoint {
+                key: row.try_get("key")?,
+                bucket_start_ms: row.try_get("bucket_start_ms")?,
+                charged_micros: Microdollars::new(row.try_get("charged")?),
+                total_tokens: row.try_get("total_tokens")?,
+                cost_event_count: row.try_get("event_count")?,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()
     }
 }

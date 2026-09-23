@@ -16,7 +16,8 @@ pub mod usage;
 
 pub use aitp::{AitpChallenge, AitpChallengeDecodeError, AitpScheme, PaymentRequired};
 pub use billing_summary::{
-    BillingSummary, KeySpend, ModelSpend, SettlementRecord, SpendTotals, WalletSummary,
+    BillingSummary, KeySpend, KeySpendPoint, KeySpendSeries, ModelSpend, SettlementDetail,
+    SettlementHistory, SettlementRecord, SpendTotals, WalletSummary,
 };
 pub use error::{ApiError, ApiErrorEnvelope, DataEnvelope, SettledReplay};
 pub use model::{ModelSelector, ModelSelectorError, OPENROUTER_CATALOG_PREFIX};

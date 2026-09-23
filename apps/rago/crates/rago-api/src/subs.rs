@@ -242,27 +242,51 @@ fn parse_thresholds(p: &Value) -> Vec<(Option<String>, Decimal, bool)> {
 
 // ---- credit-note actions ---------------------------------------------------
 
-/// `GET /credit_notes?invoice_id=` — credit notes for an invoice.
+/// `GET /credit_notes` — filterable by `invoice_id` or `external_customer_id`,
+/// else the whole org's credit notes.
 #[derive(Debug, serde::Deserialize)]
 pub struct CreditNoteIndexQuery {
     pub invoice_id: Option<Uuid>,
+    pub external_customer_id: Option<String>,
     #[serde(flatten)]
     pub page: PageParams,
 }
 
+/// `GET /credit_notes` — credit notes, optionally scoped to an invoice
+/// (`?invoice_id=`) or a customer (`?external_customer_id=`); with neither, the
+/// organization's full credit-note index (paginated). Ports Lago's
+/// `CreditNotesQuery` (unfiltered index + customer scope).
 pub async fn list_credit_notes(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Query(q): Query<CreditNoteIndexQuery>,
 ) -> ApiResult<Json<Value>> {
-    let invoice_id = q
-        .invoice_id
-        .ok_or_else(|| ApiError::validation("invoice_id", "value_is_mandatory"))?;
-    let notes = st.db.credit_notes_for_invoice(invoice_id).await?;
+    let org = auth.organization.id;
+    let (notes, total) = if let Some(invoice_id) = q.invoice_id {
+        let n = st.db.credit_notes_for_invoice(invoice_id).await?;
+        let t = n.len() as i64;
+        (n, t)
+    } else if let Some(ext) = q.external_customer_id.as_deref() {
+        let customer = st
+            .db
+            .find_customer_by_external_id(org, ext)
+            .await?
+            .ok_or_else(|| ApiError::NotFound("customer".into()))?;
+        let n = st.db.credit_notes_for_customer(customer.id).await?;
+        let t = n.len() as i64;
+        (n, t)
+    } else {
+        let n = st
+            .db
+            .credit_notes_for_org(org, q.page.per_page(), q.page.offset())
+            .await?;
+        let t = st.db.count_credit_notes_for_org(org).await?;
+        (n, t)
+    };
     let out: Vec<Value> = notes.iter().map(ser::credit_note).collect();
     Ok(Json(json!({
         "credit_notes": out,
-        "meta": pagination::meta(q.page.page(), q.page.per_page(), notes.len() as i64),
+        "meta": pagination::meta(q.page.page(), q.page.per_page(), total),
     })))
 }
 

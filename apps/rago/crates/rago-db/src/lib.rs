@@ -21,9 +21,11 @@ pub mod graphql_admin4;
 pub mod graphql_admin5;
 pub mod mapping;
 pub mod repo;
+pub mod webhook_deliveries;
 
 pub use dunning::{
-    DunningCampaignPolicy, DunningCandidate, DunningThresholdRow, OverdueInvoiceRow,
+    DunningCampaignPolicy, DunningCandidate, DunningOverviewRow, DunningThresholdRow,
+    OverdueInvoiceRow,
 };
 pub use error::{DbError, Result};
 pub use graphql_admin::{AddOnRow, DunningCampaignRow, WebhookRow};
@@ -48,6 +50,7 @@ pub use repo::{
     AdvisoryLock, AnalyticsPoint, BilledInvoice, Db, InvoiceCollectionPoint, LeasedJob,
     PrepaidSettlement, RetryingWebhook,
 };
+pub use webhook_deliveries::{NewWebhookDelivery, WebhookDeliveryRow};
 
 /// Embedded migrations (see `migrations/`).
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");

@@ -14,7 +14,14 @@ import {
   SidebarCollapse,
   SidebarExpand,
 } from "~/components/icons/Icons";
-import { FileCode2, KeyRound, LayoutGrid, Plus } from "lucide-react";
+import {
+  Download,
+  FileCode2,
+  KeyRound,
+  LayoutGrid,
+  Plus,
+  Receipt,
+} from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -73,6 +80,11 @@ const navigation: NavigationSection[] = [
         url: "/observability/models",
         icon: Model,
       },
+      {
+        title: "Model Catalog",
+        url: "/models",
+        icon: LayoutGrid,
+      },
     ],
   },
   {
@@ -82,6 +94,21 @@ const navigation: NavigationSection[] = [
         title: "Billing",
         url: "/billing",
         icon: Cost,
+      },
+      {
+        title: "Settlements",
+        url: "/billing/settlements",
+        icon: Receipt,
+      },
+      {
+        title: "API Key Spend",
+        url: "/billing/keys",
+        icon: KeyRound,
+      },
+      {
+        title: "Usage Export",
+        url: "/usage/export",
+        icon: Download,
       },
     ],
   },
