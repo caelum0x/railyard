@@ -15,7 +15,7 @@ use mint_protocol::{decode_receipt, HEADER_RECEIPT};
 use vend_core::error::VendError;
 use vend_core::transport::{
     CaptureRequest, CaptureResponse, CheckoutRequest, CheckoutResponse, HoldRequest, HoldResponse,
-    HoldView, MintTransport, ReleaseRequest, ReleaseResponse, SettlementProof, TransferRequest,
+    HoldView, MintBalance, MintTransport, ReleaseRequest, ReleaseResponse, SettlementProof, TransferRequest,
     TransferResponse,
 };
 
@@ -302,6 +302,18 @@ impl MintTransport for MintClient {
 
     async fn transfer(&self, req: TransferRequest) -> Result<TransferResponse, VendError> {
         self.post_json("/v1/transfers", &req).await
+    }
+
+    async fn get_balance(&self, account_id: &str) -> Result<MintBalance, VendError> {
+        if account_id.is_empty()
+            || !account_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b':'))
+        {
+            return Err(VendError::BadId);
+        }
+        self.get_json(&format!("/v1/accounts/{account_id}/balance"))
+            .await
     }
 }
 

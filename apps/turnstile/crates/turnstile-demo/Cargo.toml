@@ -16,6 +16,9 @@ aitp-client.workspace = true
 axum.workspace = true
 tokio.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+# Upstream proxying for config-declared paid tools.
+reqwest.workspace = true
 
 [dev-dependencies]
 # e2e_paywall.rs runs the full 402 -> authorize (REAL aitp-client Ed25519 signer +

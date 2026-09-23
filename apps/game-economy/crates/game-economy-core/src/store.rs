@@ -92,6 +92,10 @@ pub struct GameStore<M: MintTransport, F: Fulfiller = AlwaysFulfill> {
     /// before Mint is touched so the exact idempotent flow can recover after a
     /// crash between capture and local grant.
     state: Arc<dyn GameStateRepository>,
+    /// Serializes post-purchase inventory mutations (pack open, pass advance).
+    /// Those are read-modify-write over the state port; without this two
+    /// concurrent opens of the same pack could both pass the `is_opened` check.
+    inventory_lock: std::sync::Mutex<()>,
 }
 
 impl<M: MintTransport> GameStore<M, AlwaysFulfill> {
@@ -115,6 +119,7 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             catalog,
             revenue_account: revenue_account.into(),
             state: Arc::new(MemoryGameState::default()),
+            inventory_lock: std::sync::Mutex::new(()),
         }
     }
 
@@ -133,6 +138,7 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             catalog,
             revenue_account: revenue_account.into(),
             state,
+            inventory_lock: std::sync::Mutex::new(()),
         }
     }
 
@@ -155,6 +161,30 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
     /// failures rather than treating them as an empty account.
     pub fn try_inventory(&self, player: &str) -> Result<Inventory, GameError> {
         self.state.inventory(player)
+    }
+
+    /// A player's completed purchases (the receipt history), newest first.
+    pub fn purchase_history(&self, player: &str) -> Result<Vec<CompletedPurchase>, GameError> {
+        self.state.purchases_for(player)
+    }
+
+    /// Look up one of `player`'s completed purchases by its Mint receipt id.
+    pub fn receipt(
+        &self,
+        player: &str,
+        receipt_id: &str,
+    ) -> Result<Option<CompletedPurchase>, GameError> {
+        Ok(self
+            .state
+            .purchases_for(player)?
+            .into_iter()
+            .find(|p| p.outcome.receipt_id == receipt_id))
+    }
+
+    fn lock_inventory(&self) -> Result<std::sync::MutexGuard<'_, ()>, GameError> {
+        self.inventory_lock
+            .lock()
+            .map_err(|_| GameError::Storage("inventory lock poisoned".into()))
     }
 
     /// Buy `product_sku` for `player`, reserving and (on success) capturing the
@@ -284,7 +314,10 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             )
             .await?;
 
-        // 4. Grant the entitlement (idempotent by deterministic id).
+        // 4. Grant the entitlement (idempotent by deterministic id). Held under
+        //    the inventory lock (no awaits follow) so a concurrent pack open or
+        //    pass advance cannot clobber this read-modify-write.
+        let _guard = self.lock_inventory()?;
         let inventory = self.grant(
             self.state.inventory(player)?,
             &product,
@@ -319,7 +352,9 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
     }
 
     /// Open an owned pack. Deterministic: contents are derived from the pack's
-    /// stored purchase receipt id + `seed`. A pack opens exactly once; each drop
+    /// stored purchase receipt id + `seed`. The `seed` MUST come from the
+    /// server (see `game-economy-server`'s keyed pack-seed derivation), never
+    /// from the player — a player-chosen seed can be ground offline for drops. A pack opens exactly once; each drop
     /// also unlocks its content-addressed cosmetic in the player's inventory.
     pub fn open_pack(
         &self,
@@ -327,6 +362,7 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         entitlement_id: &str,
         seed: u64,
     ) -> Result<Vec<GrantedItem>, GameError> {
+        let _guard = self.lock_inventory()?;
         let mut inv = self.state.inventory(player)?;
         let pack = inv
             .packs
@@ -376,6 +412,7 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             None => return Err(GameError::UnknownProduct(pass_sku.to_string())),
         };
 
+        let _guard = self.lock_inventory()?;
         let mut inv = self.state.inventory(player)?;
         let pass = inv
             .battle_pass
@@ -385,6 +422,47 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         let tier = pass.advance_to(target, max_tiers);
         self.state.save_inventory(player, &inv)?;
         Ok(tier)
+    }
+
+    /// Revoke the entitlement granted by `player`'s purchase `receipt_id` (the
+    /// chargeback / support-refund path, called by the game backend after the
+    /// money side has been reversed in Mint). Removes the pack (and any
+    /// cosmetics it dropped), the cosmetic, or the battle pass. Returns the
+    /// revoked purchase, or `None` when no such receipt exists for the player.
+    pub fn revoke_entitlement(
+        &self,
+        player: &str,
+        receipt_id: &str,
+    ) -> Result<Option<CompletedPurchase>, GameError> {
+        let _guard = self.lock_inventory()?;
+        let Some(purchase) = self
+            .state
+            .purchases_for(player)?
+            .into_iter()
+            .find(|p| p.outcome.receipt_id == receipt_id)
+        else {
+            return Ok(None);
+        };
+        let mut inv = self.state.inventory(player)?;
+        match self.catalog.get(&purchase.outcome.product_sku) {
+            Some(Product::CardPack(_)) | None => {
+                if let Some(pack) = inv.packs.remove(&purchase.outcome.entitlement_id) {
+                    for item in pack.contents.unwrap_or_default() {
+                        inv.cosmetics.remove(&item.item_id);
+                    }
+                }
+            }
+            Some(Product::Cosmetic(c)) => {
+                inv.cosmetics.remove(&content_item_id(c.rarity, &c.name));
+            }
+            Some(Product::BattlePass(b)) => {
+                if inv.owns_battle_pass(&b.sku) {
+                    inv.battle_pass = None;
+                }
+            }
+        }
+        self.state.save_inventory(player, &inv)?;
+        Ok(Some(purchase))
     }
 
     /// Grant the entitlement for a captured purchase. Idempotent — a replayed

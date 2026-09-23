@@ -117,6 +117,45 @@ export interface SSEEvent {
   retry: number | null;
 }
 
+export interface AppBalance {
+  account_id: string;
+  available_micros: number;
+  held_micros: number;
+  updated_seq: number;
+}
+
+export interface UsageRange {
+  from: string;
+  to: string;
+  days: { utc_day: string; usage: UsageSummary }[];
+}
+
+export interface InvitedUser {
+  user: CustomerUser;
+  setup_token: string;
+  setup_expires_at: string;
+}
+
+export interface EndUser {
+  id: string;
+  app_id: string;
+  external_ref: string;
+  mint_account_id: string | null;
+}
+
+export interface VendModel {
+  id: string;
+  object: "model";
+  owned_by: string;
+  pricing: {
+    input_micros_per_million_tokens: number;
+    output_micros_per_million_tokens: number;
+    min_fee_micros_per_request: number;
+    max_input_tokens: number;
+    max_output_tokens: number;
+  };
+}
+
 export interface VendClientOptions {
   baseUrl: string;
   customerSession?: string;
@@ -288,6 +327,74 @@ export class VendClient {
     const path = new URL(resolveUrl(`/v1/customer/apps/${segment(appId)}/usage`, this.baseUrl));
     if (utcDay) path.searchParams.set("utc_day", utcDay);
     return this.control<UsageSummary>(path.toString(), "GET");
+  }
+
+  /** Inclusive per-day usage series (max 92 days). */
+  usageRange(appId: string, from: string, to: string): Promise<UsageRange> {
+    const path = new URL(resolveUrl(`/v1/customer/apps/${segment(appId)}/usage`, this.baseUrl));
+    path.searchParams.set("from", from);
+    path.searchParams.set("to", to);
+    return this.control<UsageRange>(path.toString(), "GET");
+  }
+
+  /** Live Mint balance of the app's reserve wallet. */
+  balance(appId: string): Promise<AppBalance> {
+    return this.control<AppBalance>(`/v1/customer/apps/${segment(appId)}/balance`, "GET");
+  }
+
+  provisionEndUser(appId: string, externalRef: string, mintAccountId: string): Promise<EndUser> {
+    return this.control<EndUser>(`/v1/customer/apps/${segment(appId)}/end-users`, "POST", {
+      external_ref: externalRef,
+      mint_account_id: mintAccountId,
+    });
+  }
+
+  listUsers(): Promise<CustomerUser[]> {
+    return this.control<CustomerUser[]>("/v1/customer/users", "GET");
+  }
+
+  inviteUser(email: string, displayName: string, role: CustomerRole): Promise<InvitedUser> {
+    return this.control<InvitedUser>("/v1/customer/users", "POST", {
+      email,
+      display_name: displayName,
+      role,
+    });
+  }
+
+  updateUser(userId: string, changes: { role?: CustomerRole; disabled?: boolean }): Promise<CustomerUser> {
+    return this.control<CustomerUser>(`/v1/customer/users/${segment(userId)}`, "PATCH", changes);
+  }
+
+  revokeUserSessions(userId: string): Promise<unknown> {
+    return this.control<unknown>(`/v1/customer/users/${segment(userId)}/sessions`, "DELETE");
+  }
+
+  changePassword(currentPassword: string, newPassword: string): Promise<unknown> {
+    return this.control<unknown>("/v1/customer/password", "PATCH", {
+      current_password: currentPassword,
+      new_password: newPassword,
+    });
+  }
+
+  /** Rotate the current session; the client switches to the new token. */
+  async rotateSession(): Promise<CustomerSession> {
+    const session = await this.control<CustomerSession>("/v1/customer/session/rotate", "POST");
+    this.customerSession = session.session_token;
+    return session;
+  }
+
+  /** OpenAI-compatible model list for the provisioning key, with effective rates. */
+  async listModels(): Promise<VendModel[]> {
+    if (!this.provisioningKey) throw new Error("provisioningKey is required to list models");
+    const response = await this.fetcher(resolveUrl("/v1/models", this.baseUrl), {
+      method: "GET",
+      headers: { Accept: "application/json", Authorization: `Bearer ${this.provisioningKey}` },
+    });
+    const payload: unknown = await response.json().catch(() => null);
+    if (!response.ok || !isRecord(payload) || !Array.isArray(payload.data)) {
+      throw new VendApiError(response.status, payload, settlementHeaders(response.headers));
+    }
+    return payload.data as VendModel[];
   }
 
   async chatCompletions<T = unknown>(

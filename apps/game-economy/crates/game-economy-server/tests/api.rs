@@ -21,6 +21,7 @@ const PLAYER: &str = "acct_player";
 const OTHER: &str = "acct_intruder";
 const REVENUE: &str = "acct_revenue";
 const SECRET: &[u8] = b"test-shared-secret";
+const SERVER_SECRET: &[u8] = b"test-game-server-secret";
 
 const SKIN_SKU: &str = "skin.aeon.blade"; // single-owner, $4.99
 const SKIN_PRICE: i64 = 4_990_000;
@@ -37,12 +38,28 @@ fn fixture(player_balance: i64) -> Fixture {
     let mint = FakeMint::new().with_balance(PLAYER, player_balance);
     let store = Arc::new(GameStore::new(mint, Catalog::demo(), REVENUE));
     let key = auth::derive_key(SECRET);
-    let app = game_economy_server::build_router(AppState::new(store.clone(), key));
+    let app = game_economy_server::build_router(
+        AppState::new(store.clone(), key).with_server_secret(SERVER_SECRET),
+    );
     Fixture { app, store, key }
 }
 
 fn token_for(key: &[u8; 32], player: &str) -> String {
     auth::player_token(key, player)
+}
+
+/// A server-to-server request authenticated with the game-backend credential.
+fn server_post(uri: &str, body: Value) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("content-type", "application/json")
+        .header(
+            auth::SERVER_KEY_HEADER,
+            std::str::from_utf8(SERVER_SECRET).unwrap(),
+        )
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap()
 }
 
 fn post(uri: &str, token: Option<&str>, body: Value) -> Request<Body> {
@@ -331,9 +348,8 @@ async fn battle_pass_advances_for_its_owner_and_moves_no_money() {
     let advanced = fx
         .app
         .clone()
-        .oneshot(post(
+        .oneshot(server_post(
             "/v1/pass/advance",
-            Some(&token),
             json!({ "player": PLAYER, "pass_sku": PASS_SKU, "tier": 25 }),
         ))
         .await
@@ -350,13 +366,11 @@ async fn battle_pass_advances_for_its_owner_and_moves_no_money() {
 #[tokio::test]
 async fn advancing_an_unowned_pass_maps_to_404() {
     let fx = fixture(20_000_000);
-    let token = token_for(&fx.key, PLAYER);
     let resp = fx
         .app
         .clone()
-        .oneshot(post(
+        .oneshot(server_post(
             "/v1/pass/advance",
-            Some(&token),
             json!({ "player": PLAYER, "pass_sku": PASS_SKU, "tier": 5 }),
         ))
         .await
@@ -369,20 +383,22 @@ async fn advancing_an_unowned_pass_maps_to_404() {
 }
 
 #[tokio::test]
-async fn cannot_advance_another_players_pass() {
+async fn players_cannot_advance_any_pass_even_their_own() {
     let fx = fixture(20_000_000);
-    let intruder = token_for(&fx.key, OTHER);
+    // A PLAYER bearer token (even the owner's) is never enough: progression is
+    // reported only by the game backend's server credential.
+    let own = token_for(&fx.key, PLAYER);
     let resp = fx
         .app
         .clone()
         .oneshot(post(
             "/v1/pass/advance",
-            Some(&intruder),
-            json!({ "player": PLAYER, "pass_sku": PASS_SKU, "tier": 50 }),
+            Some(&own),
+            json!({ "player": PLAYER, "pass_sku": PASS_SKU, "tier": 100 }),
         ))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // --- the concurrency guard: exactly one winner ---------------------------

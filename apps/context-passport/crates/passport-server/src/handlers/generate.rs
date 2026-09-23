@@ -7,7 +7,7 @@ use axum::Json;
 use passport_provenance::GenerationRecord;
 use passport_resolve::ConditioningPayload;
 
-use crate::auth::authorize;
+use crate::auth::authorize_passport;
 use crate::dto::{AttestRequest, GenerateRequest, ResolveRequest};
 use crate::error::ApiError;
 use crate::state::{AppState, Data};
@@ -19,7 +19,7 @@ pub async fn resolve(
     Path(id): Path<String>,
     Json(request): Json<ResolveRequest>,
 ) -> Result<Json<Data<ConditioningPayload>>, ApiError> {
-    authorize(&state.api_key, &headers)?;
+    authorize_passport(&state, &headers, &id).await?;
     let payload = state
         .service
         .resolve(&id, &request.provider, request.modality, request.version)
@@ -34,10 +34,16 @@ pub async fn generate(
     Path(id): Path<String>,
     Json(request): Json<GenerateRequest>,
 ) -> Result<(StatusCode, Json<Data<GenerationRecord>>), ApiError> {
-    authorize(&state.api_key, &headers)?;
+    authorize_passport(&state, &headers, &id).await?;
     let record = state
         .service
-        .generate(&id, &request.provider, request.modality, request.version)
+        .generate(
+            &id,
+            &request.provider,
+            request.modality,
+            request.version,
+            request.prompt,
+        )
         .await?;
     Ok((StatusCode::CREATED, Json(Data { data: record })))
 }
@@ -50,7 +56,7 @@ pub async fn attest(
     Path(id): Path<String>,
     Json(request): Json<AttestRequest>,
 ) -> Result<(StatusCode, Json<Data<GenerationRecord>>), ApiError> {
-    authorize(&state.api_key, &headers)?;
+    authorize_passport(&state, &headers, &id).await?;
     let record = state
         .service
         .attest(
@@ -72,7 +78,7 @@ pub async fn list_generations(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Data<Vec<GenerationRecord>>>, ApiError> {
-    authorize(&state.api_key, &headers)?;
+    authorize_passport(&state, &headers, &id).await?;
     Ok(Json(Data {
         data: state.service.generations(&id).await?,
     }))
@@ -84,7 +90,7 @@ pub async fn generation_manifest(
     headers: HeaderMap,
     Path((id, generation_id)): Path<(String, String)>,
 ) -> Result<Json<Data<serde_json::Value>>, ApiError> {
-    authorize(&state.api_key, &headers)?;
+    authorize_passport(&state, &headers, &id).await?;
     Ok(Json(Data {
         data: state
             .service

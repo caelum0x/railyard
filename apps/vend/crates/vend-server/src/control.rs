@@ -183,6 +183,14 @@ impl CustomerAuthConfig {
         })
     }
 
+    /// Where a finished browser OAuth login lands: the customer console.
+    fn console_url(&self) -> String {
+        format!(
+            "{}/console",
+            self.public_base_url.as_str().trim_end_matches('/')
+        )
+    }
+
     fn callback_url(&self, provider: &str) -> String {
         format!(
             "{}/v1/auth/{provider}/callback",
@@ -227,6 +235,7 @@ pub fn build_control_router(
             post(provision_end_user),
         )
         .route("/v1/control/apps/:app_id/usage", get(app_usage))
+        .route("/v1/control/apps/:app_id/balance", get(app_balance))
         .route("/v1/control/keys/:key_id", delete(revoke_key))
         .route(
             "/v1/control/tenants/:tenant_id/users",
@@ -267,6 +276,7 @@ pub fn build_control_router(
             post(customer_provision_end_user),
         )
         .route("/v1/customer/apps/:app_id/usage", get(customer_app_usage))
+        .route("/v1/customer/apps/:app_id/balance", get(customer_app_balance))
         .route("/v1/customer/keys/:key_id", delete(customer_revoke_key))
         .route(
             "/v1/customer/users",
@@ -529,6 +539,39 @@ fn secret_result<T: serde::Serialize>(value: Result<T, VendError>) -> Response {
         HeaderValue::from_static("no-store"),
     );
     response
+}
+
+/// Finish a browser OAuth login by redirecting to the customer console. The
+/// session token travels in the URL FRAGMENT, which browsers never send to any
+/// server (and `no-referrer` keeps it out of Referer); the console reads it,
+/// stores it in session storage and immediately clears it from the address bar.
+/// Failures land on the console with a stable error code instead of raw JSON.
+fn oauth_redirect(
+    state: &ControlState,
+    output: Result<vend_store::IssuedCustomerSession, VendError>,
+) -> Response {
+    let console = state.customer_auth.console_url();
+    let location = match &output {
+        Ok(session) => format!(
+            "{console}#session={}&expires_at={}",
+            session.session_token,
+            session.expires_at.timestamp()
+        ),
+        Err(error) => format!("{console}#oauth_error={}", error.code()),
+    };
+    let mut response = StatusCode::SEE_OTHER.into_response();
+    let headers = response.headers_mut();
+    match HeaderValue::from_str(&location) {
+        Ok(value) => {
+            headers.insert(axum::http::header::LOCATION, value);
+        }
+        Err(_) => return secret_result(output),
+    }
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    );
+    no_referrer(response)
 }
 
 fn no_referrer(mut response: Response) -> Response {
@@ -798,6 +841,83 @@ async fn revoke_key(State(state): State<ControlState>, Path(raw): Path<String>) 
 #[derive(Deserialize)]
 struct UsageQuery {
     utc_day: Option<String>,
+    /// Inclusive range start (`YYYY-MM-DD`); with `to`, returns one summary per day.
+    from: Option<String>,
+    /// Inclusive range end (`YYYY-MM-DD`).
+    to: Option<String>,
+}
+
+/// Longest usage range served in one request.
+const MAX_USAGE_RANGE_DAYS: i64 = 92;
+
+/// Serve a single-day summary (`utc_day`, default today) or, when `from`/`to`
+/// are given, a per-day series over the inclusive range.
+async fn usage_response(state: &ControlState, app_id: &AppId, query: UsageQuery) -> Response {
+    if query.from.is_none() && query.to.is_none() {
+        let utc_day = query
+            .utc_day
+            .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+        if NaiveDate::parse_from_str(&utc_day, "%Y-%m-%d").is_err() {
+            return control_error(VendError::BadId);
+        }
+        return result(state.repo.app_usage(app_id, &utc_day).await);
+    }
+    let today = Utc::now().date_naive();
+    let parse = |raw: Option<String>, default: NaiveDate| match raw {
+        Some(raw) => NaiveDate::parse_from_str(&raw, "%Y-%m-%d").map_err(|_| VendError::BadId),
+        None => Ok(default),
+    };
+    let to = match parse(query.to, today) {
+        Ok(day) => day,
+        Err(error) => return control_error(error),
+    };
+    let from = match parse(query.from, to - chrono::Duration::days(29)) {
+        Ok(day) => day,
+        Err(error) => return control_error(error),
+    };
+    let span = (to - from).num_days();
+    if span < 0 || span >= MAX_USAGE_RANGE_DAYS {
+        return control_error(VendError::BadId);
+    }
+    let mut days = Vec::with_capacity(span as usize + 1);
+    for offset in 0..=span {
+        let key = (from + chrono::Duration::days(offset))
+            .format("%Y-%m-%d")
+            .to_string();
+        match state.repo.app_usage(app_id, &key).await {
+            Ok(summary) => days.push(json!({ "utc_day": key, "usage": summary })),
+            Err(error) => return control_error(error),
+        }
+    }
+    result(Ok::<_, VendError>(json!({ "from": from.to_string(), "to": to.to_string(), "days": days })))
+}
+
+/// The app reserve wallet's live Mint balance (available + held).
+async fn balance_response(state: &ControlState, mint_account_id: &str) -> Response {
+    result(state.mint.get_balance(mint_account_id).await)
+}
+
+async fn app_balance(State(state): State<ControlState>, Path(raw): Path<String>) -> Response {
+    let id = match AppId::parse(&raw) {
+        Ok(id) => id,
+        Err(error) => return control_error(error),
+    };
+    match state.repo.get_app(&id).await {
+        Ok(Some(app)) => balance_response(&state, &app.mint_account_id).await,
+        Ok(None) => control_error(VendError::NotFound),
+        Err(error) => control_error(error),
+    }
+}
+
+async fn customer_app_balance(
+    State(state): State<ControlState>,
+    Extension(principal): Extension<CustomerPrincipal>,
+    Path(raw): Path<String>,
+) -> Response {
+    match owned_app(&state, &principal, &raw).await {
+        Ok(app) => balance_response(&state, &app.mint_account_id).await,
+        Err(error) => control_error(error),
+    }
 }
 
 async fn app_usage(
@@ -809,13 +929,7 @@ async fn app_usage(
         Ok(id) => id,
         Err(error) => return control_error(error),
     };
-    let utc_day = query
-        .utc_day
-        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
-    if NaiveDate::parse_from_str(&utc_day, "%Y-%m-%d").is_err() {
-        return control_error(VendError::BadId);
-    }
-    result(state.repo.app_usage(&id, &utc_day).await)
+    usage_response(&state, &id, query).await
 }
 
 #[derive(Deserialize)]
@@ -1080,13 +1194,7 @@ async fn customer_app_usage(
         Ok(app) => app,
         Err(error) => return control_error(error),
     };
-    let day = query
-        .utc_day
-        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
-    if NaiveDate::parse_from_str(&day, "%Y-%m-%d").is_err() {
-        return control_error(VendError::BadId);
-    }
-    result(state.repo.app_usage(&app.id, &day).await)
+    usage_response(&state, &app.id, query).await
 }
 
 async fn customer_revoke_key(
@@ -1631,7 +1739,7 @@ async fn github_callback(
             .map(|session| session.session_id.as_str()),
     )
     .await;
-    secret_result(output)
+    oauth_redirect(&state, output)
 }
 
 fn select_github_email(emails: Vec<GithubEmail>) -> Option<String> {
@@ -1788,7 +1896,7 @@ async fn google_callback(
             .map(|session| session.session_id.as_str()),
     )
     .await;
-    secret_result(output)
+    oauth_redirect(&state, output)
 }
 
 fn google_claims_authorized(claims: &GoogleClaims, expected_nonce: &str) -> bool {

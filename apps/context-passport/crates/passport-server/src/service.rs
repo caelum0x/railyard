@@ -14,6 +14,12 @@ use passport_core::{
 use passport_provenance::{to_c2pa_manifest, GenerationRecord, ProvenanceLog};
 use passport_resolve::{ConditioningPayload, Modality, ProviderRegistry};
 
+use crate::auth::Principal;
+use crate::receipts::ReceiptVerifier;
+
+/// Longest generation instruction accepted (characters).
+pub const MAX_PROMPT_CHARS: usize = 8_000;
+
 /// Result of a create call, carrying whether it was a fresh insert or a replay.
 pub struct CreateResult {
     pub view: PassportView,
@@ -27,6 +33,9 @@ pub struct PassportService {
     provenance: Arc<dyn ProvenanceLog>,
     relay: Arc<dyn RelayConditioningSink>,
     registry: Arc<ProviderRegistry>,
+    /// Trusted Mint receipt keys. Required for `attest`; when present, Relay
+    /// evidence on `generate` is verified too.
+    receipt_verifier: Option<Arc<ReceiptVerifier>>,
 }
 
 impl PassportService {
@@ -40,7 +49,40 @@ impl PassportService {
             provenance,
             relay,
             registry: Arc::new(ProviderRegistry::default()),
+            receipt_verifier: None,
         }
+    }
+
+    /// Verify Mint receipt signatures with `verifier` (returns a new service).
+    pub fn with_receipt_verifier(mut self, verifier: Arc<ReceiptVerifier>) -> Self {
+        self.receipt_verifier = Some(verifier);
+        self
+    }
+
+    // ---- access control --------------------------------------------------
+
+    /// Fail unless `principal` may act on passport `id`. A tenant key only sees
+    /// its own passports; another owner's passport is reported as not found so
+    /// ids cannot be probed.
+    pub async fn ensure_access(&self, id: &str, principal: &Principal) -> Result<(), PassportError> {
+        let passport = self.require_passport(id).await?;
+        if principal.may_access(&passport.owner) {
+            Ok(())
+        } else {
+            Err(PassportError::NotFound)
+        }
+    }
+
+    /// Every version of a passport, oldest first (the full edit/lock history).
+    pub async fn versions(&self, id: &str) -> Result<Vec<PassportVersion>, PassportError> {
+        let passport = self.require_passport(id).await?;
+        let mut out = Vec::with_capacity(passport.version.max(0) as usize);
+        for v in 1..=passport.version {
+            if let Some(version) = self.store.get_version(id, v).await? {
+                out.push(version);
+            }
+        }
+        Ok(out)
     }
 
     // ---- lifecycle -------------------------------------------------------
@@ -226,7 +268,19 @@ impl PassportService {
         provider: &str,
         modality: Modality,
         version: Option<i64>,
+        prompt: Option<String>,
     ) -> Result<GenerationRecord, PassportError> {
+        let prompt = prompt
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty());
+        if prompt
+            .as_ref()
+            .is_some_and(|p| p.chars().count() > MAX_PROMPT_CHARS)
+        {
+            return Err(PassportError::Invalid(format!(
+                "prompt must be at most {MAX_PROMPT_CHARS} characters"
+            )));
+        }
         let target = self.locked_target(id, version).await?;
         let principal = self.require_passport(id).await?.owner;
         let payload = self.registry.resolve(&target, provider, modality)?;
@@ -239,6 +293,7 @@ impl PassportService {
             modality: modality.as_str().to_string(),
             payload: serde_json::to_value(&payload)
                 .map_err(|e| PassportError::Relay(format!("encoding conditioning: {e}")))?,
+            prompt: prompt.clone(),
         };
         let generated = self.relay.generate(&request).await?;
         let evidence = generated.payment_evidence.clone().ok_or_else(|| {
@@ -248,6 +303,9 @@ impl PassportService {
         // so the service layer stays fail-closed regardless of which
         // `RelayConditioningSink` implementation is injected.
         check_settlement_evidence(&principal, &evidence).map_err(PassportError::Relay)?;
+        if let Some(verifier) = &self.receipt_verifier {
+            verifier.verify(&evidence).map_err(PassportError::Relay)?;
+        }
 
         // Derive the provenance id from Relay's correlated request id (the natural
         // idempotency key). A retried settled generation therefore reuses the
@@ -268,7 +326,9 @@ impl PassportService {
             Utc::now(),
         );
 
-        let record = base.with_payment_evidence(evidence);
+        let record = base
+            .with_payment_evidence(evidence)
+            .with_output(prompt, generated.output_text);
         self.provenance.record(&record).await?;
         Ok(record)
     }
@@ -297,6 +357,25 @@ impl PassportService {
         self.registry.resolve(&target, provider, modality)?;
         let owner = self.require_passport(id).await?.owner;
         validate_external_attestation(&owner, &output_ref, &evidence)?;
+        // The signature must be a real Mint Ed25519 signature over the receipt
+        // hash. Without trusted keys, attestation fails closed.
+        let verifier = self.receipt_verifier.as_ref().ok_or_else(|| {
+            PassportError::Mint(
+                "receipt verification is not configured (set MINT_RECEIPT_PUBLIC_KEYS or MINT_BASE_URL)"
+                    .into(),
+            )
+        })?;
+        verifier.verify(&evidence).map_err(PassportError::Invalid)?;
+        // One settled receipt backs exactly one generation of this passport: a
+        // genuine receipt cannot be replayed under a fresh request id.
+        let record_id_for_request = format!("gen_ext_{}", evidence.request_id);
+        if self.provenance.list(id).await?.iter().any(|r| {
+            r.id != record_id_for_request
+                && r.payment_evidence.as_ref().map(|e| &e.receipt.receipt_hash)
+                    == Some(&evidence.receipt.receipt_hash)
+        }) {
+            return Err(PassportError::IdempotencyConflict);
+        }
         let created_at = chrono::DateTime::from_timestamp_millis(settled_at_ms)
             .ok_or_else(|| PassportError::Invalid("settled_at_ms is invalid".into()))?;
         let record_id = format!("gen_ext_{}", evidence.request_id);

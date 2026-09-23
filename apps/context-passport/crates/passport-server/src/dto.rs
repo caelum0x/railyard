@@ -19,6 +19,9 @@ pub struct GenerateRequest {
     pub modality: Modality,
     #[serde(default)]
     pub version: Option<i64>,
+    /// What to produce as this passport (e.g. "Write a launch tweet about...").
+    #[serde(default)]
+    pub prompt: Option<String>,
 }
 
 /// Record a generation executed by another first-party surface (for example

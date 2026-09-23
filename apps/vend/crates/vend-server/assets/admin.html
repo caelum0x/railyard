@@ -67,6 +67,15 @@
   .count { color: var(--muted); font-size: 12px; }
   .hint { color: var(--muted); font-size: 12px; }
   code { background: var(--row); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .actions { margin: 14px 0; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .actions h3 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
+  .form-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  .form-grid input, .form-grid select { min-width: 0; width: 100%; }
+  button.danger { border-color: var(--danger, #f2668b); color: var(--danger, #f2668b); background: transparent; }
+  button.small { padding: 3px 8px; font-size: 12px; }
+  .secret { margin-top: 10px; padding: 10px; border: 1px solid #f2b35a; border-radius: 6px; background: #241f10; }
+  .secret code { display: block; margin-top: 4px; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -89,7 +98,9 @@
   <nav id="tabs"></nav>
   <main>
     <div class="toolbar" id="toolbar"></div>
+    <div id="extra"></div>
     <div id="view" class="card"><div class="loading">Loading…</div></div>
+    <div id="actions"></div>
   </main>
 </div>
 
@@ -149,12 +160,22 @@
       + " / plat " + esc(p.platform_fee_bps) + " bps / " + esc(p.funding_mode);
   }
 
-  async function api(path) {
-    const res = await fetch(path, {
+  async function api(path, method, payload) {
+    const init = {
+      method: method || "GET",
       headers: { "Authorization": "Bearer " + getKey(), "Accept": "application/json" },
-    });
+    };
+    if (payload !== undefined) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(payload);
+    }
+    const res = await fetch(path, init);
     if (res.status === 401 || res.status === 403) throw new Error("Unauthorized — check the admin token.");
-    if (!res.ok) throw new Error("HTTP " + res.status + " on " + path);
+    if (!res.ok) {
+      let msg = "HTTP " + res.status + " on " + path;
+      try { const j = await res.json(); if (j && j.error) msg = j.error.message || j.error.code || msg; } catch (_) {}
+      throw new Error(msg);
+    }
     const body = await res.json();
     // Control-plane responses are the { success, data } envelope.
     return body && Object.prototype.hasOwnProperty.call(body, "data") ? body.data : body;
@@ -242,6 +263,178 @@
     },
   ];
 
+  // ---- write actions (every one hits a real /v1/control endpoint) ------------
+  const dollars = (v) => Math.round(Number(v || 0) * 1e6);
+  const csv = (v) => String(v || "").split(",").map((x) => x.trim()).filter(Boolean);
+  function secretBox(title, value, note) {
+    return '<div class="secret"><b>' + esc(title) + '</b><div class="hint">' + esc(note || "Shown once. Store it now.")
+      + "</div><code>" + esc(value) + "</code></div>";
+  }
+  function field(id, label, attrs) {
+    return '<label>' + esc(label) + '<input id="' + id + '" ' + (attrs || "") + " /></label>";
+  }
+  function goTab(id, params) {
+    Object.assign(paramState, params || {});
+    active = TABS.find((t) => t.id === id);
+    renderTabs(); renderToolbar(); maybeLoad();
+  }
+  async function act(fn, okMsg) {
+    try { const out = await fn(); setStatus(okMsg, "ok"); return out === null || out === undefined ? true : out; }
+    catch (e) { setStatus(e.message, "err"); return null; }
+  }
+
+  const FORMS = {
+    tenants: () => '<h3>Bootstrap a tenant</h3><div class="form-grid">'
+      + field("b-tenant", "Tenant name") + field("b-app", "First app name")
+      + field("b-email", "Owner email", 'type="email"') + field("b-owner", "Owner display name")
+      + field("b-acct", "Mint reserve account", 'placeholder="acct_..."')
+      + field("b-models", "Allowed models (comma separated, blank = all)")
+      + field("b-bps", "Markup bps", 'type="number" value="2000"')
+      + field("b-min", "Min fee per request ($)", 'type="number" value="0" step="0.0001"')
+      + field("b-plat", "Platform fee bps", 'type="number" value="1000"')
+      + field("b-cap", "Key daily cap ($)", 'type="number" value="100" step="0.01"')
+      + '</div><div class="toolbar"><button class="primary" id="b-go">Bootstrap</button></div><div id="b-out"></div>',
+    apps: () => paramState.tenant_id ? '<h3>Create app for ' + esc(paramState.tenant_id) + '</h3><div class="form-grid">'
+      + field("a-name", "App name") + field("a-acct", "Mint reserve account", 'placeholder="acct_..."')
+      + field("a-models", "Allowed models (comma separated)")
+      + field("a-bps", "Markup bps", 'type="number" value="2000"')
+      + field("a-min", "Min fee per request ($)", 'type="number" value="0" step="0.0001"')
+      + field("a-plat", "Platform fee bps", 'type="number" value="1000"')
+      + '<label>ZDR<select id="a-zdr"><option value="false">off</option><option value="true">on</option></select></label>'
+      + '</div><div class="toolbar"><button class="primary" id="a-go">Create app</button></div>' : "",
+    keys: () => paramState.app_id ? '<h3>Issue key for ' + esc(paramState.app_id) + '</h3><div class="form-grid">'
+      + '<label>Environment<select id="k-env"><option value="live">live</option><option value="test">test</option></select></label>'
+      + field("k-cap", "Daily cap ($)", 'type="number" value="100" step="0.01"')
+      + field("k-eu", "Per end-user daily cap ($, optional)", 'type="number" step="0.01"')
+      + '</div><div class="toolbar"><button class="primary" id="k-go">Issue key</button></div><div id="k-out"></div>'
+      + '<h3 style="margin-top:14px">Provision end user</h3><div class="form-grid">'
+      + field("e-ref", "External reference") + field("e-acct", "Mint account", 'placeholder="acct_..."')
+      + '</div><div class="toolbar"><button id="e-go">Provision</button></div>' : "",
+    users: () => paramState.tenant_id ? '<h3>Invite user to ' + esc(paramState.tenant_id) + '</h3><div class="form-grid">'
+      + field("u-email", "Email", 'type="email"') + field("u-name", "Display name")
+      + '<label>Role<select id="u-role"><option value="viewer">viewer</option><option value="admin">admin</option><option value="owner">owner</option></select></label>'
+      + '</div><div class="toolbar"><button class="primary" id="u-go">Invite</button></div><div id="u-out"></div>' : "",
+    usage: () => "",
+  };
+
+  const policy = (p) => ({
+    markup_bps: Number(el(p + "-bps").value || 0),
+    min_fee_micros: dollars(el(p + "-min").value),
+    platform_fee_bps: Number(el(p + "-plat").value || 0),
+    funding_mode: "tenant_reserve",
+  });
+
+  function bindForms() {
+    const on = (id, fn) => { const b = el(id); if (b) b.onclick = fn; };
+    on("b-go", async () => {
+      const out = await act(() => api("/v1/control/tenants", "POST", {
+        tenant_name: el("b-tenant").value.trim(), app_name: el("b-app").value.trim(),
+        owner_email: el("b-email").value.trim(), owner_display_name: el("b-owner").value.trim(),
+        mint_account_id: el("b-acct").value.trim(), model_allowlist: csv(el("b-models").value), zdr: false,
+        markup_policy: policy("b"), daily_cap_micros: dollars(el("b-cap").value),
+      }), "Tenant bootstrapped");
+      if (out) {
+        el("b-out").innerHTML = secretBox("Provisioning key", out.provisioning_key)
+          + secretBox("Owner setup token", out.owner_setup_token, "Deliver to the owner out of band; they set a password at /console.");
+        load();
+      }
+    });
+    on("a-go", async () => {
+      const out = await act(() => api("/v1/control/tenants/" + encodeURIComponent(paramState.tenant_id) + "/apps", "POST", {
+        name: el("a-name").value.trim(), mint_account_id: el("a-acct").value.trim(),
+        model_allowlist: csv(el("a-models").value), zdr: el("a-zdr").value === "true", markup_policy: policy("a"),
+      }), "App created");
+      if (out) load();
+    });
+    on("k-go", async () => {
+      const body = { environment: el("k-env").value, daily_cap_micros: dollars(el("k-cap").value) };
+      if (el("k-eu").value) body.per_end_user_daily_cap_micros = dollars(el("k-eu").value);
+      const out = await act(() => api("/v1/control/apps/" + encodeURIComponent(paramState.app_id) + "/keys", "POST", body), "Key issued");
+      if (out) { el("k-out").innerHTML = secretBox("New provisioning key", out.secret); load(); }
+    });
+    on("e-go", async () => {
+      await act(() => api("/v1/control/apps/" + encodeURIComponent(paramState.app_id) + "/end-users", "POST", {
+        external_ref: el("e-ref").value.trim(), mint_account_id: el("e-acct").value.trim(),
+      }), "End user provisioned");
+    });
+    on("u-go", async () => {
+      const out = await act(() => api("/v1/control/tenants/" + encodeURIComponent(paramState.tenant_id) + "/users", "POST", {
+        email: el("u-email").value.trim(), display_name: el("u-name").value.trim(), role: el("u-role").value,
+      }), "User invited");
+      if (out) { el("u-out").innerHTML = secretBox("Setup token for " + out.user.email, out.setup_token); load(); }
+    });
+  }
+
+  // Per-row buttons: click-through navigation plus the real write endpoints.
+  const ROW_ACTIONS = {
+    tenants: (r) => '<button class="small" data-go="apps" data-tenant="' + esc(r.id) + '">Apps</button> '
+      + '<button class="small" data-go="users" data-tenant="' + esc(r.id) + '">Users</button>',
+    apps: (r) => '<button class="small" data-go="keys" data-app="' + esc(r.id) + '">Keys</button> '
+      + '<button class="small" data-go="usage" data-app="' + esc(r.id) + '">Usage</button> '
+      + '<button class="small' + (r.enabled ? " danger" : "") + '" data-toggle="' + esc(r.id) + '" data-enabled="' + (r.enabled ? "1" : "") + '">'
+      + (r.enabled ? "Disable" : "Enable") + "</button>",
+    keys: (r) => r.status === "revoked" ? "" : '<button class="small danger" data-revoke="' + esc(r.id) + '">Revoke</button>',
+    users: (r) => '<select class="small" data-role="' + esc(r.id) + '">' + ["viewer", "admin", "owner"].map((x) =>
+        '<option value="' + x + '"' + (r.role === x ? " selected" : "") + ">" + x + "</option>").join("") + "</select> "
+      + (r.status === "disabled"
+        ? '<button class="small" data-user-enable="' + esc(r.id) + '">Enable</button> '
+        : '<button class="small danger" data-user-disable="' + esc(r.id) + '">Disable</button> ')
+      + '<button class="small" data-sessions="' + esc(r.id) + '">Revoke sessions</button>',
+  };
+
+  function bindRowActions() {
+    const view = el("view");
+    view.querySelectorAll("button[data-go]").forEach((b) => {
+      b.onclick = () => goTab(b.dataset.go, b.dataset.tenant ? { tenant_id: b.dataset.tenant } : { app_id: b.dataset.app });
+    });
+    view.querySelectorAll("button[data-toggle]").forEach((b) => {
+      b.onclick = async () => {
+        const ok = await act(() => api("/v1/control/apps/" + encodeURIComponent(b.dataset.toggle) + "/enabled", "PATCH",
+          { enabled: !b.dataset.enabled }), b.dataset.enabled ? "App disabled" : "App enabled");
+        if (ok !== null) load();
+      };
+    });
+    view.querySelectorAll("button[data-revoke]").forEach((b) => {
+      b.onclick = async () => {
+        if (!confirm("Revoke this key? Requests using it fail immediately.")) return;
+        const ok = await act(() => api("/v1/control/keys/" + encodeURIComponent(b.dataset.revoke), "DELETE"), "Key revoked");
+        if (ok !== null) load();
+      };
+    });
+    const userPatch = async (id, body, msg) => {
+      const ok = await act(() => api("/v1/control/tenants/" + encodeURIComponent(paramState.tenant_id) + "/users/"
+        + encodeURIComponent(id), "PATCH", body), msg);
+      if (ok !== null) load();
+    };
+    view.querySelectorAll("select[data-role]").forEach((s) => { s.onchange = () => userPatch(s.dataset.role, { role: s.value }, "Role updated"); });
+    view.querySelectorAll("button[data-user-disable]").forEach((b) => { b.onclick = () => userPatch(b.dataset.userDisable, { disabled: true }, "User disabled"); });
+    view.querySelectorAll("button[data-user-enable]").forEach((b) => { b.onclick = () => userPatch(b.dataset.userEnable, { disabled: false }, "User enabled"); });
+    view.querySelectorAll("button[data-sessions]").forEach((b) => {
+      b.onclick = () => act(() => api("/v1/control/tenants/" + encodeURIComponent(paramState.tenant_id) + "/users/"
+        + encodeURIComponent(b.dataset.sessions) + "/sessions", "DELETE"), "Sessions revoked");
+    });
+  }
+
+  function renderActions() {
+    const html = (FORMS[active.id] || (() => ""))();
+    el("actions").innerHTML = html ? '<div class="actions">' + html + "</div>" : "";
+    bindForms();
+  }
+
+  async function renderExtra() {
+    const box = el("extra");
+    box.innerHTML = "";
+    if (active.id !== "usage" || !paramState.app_id) return;
+    try {
+      const b = await api("/v1/control/apps/" + encodeURIComponent(paramState.app_id) + "/balance");
+      box.innerHTML = '<div class="actions"><h3>Reserve wallet</h3>Available <b>' + usd(b.available_micros)
+        + "</b> &middot; held by in-flight requests <b>" + usd(b.held_micros) + '</b> <span class="hint">(Mint account '
+        + esc(b.account_id) + ")</span></div>";
+    } catch (e) {
+      box.innerHTML = '<div class="actions"><h3>Reserve wallet</h3><span class="hint">' + esc(e.message) + "</span></div>";
+    }
+  }
+
   let active = TABS[0];
   const paramState = {}; // key -> value, shared across tabs (tenant_id/app_id reused)
 
@@ -266,6 +459,7 @@
       input.placeholder = param.label + (param.required ? " *" : "");
       input.value = paramState[param.key] || "";
       input.oninput = () => { paramState[param.key] = input.value.trim(); };
+      input.onchange = () => { renderActions(); renderExtra(); };
       input.addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
       bar.appendChild(input);
     });
@@ -284,6 +478,8 @@
   }
 
   function maybeLoad() {
+    renderActions();
+    renderExtra();
     if (missingParams().length === 0) load();
     else {
       el("view").innerHTML = '<div class="empty">Enter '
@@ -301,12 +497,16 @@
       const c = el("count"); if (c) c.textContent = "0 rows";
       return;
     }
+    const rowActions = ROW_ACTIONS[active.id];
     const head = active.cols.map((c) =>
-      '<th' + (c.mono ? ' class="mono"' : "") + ">" + esc(c.h) + "</th>").join("");
+      '<th' + (c.mono ? ' class="mono"' : "") + ">" + esc(c.h) + "</th>").join("")
+      + (rowActions ? "<th>Actions</th>" : "");
     const body = rows.map((r) =>
       "<tr>" + active.cols.map((c) =>
-        "<td" + (c.mono ? ' class="mono"' : "") + ">" + c.f(r) + "</td>").join("") + "</tr>").join("");
+        "<td" + (c.mono ? ' class="mono"' : "") + ">" + c.f(r) + "</td>").join("")
+      + (rowActions ? "<td>" + rowActions(r) + "</td>" : "") + "</tr>").join("");
     view.innerHTML = "<table><thead><tr>" + head + "</tr></thead><tbody>" + body + "</tbody></table>";
+    bindRowActions();
     const c = el("count"); if (c) c.textContent = rows.length + " row" + (rows.length === 1 ? "" : "s");
   }
 

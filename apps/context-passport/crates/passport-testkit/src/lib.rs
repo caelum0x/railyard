@@ -48,6 +48,10 @@ impl RelayConditioningSink for FakeRelay {
                     signature: format!("signed_receipt_{n}"),
                 },
             }),
+            output_text: Some(format!(
+                "fake output {n}: {}",
+                request.prompt.clone().unwrap_or_default()
+            )),
         })
     }
 }
@@ -93,6 +97,7 @@ impl RelayConditioningSink for ReplayRelay {
                     signature: "signed_receipt_stable".into(),
                 },
             }),
+            output_text: Some("stable output".into()),
         })
     }
 }

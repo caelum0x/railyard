@@ -168,6 +168,54 @@ impl Catalog {
         self.products.is_empty()
     }
 
+    /// Every rarity pool, ordered by rarity (for catalog discovery endpoints).
+    pub fn pools(&self) -> &BTreeMap<Rarity, Vec<String>> {
+        &self.pools
+    }
+
+    /// Load an operator-authored catalog from its JSON definition (see
+    /// [`CatalogFile`]). Every SKU, price, drop table and season is validated up
+    /// front so a bad file fails the boot instead of mis-charging players.
+    pub fn from_json(json: &str) -> Result<Self, CatalogError> {
+        let file: CatalogFile =
+            serde_json::from_str(json).map_err(|e| CatalogError(format!("invalid JSON: {e}")))?;
+        Catalog::from_file(file)
+    }
+
+    /// Build + validate a catalog from its parsed definition.
+    pub fn from_file(file: CatalogFile) -> Result<Self, CatalogError> {
+        if file.products.is_empty() {
+            return Err(CatalogError("catalog must define at least one product".into()));
+        }
+        let mut catalog = Catalog::empty();
+        for product in file.products {
+            validate_product(&product)?;
+            if catalog.products.contains_key(product.sku()) {
+                return Err(CatalogError(format!("duplicate sku `{}`", product.sku())));
+            }
+            catalog.products.insert(product.sku().to_string(), product);
+        }
+        for (rarity, names) in file.pools {
+            if names.iter().any(|n| n.trim().is_empty()) {
+                return Err(CatalogError(format!(
+                    "pool `{}` contains an empty item name",
+                    rarity.tag()
+                )));
+            }
+            catalog.pools.insert(rarity, names);
+        }
+        Ok(catalog)
+    }
+
+    /// The serializable definition of this catalog (round-trips via
+    /// [`Catalog::from_file`]).
+    pub fn to_file(&self) -> CatalogFile {
+        CatalogFile {
+            products: self.products.values().cloned().collect(),
+            pools: self.pools.clone(),
+        }
+    }
+
     /// The canonical demo storefront: three card-pack tiers, two skins, and a
     /// battle-pass, with a full per-rarity item pool. Prices are authored in
     /// dollars for readability but stored as µ$.
@@ -244,9 +292,82 @@ impl Catalog {
     }
 }
 
+/// The on-disk catalog definition an operator authors for their game
+/// (`GAME_CATALOG_PATH`). `products` uses the externally-tagged [`Product`]
+/// shape, e.g. `{"CardPack": {"sku": "pack.standard", ...}}`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogFile {
+    /// Every sellable SKU.
+    pub products: Vec<Product>,
+    /// Per-rarity item names pack drops draw from.
+    #[serde(default)]
+    pub pools: BTreeMap<Rarity, Vec<String>>,
+}
+
+/// A catalog definition that failed validation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CatalogError(pub String);
+
+impl std::fmt::Display for CatalogError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "catalog error: {}", self.0)
+    }
+}
+
+impl std::error::Error for CatalogError {}
+
+fn validate_product(product: &Product) -> Result<(), CatalogError> {
+    let sku = product.sku();
+    if sku.trim().is_empty() || sku.chars().any(char::is_whitespace) {
+        return Err(CatalogError(format!("invalid sku `{sku}`")));
+    }
+    if product.price_micros() <= 0 {
+        return Err(CatalogError(format!("sku `{sku}` must have a positive price")));
+    }
+    match product {
+        Product::CardPack(t) => {
+            if t.name.trim().is_empty() {
+                return Err(CatalogError(format!("pack `{sku}` needs a name")));
+            }
+            if t.cards_per_pack == 0 || t.cards_per_pack > 100 {
+                return Err(CatalogError(format!(
+                    "pack `{sku}` cards_per_pack must be 1..=100"
+                )));
+            }
+            if t.rarity_weights.iter().map(|(_, w)| *w as u64).sum::<u64>() == 0 {
+                return Err(CatalogError(format!(
+                    "pack `{sku}` needs a non-zero rarity_weights table"
+                )));
+            }
+        }
+        Product::Cosmetic(c) => {
+            if c.name.trim().is_empty() || c.slot.trim().is_empty() {
+                return Err(CatalogError(format!("cosmetic `{sku}` needs a name and slot")));
+            }
+        }
+        Product::BattlePass(b) => {
+            if b.name.trim().is_empty() || b.tiers == 0 {
+                return Err(CatalogError(format!(
+                    "battle pass `{sku}` needs a name and at least one tier"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_file_round_trips_and_validates() {
+        let demo = Catalog::demo();
+        let json = serde_json::to_string(&demo.to_file()).unwrap();
+        let loaded = Catalog::from_json(&json).unwrap();
+        assert_eq!(loaded.len(), demo.len());
+        assert!(Catalog::from_json(r#"{"products":[]}"#).is_err());
+    }
 
     #[test]
     fn demo_catalog_has_all_three_sku_shapes() {

@@ -73,6 +73,17 @@ impl PricingCatalog {
         Self::from_json(&raw)
     }
 
+    /// Every priced model, sorted by id (backs `GET /v1/models`).
+    pub fn models(&self) -> Vec<(String, ModelRate)> {
+        let mut out: Vec<(String, ModelRate)> = self
+            .rates
+            .iter()
+            .map(|(model, rate)| (model.clone(), *rate))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
     fn rate(&self, model: &str) -> Result<ModelRate, VendError> {
         self.rates
             .get(model)

@@ -24,13 +24,42 @@ struct Harness {
     service: PassportService,
 }
 
+/// Deterministic stand-in for Mint's receipt-signing key.
+fn mint_key() -> ed25519_dalek::SigningKey {
+    ed25519_dalek::SigningKey::from_bytes(&[42u8; 32])
+}
+
+/// A receipt hash + Mint signature over it, hex-encoded like Mint emits them.
+fn signed_receipt(seed: u8) -> (String, String) {
+    use ed25519_dalek::Signer;
+    let hash = [seed; 32];
+    (hex::encode(hash), hex::encode(mint_key().sign(&hash).to_bytes()))
+}
+
 fn harness() -> Harness {
+    build_harness(false)
+}
+
+/// Harness whose service verifies Mint receipt signatures (required by attest).
+fn attest_harness() -> Harness {
+    build_harness(true)
+}
+
+fn build_harness(verify_receipts: bool) -> Harness {
     let store = Arc::new(MemoryStore::default());
     let relay = Arc::new(FakeRelay::default());
-    let service = PassportService::new(store.clone(), store, relay.clone());
+    let mut service = PassportService::new(store.clone(), store, relay.clone());
+    if verify_receipts {
+        let verifier = passport_server::receipts::ReceiptVerifier::from_hex_keys([hex::encode(
+            mint_key().verifying_key().as_bytes(),
+        )])
+        .unwrap();
+        service = service.with_receipt_verifier(Arc::new(verifier));
+    }
     let state = AppState {
         service: service.clone(),
         api_key: Arc::from(API_KEY),
+        owner_keys: Default::default(),
     };
     Harness {
         app: build_router(state),
@@ -330,8 +359,9 @@ async fn generate_as_passport_wires_relay_provenance_and_mint() {
 
 #[tokio::test]
 async fn external_generation_attestation_is_locked_receipted_and_idempotent() {
-    let h = harness();
+    let h = attest_harness();
     let id = create_locked_character(&h.app).await;
+    let (receipt_hash, signature) = signed_receipt(7);
     let body = json!({
         "provider": "runway",
         "modality": "image",
@@ -347,8 +377,8 @@ async fn external_generation_attestation_is_locked_receipted_and_idempotent() {
                 "operation": "hold.capture",
                 "operation_hash": "op-hash",
                 "amount_micros": 990000,
-                "receipt_hash": "receipt-hash",
-                "signature": "signed-receipt"
+                "receipt_hash": receipt_hash,
+                "signature": signature
             }
         }
     });
@@ -390,7 +420,7 @@ async fn external_generation_attestation_is_locked_receipted_and_idempotent() {
 
 #[tokio::test]
 async fn external_attestation_rejects_wrong_payer() {
-    let h = harness();
+    let h = attest_harness();
     let id = create_locked_character(&h.app).await;
     let (status, error) = send(
         &h.app,
@@ -419,6 +449,43 @@ async fn external_attestation_rejects_wrong_payer() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(error["error"]["code"], "invalid_passport");
+}
+
+#[tokio::test]
+async fn external_attestation_rejects_forged_signature_and_receipt_replay() {
+    let h = attest_harness();
+    let id = create_locked_character(&h.app).await;
+    let uri = format!("/v1/passports/{id}/attest");
+    let (receipt_hash, signature) = signed_receipt(3);
+    let body = |request_id: &str, sig: &str| {
+        json!({
+            "provider": "runway",
+            "modality": "image",
+            "output_ref": "r2://asset",
+            "settled_at_ms": 1_787_854_400_000_i64,
+            "payment_evidence": {
+                "request_id": request_id,
+                "payer_account": "menivor",
+                "receipt": {
+                    "sequence": 1,
+                    "operation": "hold.capture",
+                    "operation_hash": "op",
+                    "amount_micros": 1,
+                    "receipt_hash": receipt_hash,
+                    "signature": sig
+                }
+            }
+        })
+    };
+    // A fabricated signature never produces provenance.
+    let (status, _) = send(&h.app, "POST", &uri, Some(API_KEY), Some(body("req-forged", "x"))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    // A genuine receipt records once...
+    let (status, _) = send(&h.app, "POST", &uri, Some(API_KEY), Some(body("req-a", &signature))).await;
+    assert_eq!(status, StatusCode::CREATED);
+    // ...and cannot be replayed under a fresh request id.
+    let (status, _) = send(&h.app, "POST", &uri, Some(API_KEY), Some(body("req-b", &signature))).await;
+    assert_eq!(status, StatusCode::CONFLICT);
 }
 
 #[tokio::test]
@@ -474,6 +541,7 @@ async fn generate_is_idempotent_on_relay_request_id() {
     let state = AppState {
         service,
         api_key: Arc::from(API_KEY),
+        owner_keys: Default::default(),
     };
     let app = build_router(state);
     let id = create_locked_character(&app).await;
@@ -521,7 +589,7 @@ async fn generate_on_draft_fails_closed_without_calling_relay() {
     // Never locked → resolve/generate must refuse and never hit Relay.
     let err = h
         .service
-        .generate(&id, "runway", Modality::Image, None)
+        .generate(&id, "runway", Modality::Image, None, None)
         .await
         .unwrap_err();
     assert_eq!(err, passport_core::PassportError::VersionNotLocked);

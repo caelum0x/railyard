@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<meta name="referrer" content="no-referrer" />
+<title>Vend Console</title>
+<style>
+  :root { --bg:#0f1117; --panel:#181b24; --border:#262b38; --fg:#e6e8ee; --muted:#8b91a1;
+    --accent:#6ea8fe; --danger:#f2668b; --ok:#55c98a; --row:#1e222d; --warn:#f2b35a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:14px 20px; background:var(--panel);
+    border-bottom:1px solid var(--border); position:sticky; top:0; z-index:5; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  .spacer { flex:1; }
+  input, select, button { font:inherit; color:var(--fg); background:var(--row); border:1px solid var(--border); border-radius:6px; padding:7px 10px; }
+  button { cursor:pointer; } button:disabled { opacity:.5; cursor:default; }
+  button.primary { background:var(--accent); color:#0b1020; border-color:var(--accent); font-weight:600; }
+  button.danger { border-color:var(--danger); color:var(--danger); background:transparent; }
+  button.link { background:transparent; border:none; color:var(--accent); padding:0; }
+  #status { font-size:12px; color:var(--muted); } #status.err { color:var(--danger); } #status.ok { color:var(--ok); }
+  nav { display:flex; gap:4px; padding:12px 20px 0; flex-wrap:wrap; }
+  nav button { background:transparent; border:1px solid transparent; border-bottom:none; border-radius:6px 6px 0 0; color:var(--muted); padding:8px 14px; }
+  nav button.active { color:var(--fg); background:var(--panel); border-color:var(--border); }
+  main { padding:0 20px 40px; max-width:1100px; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:16px; margin-top:16px; }
+  .panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin:0 0 12px; }
+  .auth { max-width:440px; margin:48px auto; }
+  .field { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+  .field label { font-size:12px; color:var(--muted); }
+  .field input, .field select { width:100%; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; }
+  .card { background:var(--row); border:1px solid var(--border); border-radius:8px; padding:12px; }
+  .card .big { font-size:22px; font-weight:600; font-variant-numeric:tabular-nums; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:top; font-variant-numeric:tabular-nums; }
+  th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.4px; }
+  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; word-break:break-all; }
+  .muted { color:var(--muted); font-size:12px; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:20px; font-size:11px; border:1px solid var(--border); }
+  .badge.on { color:var(--ok); border-color:var(--ok); } .badge.off { color:var(--danger); border-color:var(--danger); }
+  .empty, .loading { padding:24px; color:var(--muted); text-align:center; }
+  .secret { background:#241f10; border:1px solid var(--warn); border-radius:6px; padding:12px; margin-top:12px; }
+  .secret code { display:block; margin-top:6px; word-break:break-all; font-family:ui-monospace,Menlo,monospace; }
+  .bars { display:flex; align-items:flex-end; gap:3px; height:90px; margin-top:8px; }
+  .bars div { flex:1; background:var(--accent); min-height:1px; border-radius:2px 2px 0 0; opacity:.85; }
+  .divider { text-align:center; color:var(--muted); font-size:12px; margin:14px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Vend Console</h1>
+  <span id="who" class="muted"></span>
+  <div class="spacer"></div>
+  <span id="status"></span>
+  <button id="logout" hidden>Sign out</button>
+</header>
+<nav id="tabs"></nav>
+<main id="main"></main>
+<script>
+(function () {
+  "use strict";
+  var SESSION = "vend_customer_session", TENANT = "vend_customer_tenant";
+  var st = { token: sessionStorage.getItem(SESSION) || "", tab: "apps", tenant: null, me: null, appId: null };
+  var main = document.getElementById("main");
+  function $(id) { return document.getElementById(id); }
+  function esc(v) { if (v === null || v === undefined) return ""; return String(v).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function usd(m) { if (m === null || m === undefined) return "-"; var n = Number(m) / 1e6; return "$" + n.toFixed(n !== 0 && Math.abs(n) < 0.01 ? 6 : 2); }
+  function setStatus(m, k) { var s = $("status"); s.textContent = m || ""; s.className = k || ""; }
+  function api(method, path, body) {
+    var opts = { method: method, headers: { "Accept": "application/json" } };
+    if (st.token) opts.headers["Authorization"] = "Bearer " + st.token;
+    if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+    return fetch(path, opts).then(function (r) {
+      return r.text().then(function (t) {
+        var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) {}
+        if (r.status === 401 && st.token) { signOut("Your session ended. Sign in again."); throw new Error("Session ended"); }
+        if (!r.ok || (j && j.success === false)) throw new Error(j && j.error ? (j.error.message || j.error.code) : ("HTTP " + r.status));
+        return j && Object.prototype.hasOwnProperty.call(j, "data") ? j.data : j;
+      });
+    });
+  }
+  function secretBox(title, value, note) {
+    return '<div class="secret"><b>' + esc(title) + '</b><div class="muted">' + esc(note || "Copy it now. It will not be shown again.") +
+      '</div><code>' + esc(value) + "</code></div>";
+  }
+
+  // ---- OAuth landing: the server redirects here with the session in the fragment.
+  (function readFragment() {
+    if (!location.hash) return;
+    var params = new URLSearchParams(location.hash.slice(1));
+    if (params.get("session")) { st.token = params.get("session"); sessionStorage.setItem(SESSION, st.token); }
+    if (params.get("oauth_error")) setStatus("Sign-in failed: " + params.get("oauth_error"), "err");
+    history.replaceState(null, "", location.pathname);
+  })();
+
+  function signOut(msg) {
+    st.token = ""; st.tenant = null; st.me = null; st.appId = null;
+    sessionStorage.removeItem(SESSION);
+    render(); if (msg) setStatus(msg, "err");
+  }
+  $("logout").onclick = function () {
+    api("POST", "/v1/customer/logout").catch(function () {}).then(function () { signOut(); setStatus("Signed out", "ok"); });
+  };
+
+  // ---- Auth screens -----------------------------------------------------------
+  function renderAuth() {
+    var tenant = localStorage.getItem(TENANT) || "";
+    main.innerHTML = '<div class="panel auth"><h2>Sign in</h2>' +
+      '<div class="field"><label>Workspace (tenant) ID</label><input id="l-tenant" value="' + esc(tenant) + '" placeholder="ten_..." /></div>' +
+      '<div class="field"><label>Email</label><input id="l-email" type="email" autocomplete="username" /></div>' +
+      '<div class="field"><label>Password</label><input id="l-pass" type="password" autocomplete="current-password" /></div>' +
+      '<button id="l-go" class="primary" style="width:100%">Sign in</button>' +
+      '<div class="divider">or continue with</div><div class="row"><button id="o-gh" style="flex:1">GitHub</button><button id="o-gg" style="flex:1">Google</button></div>' +
+      '<div class="divider">first time here?</div>' +
+      '<div class="field"><label>Setup token (from your invitation)</label><input id="s-token" autocomplete="off" /></div>' +
+      '<div class="field"><label>Choose a password</label><input id="s-pass" type="password" autocomplete="new-password" /></div>' +
+      '<button id="s-go" style="width:100%">Set password</button></div>';
+    function tenantId() { var t = $("l-tenant").value.trim(); if (t) localStorage.setItem(TENANT, t); return t; }
+    $("l-go").onclick = function () {
+      var t = tenantId();
+      if (!t || !$("l-email").value || !$("l-pass").value) { setStatus("Workspace ID, email and password are required", "err"); return; }
+      api("POST", "/v1/auth/login", { tenant_id: t, email: $("l-email").value.trim(), password: $("l-pass").value })
+        .then(function (s) { st.token = s.session_token; sessionStorage.setItem(SESSION, st.token); setStatus("Signed in", "ok"); render(); })
+        .catch(function (e) { setStatus(e.message, "err"); });
+    };
+    function oauth(provider) { var t = tenantId(); if (!t) { setStatus("Enter your workspace ID first", "err"); return; }
+      location.href = "/v1/auth/" + provider + "/start?tenant_id=" + encodeURIComponent(t); }
+    $("o-gh").onclick = function () { oauth("github"); };
+    $("o-gg").onclick = function () { oauth("google"); };
+    $("s-go").onclick = function () {
+      api("POST", "/v1/auth/setup", { setup_token: $("s-token").value.trim(), password: $("s-pass").value })
+        .then(function (u) { localStorage.setItem(TENANT, u.tenant_id); setStatus("Password set. Sign in with " + u.email + ".", "ok"); renderAuth(); })
+        .catch(function (e) { setStatus(e.message, "err"); });
+    };
+  }
+
+  // ---- Shell ------------------------------------------------------------------
+  var TABS = [["apps", "Apps"], ["team", "Team"], ["account", "Account"]];
+  function renderTabs() {
+    var nav = $("tabs"); nav.innerHTML = "";
+    if (!st.token) return;
+    TABS.forEach(function (t) {
+      var b = document.createElement("button"); b.textContent = t[1]; b.className = st.tab === t[0] ? "active" : "";
+      b.onclick = function () { st.tab = t[0]; render(); }; nav.appendChild(b);
+    });
+  }
+  function render() {
+    $("logout").hidden = !st.token;
+    renderTabs();
+    if (!st.token) { $("who").textContent = ""; return renderAuth(); }
+    var ready = st.tenant ? Promise.resolve() : api("GET", "/v1/customer/tenant").then(function (t) { st.tenant = t; });
+    ready.then(function () {
+      $("who").textContent = st.tenant.name + " (" + st.tenant.id + ")";
+      if (st.tab === "apps") return st.appId ? renderApp(st.appId) : renderApps();
+      if (st.tab === "team") return renderTeam();
+      return renderAccount();
+    }).catch(function (e) { main.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
+  }
+
+  // ---- Apps -------------------------------------------------------------------
+  function renderApps() {
+    main.innerHTML = '<div class="loading">Loading apps...</div>';
+    api("GET", "/v1/customer/apps").then(function (apps) {
+      var html = '<div class="panel"><h2>Apps</h2>' + (apps.length ? "<table><thead><tr><th>Name</th><th>Status</th><th>Models</th><th>Markup</th><th></th></tr></thead><tbody>" +
+        apps.map(function (a) {
+          return "<tr><td><b>" + esc(a.name) + '</b><div class="mono muted">' + esc(a.id) + "</div></td><td>" + (a.enabled ? '<span class="badge on">enabled</span>' : '<span class="badge off">disabled</span>') +
+            "</td><td>" + (a.model_allowlist.length ? esc(a.model_allowlist.join(", ")) : '<span class="muted">all priced models</span>') +
+            "</td><td>" + esc(a.markup_policy.markup_bps) + ' bps</td><td><button data-open="' + esc(a.id) + '">Open</button></td></tr>';
+        }).join("") + "</tbody></table>" : '<div class="empty">No apps yet.</div>') + "</div>" +
+        '<div class="panel"><h2>New app</h2><div class="cards">' +
+        '<div class="field"><label>Name</label><input id="na-name" /></div>' +
+        '<div class="field"><label>Mint reserve account</label><input id="na-acct" placeholder="acct_..." value="' + esc(st.tenant.mint_account_id) + '" /></div>' +
+        '<div class="field"><label>Allowed models (comma separated, blank = all)</label><input id="na-models" /></div>' +
+        '<div class="field"><label>Markup (bps)</label><input id="na-bps" type="number" value="2000" min="0" /></div>' +
+        '<div class="field"><label>Minimum fee per request ($)</label><input id="na-min" type="number" value="0" min="0" step="0.0001" /></div></div>' +
+        '<button id="na-go" class="primary">Create app</button></div>';
+      main.innerHTML = html;
+      main.querySelectorAll("button[data-open]").forEach(function (b) { b.onclick = function () { st.appId = b.dataset.open; render(); }; });
+      $("na-go").onclick = function () {
+        var models = $("na-models").value.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+        api("POST", "/v1/customer/apps", {
+          name: $("na-name").value.trim(), mint_account_id: $("na-acct").value.trim(), model_allowlist: models, zdr: false,
+          markup_policy: { markup_bps: Number($("na-bps").value || 0), min_fee_micros: Math.round(Number($("na-min").value || 0) * 1e6), platform_fee_bps: 0, funding_mode: "tenant_reserve" }
+        }).then(function (a) { setStatus("App created", "ok"); st.appId = a.id; render(); }).catch(function (e) { setStatus(e.message, "err"); });
+      };
+    }).catch(function (e) { main.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
+  }
+
+  function renderApp(appId) {
+    main.innerHTML = '<div class="loading">Loading app...</div>';
+    var base = "/v1/customer/apps/" + encodeURIComponent(appId);
+    Promise.all([
+      api("GET", base),
+      api("GET", base + "/balance").catch(function (e) { return { error: e.message }; }),
+      api("GET", base + "/keys"),
+      api("GET", base + "/usage?from=" + dayOffset(-29) + "&to=" + dayOffset(0))
+    ]).then(function (r) {
+      var app = r[0], bal = r[1], keys = r[2], usage = r[3];
+      var days = usage.days || [];
+      var total = days.reduce(function (s, d) { return s + (d.usage.captured_charge_micros || 0); }, 0);
+      var reqs = days.reduce(function (s, d) { return s + (d.usage.requests || 0); }, 0);
+      var max = Math.max.apply(null, days.map(function (d) { return d.usage.captured_charge_micros || 0; }).concat([1]));
+      main.innerHTML =
+        '<div class="panel"><div class="row"><button class="link" id="back">All apps</button><div class="spacer"></div>' +
+        (app.enabled ? '<button id="toggle" class="danger">Disable app</button>' : '<button id="toggle" class="primary">Enable app</button>') + "</div>" +
+        '<h2 style="margin-top:10px">' + esc(app.name) + '</h2><div class="mono muted">' + esc(app.id) + " &middot; reserve " + esc(app.mint_account_id) + "</div></div>" +
+        '<div class="panel"><h2>Wallet</h2><div class="cards">' +
+        (bal.error ? '<div class="card"><div class="muted">Balance unavailable</div><div>' + esc(bal.error) + "</div></div>" :
+          '<div class="card"><div class="muted">Available</div><div class="big">' + usd(bal.available_micros) + '</div></div><div class="card"><div class="muted">Held by in-flight requests</div><div class="big">' + usd(bal.held_micros) + "</div></div>") +
+        '<div class="card"><div class="muted">Spent, last 30 days</div><div class="big">' + usd(total) + '</div><div class="muted">' + reqs + " requests</div></div></div>" +
+        '<div class="row" style="margin-top:12px"><select id="f-prov"><option value="stripe">Card (Stripe)</option><option value="creem">Creem</option><option value="polar">Polar</option><option value="paypal">PayPal</option><option value="iyzico">iyzico</option><option value="usdc">USDC</option></select>' +
+        '<input id="f-amt" type="number" min="1" step="1" value="50" style="width:120px" /><span class="muted">USD</span><button id="f-go" class="primary">Add funds</button></div></div>' +
+        '<div class="panel"><h2>Usage, last 30 days</h2><div class="bars">' + days.map(function (d) {
+          var v = d.usage.captured_charge_micros || 0; return '<div title="' + esc(d.utc_day) + ": " + usd(v) + ", " + (d.usage.requests || 0) + ' requests" style="height:' + Math.max(1, Math.round(88 * v / max)) + 'px"></div>';
+        }).join("") + '</div><table style="margin-top:12px"><thead><tr><th>Day</th><th>Requests</th><th>Captured</th><th>Released</th><th>Pending</th><th>Charged</th></tr></thead><tbody>' +
+        days.slice().reverse().filter(function (d) { return d.usage.requests; }).map(function (d) {
+          var u = d.usage; return "<tr><td>" + esc(d.utc_day) + "</td><td>" + u.requests + "</td><td>" + u.captured_requests + "</td><td>" + u.released_requests + "</td><td>" + u.pending_requests + "</td><td>" + usd(u.captured_charge_micros) + "</td></tr>";
+        }).join("") + "</tbody></table>" + (reqs ? "" : '<div class="empty">No traffic in the last 30 days.</div>') + "</div>" +
+        '<div class="panel"><h2>Provisioning keys</h2>' + (keys.length ? "<table><thead><tr><th>Prefix</th><th>Scope</th><th>Status</th><th>Daily cap</th><th>Per end-user cap</th><th></th></tr></thead><tbody>" +
+          keys.map(function (k) {
+            return '<tr><td class="mono">' + esc(k.prefix) + "</td><td>" + esc(k.scope) + "</td><td>" + esc(k.status) + "</td><td>" + usd(k.daily_cap_micros) + "</td><td>" + usd(k.per_end_user_daily_cap_micros) +
+              "</td><td>" + (k.status === "revoked" ? "" : '<button class="danger" data-revoke="' + esc(k.id) + '">Revoke</button>') + "</td></tr>";
+          }).join("") + "</tbody></table>" : '<div class="empty">No keys yet.</div>') +
+        '<div class="row" style="margin-top:12px"><select id="k-env"><option value="live">live</option><option value="test">test</option></select>' +
+        '<input id="k-cap" type="number" min="0" step="0.01" value="100" style="width:120px" /><span class="muted">USD / day</span>' +
+        '<input id="k-eu" type="number" min="0" step="0.01" placeholder="per end-user / day" style="width:170px" /><button id="k-go" class="primary">Issue key</button></div><div id="k-out"></div></div>' +
+        '<div class="panel"><h2>End users</h2><div class="muted">Provision an end user with their own Mint reserve account, then pass their reference in the <code>Vend-End-User</code> header.</div>' +
+        '<div class="row" style="margin-top:10px"><input id="eu-ref" placeholder="external reference (your user id)" /><input id="eu-acct" placeholder="acct_... (Mint account)" /><button id="eu-go">Provision</button></div></div>';
+
+      $("back").onclick = function () { st.appId = null; render(); };
+      $("toggle").onclick = function () {
+        api("PATCH", base + "/enabled", { enabled: !app.enabled }).then(function () { setStatus(app.enabled ? "App disabled" : "App enabled", "ok"); render(); }).catch(function (e) { setStatus(e.message, "err"); });
+      };
+      $("f-go").onclick = function () {
+        var cents = Math.round(Number($("f-amt").value) * 100);
+        if (!(cents > 0)) { setStatus("Enter an amount", "err"); return; }
+        api("POST", base + "/funding-checkout", { provider: $("f-prov").value, amount_micros: cents * 10000 })
+          .then(function (c) { setStatus("Redirecting to checkout...", "ok"); location.href = c.checkout_url; })
+          .catch(function (e) { setStatus(e.message, "err"); });
+      };
+      main.querySelectorAll("button[data-revoke]").forEach(function (b) {
+        b.onclick = function () { if (!confirm("Revoke this key? Requests using it will fail immediately.")) return;
+          api("DELETE", "/v1/customer/keys/" + encodeURIComponent(b.dataset.revoke)).then(function () { setStatus("Key revoked", "ok"); render(); }).catch(function (e) { setStatus(e.message, "err"); }); };
+      });
+      $("k-go").onclick = function () {
+        var body = { environment: $("k-env").value, daily_cap_micros: Math.round(Number($("k-cap").value) * 1e6) };
+        if ($("k-eu").value) body.per_end_user_daily_cap_micros = Math.round(Number($("k-eu").value) * 1e6);
+        api("POST", base + "/keys", body).then(function (k) {
+          $("k-out").innerHTML = secretBox("New provisioning key", k.secret); setStatus("Key issued", "ok");
+        }).catch(function (e) { setStatus(e.message, "err"); });
+      };
+      $("eu-go").onclick = function () {
+        api("POST", base + "/end-users", { external_ref: $("eu-ref").value.trim(), mint_account_id: $("eu-acct").value.trim() })
+          .then(function () { setStatus("End user provisioned", "ok"); $("eu-ref").value = ""; $("eu-acct").value = ""; })
+          .catch(function (e) { setStatus(e.message, "err"); });
+      };
+    }).catch(function (e) { main.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
+  }
+  function dayOffset(n) { var d = new Date(); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+
+  // ---- Team -------------------------------------------------------------------
+  function renderTeam() {
+    main.innerHTML = '<div class="loading">Loading team...</div>';
+    api("GET", "/v1/customer/users").then(function (users) {
+      main.innerHTML = '<div class="panel"><h2>Team</h2><table><thead><tr><th>Member</th><th>Role</th><th>Status</th><th>Sign-in</th><th></th></tr></thead><tbody>' +
+        users.map(function (u) {
+          return "<tr><td><b>" + esc(u.display_name) + '</b><div class="muted">' + esc(u.email) + "</div></td><td>" +
+            (u.role === "owner" ? "owner" : '<select data-role="' + esc(u.id) + '"><option value="admin"' + (u.role === "admin" ? " selected" : "") + '>admin</option><option value="viewer"' + (u.role === "viewer" ? " selected" : "") + ">viewer</option></select>") +
+            "</td><td>" + esc(u.status) + "</td><td>" + esc((u.external_providers || []).join(", ") || "password") + "</td><td>" +
+            (u.role === "owner" ? "" : (u.status === "disabled" ? '<button data-enable="' + esc(u.id) + '">Enable</button>' : '<button class="danger" data-disable="' + esc(u.id) + '">Disable</button>') +
+              ' <button data-sessions="' + esc(u.id) + '">Sign out everywhere</button>') + "</td></tr>";
+        }).join("") + "</tbody></table></div>" +
+        '<div class="panel"><h2>Invite</h2><div class="row"><input id="i-email" type="email" placeholder="email" /><input id="i-name" placeholder="display name" />' +
+        '<select id="i-role"><option value="viewer">viewer</option><option value="admin">admin</option></select><button id="i-go" class="primary">Invite</button></div><div id="i-out"></div></div>';
+      function patch(id, body, msg) { api("PATCH", "/v1/customer/users/" + encodeURIComponent(id), body).then(function () { setStatus(msg, "ok"); renderTeam(); }).catch(function (e) { setStatus(e.message, "err"); }); }
+      main.querySelectorAll("select[data-role]").forEach(function (s) { s.onchange = function () { patch(s.dataset.role, { role: s.value }, "Role updated"); }; });
+      main.querySelectorAll("button[data-disable]").forEach(function (b) { b.onclick = function () { patch(b.dataset.disable, { disabled: true }, "Member disabled"); }; });
+      main.querySelectorAll("button[data-enable]").forEach(function (b) { b.onclick = function () { patch(b.dataset.enable, { disabled: false }, "Member enabled"); }; });
+      main.querySelectorAll("button[data-sessions]").forEach(function (b) {
+        b.onclick = function () { api("DELETE", "/v1/customer/users/" + encodeURIComponent(b.dataset.sessions) + "/sessions").then(function () { setStatus("Sessions revoked", "ok"); }).catch(function (e) { setStatus(e.message, "err"); }); };
+      });
+      $("i-go").onclick = function () {
+        api("POST", "/v1/customer/users", { email: $("i-email").value.trim(), display_name: $("i-name").value.trim(), role: $("i-role").value })
+          .then(function (inv) { $("i-out").innerHTML = secretBox("Setup token for " + inv.user.email, inv.setup_token, "Send this to the invitee securely. It expires " + new Date(inv.setup_expires_at).toLocaleString() + "."); setStatus("Invitation created", "ok"); })
+          .catch(function (e) { setStatus(e.message, "err"); });
+      };
+    }).catch(function (e) { main.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
+  }
+
+  // ---- Account ----------------------------------------------------------------
+  function renderAccount() {
+    main.innerHTML = '<div class="panel"><h2>Workspace</h2><div>' + esc(st.tenant.name) + '</div><div class="mono muted">' + esc(st.tenant.id) + "</div></div>" +
+      '<div class="panel"><h2>Change password</h2><div class="field"><label>Current password</label><input id="p-cur" type="password" autocomplete="current-password" /></div>' +
+      '<div class="field"><label>New password</label><input id="p-new" type="password" autocomplete="new-password" /></div><button id="p-go" class="primary">Update password</button></div>' +
+      '<div class="panel"><h2>Session</h2><div class="muted">Rotate this browser session token (the old token stops working immediately).</div><div class="row" style="margin-top:10px"><button id="r-go">Rotate session</button></div></div>';
+    $("p-go").onclick = function () {
+      api("PATCH", "/v1/customer/password", { current_password: $("p-cur").value, new_password: $("p-new").value })
+        .then(function () { setStatus("Password updated", "ok"); $("p-cur").value = ""; $("p-new").value = ""; })
+        .catch(function (e) { setStatus(e.message, "err"); });
+    };
+    $("r-go").onclick = function () {
+      api("POST", "/v1/customer/session/rotate").then(function (s) {
+        if (s && s.session_token) { st.token = s.session_token; sessionStorage.setItem(SESSION, st.token); }
+        setStatus("Session rotated", "ok");
+      }).catch(function (e) { setStatus(e.message, "err"); });
+    };
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>

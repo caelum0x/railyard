@@ -1253,10 +1253,12 @@ name = "passport-relay-client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "hex",
  "mint-protocol",
  "passport-core",
  "reqwest",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -1277,6 +1279,8 @@ dependencies = [
  "async-trait",
  "axum",
  "chrono",
+ "ed25519-dalek",
+ "hex",
  "passport-core",
  "passport-provenance",
  "passport-relay-client",
@@ -1284,6 +1288,7 @@ dependencies = [
  "passport-store",
  "passport-store-postgres",
  "passport-testkit",
+ "reqwest",
  "serde",
  "serde_json",
  "subtle",

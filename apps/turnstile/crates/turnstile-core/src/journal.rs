@@ -132,6 +132,20 @@ pub trait SettlementJournal: Send + Sync {
     ) -> Result<Vec<SettlementRecord>, TurnstileError>;
 
     async fn get(&self, nonce: &str) -> Result<Option<SettlementRecord>, TurnstileError>;
+
+    /// The most recent settlement commands, newest first, optionally filtered
+    /// to one phase. Powers the operator console (paid calls, captured
+    /// revenue, stuck captures). Journals that cannot enumerate return an
+    /// explicit storage error rather than an empty list.
+    async fn list_recent(
+        &self,
+        _limit: usize,
+        _phase: Option<SettlementPhase>,
+    ) -> Result<Vec<SettlementRecord>, TurnstileError> {
+        Err(TurnstileError::Storage(
+            "this settlement journal does not support listing".into(),
+        ))
+    }
 }
 
 /// Single-process journal used by tests and explicit single-replica deployments.
@@ -427,5 +441,25 @@ impl SettlementJournal for InMemorySettlementJournal {
             .unwrap_or_else(|error| error.into_inner())
             .get(nonce)
             .cloned())
+    }
+
+    async fn list_recent(
+        &self,
+        limit: usize,
+        phase: Option<SettlementPhase>,
+    ) -> Result<Vec<SettlementRecord>, TurnstileError> {
+        let records = self
+            .records
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut out: Vec<SettlementRecord> = records
+            .values()
+            .filter(|record| phase.is_none_or(|p| record.phase == p))
+            .cloned()
+            .collect();
+        // Challenge expiry is issue time + a fixed TTL, so it orders by recency.
+        out.sort_by(|a, b| b.authorization.expiry.cmp(&a.authorization.expiry));
+        out.truncate(limit);
+        Ok(out)
     }
 }

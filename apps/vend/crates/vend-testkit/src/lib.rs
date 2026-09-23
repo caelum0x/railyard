@@ -266,6 +266,21 @@ impl MintTransport for FakeMint {
             .insert(req.idem_key.clone(), (req, response.clone()));
         Ok(response)
     }
+    async fn get_balance(&self, account_id: &str) -> Result<MintBalance, VendError> {
+        let s = self.inner.lock().unwrap();
+        let held: i64 = s
+            .holds
+            .values()
+            .filter(|h| h.account == account_id && !h.settled)
+            .map(|h| h.amount)
+            .sum();
+        Ok(MintBalance {
+            account_id: account_id.to_string(),
+            available_micros: *s.balances.get(account_id).unwrap_or(&0),
+            held_micros: held,
+            updated_seq: s.seq,
+        })
+    }
 }
 
 // --- FakeRelay ------------------------------------------------------------

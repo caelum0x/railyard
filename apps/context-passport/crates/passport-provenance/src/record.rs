@@ -33,6 +33,13 @@ pub struct GenerationRecord {
     /// deserialize with `None`; new generation writes require `Some`.
     #[serde(default)]
     pub payment_evidence: Option<PaymentEvidence>,
+    /// The caller's generation instruction (what was asked of the passport).
+    #[serde(default)]
+    pub prompt: Option<String>,
+    /// The produced text for text-modality generations, so the asset itself is
+    /// retrievable next to its provenance.
+    #[serde(default)]
+    pub output_text: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -85,8 +92,18 @@ impl GenerationRecord {
             disclosure_required: matches!(version.rights.disclosure, DisclosureLevel::Required),
             mint_receipt_ref: None,
             payment_evidence: None,
+            prompt: None,
+            output_text: None,
             created_at,
         }
+    }
+
+    /// Attach the generation instruction and produced text (returns a new record).
+    pub fn with_output(&self, prompt: Option<String>, output_text: Option<String>) -> Self {
+        let mut next = self.clone();
+        next.prompt = prompt;
+        next.output_text = output_text;
+        next
     }
 
     /// Attach a Mint receipt reference (returns a new record; no mutation).

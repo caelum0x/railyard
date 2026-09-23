@@ -25,6 +25,45 @@ BIND_ADDR=0.0.0.0:8101 \
 cargo run -p turnstile-demo
 ```
 
+### Put your own endpoints behind the paywall (no Rust)
+
+Point `TURNSTILE_TOOLS_PATH` at a JSON registry and every entry becomes a paid
+tool over HTTP (`POST /v1/tools/<name>/call`) and MCP (`tools/call`), each
+priced independently. Works for upstreams written in anything (Node, Python, Go):
+
+```json
+[
+  {
+    "name": "summarize",
+    "description": "Summarize a document.",
+    "price_micros": 20000,
+    "upstream_url": "https://internal.example.com/summarize",
+    "upstream_auth_env": "SUMMARIZE_UPSTREAM_TOKEN",
+    "upstream_auth_header": "authorization",
+    "usage_header": "x-usage-micros",
+    "input_schema": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }
+  }
+]
+```
+
+- A 2xx upstream response captures the quote (or the `usage_header` amount,
+  capped at the quote); any other status or a transport error releases the hold,
+  so the agent is never charged for a failed call.
+- Upstream credentials are read from the named environment variable; they never
+  live in the registry file.
+- When `TURNSTILE_TOOLS_PATH` is unset the server runs the built-in `echo` demo
+  tool priced by `TURNSTILE_PRICE_MICROS`.
+
+### Operator console and settlement access
+
+- `TURNSTILE_ADMIN_TOKEN` (24+ chars) enables `GET /v1/admin/summary` (captured
+  revenue, pending captures, per-tool revenue) and
+  `GET /v1/admin/settlements?limit=&phase=` (recent paid calls). `GET /admin`
+  is the console over those endpoints.
+- `GET /v1/settlements/:request_id` is scoped to the payer: present the exact
+  `AITP-Authorization` you paid with (or the operator bearer token). A bare
+  request id no longer reveals payer, amounts or the receipt.
+
 `GET /healthz` is open and `POST /v1/echo` is paid. An unpaid call returns a
 machine-readable AITP-402 challenge; a valid authorization is verified through
 Mint and successful work is captured for actual usage.
@@ -52,23 +91,23 @@ pays via AITP-402 and it settles on Mint — fiat-backed, gasless, success-only.
 
 ## Full plan
 
-See the vision doc:
-[`docs/apps-vision/turnstile.md`](../../docs/apps-vision/turnstile.md)
+Platform context: [`docs/RAILYARD_ENTERPRISE_ARCHITECTURE.md`](../../docs/RAILYARD_ENTERPRISE_ARCHITECTURE.md)
+and [`docs/CAPABILITY_GRAPH_2026-08-27.md`](../../docs/CAPABILITY_GRAPH_2026-08-27.md).
 
 ## What it reuses (no new rail — it rides the existing one)
 
-- **Mint** (`apps/mint`, `docs/mint/*`) — the settlement rail. Turnstile is a
-  first-class client of Mint's **AITP-402** protocol
-  (`docs/mint/AITP-402-SPEC.md` §5): `402` challenge/authorize/verify,
+- **Mint** ([`apps/mint`](../mint/README.md)) — the settlement rail. Turnstile is a
+  first-class client of Mint's **AITP-402** protocol (implemented in
+  `apps/mint/crates/mint-protocol`): `402` challenge/authorize/verify,
   `aitp-hold` → `hold.create`/`capture`/`release` (success-only, ADR-0002),
   `aitp-transfer` → `transfer`, **allowances** (agent budgets), **hash-linked
   receipts**, **reserve 1:1 proof**, and Mint's exact-µ$ fee split. Turnstile holds
   **no money** — Mint is the vault.
 - **Relay** (`apps/relay`) — the flagship AITP-402 reference integration; Turnstile
   generalizes Relay's 402 handling into a reusable middleware and dogfoods it back.
-- **ReelForge** (`apps/api`) — Python provider-adapter discipline (injectable
-  transport, fake in tests) for the Python SDK; render/publish/gateway ops become
-  the first paid tools; clipmarket CPM payout rails reused for tool-author payouts.
+- **Any HTTP service** — via the config-driven tool registry above, a Node,
+  Python or Go endpoint is paywalled by the reference server without an SDK in
+  that language.
 - **Shared invariants** — ADR-0001 (integer microdollar) and ADR-0002
   (success-only billing); Neon/Postgres + Cloudflare for the thin metadata
   control-plane only.
@@ -106,5 +145,7 @@ settlement stores, lease recovery worker, settlement-status API
 (`GET /v1/settlements/:request_id`), provider registry/discovery
 (`ToolRegistry`/`ToolCatalog` + `GET /v1/tools`), the framework-agnostic MCP
 paywall helper (`turnstile_core::mcp` + a reference `POST /mcp` JSON-RPC
-endpoint), and the reference server exist. Other framework adapters (Actix,
-Tower-for-non-axum, Python/TS SDKs) and published SDK packages do not.
+endpoint), the config-driven upstream tool registry, the operator summary/list
+APIs, and the reference server exist. Native in-process middleware for other
+frameworks (Actix, Express, FastAPI) and agent-side TS/Python payment clients
+do not yet; non-Rust providers use the upstream proxy mode instead.

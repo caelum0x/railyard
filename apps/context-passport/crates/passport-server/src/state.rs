@@ -7,7 +7,10 @@ use crate::service::PassportService;
 #[derive(Clone)]
 pub struct AppState {
     pub service: PassportService,
+    /// Operator key (full access).
     pub api_key: Arc<str>,
+    /// Per-owner tenant keys.
+    pub owner_keys: Arc<crate::auth::OwnerKeys>,
 }
 
 /// Uniform success envelope: `{ "data": ... }`.

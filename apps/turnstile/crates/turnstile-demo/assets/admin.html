@@ -70,6 +70,8 @@
 <body>
 <header>
   <h1>Turnstile Admin</h1>
+  <input id="token" type="password" placeholder="Operator token (TURNSTILE_ADMIN_TOKEN)" autocomplete="off" />
+  <button id="save-token" class="primary">Connect</button>
   <div class="spacer"></div>
   <span id="status">Ready</span>
 </header>
@@ -112,11 +114,26 @@
     return '<span class="badge">' + esc(text) + "</span>";
   }
 
-  // Turnstile's read endpoints (discovery + settlement status) are intentionally
-  // OPEN/unauthenticated by design, so no key is sent — matching the real service.
+  // Discovery is open; settlement data needs the operator token, sent as
+  // `Authorization: Bearer <TURNSTILE_ADMIN_TOKEN>`. Kept in session storage only.
+  const TOKEN_KEY = "turnstile_admin_token";
+  el("token").value = sessionStorage.getItem(TOKEN_KEY) || "";
+  el("save-token").onclick = () => {
+    sessionStorage.setItem(TOKEN_KEY, el("token").value.trim());
+    run();
+  };
   async function api(path) {
-    const res = await fetch(path, { headers: { "Accept": "application/json" } });
+    const headers = { "Accept": "application/json" };
+    const token = sessionStorage.getItem(TOKEN_KEY);
+    if (token) headers["Authorization"] = "Bearer " + token;
+    const res = await fetch(path, { headers });
     if (res.status === 404) throw new Error("Not found: " + path);
+    if (res.status === 401) throw new Error("Operator token required or invalid.");
+    if (res.status === 503) {
+      let msg = "Service unavailable";
+      try { const j = await res.json(); msg = j.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
     if (!res.ok) throw new Error("HTTP " + res.status + " on " + path);
     return res.json();
   }
@@ -130,16 +147,21 @@
     registry: 'This is the deployment\'s live priced-tool catalog from the OPEN '
       + '<b>GET /v1/tools</b> discovery endpoint — the single source of truth for what '
       + 'this Turnstile charges (payee, currency, per-tool price and scheme).',
-    settlement: 'Poll one paid request\'s terminal settlement state from the OPEN '
-      + '<b>GET /v1/settlements/:request_id</b> endpoint, using the '
-      + '<code>AITP-Request-Id</code> a client receives from a paid call. Turnstile '
-      + 'exposes <b>no</b> HTTP endpoint that lists issued challenges or enumerates '
-      + 'settlements, so challenge state cannot be shown here — only a point lookup by id.',
+    revenue: 'Captured revenue, authorized-but-pending amounts and settlement health across '
+      + 'the most recent paid calls, from <b>GET /v1/admin/summary</b>.',
+    calls: 'Recent paid calls from the durable settlement journal '
+      + '(<b>GET /v1/admin/settlements</b>). Filter by phase to find stuck captures '
+      + '(<code>capture_pending</code>) or rejections.',
+    settlement: 'Look up one paid request by the <code>AITP-Request-Id</code> a client '
+      + 'received (<b>GET /v1/settlements/:request_id</b>). Payers can read their own '
+      + 'settlement by presenting the AITP-Authorization they paid with.',
   };
 
   const TABS = [
-    { id: "registry", label: "Tool Catalog", params: false, render: renderCatalog, load: loadCatalog },
-    { id: "settlement", label: "Settlement Lookup", params: true, render: null, load: loadSettlement },
+    { id: "revenue", label: "Revenue", load: loadSummary },
+    { id: "calls", label: "Paid Calls", load: loadCalls },
+    { id: "registry", label: "Tool Catalog", load: loadCatalog },
+    { id: "settlement", label: "Settlement Lookup", load: loadSettlement },
   ];
   let active = TABS[0];
 
@@ -171,6 +193,15 @@
       btn.onclick = run;
       bar.appendChild(btn);
     } else {
+      if (active.id === "calls") {
+        const sel = document.createElement("select");
+        sel.id = "phase";
+        ["", "captured", "capture_pending", "held", "released", "release_pending", "rejected", "verifying", "transfer_complete"]
+          .forEach((p) => { const o = document.createElement("option"); o.value = p; o.textContent = p || "all phases"; sel.appendChild(o); });
+        sel.onchange = run;
+        sel.style.cssText = "font:inherit;color:inherit;background:var(--row);border:1px solid var(--border);border-radius:6px;padding:7px 10px";
+        bar.appendChild(sel);
+      }
       const btn = document.createElement("button");
       btn.textContent = "Refresh";
       btn.onclick = run;
@@ -243,6 +274,50 @@
         + "</tbody></table>";
     }
     el("view").innerHTML = html;
+  }
+
+  async function loadSummary() {
+    const s = await api("/v1/admin/summary");
+    const phases = Object.entries(s.by_phase || {});
+    const resources = Array.isArray(s.by_resource) ? s.by_resource : [];
+    el("view").innerHTML = "<table class=\"kv\"><tbody>"
+      + row("Captured revenue", usd(s.captured_micros))
+      + row("Authorized, not yet captured", usd(s.pending_authorized_micros))
+      + row("Calls in window", esc(s.window))
+      + "</tbody></table>"
+      + '<div class="section-title">By phase</div>'
+      + (phases.length ? "<table><thead><tr><th>Phase</th><th>Calls</th></tr></thead><tbody>"
+        + phases.map(([p, n]) => "<tr><td>" + badge(p) + "</td><td>" + esc(n) + "</td></tr>").join("")
+        + "</tbody></table>" : '<div class="empty">No paid calls yet.</div>')
+      + '<div class="section-title">By tool</div>'
+      + (resources.length ? "<table><thead><tr><th>Resource</th><th>Paid calls</th><th>Captured</th></tr></thead><tbody>"
+        + resources.map((r) => '<tr><td class="mono">' + esc(r.resource) + "</td><td>" + esc(r.paid_calls)
+          + "</td><td>" + usd(r.captured_micros) + "</td></tr>").join("")
+        + "</tbody></table>" : '<div class="empty">No captured revenue yet.</div>');
+  }
+
+  async function loadCalls() {
+    const phase = el("phase") ? el("phase").value : "";
+    const data = await api("/v1/admin/settlements?limit=200" + (phase ? "&phase=" + encodeURIComponent(phase) : ""));
+    const items = data.settlements || [];
+    const c = el("count"); if (c) c.textContent = items.length + " call" + (items.length === 1 ? "" : "s");
+    if (!items.length) { el("view").innerHTML = '<div class="empty">No paid calls match.</div>'; return; }
+    el("view").innerHTML = "<table><thead><tr><th>Request</th><th>Resource</th><th>Payer</th><th>Phase</th>"
+      + "<th>Authorized</th><th>Captured</th><th>Error</th></tr></thead><tbody>"
+      + items.map((s) => '<tr><td class="mono"><a href="#" data-id="' + esc(s.request_id) + '" style="color:var(--accent)">'
+        + esc(s.request_id) + '</a></td><td class="mono">' + esc(s.resource) + '</td><td class="mono">' + esc(s.payer)
+        + "</td><td>" + badge(s.phase) + "</td><td>" + usd(s.authorized_micros) + "</td><td>"
+        + (s.actual_micros === undefined ? "—" : usd(s.actual_micros)) + "</td><td>" + esc(s.error || "") + "</td></tr>").join("")
+      + "</tbody></table>";
+    el("view").querySelectorAll("a[data-id]").forEach((a) => {
+      a.onclick = async (e) => {
+        e.preventDefault();
+        active = TABS.find((t) => t.id === "settlement");
+        renderTabs(); renderToolbar(); el("note").innerHTML = NOTES[active.id];
+        el("request_id").value = a.dataset.id;
+        run();
+      };
+    });
   }
 
   async function loadCatalog() {

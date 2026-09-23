@@ -91,7 +91,9 @@ pub struct AppState {
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/v1/chat/completions", post(chat_completions))
+        .route("/v1/models", get(list_models))
         .route("/admin", get(admin_page))
+        .route("/console", get(console_page))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .with_state(state)
@@ -105,6 +107,61 @@ pub fn build_router(state: AppState) -> Router {
 /// keys, per-app daily usage, and tenant users.
 async fn admin_page() -> axum::response::Html<&'static str> {
     axum::response::Html(include_str!("../assets/admin.html"))
+}
+
+/// `GET /console` — the customer console (static HTML + vanilla JS) over the
+/// authenticated `/v1/customer` and `/v1/auth` endpoints: sign in (password or
+/// GitHub/Google OAuth), manage apps and provisioning keys, view usage, fund
+/// the app reserve through Mint checkout, manage the team, and change password.
+async fn console_page() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("../assets/console.html"))
+}
+
+/// `GET /v1/models` — the OpenAI-compatible model list for the calling key:
+/// every priced model the key's app allowlist permits, with the effective
+/// per-million-token rates the app bills at (provider rate plus the app's
+/// markup) and the per-request minimum fee.
+async fn list_models(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(response) = preflight_provisioning_key(&state, &headers).await {
+        return response;
+    }
+    let app = match async {
+        let secret = bearer(&headers)?;
+        let key = verify(state.keys.as_ref(), secret).await?;
+        let ctx = resolve(state.tenants.as_ref(), &key, end_user_ref(&headers).as_deref()).await?;
+        Ok::<_, VendError>(ctx.app)
+    }
+    .await
+    {
+        Ok(app) => app,
+        Err(error) => return error_response(error),
+    };
+    let policy = &app.markup_policy;
+    let marked_up = |micros: i64| -> i64 {
+        let scaled = i128::from(micros) * (10_000 + i128::from(policy.markup_bps)) / 10_000;
+        i64::try_from(scaled).unwrap_or(i64::MAX)
+    };
+    let data: Vec<serde_json::Value> = state
+        .pricing
+        .models()
+        .into_iter()
+        .filter(|(model, _)| app.allows_model(model))
+        .map(|(model, rate)| {
+            serde_json::json!({
+                "id": model,
+                "object": "model",
+                "owned_by": "vend",
+                "pricing": {
+                    "input_micros_per_million_tokens": marked_up(rate.input_micros_per_million_tokens),
+                    "output_micros_per_million_tokens": marked_up(rate.output_micros_per_million_tokens),
+                    "min_fee_micros_per_request": policy.min_fee_micros,
+                    "max_input_tokens": rate.max_input_tokens,
+                    "max_output_tokens": rate.max_output_tokens,
+                },
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "object": "list", "data": data })).into_response()
 }
 
 async fn healthz() -> impl IntoResponse {

@@ -32,6 +32,9 @@ pub enum PurchaseRecord {
 pub trait GameStateRepository: Send + Sync {
     fn inventory(&self, player: &str) -> Result<Inventory, GameError>;
     fn purchase(&self, idem_key: &str) -> Result<Option<PurchaseRecord>, GameError>;
+    /// Every COMPLETED purchase made by `player`, newest settlement first. Backs
+    /// the player's purchase history / receipt lookup routes.
+    fn purchases_for(&self, player: &str) -> Result<Vec<CompletedPurchase>, GameError>;
     fn begin_purchase(
         &self,
         idem_key: &str,
@@ -115,6 +118,14 @@ impl GameStateRepository for MemoryGameState {
             .purchases
             .get(idem_key)
             .cloned())
+    }
+
+    fn purchases_for(&self, player: &str) -> Result<Vec<CompletedPurchase>, GameError> {
+        let guard = self
+            .inner
+            .lock()
+            .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
+        Ok(completed_for(guard.purchases.values(), player))
     }
 
     fn begin_purchase(
@@ -216,4 +227,20 @@ impl GameStateRepository for MemoryGameState {
             }
         }
     }
+}
+
+/// Collect `player`'s completed purchases, newest settlement first. Shared by
+/// every adapter so history ordering is identical across backends.
+pub fn completed_for<'a>(
+    records: impl Iterator<Item = &'a PurchaseRecord>,
+    player: &str,
+) -> Vec<CompletedPurchase> {
+    let mut out: Vec<CompletedPurchase> = records
+        .filter_map(|record| match record {
+            PurchaseRecord::Completed(done) if done.player == player => Some(done.clone()),
+            _ => None,
+        })
+        .collect();
+    out.sort_by(|a, b| b.outcome.settlement_seq.cmp(&a.outcome.settlement_seq));
+    out
 }

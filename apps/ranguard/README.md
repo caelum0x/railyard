@@ -11,7 +11,7 @@
 
 ## TL;DR
 
-`vanguard` is a small, **zero-dependency** Rust program (one binary + one library) that shows the
+`ranguard` is a small, **zero-dependency** Rust program (one binary + one library) that shows the
 "honest subset" of anti-cheat engineering without any of the invasive machinery the name evokes.
 When you run it, it:
 
@@ -30,7 +30,7 @@ scratch so the whole thing builds and runs fully offline. `#![forbid(unsafe_code
 the crate root.
 
 ```bash
-cargo run --manifest-path /path/to/vanguard-anticheat/Cargo.toml   # runs the full demo
+cargo run --manifest-path apps/ranguard/Cargo.toml   # runs the full demo
 ```
 
 ---
@@ -60,7 +60,7 @@ Everything it does is confined to **two things it exclusively owns**:
   a process handle it holds the entire time.
 
 The demo signing keys in `src/main.rs` are clearly labeled throwaway values
-(`b"vanguard-demo-signing-key-not-a-real-secret"`) and must never be treated as real secrets. Do not
+(`b"ranguard-demo-signing-key-not-a-real-secret"`) and must never be treated as real secrets. Do not
 use this code as a base for surveilling users or processes you do not own — that is explicitly what
 it refuses to do.
 
@@ -121,7 +121,7 @@ staged demonstration so you can watch each defense succeed.
 
 ### Module / crate map
 
-The crate ships **both** a library (`vanguard`) and a binary (`vanguard`). The library holds the
+The crate ships **both** a library (`ranguard`) and a binary (`ranguard`). The library holds the
 reusable primitives; the binary is a thin demo driver plus the internal `game-loop` child.
 
 | File | Role | Key items |
@@ -213,18 +213,18 @@ drops straight into a CI gate or a pre-launch check. A wrong or missing `RANGUAR
 ### Build
 
 ```bash
-cargo build --manifest-path /path/to/vanguard-anticheat/Cargo.toml
+cargo build --manifest-path apps/ranguard/Cargo.toml
 ```
 
 ```text
-   Compiling vanguard-anticheat v0.1.0 (/Users/you/vanguard-anticheat)
+   Compiling ranguard v0.1.0 (/path/to/railyard/apps/ranguard)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.07s
 ```
 
 ### Run the full demo
 
 ```bash
-cargo run --manifest-path /path/to/vanguard-anticheat/Cargo.toml
+cargo run --manifest-path apps/ranguard/Cargo.toml
 ```
 
 Captured output from a real run:
@@ -234,7 +234,7 @@ Vanguard-style Integrity Monitor — DEFENSIVE / USERSPACE / EDUCATIONAL
 This tool only inspects a sandbox it creates and a child it spawns.
 No kernel driver. No foreign-process memory scanning. No anti-debugging.
 
-Sandbox (tool-owned): /var/folders/9y/.../T/vanguard_sandbox_1787085759093848000/assets
+Sandbox (tool-owned): /var/folders/9y/.../T/ranguard_sandbox_1787085759093848000/assets
 
 === 1. Build signed integrity manifest (trusted snapshot) ===
 Hashed 3 asset file(s) with SHA-256:
@@ -242,7 +242,7 @@ Hashed 3 asset file(s) with SHA-256:
   scripts/init.lua     152 bytes  092f3ace300cd97b…
   textures.pak         305 bytes  c1658edce81ac4b1…
 Manifest signed (HMAC-SHA256): 3fd76e86dde5c2a0…
-Manifest written to: /var/folders/9y/.../T/vanguard_sandbox_1787085759093848000/vanguard.manifest
+Manifest written to: /var/folders/9y/.../T/ranguard_sandbox_1787085759093848000/ranguard.manifest
 
 === 2. Re-scan an untampered sandbox ===
 Integrity scan: 3 file(s) checked, 0 change(s) detected
@@ -261,7 +261,7 @@ Loaded manifest signature valid with wrong key   : false
 Tampered manifest (edited hash) signature valid  : false  <- rejected
 
 === 5. Process attestation (own child only, never arbitrary PIDs) ===
-Launched tool-owned child pid=71969 backed by /Users/you/vanguard-anticheat/target/debug/vanguard
+Launched tool-owned child pid=71969 backed by /path/to/railyard/apps/ranguard/target/debug/ranguard
 Trusted binary hash: e825d6b79d53ee3e…
   attest #1: OK — pid 71969 alive, binary hash matches
   attest #2: OK — pid 71969 alive, binary hash matches
@@ -288,12 +288,12 @@ The sandbox path, MAC values, and child PID vary from run to run; everything els
 ### Unknown arguments
 
 ```bash
-cargo run --manifest-path /path/to/vanguard-anticheat/Cargo.toml -- --help
+cargo run --manifest-path apps/ranguard/Cargo.toml -- --help
 ```
 
 ```text
 unknown command: --help
-usage: vanguard [demo | game-loop <ms>]
+usage: ranguard [demo | snapshot <dir> [out] | verify <dir> <manifest> | game-loop <ms>]
 ```
 
 (Exit code `2`.)
@@ -301,7 +301,7 @@ usage: vanguard [demo | game-loop <ms>]
 ### Test
 
 ```bash
-cargo test --manifest-path /path/to/vanguard-anticheat/Cargo.toml
+cargo test --manifest-path apps/ranguard/Cargo.toml
 ```
 
 ```text

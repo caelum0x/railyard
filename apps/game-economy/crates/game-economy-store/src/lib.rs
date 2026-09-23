@@ -106,6 +106,14 @@ impl GameStateRepository for JsonFileGameState {
             .cloned())
     }
 
+    fn purchases_for(&self, player: &str) -> Result<Vec<CompletedPurchase>, GameError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
+        Ok(game_economy_core::completed_for(guard.purchases.values(), player))
+    }
+
     fn begin_purchase(
         &self,
         idem_key: &str,

@@ -74,6 +74,22 @@ impl RelayConditioningSink for RelayClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
+            let lowered = body.to_ascii_lowercase();
+            if lowered.contains("unknown function") || lowered.contains("unknownfunction") {
+                return Err(PassportError::Relay(format!(
+                    "Relay has no `passport_{}` function configured for {} generation; \
+                     generate this modality with your asset provider and record it via \
+                     POST /v1/passports/:id/attest",
+                    request.modality, request.modality
+                )));
+            }
+            if lowered.contains("unknown variant") || lowered.contains("unknownvariant") {
+                return Err(PassportError::Relay(format!(
+                    "Relay has no `{}` provider variant for passport_{}",
+                    provider_variant(&request.provider),
+                    request.modality
+                )));
+            }
             return Err(PassportError::Relay(format!(
                 "relay returned {status}: {body}"
             )));
@@ -103,8 +119,11 @@ fn build_inference_request(request: &RelayGenerationRequest) -> Value {
         "function_name": format!("passport_{}", request.modality),
         "variant_name": provider_variant(&request.provider),
         "input": {
+            // The locked identity conditions the model as the system turn; the
+            // caller's instruction is the user turn.
+            "system": assemble_conditioning_prompt(request),
             "messages": [
-                { "role": "user", "content": assemble_conditioning_prompt(request) }
+                { "role": "user", "content": user_instruction(request) }
             ]
         },
         "tags": {
@@ -129,6 +148,18 @@ fn build_inference_request(request: &RelayGenerationRequest) -> Value {
 /// silently running on the wrong model.
 fn provider_variant(provider: &str) -> String {
     provider.trim().to_ascii_lowercase()
+}
+
+/// The user turn: the caller's instruction, or a neutral self-introduction when
+/// no prompt was given (so a bare call still yields visible, on-identity output).
+fn user_instruction(request: &RelayGenerationRequest) -> String {
+    match request.prompt.as_deref().map(str::trim) {
+        Some(prompt) if !prompt.is_empty() => prompt.to_string(),
+        _ => format!(
+            "Write a short {} sample that showcases this identity.",
+            request.modality
+        ),
+    }
 }
 
 /// Assemble the resolved conditioning payload into a single instruction string.
@@ -186,8 +217,9 @@ fn assemble_conditioning_prompt(request: &RelayGenerationRequest) -> String {
 /// Build a [`RelayGenerationResult`] from a native inference response body.
 ///
 /// The generated asset is the stored inference itself, referenced by its
-/// `inference_id`; `asset_hash` is left unset here (optional provenance
-/// hard-binding is computed downstream from the retrieved output).
+/// `inference_id`. For chat functions the produced text blocks are returned as
+/// `output_text` and hard-bound into provenance via `asset_hash`
+/// (`sha256:<hex>` of the exact text).
 fn relay_result(
     body: &Value,
     payment_evidence: Option<PaymentEvidence>,
@@ -199,10 +231,27 @@ fn relay_result(
         .ok_or_else(|| {
             PassportError::Relay("relay inference response missing inference_id".into())
         })?;
+    let output_text = body
+        .get("content")
+        .and_then(Value::as_array)
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|b| b.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .filter(|text| !text.is_empty());
+    let asset_hash = output_text.as_deref().map(|text| {
+        use sha2::{Digest, Sha256};
+        format!("sha256:{}", hex::encode(Sha256::digest(text.as_bytes())))
+    });
     Ok(RelayGenerationResult {
         output_ref: format!("relay-inference:{inference_id}"),
-        asset_hash: None,
+        asset_hash,
         payment_evidence,
+        output_text,
     })
 }
 
@@ -283,6 +332,7 @@ mod tests {
                 "text_directives": ["hook in 3s", "call to action"],
                 "negative_prompt": "no jargon",
             }),
+            prompt: Some("Announce the spring launch".into()),
         }
     }
 
@@ -297,9 +347,13 @@ mod tests {
         assert_eq!(request["tags"]["passport_id"], "psp_1");
         assert_eq!(request["tags"]["passport_version"], "3");
         assert_eq!(request["tags"]["passport_principal"], "acct_owner");
-        let content = request["input"]["messages"][0]["content"]
+        assert_eq!(
+            request["input"]["messages"][0]["content"],
+            "Announce the spring launch"
+        );
+        let content = request["input"]["system"]
             .as_str()
-            .expect("assembled user content");
+            .expect("assembled conditioning");
         assert!(content.contains("warm, punchy, brand voice"));
         assert!(content.contains("hook in 3s"));
         assert!(content.contains("call to action"));

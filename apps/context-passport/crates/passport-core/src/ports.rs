@@ -70,6 +70,10 @@ pub struct RelayGenerationRequest {
     pub provider: String,
     pub modality: String,
     pub payload: serde_json::Value,
+    /// What the caller asked the passport to produce ("write a launch tweet
+    /// about..."). The conditioning payload says WHO is speaking; this says WHAT.
+    #[serde(default)]
+    pub prompt: Option<String>,
 }
 
 /// The result of a Relay generation: a reference to the produced asset.
@@ -82,6 +86,9 @@ pub struct RelayGenerationResult {
     /// Correlated, signed settlement evidence returned by Relay/Mint.
     #[serde(default)]
     pub payment_evidence: Option<PaymentEvidence>,
+    /// The generated text, for text-modality generations.
+    #[serde(default)]
+    pub output_text: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

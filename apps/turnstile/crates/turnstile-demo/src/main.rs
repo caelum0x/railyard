@@ -20,19 +20,30 @@
 //! Required: `MINT_SERVER_URL`, `TURNSTILE_API_KEY`, `TURNSTILE_PAYEE`,
 //! `TURNSTILE_PRICE_MICROS`. Optional: `TURNSTILE_CURRENCY`,
 //! `TURNSTILE_CHALLENGE_TTL_MS`, `BIND_ADDR` (default `0.0.0.0:8101`).
+//!
+//! Production mode: set `TURNSTILE_TOOLS_PATH` to a JSON tool registry (see
+//! [`tools`]) and every declared upstream endpoint becomes a paid tool over
+//! HTTP (`POST /v1/tools/<name>/call`) and MCP, each priced independently. The
+//! built-in `echo` tool (priced by `TURNSTILE_PRICE_MICROS`) is served only
+//! when no registry is configured.
+//!
+//! Operator access: `TURNSTILE_ADMIN_TOKEN` enables `GET /v1/admin/settlements`
+//! and `GET /v1/admin/summary` (captured revenue, pending captures, failures).
 
 mod mcp;
+mod operator;
+mod tools;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use aitp_client::ReqwestTransport;
+use aitp_client::{ReqwestTransport, Scheme};
 use axum::http::StatusCode;
 use axum::middleware::from_fn_with_state;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::Router;
-use turnstile_axum::{admit, discover, settlement_status, PaidRequest};
+use turnstile_axum::{admit, discover, PaidRequest};
 use turnstile_core::{
     spawn_reaper, spawn_settlement_reaper, AmountMicros, ChallengeIssuer, InMemoryNonceStore,
     InMemorySettlementJournal, McpPaywall, MintVerifier, NonceStore, PostgresNonceStore,
@@ -40,7 +51,9 @@ use turnstile_core::{
     TurnstileConfig,
 };
 
-use crate::mcp::{mcp_endpoint, McpState, MCP_ECHO_RESOURCE};
+use crate::mcp::{echo_schema, mcp_endpoint, McpState, McpTool, McpToolKind, MCP_ECHO_RESOURCE};
+use crate::operator::{list_settlements, settlement_for_payer, summary, OperatorState};
+use crate::tools::{load_specs, proxy_http, UpstreamTool};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -74,10 +87,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
             }
         };
-    // Keep a handle to the journal for the settlement-status API before the gate
-    // takes ownership of its clone below.
+    // Keep a handle to the journal for the settlement-status/operator APIs.
     let status_journal = settlements.clone();
-    let issuer = ChallengeIssuer::new(config.clone(), nonces.clone());
     let settlement_lease = Duration::from_secs(30);
     let _settlement_reaper = spawn_settlement_reaper(
         settlements.clone(),
@@ -86,34 +97,98 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         settlement_lease,
         100,
     );
-    let gate = Arc::new(Turnstile::with_journal(
-        issuer,
-        verifier,
-        nonces,
-        settlements,
-        settlement_lease,
-    ));
-
-    // <10 lines to gate a route: attach the admit middleware as a route layer.
-    let protected = post(echo).route_layer(from_fn_with_state(gate.clone(), admit));
-
-    // Provider registry: the single source of truth for what this deployment
-    // charges. Built from the SAME config the gate quotes, so discovery can
-    // never drift from the live price. Both the HTTP tool and the MCP tool are
-    // advertised.
-    let registry = ToolRegistry::from_config(&config)
-        .with_tool(ToolDescriptor::priced_by(
-            "echo",
-            "POST /v1/echo",
-            "Echo the request body back, billing one microdollar per byte.",
-            &config,
+    // One gate per price point, all sharing the nonce store, Mint verifier and
+    // settlement journal (so recovery and replay protection span every tool).
+    let make_gate = |price: AmountMicros| {
+        let mut priced = config.clone();
+        priced.price_micros = price;
+        Arc::new(Turnstile::with_journal(
+            ChallengeIssuer::new(priced, nonces.clone()),
+            verifier.clone(),
+            nonces.clone(),
+            settlements.clone(),
+            settlement_lease,
         ))
-        .with_tool(ToolDescriptor::priced_by(
-            "echo",
-            MCP_ECHO_RESOURCE,
-            "Echo the `text` argument back over MCP, billing per byte.",
-            &config,
-        ));
+    };
+
+    let mut registry = ToolRegistry::from_config(&config);
+    let mut mcp_tools: Vec<McpTool> = Vec::new();
+    let mut paid_routes: Router = Router::new();
+
+    match std::env::var("TURNSTILE_TOOLS_PATH") {
+        Ok(path) if !path.trim().is_empty() => {
+            // Production mode: operator-declared upstream tools.
+            let specs = load_specs(path.trim())?;
+            for spec in specs {
+                let price = AmountMicros::new(spec.price_micros);
+                let gate = make_gate(price);
+                let upstream = Arc::new(UpstreamTool::new(spec.clone())?);
+                if spec.http {
+                    registry = registry.with_tool(ToolDescriptor::new(
+                        spec.name.clone(),
+                        spec.http_resource(),
+                        spec.description.clone(),
+                        price,
+                        Scheme::Hold,
+                    ));
+                    let route = Router::new()
+                        .route(
+                            &spec.http_path(),
+                            post(proxy_http).route_layer(from_fn_with_state(gate.clone(), admit)),
+                        )
+                        .with_state(upstream.clone());
+                    paid_routes = paid_routes.merge(route);
+                }
+                if spec.mcp {
+                    registry = registry.with_tool(ToolDescriptor::new(
+                        spec.name.clone(),
+                        spec.mcp_resource(),
+                        spec.description.clone(),
+                        price,
+                        Scheme::Hold,
+                    ));
+                    mcp_tools.push(McpTool {
+                        name: spec.name.clone(),
+                        resource: spec.mcp_resource(),
+                        input_schema: spec
+                            .input_schema
+                            .clone()
+                            .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
+                        paywall: McpPaywall::new(gate.clone()),
+                        kind: McpToolKind::Upstream(upstream.clone()),
+                    });
+                }
+                println!("paid tool {} -> {} ({} micros)", spec.name, spec.upstream_url, spec.price_micros);
+            }
+        }
+        _ => {
+            // Demo mode: the built-in echo tool at TURNSTILE_PRICE_MICROS.
+            let gate = make_gate(config.price_micros);
+            // <10 lines to gate a route: attach the admit middleware as a route layer.
+            let protected = post(echo).route_layer(from_fn_with_state(gate.clone(), admit));
+            paid_routes = paid_routes.route("/v1/echo", protected);
+            registry = registry
+                .with_tool(ToolDescriptor::priced_by(
+                    "echo",
+                    "POST /v1/echo",
+                    "Echo the request body back, billing one microdollar per byte.",
+                    &config,
+                ))
+                .with_tool(ToolDescriptor::priced_by(
+                    "echo",
+                    MCP_ECHO_RESOURCE,
+                    "Echo the `text` argument back over MCP, billing per byte.",
+                    &config,
+                ));
+            mcp_tools.push(McpTool {
+                name: "echo".into(),
+                resource: MCP_ECHO_RESOURCE.into(),
+                input_schema: echo_schema(),
+                paywall: McpPaywall::new(gate),
+                kind: McpToolKind::Echo,
+            });
+        }
+    }
     let catalog = Arc::new(registry.catalog());
 
     // Discovery API: an OPEN (free, ungated) catalog of priced tools an agent
@@ -123,26 +198,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/.well-known/aitp-tools", get(discover))
         .with_state(catalog.clone());
 
-    // MCP API: the same paid `echo` tool over JSON-RPC, gated by the same gate.
+    // MCP API: every paid tool over JSON-RPC, each gated by its own priced gate.
     let mcp_state = Arc::new(McpState {
-        paywall: McpPaywall::new(gate.clone()),
+        tools: mcp_tools,
         catalog,
     });
     let mcp_api = Router::new()
         .route("/mcp", post(mcp_endpoint))
         .with_state(mcp_state);
 
-    // Settlement-status API: a client holding an `AITP-Request-Id` (e.g. from a
-    // `503 capture_pending`) can poll the terminal state + signed receipt. Its
-    // own sub-router carries the journal handle as state.
+    // Settlement access: payer-scoped status + operator list/summary.
+    let admin_token = std::env::var("TURNSTILE_ADMIN_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    if admin_token.as_ref().is_some_and(|t| t.len() < 24) {
+        return Err("TURNSTILE_ADMIN_TOKEN must be at least 24 characters".into());
+    }
+    let operator_state = OperatorState {
+        journal: status_journal,
+        admin_token: admin_token.map(Arc::from),
+    };
     let status_api = Router::new()
-        .route("/v1/settlements/:request_id", get(settlement_status))
-        .with_state(status_journal);
+        .route("/v1/settlements/:request_id", get(settlement_for_payer))
+        .route("/v1/admin/settlements", get(list_settlements))
+        .route("/v1/admin/summary", get(summary))
+        .with_state(operator_state);
 
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/admin", get(admin_page))
-        .route("/v1/echo", protected)
+        .merge(paid_routes)
         .merge(discovery_api)
         .merge(mcp_api)
         .merge(status_api);
@@ -163,12 +249,9 @@ async fn healthz() -> impl IntoResponse {
 }
 
 /// `GET /admin` — a self-contained operator console (static HTML + vanilla JS, no
-/// build step). It reads only Turnstile's existing OPEN endpoints: the priced-tool
-/// catalog (`GET /v1/tools`) and per-request settlement status
-/// (`GET /v1/settlements/:request_id`). Both are unauthenticated by design, so the
-/// page adds no auth path and no bypass; it surfaces exactly what those endpoints
-/// return. Turnstile exposes no challenge/settlement list endpoint, and the page
-/// says so rather than inventing one.
+/// build step): the priced-tool catalog, revenue summary, recent paid calls and
+/// per-request settlement lookup. Every data call carries the operator's
+/// `Authorization: Bearer <TURNSTILE_ADMIN_TOKEN>`; the page itself holds no data.
 async fn admin_page() -> axum::response::Html<&'static str> {
     axum::response::Html(include_str!("../assets/admin.html"))
 }

@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Identity Lock</title>
+<style>
+  :root { --bg:#0f1117; --panel:#181b24; --border:#262b38; --fg:#e6e8ee; --muted:#8b91a1;
+    --accent:#6ea8fe; --danger:#f2668b; --ok:#55c98a; --row:#1e222d; --warn:#f2b35a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:14px 20px; background:var(--panel);
+    border-bottom:1px solid var(--border); position:sticky; top:0; z-index:5; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  .spacer { flex:1; }
+  input, select, textarea, button { font:inherit; color:var(--fg); background:var(--row); border:1px solid var(--border);
+    border-radius:6px; padding:7px 10px; }
+  textarea { width:100%; min-height:90px; resize:vertical; }
+  button { cursor:pointer; } button:disabled { opacity:.5; cursor:default; }
+  button.primary { background:var(--accent); color:#0b1020; border-color:var(--accent); font-weight:600; }
+  button.danger { border-color:var(--danger); color:var(--danger); }
+  #status { font-size:12px; color:var(--muted); } #status.err { color:var(--danger); } #status.ok { color:var(--ok); }
+  main { display:grid; grid-template-columns: 340px 1fr; gap:16px; padding:16px 20px 40px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px; }
+  .panel h2 { font-size:13px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin:0 0 10px; }
+  .list-item { padding:10px; border:1px solid var(--border); border-radius:6px; margin-bottom:8px; cursor:pointer; }
+  .list-item.active, .list-item:hover { background:var(--row); border-color:var(--accent); }
+  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; word-break:break-all; }
+  .muted { color:var(--muted); font-size:12px; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:20px; font-size:11px; border:1px solid var(--border);
+    text-transform:uppercase; letter-spacing:.4px; }
+  .badge.locked { color:var(--ok); border-color:var(--ok); } .badge.draft { color:var(--warn); border-color:var(--warn); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0; }
+  .field { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+  .field label { font-size:12px; color:var(--muted); }
+  .field input, .field select { width:100%; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .section { margin-top:18px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+  th { color:var(--muted); font-size:12px; text-transform:uppercase; }
+  .empty { padding:20px; color:var(--muted); text-align:center; }
+  pre { background:var(--row); padding:10px; border-radius:6px; overflow:auto; max-height:360px; font-size:12px; white-space:pre-wrap; }
+  .output { background:var(--row); border-left:3px solid var(--accent); padding:10px 12px; border-radius:4px; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Identity Lock</h1>
+  <input id="apikey" type="password" placeholder="X-API-Key" autocomplete="off" style="min-width:260px" />
+  <button id="connect" class="primary">Connect</button>
+  <div class="spacer"></div>
+  <span id="status">Enter your API key to begin</span>
+</header>
+<main>
+  <section>
+    <div class="panel">
+      <h2>New passport</h2>
+      <div class="field"><label>Kind</label>
+        <select id="new-kind"><option value="character">Character</option><option value="brand">Brand</option><option value="persona">Persona</option></select></div>
+      <div class="field"><label>Owner account</label><input id="new-owner" placeholder="acct_studio (blank = your key's owner)" /></div>
+      <button id="create" class="primary">Create draft</button>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h2>Passports</h2>
+      <div class="row"><select id="filter-kind"><option value="">All kinds</option><option value="character">Character</option><option value="brand">Brand</option><option value="persona">Persona</option></select>
+        <button id="refresh">Refresh</button></div>
+      <div id="list"><div class="empty">Not connected.</div></div>
+    </div>
+  </section>
+  <section id="detail" class="panel"><div class="empty">Select a passport to view and edit it.</div></section>
+</main>
+<script>
+(function () {
+  "use strict";
+  var KEY = "identity_lock_key";
+  var st = { key: sessionStorage.getItem(KEY) || "", selected: null, list: [] };
+  var FIELDS = {
+    character: [["style","text"],["personality","text"],["wardrobe","text"],["voice_id","text"],["avatar_ref","text"],["lora_ref","text"],["embedding_ref","text"],["face_refs","list"]],
+    brand: [["voice_tone","text"],["typography","text"],["logo_ref","text"],["watermark_ref","text"],["palette","list"]],
+    persona: [["audience","text"],["language","text"],["platform","text"],["hooks","list"]]
+  };
+  var statusEl = document.getElementById("status");
+  function setStatus(m, k) { statusEl.textContent = m; statusEl.className = k || ""; }
+  function esc(v) { var d = document.createElement("div"); d.textContent = v == null ? "" : String(v); return d.innerHTML; }
+  function api(method, path, body) {
+    var opts = { method: method, headers: { "X-API-Key": st.key } };
+    if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+    return fetch(path, opts).then(function (r) {
+      return r.text().then(function (t) {
+        var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) {}
+        if (!r.ok) throw new Error(j && j.error ? j.error.message : (t || "HTTP " + r.status));
+        return j ? j.data : null;
+      });
+    });
+  }
+  document.getElementById("apikey").value = st.key;
+  document.getElementById("connect").onclick = function () {
+    st.key = document.getElementById("apikey").value.trim();
+    if (!st.key) { setStatus("API key required", "err"); return; }
+    sessionStorage.setItem(KEY, st.key); loadList();
+  };
+  document.getElementById("refresh").onclick = loadList;
+  document.getElementById("filter-kind").onchange = loadList;
+  document.getElementById("create").onclick = function () {
+    var kind = document.getElementById("new-kind").value;
+    var owner = document.getElementById("new-owner").value.trim();
+    var idem = "console-" + (crypto.randomUUID ? crypto.randomUUID() : Date.now());
+    api("POST", "/v1/passports", { idempotency_key: idem, kind: kind, owner: owner })
+      .then(function (v) { setStatus("Created " + v.id, "ok"); st.selected = v.id; loadList(); })
+      .catch(function (e) { setStatus(e.message, "err"); });
+  };
+
+  function loadList() {
+    if (!st.key) return;
+    var list = document.getElementById("list");
+    list.innerHTML = '<div class="empty">Loading...</div>';
+    var kind = document.getElementById("filter-kind").value;
+    api("GET", "/v1/passports" + (kind ? "?kind=" + kind : "")).then(function (items) {
+      st.list = items; setStatus("Connected", "ok");
+      if (!items.length) { list.innerHTML = '<div class="empty">No passports yet. Create one above.</div>'; return; }
+      list.innerHTML = items.map(function (p) {
+        return '<div class="list-item' + (p.id === st.selected ? " active" : "") + '" data-id="' + esc(p.id) + '">' +
+          '<div><b>' + esc(p.kind) + '</b> <span class="badge ' + esc(p.status) + '">' + esc(p.status) + '</span> <span class="muted">v' + p.version + '</span></div>' +
+          '<div class="mono muted">' + esc(p.id) + '</div><div class="muted">' + esc(p.owner) + "</div></div>";
+      }).join("");
+      list.querySelectorAll(".list-item").forEach(function (el) { el.onclick = function () { st.selected = el.dataset.id; loadList(); loadDetail(); }; });
+      if (st.selected) loadDetail();
+    }).catch(function (e) { list.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; setStatus(e.message, "err"); });
+  }
+
+  function assetInputs(view) {
+    var a = view.head.assets || {}, locked = view.head.status === "locked";
+    return FIELDS[view.kind].map(function (f) {
+      var v = a[f[0]]; if (f[1] === "list") v = (v || []).join(", ");
+      return '<div class="field"><label>' + esc(f[0].replace(/_/g, " ")) + (f[1] === "list" ? " (comma separated)" : "") +
+        '</label><input data-f="' + f[0] + '" data-t="' + f[1] + '" value="' + esc(v || "") + '"' + (locked ? " disabled" : "") + " /></div>";
+    }).join("");
+  }
+
+  function loadDetail() {
+    var el = document.getElementById("detail"), id = st.selected;
+    el.innerHTML = '<div class="empty">Loading...</div>';
+    Promise.all([api("GET", "/v1/passports/" + id), api("GET", "/v1/passports/" + id + "/versions"), api("GET", "/v1/passports/" + id + "/generations")])
+      .then(function (r) { renderDetail(r[0], r[1], r[2]); })
+      .catch(function (e) { el.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
+  }
+
+  function renderDetail(view, versions, gens) {
+    var el = document.getElementById("detail"), locked = view.head.status === "locked";
+    var rights = view.head.rights || {};
+    el.innerHTML =
+      '<div class="row"><b style="font-size:16px">' + esc(view.kind) + '</b><span class="badge ' + esc(view.head.status) + '">' + esc(view.head.status) +
+      '</span><span class="muted">version ' + view.head.version + '</span><div class="spacer"></div>' +
+      (locked ? '<button id="branch">Branch new version</button>' : '<button id="save">Save draft</button><button id="lock" class="primary">Lock version</button>') + "</div>" +
+      '<div class="mono muted">' + esc(view.id) + " &middot; owner " + esc(view.owner) + "</div>" +
+      (view.head.content_digest ? '<div class="mono muted">digest ' + esc(view.head.content_digest) + "</div>" : "") +
+      '<div class="section"><h2 class="muted">Identity assets</h2><div class="grid2">' + assetInputs(view) + "</div>" +
+      (locked ? '<div class="muted">Locked versions are immutable. Branch a new version to edit.</div>' : "") + "</div>" +
+      '<div class="section"><h2 class="muted">Rights</h2><div class="muted">basis ' + esc(rights.basis) + " &middot; disclosure " + esc(rights.disclosure) +
+      " &middot; consent " + (rights.consent_obtained ? "obtained" : "not recorded") + (rights.scope && rights.scope.length ? " &middot; scope " + esc(rights.scope.join(", ")) : "") + "</div></div>" +
+      '<div class="section"><h2 class="muted">Generate as this passport</h2>' +
+      (locked || versions.some(function (v) { return v.status === "locked"; }) ?
+        '<div class="row"><select id="gen-modality"><option value="text">Text</option><option value="image">Image</option><option value="voice">Voice</option><option value="video">Video</option></select>' +
+        '<input id="gen-provider" value="openai" placeholder="provider" /></div><textarea id="gen-prompt" placeholder="What should this identity produce?"></textarea>' +
+        '<div class="row"><button id="gen" class="primary">Generate</button></div><div id="gen-out"></div>'
+        : '<div class="muted">Lock a version before generating.</div>') + "</div>" +
+      '<div class="section"><h2 class="muted">Versions</h2><table><thead><tr><th>Version</th><th>Status</th><th>Locked</th><th>Digest</th></tr></thead><tbody>' +
+      versions.slice().reverse().map(function (v) {
+        return "<tr><td>v" + v.version + '</td><td><span class="badge ' + esc(v.status) + '">' + esc(v.status) + "</span></td><td>" + esc(v.locked_at ? new Date(v.locked_at).toLocaleString() : "-") +
+          '</td><td class="mono">' + esc(v.content_digest || "-") + "</td></tr>";
+      }).join("") + "</tbody></table></div>" +
+      '<div class="section"><h2 class="muted">Generations</h2>' + (gens.length ?
+        '<table><thead><tr><th>When</th><th>Provider</th><th>Output</th><th></th></tr></thead><tbody>' + gens.map(function (g) {
+          return "<tr><td>" + esc(new Date(g.created_at).toLocaleString()) + "<div class=\"muted\">v" + g.version + " " + esc(g.modality) + "</div></td><td>" + esc(g.provider) +
+            "</td><td>" + (g.prompt ? '<div class="muted">' + esc(g.prompt) + "</div>" : "") + (g.output_text ? '<div class="output">' + esc(g.output_text) + "</div>" : '<div class="mono">' + esc(g.output_ref) + "</div>") +
+            '</td><td><button data-manifest="' + esc(g.id) + '">Manifest</button></td></tr>';
+        }).join("") + '</tbody></table><div id="manifest"></div>' : '<div class="empty">No generations yet.</div>') + "</div>";
+
+    var id = view.id;
+    function act(p) { return p.then(function () { loadList(); }).catch(function (e) { setStatus(e.message, "err"); }); }
+    var save = document.getElementById("save");
+    if (save) save.onclick = function () {
+      var patch = { kind: view.kind };
+      el.querySelectorAll("input[data-f]").forEach(function (i) {
+        var v = i.value.trim();
+        if (i.dataset.t === "list") patch[i.dataset.f] = v ? v.split(",").map(function (s) { return s.trim(); }).filter(Boolean) : [];
+        else if (v) patch[i.dataset.f] = v;
+      });
+      act(api("PATCH", "/v1/passports/" + id, patch).then(function () { setStatus("Draft saved", "ok"); }));
+    };
+    var lock = document.getElementById("lock");
+    if (lock) lock.onclick = function () {
+      if (!confirm("Lock version " + view.head.version + "? Locked versions can never be edited.")) return;
+      act(api("POST", "/v1/passports/" + id + "/lock").then(function () { setStatus("Version locked", "ok"); }));
+    };
+    var branch = document.getElementById("branch");
+    if (branch) branch.onclick = function () { act(api("POST", "/v1/passports/" + id + "/versions").then(function () { setStatus("New draft version created", "ok"); })); };
+    var gen = document.getElementById("gen");
+    if (gen) gen.onclick = function () {
+      var out = document.getElementById("gen-out");
+      gen.disabled = true; out.innerHTML = '<div class="muted">Generating...</div>';
+      api("POST", "/v1/passports/" + id + "/generate", {
+        provider: document.getElementById("gen-provider").value.trim(),
+        modality: document.getElementById("gen-modality").value,
+        prompt: document.getElementById("gen-prompt").value
+      }).then(function (g) {
+        out.innerHTML = (g.output_text ? '<div class="output">' + esc(g.output_text) + "</div>" : '<div class="mono">' + esc(g.output_ref) + "</div>") +
+          '<div class="muted">receipt ' + esc(g.mint_receipt_ref || "-") + "</div>";
+        setStatus("Generated", "ok"); loadDetail();
+      }).catch(function (e) { out.innerHTML = '<div class="output" style="border-color:var(--danger)">' + esc(e.message) + "</div>"; })
+        .then(function () { gen.disabled = false; });
+    };
+    el.querySelectorAll("button[data-manifest]").forEach(function (b) {
+      b.onclick = function () {
+        api("GET", "/v1/passports/" + id + "/generations/" + encodeURIComponent(b.dataset.manifest) + "/manifest")
+          .then(function (m) { document.getElementById("manifest").innerHTML = "<pre>" + esc(JSON.stringify(m, null, 2)) + "</pre>"; })
+          .catch(function (e) { setStatus(e.message, "err"); });
+      };
+    });
+  }
+  if (st.key) loadList();
+})();
+</script>
+</body>
+</html>

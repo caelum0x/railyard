@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Game Store</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #181b24; --border: #262b38; --fg: #e6e8ee;
+    --muted: #8b91a1; --accent: #6ea8fe; --danger: #f2668b; --ok: #55c98a; --row: #1e222d;
+    --common: #9aa3b5; --uncommon: #55c98a; --rare: #6ea8fe; --epic: #b48cf2; --legendary: #f2b35a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 20px;
+    background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .spacer { flex: 1; }
+  input, button { font: inherit; color: var(--fg); background: var(--row);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; }
+  input { min-width: 320px; }
+  button { cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); color: #0b1020; border-color: var(--accent); font-weight: 600; }
+  #status { font-size: 12px; color: var(--muted); }
+  #status.err { color: var(--danger); } #status.ok { color: var(--ok); }
+  nav { display: flex; gap: 4px; padding: 12px 20px 0; }
+  nav button { background: transparent; border: 1px solid transparent; border-bottom: none;
+    border-radius: 6px 6px 0 0; color: var(--muted); padding: 8px 14px; }
+  nav button.active { color: var(--fg); background: var(--panel); border-color: var(--border); }
+  main { padding: 0 20px 40px; max-width: 1040px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; padding: 16px 0; }
+  .tile { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px;
+    display: flex; flex-direction: column; gap: 8px; }
+  .tile h3 { margin: 0; font-size: 15px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .price { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 11px;
+    border: 1px solid var(--border); background: var(--row); text-transform: uppercase; letter-spacing: .4px; }
+  .r-Common { color: var(--common); } .r-Uncommon { color: var(--uncommon); } .r-Rare { color: var(--rare); }
+  .r-Epic { color: var(--epic); } .r-Legendary { color: var(--legendary); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 0 8px 8px 8px; overflow: auto; margin-top: 0; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; }
+  .empty, .loading { padding: 28px; color: var(--muted); text-align: center; }
+  .signin { max-width: 560px; margin: 40px auto; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 20px; }
+  .signin input { width: 100%; margin: 10px 0; }
+  .drops { display: flex; flex-wrap: wrap; gap: 6px; }
+  .bar { height: 8px; background: var(--row); border-radius: 4px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Game Store</h1>
+  <span id="who" class="muted"></span>
+  <div class="spacer"></div>
+  <span id="status">Ready</span>
+  <button id="signout" hidden>Sign out</button>
+</header>
+<nav id="tabs"></nav>
+<main id="main"></main>
+<script>
+(function () {
+  "use strict";
+  var TOKEN_KEY = "game_store_token";
+  var state = { token: sessionStorage.getItem(TOKEN_KEY) || "", player: "", tab: "shop", catalog: null };
+  var main = document.getElementById("main");
+  var statusEl = document.getElementById("status");
+
+  function esc(v) { var d = document.createElement("div"); d.textContent = v == null ? "" : String(v); return d.innerHTML; }
+  function money(micros) { return "$" + (Number(micros || 0) / 1e6).toFixed(2); }
+  function setStatus(msg, kind) { statusEl.textContent = msg; statusEl.className = kind || ""; }
+  function playerFromToken(t) {
+    // v2.<exp>.<player>.<tag>  or legacy <player>.<tag>
+    if (t.indexOf("v2.") === 0) { var rest = t.slice(3); rest = rest.slice(rest.indexOf(".") + 1); return rest.slice(0, rest.lastIndexOf(".")); }
+    return t.slice(0, t.lastIndexOf("."));
+  }
+
+  function api(method, path, body) {
+    var opts = { method: method, headers: {} };
+    if (state.token) opts.headers["Authorization"] = "Bearer " + state.token;
+    if (body) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+    return fetch(path, opts).then(function (r) {
+      return r.text().then(function (txt) {
+        var json = null; try { json = txt ? JSON.parse(txt) : null; } catch (e) { json = null; }
+        if (r.status === 401) { signOut(); throw new Error("Your session expired. Sign in again."); }
+        if (!r.ok || !json || json.success === false) {
+          var msg = json && json.error ? json.error.message : (txt || ("HTTP " + r.status));
+          throw new Error(msg);
+        }
+        return json.data;
+      });
+    });
+  }
+
+  function signOut() { state.token = ""; state.player = ""; sessionStorage.removeItem(TOKEN_KEY); render(); }
+  document.getElementById("signout").onclick = signOut;
+
+  function renderSignin() {
+    main.innerHTML = '<div class="signin"><h2 style="margin-top:0">Sign in</h2>' +
+      '<p class="muted">Paste the store token your game issued for your account. It is kept only in this browser tab.</p>' +
+      '<input id="tok" placeholder="v2.1767225600.acct_player.3f9a..." autocomplete="off" />' +
+      '<button class="primary" id="go">Continue</button></div>';
+    document.getElementById("go").onclick = function () {
+      var t = document.getElementById("tok").value.trim();
+      if (!t || t.lastIndexOf(".") < 1) { setStatus("That does not look like a store token", "err"); return; }
+      state.token = t; state.player = playerFromToken(t);
+      sessionStorage.setItem(TOKEN_KEY, t);
+      // Validate by loading the inventory (401 signs straight back out).
+      api("GET", "/v1/inventory/" + encodeURIComponent(state.player)).then(function () {
+        setStatus("Signed in", "ok"); render();
+      }).catch(function (e) { setStatus(e.message, "err"); });
+    };
+  }
+
+  var TABS = [["shop", "Shop"], ["inventory", "Inventory"], ["history", "Purchases"]];
+  function renderTabs() {
+    var nav = document.getElementById("tabs");
+    nav.innerHTML = "";
+    if (!state.token) return;
+    TABS.forEach(function (t) {
+      var b = document.createElement("button");
+      b.textContent = t[1]; b.className = state.tab === t[0] ? "active" : "";
+      b.onclick = function () { state.tab = t[0]; render(); };
+      nav.appendChild(b);
+    });
+  }
+
+  function loadCatalog() {
+    if (state.catalog) return Promise.resolve(state.catalog);
+    return api("GET", "/v1/catalog").then(function (d) { state.catalog = d; return d; });
+  }
+
+  function describe(p) {
+    var d = p.details, inner = d.CardPack || d.Cosmetic || d.BattlePass || {};
+    if (d.CardPack) {
+      var total = inner.rarity_weights.reduce(function (s, w) { return s + w[1]; }, 0) || 1;
+      return inner.cards_per_pack + " cards per pack<br>" + inner.rarity_weights.map(function (w) {
+        return '<span class="r-' + esc(w[0]) + '">' + esc(w[0]) + " " + (100 * w[1] / total).toFixed(1) + "%</span>";
+      }).join(" &middot; ");
+    }
+    if (d.Cosmetic) return '<span class="r-' + esc(inner.rarity) + '">' + esc(inner.rarity) + "</span> &middot; slot " + esc(inner.slot);
+    if (d.BattlePass) return inner.tiers + " reward tiers";
+    return "";
+  }
+
+  function renderShop() {
+    main.innerHTML = '<div class="loading">Loading catalog...</div>';
+    loadCatalog().then(function (cat) {
+      if (!cat.products.length) { main.innerHTML = '<div class="empty">Nothing is for sale right now.</div>'; return; }
+      main.innerHTML = '<div class="grid">' + cat.products.map(function (p, i) {
+        return '<div class="tile"><span class="badge">' + esc(p.kind.replace("_", " ")) + '</span>' +
+          '<h3>' + esc(p.name) + '</h3><div class="muted">' + describe(p) + '</div>' +
+          '<div class="price">' + money(p.price_micros) + '</div>' +
+          '<button class="primary" data-i="' + i + '">Buy</button></div>';
+      }).join("") + "</div>";
+      main.querySelectorAll("button[data-i]").forEach(function (b) {
+        b.onclick = function () { buy(cat.products[Number(b.dataset.i)], b); };
+      });
+    }).catch(function (e) { main.innerHTML = '<div class="empty">Could not load the catalog: ' + esc(e.message) + "</div>"; });
+  }
+
+  function buy(p, btn) {
+    if (!confirm("Buy " + p.name + " for " + money(p.price_micros) + "?")) return;
+    btn.disabled = true; setStatus("Processing payment...");
+    var key = "web-" + (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
+    api("POST", "/v1/purchase", { player: state.player, product_sku: p.sku, idempotency_key: key })
+      .then(function (o) { setStatus("Purchased " + p.name + " (" + money(o.charged_micros) + ")", "ok"); })
+      .catch(function (e) { setStatus(e.message, "err"); })
+      .then(function () { btn.disabled = false; });
+  }
+
+  function renderInventory() {
+    main.innerHTML = '<div class="loading">Loading inventory...</div>';
+    api("GET", "/v1/inventory/" + encodeURIComponent(state.player)).then(function (inv) {
+      var packs = Object.keys(inv.packs || {}).map(function (k) { return inv.packs[k]; });
+      var cos = Object.keys(inv.cosmetics || {});
+      var html = "";
+      if (inv.battle_pass) {
+        var bp = inv.battle_pass, tiers = 0;
+        (state.catalog ? state.catalog.products : []).forEach(function (p) { if (p.sku === bp.pass_sku && p.details.BattlePass) tiers = p.details.BattlePass.tiers; });
+        html += '<h3>Battle pass</h3><div class="tile"><b>' + esc(bp.pass_sku) + "</b><div>Tier " + bp.tier + (tiers ? " of " + tiers : "") +
+          '</div>' + (tiers ? '<div class="bar"><div style="width:' + Math.min(100, 100 * bp.tier / tiers) + '%"></div></div>' : "") +
+          '<div class="muted">Tiers unlock as you play.</div></div>';
+      }
+      html += "<h3>Packs</h3>";
+      html += packs.length ? '<div class="grid">' + packs.map(function (pk) {
+        var opened = !!pk.contents;
+        return '<div class="tile"><h3>' + esc(pk.pack_sku) + '</h3><div class="muted mono">' + esc(pk.entitlement_id) + "</div>" +
+          (opened ? '<div class="drops">' + pk.contents.map(function (it) {
+            return '<span class="badge r-' + esc(it.rarity) + '">' + esc(it.name) + "</span>"; }).join("") + "</div>"
+            : '<button class="primary" data-open="' + esc(pk.entitlement_id) + '">Open pack</button>') + "</div>";
+      }).join("") + "</div>" : '<div class="empty">No packs yet. Buy one in the Shop.</div>';
+      html += "<h3>Cosmetics</h3>";
+      html += cos.length ? '<div class="card"><table><thead><tr><th>Item</th><th>Item id</th></tr></thead><tbody>' +
+        cos.map(function (id) { return "<tr><td>" + esc(inv.cosmetics[id]) + '</td><td class="mono">' + esc(id) + "</td></tr>"; }).join("") +
+        "</tbody></table></div>" : '<div class="empty">No cosmetics unlocked yet.</div>';
+      main.innerHTML = html;
+      main.querySelectorAll("button[data-open]").forEach(function (b) {
+        b.onclick = function () {
+          b.disabled = true; setStatus("Opening pack...");
+          api("POST", "/v1/packs/open", { player: state.player, entitlement_id: b.dataset.open })
+            .then(function (d) { setStatus("Opened: " + d.items.map(function (i) { return i.name; }).join(", "), "ok"); renderInventory(); })
+            .catch(function (e) { b.disabled = false; setStatus(e.message, "err"); });
+        };
+      });
+    }).catch(function (e) { main.innerHTML = '<div class="empty">Could not load inventory: ' + esc(e.message) + "</div>"; });
+  }
+
+  function renderHistory() {
+    main.innerHTML = '<div class="loading">Loading purchases...</div>';
+    api("GET", "/v1/purchases/" + encodeURIComponent(state.player)).then(function (d) {
+      if (!d.purchases.length) { main.innerHTML = '<div class="empty">No purchases yet.</div>'; return; }
+      main.innerHTML = '<div class="card" style="margin-top:16px"><table><thead><tr><th>Item</th><th>Charged</th><th>Settlement</th><th>Receipt</th></tr></thead><tbody>' +
+        d.purchases.map(function (p) {
+          return "<tr><td>" + esc(p.product_sku) + "</td><td>" + money(p.charged_micros) + "</td><td>#" + esc(p.settlement_seq) +
+            '</td><td class="mono">' + esc(p.receipt_id) + "</td></tr>";
+        }).join("") + "</tbody></table></div>";
+    }).catch(function (e) { main.innerHTML = '<div class="empty">Could not load purchases: ' + esc(e.message) + "</div>"; });
+  }
+
+  function render() {
+    document.getElementById("signout").hidden = !state.token;
+    document.getElementById("who").textContent = state.token ? state.player : "";
+    renderTabs();
+    if (!state.token) return renderSignin();
+    if (state.tab === "shop") return renderShop();
+    loadCatalog().catch(function () {}).then(function () {
+      if (state.tab === "inventory") renderInventory(); else renderHistory();
+    });
+  }
+
+  if (state.token) state.player = playerFromToken(state.token);
+  render();
+})();
+</script>
+</body>
+</html>

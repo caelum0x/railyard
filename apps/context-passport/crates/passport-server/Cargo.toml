@@ -28,6 +28,11 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
+# Mint receipt signature verification (Ed25519 over the receipt hash) and key
+# discovery from the live Mint.
+ed25519-dalek = "2"
+hex = { workspace = true }
+reqwest = { workspace = true }
 
 [dev-dependencies]
 passport-testkit = { workspace = true }

@@ -68,6 +68,8 @@ mod tests {
             disclosure_required: true,
             mint_receipt_ref: Some("rcpt_9".into()),
             payment_evidence: None,
+            prompt: None,
+            output_text: None,
             created_at: Utc::now(),
         };
         let m = to_c2pa_manifest(&record);

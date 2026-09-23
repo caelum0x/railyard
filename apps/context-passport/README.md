@@ -72,11 +72,23 @@ Two facts drive the design (from the provider research):
 | `PATCH /v1/passports/:id` | `X-API-Key` | Merge a typed asset patch into the head **draft** (locked → `409`) |
 | `POST /v1/passports/:id/lock` | `X-API-Key` | Lock the head version (validates rights, content-addresses, immutable) |
 | `POST /v1/passports/:id/versions` | `X-API-Key` | Branch a new draft from the locked head |
+| `GET /v1/passports/:id/versions` | `X-API-Key` | Full version history, oldest first |
 | `GET /v1/passports/:id/versions/:v` | `X-API-Key` | Fetch a specific version |
 | `POST /v1/passports/:id/resolve` | `X-API-Key` | Resolve a locked version → provider `ConditioningPayload` |
-| `POST /v1/passports/:id/generate` | `X-API-Key` | Generate via Relay; require principal/request-correlated signed settlement evidence; record it in provenance |
+| `POST /v1/passports/:id/generate` | `X-API-Key` | Generate via Relay from `{provider, modality, prompt}`; returns the produced text (`output_text`, hard-bound by `asset_hash`) plus provenance with signed settlement evidence |
+| `POST /v1/passports/:id/attest` | `X-API-Key` | Record a generation made elsewhere; the Mint receipt signature is verified (Ed25519) and a receipt can back only one generation |
 | `GET /v1/passports/:id/generations` | `X-API-Key` | Provenance: assets conditioned by this passport |
 | `GET /v1/passports/:id/generations/:gen/manifest` | `X-API-Key` | Export one generation's C2PA-aligned Content Credential manifest |
+| `GET /console` | page (key entered in browser) | Web console: create/edit/lock/version passports, generate, browse generations + manifests |
+
+Access control: the operator key (`PASSPORT_API_KEY`) sees everything; tenant
+keys from `PASSPORT_OWNER_KEYS` act only as their owner (creates are stamped with
+that owner, lists are filtered, other owners' passports answer `404`).
+
+Modalities: Relay ships `passport_text`. Image/voice/video generation needs a
+`passport_<modality>` function wired to an asset provider in Relay's config;
+until then generate those assets with the provider directly and record them via
+`/attest`.
 
 ## Run locally
 
@@ -97,7 +109,10 @@ credentials.
 | Variable | Required | Meaning |
 |---|---:|---|
 | `DATABASE_URL` | yes | Postgres DSN for passport metadata, versions, provenance |
-| `PASSPORT_API_KEY` | yes | Credential clients send as `X-API-Key` |
+| `PASSPORT_API_KEY` | yes | Operator credential clients send as `X-API-Key` |
+| `PASSPORT_OWNER_KEYS` | no | Per-owner tenant keys, `owner:key,owner2:key2` (keys 24+ chars) |
+| `MINT_RECEIPT_PUBLIC_KEYS` | yes* | Hex Ed25519 Mint receipt keys (comma separated) used to verify settlement evidence |
+| `MINT_BASE_URL` | yes* | Alternative: discover the keys from Mint's `/.well-known/mint-verification-keys.json` |
 | `RELAY_BASE` / `RELAY_API_KEY` | yes | Relay gateway base URL + key |
 | `PASSPORT_BIND_ADDR` | no | Listener; default `0.0.0.0:8095` |
 | `RUST_LOG` | no | Tracing filter; default `info` |

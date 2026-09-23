@@ -137,6 +137,9 @@ impl GameStateRepository for FailFirstCommit {
     fn purchase(&self, key: &str) -> Result<Option<PurchaseRecord>, GameError> {
         self.inner.purchase(key)
     }
+    fn purchases_for(&self, player: &str) -> Result<Vec<CompletedPurchase>, GameError> {
+        self.inner.purchases_for(player)
+    }
     fn begin_purchase(&self, key: &str, player: &str, sku: &str) -> Result<(), GameError> {
         self.inner.begin_purchase(key, player, sku)
     }

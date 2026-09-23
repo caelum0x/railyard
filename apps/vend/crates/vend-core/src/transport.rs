@@ -111,7 +111,8 @@ pub struct TransferRequest {
     pub ref_: Option<String>,
 }
 
-/// Mint balance projection embedded in a transfer receipt.
+/// Mint balance projection (embedded in transfer receipts and returned by
+/// `GET /v1/accounts/:id/balance`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MintBalance {
     pub account_id: String,
@@ -171,6 +172,8 @@ pub trait MintTransport: Send + Sync {
     ) -> Result<ReleaseResponse, VendError>;
     /// `POST /v1/transfers` — move one payout leg from Vend clearing.
     async fn transfer(&self, req: TransferRequest) -> Result<TransferResponse, VendError>;
+    /// `GET /v1/accounts/:id/balance` — the reserve wallet's live balance.
+    async fn get_balance(&self, account_id: &str) -> Result<MintBalance, VendError>;
 }
 
 // ---------------------------------------------------------------------------

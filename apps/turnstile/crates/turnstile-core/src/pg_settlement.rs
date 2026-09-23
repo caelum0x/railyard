@@ -397,6 +397,52 @@ impl SettlementJournal for PostgresSettlementJournal {
     async fn get(&self, nonce: &str) -> Result<Option<SettlementRecord>, TurnstileError> {
         self.fetch(nonce).await
     }
+
+    async fn list_recent(
+        &self,
+        limit: usize,
+        phase: Option<SettlementPhase>,
+    ) -> Result<Vec<SettlementRecord>, TurnstileError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = match phase {
+            Some(phase) => {
+                let query = format!(
+                    "SELECT {COLUMNS} FROM turnstile_settlements WHERE phase = $1 \
+                     ORDER BY created_at DESC, nonce LIMIT $2"
+                );
+                sqlx::query_as::<_, StoredSettlement>(&query)
+                    .bind(phase_tag(phase))
+                    .bind(limit)
+                    .fetch_all(&self.pool)
+                    .await
+            }
+            None => {
+                let query = format!(
+                    "SELECT {COLUMNS} FROM turnstile_settlements \
+                     ORDER BY created_at DESC, nonce LIMIT $1"
+                );
+                sqlx::query_as::<_, StoredSettlement>(&query)
+                    .bind(limit)
+                    .fetch_all(&self.pool)
+                    .await
+            }
+        }
+        .map_err(db)?;
+        rows.into_iter().map(TryInto::try_into).collect()
+    }
+}
+
+fn phase_tag(phase: SettlementPhase) -> &'static str {
+    match phase {
+        SettlementPhase::Verifying => "verifying",
+        SettlementPhase::Held => "held",
+        SettlementPhase::CapturePending => "capture_pending",
+        SettlementPhase::Captured => "captured",
+        SettlementPhase::ReleasePending => "release_pending",
+        SettlementPhase::Released => "released",
+        SettlementPhase::TransferComplete => "transfer_complete",
+        SettlementPhase::Rejected => "rejected",
+    }
 }
 
 fn require_one(rows: u64, message: &str) -> Result<(), TurnstileError> {

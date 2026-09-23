@@ -1,10 +1,15 @@
 //! The payment seam: a trait owned by the agent runtime.
 //!
-//! This is the decoupling boundary. Today the only implementor is
-//! [`crate::stub::StubPaymentGateway`] (Mint AITP-402 == AP3 is not ready).
-//! Later a `MintPaymentGateway` (living in apps/mint or a thin adapter) will
-//! implement the same trait against `POST /v1/aitp/verify` — the agent runtime
-//! never imports Mint.
+//! This is the decoupling boundary. Implementors:
+//! - [`crate::mint::MintPaymentGateway`] — the production gateway: talks to a
+//!   live mint-server over HTTP (`POST /v1/aitp/verify`, then
+//!   `/v1/holds/:id/capture` or `/v1/holds/:id/release`) through the injectable
+//!   [`crate::transport::HttpTransport`] seam, signing authorizations with the
+//!   agent's Ed25519 key;
+//! - [`crate::stub::StubPaymentGateway`] — an in-process fake for tests and the
+//!   network-free `agent-runtime-demo`.
+//!
+//! The agent runtime depends only on this trait, never on Mint's crates.
 
 use async_trait::async_trait;
 

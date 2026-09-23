@@ -12,6 +12,12 @@
 //! when absent, an [`UnconfiguredRelay`] is injected that fails closed on every
 //! generation attempt (it never fabricates settlement evidence), so `generate`
 //! honestly returns `502 relay_unavailable` until a real Relay is configured.
+//!
+//! Access: `PASSPORT_API_KEY` is the operator key; `PASSPORT_OWNER_KEYS`
+//! (`owner:key,...`) adds per-owner tenant keys scoped to their own passports.
+//! Receipts: `MINT_RECEIPT_PUBLIC_KEYS` (hex Ed25519, comma-separated) or
+//! `MINT_BASE_URL` (keys discovered from `/.well-known/mint-verification-keys.json`).
+//! The operator console is served at `GET /console`.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -24,6 +30,8 @@ use passport_core::{
 };
 use passport_relay_client::RelayClient;
 use passport_server::service::PassportService;
+use passport_server::auth::OwnerKeys;
+use passport_server::receipts::ReceiptVerifier;
 use passport_server::{build_router, AppState};
 use passport_store::MemoryStore;
 use passport_store_postgres::PostgresStore;
@@ -42,9 +50,17 @@ struct RelayConfig {
     key: String,
 }
 
+enum ReceiptKeys {
+    Static(Vec<String>),
+    Discover(String),
+    None,
+}
+
 struct Config {
     bind_addr: SocketAddr,
     api_key: String,
+    owner_keys: OwnerKeys,
+    receipt_keys: ReceiptKeys,
     store: StoreMode,
     relay: Option<RelayConfig>,
 }
@@ -82,9 +98,34 @@ impl Config {
             _ => bail!("RELAY_BASE and RELAY_API_KEY must both be set, or both be omitted"),
         };
 
+        let owner_keys = match optional("PASSPORT_OWNER_KEYS") {
+            Some(spec) => OwnerKeys::parse(&spec).map_err(|e| anyhow::anyhow!("PASSPORT_OWNER_KEYS: {e}"))?,
+            None => OwnerKeys::default(),
+        };
+
+        // Mint receipt keys: explicit hex keys win; otherwise discover them from
+        // the live Mint. Durable (postgres) deployments must verify receipts.
+        let receipt_keys = match (
+            optional("MINT_RECEIPT_PUBLIC_KEYS"),
+            optional("MINT_BASE_URL"),
+        ) {
+            (Some(keys), _) => ReceiptKeys::Static(
+                keys.split(',').map(|k| k.trim().to_string()).collect(),
+            ),
+            (None, Some(base)) => ReceiptKeys::Discover(base),
+            (None, None) => {
+                if matches!(store, StoreMode::Postgres { .. }) {
+                    bail!("MINT_RECEIPT_PUBLIC_KEYS or MINT_BASE_URL must be set so settlement receipts can be verified");
+                }
+                ReceiptKeys::None
+            }
+        };
+
         Ok(Self {
             bind_addr,
             api_key,
+            owner_keys,
+            receipt_keys,
             store,
             relay,
         })
@@ -128,9 +169,31 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    let service = match &config.receipt_keys {
+        ReceiptKeys::Static(keys) => {
+            let verifier = ReceiptVerifier::from_hex_keys(keys)
+                .map_err(|e| anyhow::anyhow!("MINT_RECEIPT_PUBLIC_KEYS: {e}"))?;
+            service.with_receipt_verifier(Arc::new(verifier))
+        }
+        ReceiptKeys::Discover(base) => {
+            let verifier = ReceiptVerifier::fetch(base)
+                .await
+                .map_err(|e| anyhow::anyhow!("discovering Mint receipt keys: {e}"))?;
+            tracing::info!(mint = %base, "mint receipt keys discovered");
+            service.with_receipt_verifier(Arc::new(verifier))
+        }
+        ReceiptKeys::None => {
+            tracing::warn!(
+                "mint receipt keys unconfigured — /attest is disabled until MINT_RECEIPT_PUBLIC_KEYS or MINT_BASE_URL is set"
+            );
+            service
+        }
+    };
+
     let state = AppState {
         service,
         api_key: Arc::from(config.api_key),
+        owner_keys: Arc::new(config.owner_keys),
     };
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr)

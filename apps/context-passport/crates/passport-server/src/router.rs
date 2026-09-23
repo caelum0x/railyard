@@ -11,6 +11,7 @@ use crate::state::AppState;
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(handlers::health::healthz))
+        .route("/console", get(crate::console::page))
         .route("/readyz", get(handlers::health::readyz))
         .route(
             "/v1/passports",
@@ -23,7 +24,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/passports/:id/lock", post(handlers::passports::lock))
         .route(
             "/v1/passports/:id/versions",
-            post(handlers::versions::new_version),
+            post(handlers::versions::new_version).get(handlers::versions::list_versions),
         )
         .route(
             "/v1/passports/:id/versions/:version",

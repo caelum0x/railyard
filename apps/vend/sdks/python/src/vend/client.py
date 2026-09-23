@@ -216,6 +216,91 @@ class VendClient:
             path += "?" + urlencode({"utc_day": utc_day})
         return self._control(path, "GET")
 
+    def usage_range(self, app_id: str, from_day: str, to_day: str) -> dict[str, Any]:
+        """Inclusive per-day usage series (max 92 days)."""
+        path = f"/v1/customer/apps/{_segment(app_id)}/usage?" + urlencode(
+            {"from": from_day, "to": to_day}
+        )
+        return self._control(path, "GET")
+
+    def balance(self, app_id: str) -> dict[str, Any]:
+        """Live Mint balance of the app's reserve wallet."""
+        return self._control(f"/v1/customer/apps/{_segment(app_id)}/balance", "GET")
+
+    def provision_end_user(
+        self, app_id: str, external_ref: str, mint_account_id: str
+    ) -> dict[str, Any]:
+        return self._control(
+            f"/v1/customer/apps/{_segment(app_id)}/end-users",
+            "POST",
+            {"external_ref": external_ref, "mint_account_id": mint_account_id},
+        )
+
+    def list_users(self) -> list[dict[str, Any]]:
+        return self._control("/v1/customer/users", "GET")
+
+    def invite_user(
+        self,
+        email: str,
+        display_name: str,
+        role: Literal["owner", "admin", "viewer"] = "viewer",
+    ) -> dict[str, Any]:
+        return self._control(
+            "/v1/customer/users",
+            "POST",
+            {"email": email, "display_name": display_name, "role": role},
+        )
+
+    def update_user(
+        self,
+        user_id: str,
+        *,
+        role: Literal["owner", "admin", "viewer"] | None = None,
+        disabled: bool | None = None,
+    ) -> dict[str, Any]:
+        changes: dict[str, Any] = {}
+        if role is not None:
+            changes["role"] = role
+        if disabled is not None:
+            changes["disabled"] = disabled
+        return self._control(f"/v1/customer/users/{_segment(user_id)}", "PATCH", changes)
+
+    def revoke_user_sessions(self, user_id: str) -> Any:
+        return self._control(
+            f"/v1/customer/users/{_segment(user_id)}/sessions", "DELETE"
+        )
+
+    def change_password(self, current_password: str, new_password: str) -> Any:
+        return self._control(
+            "/v1/customer/password",
+            "PATCH",
+            {"current_password": current_password, "new_password": new_password},
+        )
+
+    def rotate_session(self) -> dict[str, Any]:
+        """Rotate the current session; the client switches to the new token."""
+        session = self._control("/v1/customer/session/rotate", "POST")
+        self.customer_session = session["session_token"]
+        return session
+
+    def list_models(self) -> list[dict[str, Any]]:
+        """OpenAI-compatible model list for the provisioning key, with rates."""
+        if not self.provisioning_key:
+            raise ValueError("provisioning_key is required to list models")
+        status, response_headers, raw = self._request(
+            "/v1/models",
+            "GET",
+            None,
+            {
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self.provisioning_key}",
+            },
+        )
+        payload = _decode_json(raw)
+        if not 200 <= status < 300 or not isinstance(payload, dict):
+            raise VendApiError(status, payload, _settlement_headers(response_headers))
+        return list(payload.get("data") or [])
+
     def chat_completions(
         self,
         body: JsonObject,

@@ -2303,6 +2303,8 @@ dependencies = [
  "aitp-client",
  "async-trait",
  "axum",
+ "reqwest",
+ "serde",
  "serde_json",
  "tokio",
  "tower",

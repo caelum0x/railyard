@@ -405,12 +405,14 @@ name = "game-economy-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "blake3",
  "game-economy-core",
  "game-economy-mint-client",
  "game-economy-store",
  "game-economy-testkit",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",

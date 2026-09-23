@@ -28,6 +28,9 @@ anyhow = { workspace = true }
 # BLAKE3 keyed-hash backs the per-player bearer-token auth (real MAC, constant-time
 # tag compare) — reused rather than adding `subtle`/`hmac`.
 blake3 = { workspace = true }
+# Signed delivery webhook into the game backend (the real Fulfiller).
+reqwest = { workspace = true }
+async-trait = { workspace = true }
 
 [dev-dependencies]
 # Route tests drive the router with the contract-faithful in-memory Mint.

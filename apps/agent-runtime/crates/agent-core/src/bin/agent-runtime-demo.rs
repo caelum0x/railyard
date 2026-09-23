@@ -13,6 +13,11 @@
 //! ```bash
 //! cargo run -p agent-core --features demo --bin agent-runtime-demo
 //! ```
+//!
+//! This binary is deliberately network-free. The same `RuntimeAgent` against a
+//! LIVE Mint (`MintPaymentGateway`) and a live Relay model is the `live_agent`
+//! example: `cargo run -p agent-core --example live_agent` (see its header for
+//! the required `MINT_*` / `RELAY_*` / agent-key environment).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
