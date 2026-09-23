@@ -257,7 +257,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8101".to_string());
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     println!(
-        "turnstile-demo listening on {bind_addr} (mint: {})",
+        "turnstile-server listening on {bind_addr} (mint: {})",
         config.mint_server_url
     );
     axum::serve(listener, app).await?;

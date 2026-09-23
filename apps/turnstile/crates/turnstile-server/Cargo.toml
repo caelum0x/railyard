@@ -1,12 +1,12 @@
 [package]
-name = "turnstile-demo"
+name = "turnstile-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Reference Turnstile server: one paid endpoint (POST /v1/echo) gated by turnstile-axum plus an open /healthz, wiring ReqwestTransport to a live mint-server to prove the full 402 -> verify -> capture loop."
+description = "Turnstile production server: config-declared paid tools over HTTP and MCP gated by turnstile-axum, settled on a live mint-server (402 -> verify -> capture), with a settlement journal and operator console."
 
 [[bin]]
-name = "turnstile-demo"
+name = "turnstile-server"
 path = "src/main.rs"
 
 [dependencies]

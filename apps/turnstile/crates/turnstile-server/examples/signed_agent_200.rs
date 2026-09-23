@@ -14,7 +14,7 @@
 //! server, its gating middleware, the settlement journal, and the
 //! settlement-status API are all the REAL production code.
 //!
-//! Run: `cargo run -p turnstile-demo --example signed_agent_200`
+//! Run: `cargo run -p turnstile-server --example signed_agent_200`
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

@@ -4,13 +4,18 @@
 > `apps/turnstile` is now its own cargo workspace (excluded from the repo-root
 > GPUI/Metal graph) with three crates: `turnstile-core` (framework-agnostic
 > AITP-402 paywall engine), `turnstile-axum` (drop-in axum middleware +
-> `PaidRequest` extractor + 402/receipt responses), and `turnstile-demo` (a
-> reference server: paid `POST /v1/echo` + open `/healthz`). It reuses the REAL
+> `PaidRequest` extractor + 402/receipt responses), and `turnstile-server` (the
+> production paid-tool gateway: config-declared paid tools over HTTP and MCP,
+> settlement journal, operator console at `/admin`, `/healthz`; the built-in
+> paid `POST /v1/echo` only runs with `TURNSTILE_DEMO_ECHO=1`). It reuses the REAL
 > `aitp-client` (path dep on `apps/agent-runtime`) for the wire types, header
 > codec, and injectable `HttpTransport` seam — Turnstile forwards the agent's
 > already-signed authorization to a live mint-server; it never re-signs.
 >
 > Build/test from here only: `cd apps/turnstile && cargo check` (or `cargo test`).
+>
+> Container image (build context = repo root, because of the `aitp-client` path
+> dependency): `docker build -f apps/turnstile/Dockerfile -t railyard/turnstile-server .`
 
 Run the paid echo product against Mint:
 
@@ -23,7 +28,7 @@ TURNSTILE_PRICE_MICROS=4200 \
 TURNSTILE_DATABASE_URL=postgres://localhost/turnstile \
 BIND_ADDR=0.0.0.0:8101 \
 TURNSTILE_DEMO_ECHO=1 \
-cargo run -p turnstile-demo
+cargo run -p turnstile-server
 ```
 
 ### Put your own endpoints behind the paywall (no Rust)

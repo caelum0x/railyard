@@ -2297,7 +2297,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "turnstile-demo"
+name = "turnstile-server"
 version = "0.1.0"
 dependencies = [
  "aitp-client",

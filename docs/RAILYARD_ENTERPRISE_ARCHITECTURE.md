@@ -277,7 +277,7 @@ estimate.
 turnstile-core  — framework-agnostic AITP-402 paywall engine: challenge/verifier/settle/nonce/
                   guard/clock/config/error
 turnstile-axum  — drop-in axum middleware + PaidRequest extractor + 402/receipt responses
-turnstile-demo  — reference server (paid POST /v1/echo + open /healthz)
+turnstile-server — reference server (paid POST /v1/echo + open /healthz)
 ```
 
 **Maturity:** Engine + Axum adapter are solid and reuse the real `aitp-client`.
@@ -291,7 +291,7 @@ add the shared nonce store, following mint's store split:**
 ```
 turnstile-core        — (exists) paywall engine
 turnstile-axum        — (exists) axum adapter
-turnstile-demo        — (exists) reference server
+turnstile-server      — (exists) reference server
 turnstile-nonce-store(new)— nonce store PORT (extract from core) — trait seam
 turnstile-nonce-postgres(new)— shared Postgres/Redis nonce store → closes the scale gap
 turnstile-tower   (new)— generic tower::Service adapter (any tower/hyper stack)

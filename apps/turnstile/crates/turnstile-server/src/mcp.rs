@@ -88,7 +88,7 @@ fn initialize_result() -> Value {
     json!({
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "capabilities": { "tools": { "listChanged": false } },
-        "serverInfo": { "name": "turnstile-demo", "version": env!("CARGO_PKG_VERSION") },
+        "serverInfo": { "name": "turnstile-server", "version": env!("CARGO_PKG_VERSION") },
         "instructions": "Paid MCP tools. Pay per call with an AITP-402 \
                          authorization in the `_aitp_authorization` argument; an \
                          unpaid call returns a JSON-RPC error whose data carries \

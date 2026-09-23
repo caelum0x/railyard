@@ -12,7 +12,7 @@ resolver = "2"
 members = [
     "crates/turnstile-core",
     "crates/turnstile-axum",
-    "crates/turnstile-demo",
+    "crates/turnstile-server",
 ]
 
 [workspace.package]
