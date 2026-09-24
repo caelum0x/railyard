@@ -1,0 +1,59 @@
+# Overlay on docker-compose.quickstart.yml that adds Postgres, API keys,
+# postpaid metering and per-key spend caps. Run from the repository root:
+#
+#   export OPENAI_API_KEY=sk-...
+#   docker compose -f docker-compose.quickstart.yml \
+#     -f examples/relay/budgets/docker-compose.budgets.yml up -d --build
+#
+# Paths are relative to the repository root (the first compose file's folder).
+# Local development only: the Postgres password below is a fixed demo value.
+
+services:
+  postgres:
+    # Postgres with the pg_cron, pg_trgm and pgvector extensions the gateway
+    # schema needs. Any Postgres 14+ with those three extensions also works.
+    image: tensorzero/postgres:14
+    environment:
+      POSTGRES_DB: relay
+      POSTGRES_USER: relay
+      POSTGRES_PASSWORD: relay-local-only
+    command: ["postgres", "-c", "cron.database_name=relay"]
+    volumes:
+      - relay-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relay -d relay"]
+      start_period: 30s
+      interval: 2s
+      timeout: 2s
+
+  # One-shot: applies the gateway's Postgres schema, then exits. Also used to
+  # create API keys (see README.md).
+  migrations:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: relay-gateway:local
+    entrypoint: ["gateway", "--run-postgres-migrations"]
+    environment:
+      TENSORZERO_POSTGRES_URL: postgres://relay:relay-local-only@postgres:5432/relay
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  gateway:
+    entrypoint: ["gateway", "--config-file", "/app/budgets/tensorzero.toml"]
+    volumes:
+      - ./examples/relay/budgets:/app/budgets:ro
+    environment:
+      TENSORZERO_POSTGRES_URL: postgres://relay:relay-local-only@postgres:5432/relay
+      # Record every successful inference as a priced cost event.
+      RELAY_METERING_ENABLED: "1"
+      # Public ids of API keys allowed to set caps and read spend for all keys.
+      RELAY_OPERATOR_KEY_IDS: ${RELAY_OPERATOR_KEY_IDS:-}
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+
+volumes:
+  relay-postgres:

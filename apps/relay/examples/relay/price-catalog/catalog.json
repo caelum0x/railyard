@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "revision": "example-resale-catalog-1",
+  "generated_at_ms": 1790208000000,
+  "models": [
+    {
+      "id": "tensorzero::function_name::chat",
+      "provider": "tensorzero",
+      "display_name": "Chat",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "tools": true,
+        "json_schema": true,
+        "streaming": true
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 300000,
+        "output_micro_usd_per_million": 1200000,
+        "source": "operator_override"
+      },
+      "enabled": true
+    },
+    {
+      "id": "tensorzero::model_name::gpt-4o-mini",
+      "provider": "tensorzero",
+      "display_name": "GPT-4o mini (with failover)",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "tools": true,
+        "vision": true,
+        "json_schema": true,
+        "streaming": true,
+        "batch": true
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 225000,
+        "output_micro_usd_per_million": 900000,
+        "source": "operator_override"
+      },
+      "context_window_tokens": 128000,
+      "max_output_tokens": 16384,
+      "enabled": true
+    },
+    {
+      "id": "tensorzero::model_name::text-embedding-3-small",
+      "provider": "tensorzero",
+      "display_name": "Text Embedding 3 Small",
+      "aliases": [],
+      "capabilities": {
+        "embeddings": true
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 40000,
+        "output_micro_usd_per_million": 0,
+        "source": "operator_override"
+      },
+      "enabled": true
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "provider": "openai",
+      "display_name": "GPT-4o mini (direct)",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "tools": true,
+        "vision": true,
+        "json_schema": true,
+        "streaming": true
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 150000,
+        "output_micro_usd_per_million": 600000,
+        "source": "provider_list"
+      },
+      "context_window_tokens": 128000,
+      "max_output_tokens": 16384,
+      "enabled": true
+    },
+    {
+      "id": "openai/gpt-4o",
+      "provider": "openai",
+      "display_name": "GPT-4o (disabled in this catalog)",
+      "aliases": [],
+      "capabilities": {
+        "chat": true
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 2500000,
+        "output_micro_usd_per_million": 10000000,
+        "source": "provider_list"
+      },
+      "enabled": false
+    }
+  ]
+}

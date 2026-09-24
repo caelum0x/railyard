@@ -1,0 +1,108 @@
+# Relay fallback routing example.
+#
+# Three layers of resilience, from cheapest to most expensive:
+#   1. Retries:   a failed provider call is retried on the same
+#                 provider with exponential backoff. Retry-After is honoured.
+#   2. Failover:  when a provider is still failing, the model moves to the next
+#                 provider in `routing`.
+#   3. Fallback variant: when every provider of the sampled model fails, the
+#                 function tries its `fallback_variants` (here: Claude).
+# Optional hedging (4) races a second provider for latency. It is off unless
+# `hedge.enabled = true`.
+#
+# Run it with the quickstart compose file:
+#   docker compose -f docker-compose.quickstart.yml run --rm --service-ports \
+#     -v "$PWD/examples/relay/fallback-routing:/app/example:ro" \
+#     -e ANTHROPIC_API_KEY \
+#     --entrypoint gateway gateway --config-file /app/example/tensorzero.toml
+
+[gateway]
+bind_address = "0.0.0.0:3000"
+disable_pseudonymous_usage_analytics = true
+
+[gateway.observability]
+enabled = false
+
+# ── 1 + 2: retries and provider failover ─────────────────────────────────────
+
+[models."gpt-4o-mini"]
+routing = ["openai", "openrouter"]
+# One retry per provider before failing over (this is also the default).
+# Set num_retries = 0 to fail over immediately.
+retries = { num_retries = 1, max_delay_s = 2.0 }
+# Give up on a slow provider and fail over instead of waiting forever.
+timeouts = { non_streaming = { total_ms = 30000 }, streaming = { ttft_ms = 5000 } }
+
+[models."gpt-4o-mini".providers.openai]
+type = "openai"
+model_name = "gpt-4o-mini"
+api_key_location = "env::OPENAI_API_KEY"
+
+[models."gpt-4o-mini".providers.openrouter]
+type = "openrouter"
+model_name = "openai/gpt-4o-mini"
+api_key_location = { default = "dynamic::relay_openrouter_api_key", fallback = "none" }
+
+[models."claude-sonnet"]
+routing = ["anthropic", "openrouter"]
+
+[models."claude-sonnet".providers.anthropic]
+type = "anthropic"
+model_name = "claude-sonnet-4-5"
+api_key_location = "env::ANTHROPIC_API_KEY"
+
+[models."claude-sonnet".providers.openrouter]
+type = "openrouter"
+model_name = "anthropic/claude-sonnet-4.5"
+api_key_location = { default = "dynamic::relay_openrouter_api_key", fallback = "none" }
+
+# ── 3: fallback variant across model families ────────────────────────────────
+
+[functions.chat]
+type = "chat"
+
+# `default` serves all sampled traffic. `anthropic` is tried only after the
+# sampled variant fails.
+[functions.chat.experimentation]
+type = "static"
+candidate_variants = ["default"]
+fallback_variants = ["anthropic"]
+
+[functions.chat.variants.default]
+type = "chat_completion"
+model = "gpt-4o-mini"
+
+[functions.chat.variants.anthropic]
+type = "chat_completion"
+model = "claude-sonnet"
+
+# ── 4: optional latency hedging ──────────────────────────────────────────────
+#
+# A second model that races OpenAI against OpenRouter. Non-streaming calls take
+# the first complete success, streaming calls take the first token. Losers are
+# cancelled. `max_cost_micros` caps the combined estimated cost of concurrent
+# attempts; a provider without a `provider_cost_micros` entry is never launched
+# concurrently when a cap is set.
+
+[models."gpt-4o-mini-hedged"]
+routing = ["openai", "openrouter"]
+
+[models."gpt-4o-mini-hedged".hedge]
+enabled = true
+max_concurrency = 2
+stagger_ms = 400
+max_cost_micros = 2000
+
+[models."gpt-4o-mini-hedged".hedge.provider_cost_micros]
+openai = 900
+openrouter = 950
+
+[models."gpt-4o-mini-hedged".providers.openai]
+type = "openai"
+model_name = "gpt-4o-mini"
+api_key_location = "env::OPENAI_API_KEY"
+
+[models."gpt-4o-mini-hedged".providers.openrouter]
+type = "openrouter"
+model_name = "openai/gpt-4o-mini"
+api_key_location = { default = "dynamic::relay_openrouter_api_key", fallback = "none" }

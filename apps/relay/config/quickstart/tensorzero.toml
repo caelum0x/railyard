@@ -1,0 +1,64 @@
+# Relay quickstart config.
+#
+# The smallest useful Relay setup: one stateless gateway, one provider key, no
+# database, no auth. Used by `docker-compose.quickstart.yml` at the repository
+# root. For production, start from `config/tensorzero.toml` instead (auth,
+# Postgres observability, object storage).
+#
+# Secrets never go in this file. Provider keys are read from the environment.
+
+[gateway]
+bind_address = "0.0.0.0:3000"
+# Relay does not phone home. Pseudonymous usage analytics stay off.
+disable_pseudonymous_usage_analytics = true
+
+# No database in the quickstart. Inferences are served but not stored.
+# To record inferences, add Postgres (see examples/relay/budgets) and set
+# `enabled = true` with `backend = "postgres"`.
+[gateway.observability]
+enabled = false
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │ MODELS                                                                      │
+# │                                                                             │
+# │ `gpt-4o-mini` routes to OpenAI first. If OPENROUTER_API_KEY is also set,    │
+# │ a failed OpenAI call (outage, 5xx, exhausted retries) is retried on         │
+# │ OpenRouter. Without an OpenRouter key the second leg is simply skipped.     │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+[models."gpt-4o-mini"]
+routing = ["openai", "openrouter"]
+
+[models."gpt-4o-mini".providers.openai]
+type = "openai"
+model_name = "gpt-4o-mini"
+api_key_location = "env::OPENAI_API_KEY"
+
+[models."gpt-4o-mini".providers.openrouter]
+type = "openrouter"
+model_name = "openai/gpt-4o-mini"
+# `dynamic::relay_openrouter_api_key` is filled from OPENROUTER_API_KEY by the
+# gateway. `none` keeps startup working when that variable is unset.
+api_key_location = { default = "dynamic::relay_openrouter_api_key", fallback = "none" }
+
+[embedding_models."text-embedding-3-small"]
+routing = ["openai"]
+
+[embedding_models."text-embedding-3-small".providers.openai]
+type = "openai"
+model_name = "text-embedding-3-small"
+api_key_location = "env::OPENAI_API_KEY"
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │ FUNCTIONS                                                                   │
+# │                                                                             │
+# │ A function is a named entry point your app calls instead of a raw model.   │
+# │ Swap the model behind it here without touching client code.                │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+[functions.chat]
+type = "chat"
+
+[functions.chat.variants.default]
+type = "chat_completion"
+model = "gpt-4o-mini"

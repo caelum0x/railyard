@@ -1,0 +1,44 @@
+# Relay budgets example: authenticated gateway, Postgres, postpaid metering and
+# per-key monthly spend caps. Used by docker-compose.budgets.yml.
+#
+# Every successful inference is priced from the catalog
+# (RELAY_CATALOG_PATH, /app/config/catalog.json in the image) and recorded as a
+# durable cost event owned by the calling API key. A key whose month-to-date
+# spend reaches its cap gets HTTP 429 `relay_spend_cap_exceeded` before any
+# provider is called.
+
+[gateway]
+bind_address = "0.0.0.0:3000"
+disable_pseudonymous_usage_analytics = true
+
+# Metering and spend caps attribute usage to an API key, so auth is required.
+[gateway.auth]
+enabled = true
+
+# Inferences are stored in the same Postgres database.
+[gateway.observability]
+enabled = true
+backend = "postgres"
+
+[models."gpt-4o-mini"]
+routing = ["openai", "openrouter"]
+
+[models."gpt-4o-mini".providers.openai]
+type = "openai"
+model_name = "gpt-4o-mini"
+api_key_location = "env::OPENAI_API_KEY"
+
+[models."gpt-4o-mini".providers.openrouter]
+type = "openrouter"
+model_name = "openai/gpt-4o-mini"
+api_key_location = { default = "dynamic::relay_openrouter_api_key", fallback = "none" }
+
+# Every configured model and function must have an enabled price in the
+# catalog, otherwise metered startup fails closed. The image catalog prices
+# both `tensorzero::model_name::gpt-4o-mini` and `tensorzero::function_name::chat`.
+[functions.chat]
+type = "chat"
+
+[functions.chat.variants.default]
+type = "chat_completion"
+model = "gpt-4o-mini"

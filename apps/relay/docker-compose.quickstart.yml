@@ -1,0 +1,36 @@
+# Relay quickstart: one gateway, one provider key.
+#
+#   export OPENAI_API_KEY=sk-...
+#   docker compose -f docker-compose.quickstart.yml up --build
+#
+# Then call http://localhost:3000/openai/v1/chat/completions with any OpenAI
+# SDK (see examples/relay/openai-client). No database, no auth: this is a local
+# development setup. For production start from config/tensorzero.toml and the
+# Dockerfile, and read docs/deployment/.
+#
+# Optional:
+#   OPENROUTER_API_KEY   enables the OpenRouter failover leg for gpt-4o-mini.
+#   RELAY_PORT           host port (default 3000).
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: relay-gateway:local
+    # Replace the image's production config with the quickstart config.
+    entrypoint: ["gateway", "--config-file", "/app/quickstart/tensorzero.toml"]
+    volumes:
+      - ./config/quickstart:/app/quickstart:ro
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY before running the Relay quickstart}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "${RELAY_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      start_period: 15s
+      interval: 10s
+      timeout: 3s
+    restart: unless-stopped
