@@ -5,7 +5,9 @@ use async_trait::async_trait;
 use sqlx::postgres::PgPool;
 
 use crate::error::TurnstileError;
-use crate::journal::{SettlementJournal, SettlementPhase, SettlementRecord};
+use crate::journal::{
+    ResourceRevenue, RevenueSummary, SettlementJournal, SettlementPhase, SettlementRecord,
+};
 
 const COLUMNS: &str = "nonce, authorization_json, phase, hold_id, scheme_json, actual_micros, receipt_json, owner_token, lease_until_ms, last_error";
 const RETURNING_COLUMNS: &str = "settlement.nonce, settlement.authorization_json, settlement.phase, settlement.hold_id, settlement.scheme_json, settlement.actual_micros, settlement.receipt_json, settlement.owner_token, settlement.lease_until_ms, settlement.last_error";
@@ -429,6 +431,79 @@ impl SettlementJournal for PostgresSettlementJournal {
         }
         .map_err(db)?;
         rows.into_iter().map(TryInto::try_into).collect()
+    }
+
+    async fn list_page(
+        &self,
+        limit: usize,
+        offset: usize,
+        phase: Option<SettlementPhase>,
+    ) -> Result<Vec<SettlementRecord>, TurnstileError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let offset = i64::try_from(offset).unwrap_or(i64::MAX);
+        let query = format!(
+            "SELECT {COLUMNS} FROM turnstile_settlements \
+             WHERE ($1::text IS NULL OR phase = $1) \
+             ORDER BY created_at DESC, nonce LIMIT $2 OFFSET $3"
+        );
+        let rows = sqlx::query_as::<_, StoredSettlement>(&query)
+            .bind(phase.map(phase_tag))
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?;
+        rows.into_iter().map(TryInto::try_into).collect()
+    }
+
+    async fn revenue_summary(&self) -> Result<RevenueSummary, TurnstileError> {
+        let phases: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT phase, COUNT(*)::BIGINT FROM turnstile_settlements GROUP BY phase",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?;
+        let resources: Vec<(String, i64, i64)> = sqlx::query_as(
+            "SELECT (authorization_json::jsonb)->>'resource' AS resource, COUNT(*)::BIGINT, \
+             COALESCE(SUM(COALESCE(actual_micros, \
+                 ((authorization_json::jsonb)->>'amount_micros')::BIGINT)), 0)::BIGINT \
+             FROM turnstile_settlements \
+             WHERE phase IN ('captured', 'transfer_complete') \
+             GROUP BY 1 ORDER BY 1",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?;
+        let (pending,): (i64,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(((authorization_json::jsonb)->>'amount_micros')::BIGINT), 0)::BIGINT \
+             FROM turnstile_settlements WHERE phase IN ('held', 'capture_pending', 'verifying')",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db)?;
+        let by_resource: Vec<ResourceRevenue> = resources
+            .into_iter()
+            .map(|(resource, calls, micros)| ResourceRevenue {
+                resource,
+                paid_calls: u64::try_from(calls).unwrap_or_default(),
+                captured_micros: micros,
+            })
+            .collect();
+        Ok(RevenueSummary {
+            total_calls: phases
+                .iter()
+                .map(|(_, n)| u64::try_from(*n).unwrap_or_default())
+                .sum(),
+            captured_micros: by_resource
+                .iter()
+                .fold(0_i64, |acc, r| acc.saturating_add(r.captured_micros)),
+            pending_authorized_micros: pending,
+            by_phase: phases
+                .into_iter()
+                .map(|(phase, n)| (phase, u64::try_from(n).unwrap_or_default()))
+                .collect(),
+            by_resource,
+        })
     }
 }
 

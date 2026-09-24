@@ -30,9 +30,12 @@ pub mod nonce;
 pub mod pg;
 #[cfg(feature = "postgres")]
 pub mod pg_settlement;
+#[cfg(feature = "postgres")]
+pub mod pg_tools;
 pub mod recovery;
 pub mod registry;
 pub mod settle;
+pub mod tool_store;
 pub mod verifier;
 
 // Re-export the whole reused crate plus the wire types callers touch directly,
@@ -48,7 +51,8 @@ pub use config::TurnstileConfig;
 pub use error::TurnstileError;
 pub use guard::{Admit, Turnstile};
 pub use journal::{
-    InMemorySettlementJournal, SettlementJournal, SettlementPhase, SettlementRecord,
+    InMemorySettlementJournal, ResourceRevenue, RevenueSummary, SettlementJournal,
+    SettlementPhase, SettlementRecord,
 };
 pub use mcp::{McpAdmit, McpPaywall};
 pub use nonce::{InMemoryNonceStore, NonceStore};
@@ -56,7 +60,12 @@ pub use nonce::{InMemoryNonceStore, NonceStore};
 pub use pg::{spawn_reaper, PostgresNonceStore};
 #[cfg(feature = "postgres")]
 pub use pg_settlement::PostgresSettlementJournal;
+#[cfg(feature = "postgres")]
+pub use pg_tools::PostgresToolStore;
 pub use recovery::{reconcile_once, spawn_settlement_reaper, RecoveryReport};
 pub use registry::{ToolCatalog, ToolDescriptor, ToolRegistry};
 pub use settle::Settled;
+pub use tool_store::{
+    InMemoryToolStore, StoredTool, ToolAction, ToolAuditEntry, ToolStore, ToolStoreError,
+};
 pub use verifier::{FakeVerifier, MintVerifier, PaymentVerifier, VerifiedHold};

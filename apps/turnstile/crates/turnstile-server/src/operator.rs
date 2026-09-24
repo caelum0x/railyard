@@ -5,14 +5,14 @@
 //!   the exact signed `AITP-Authorization` they paid with (only the payer ever
 //!   held it), or the operator token. A bare request id is no longer enough to
 //!   read the payer account, amounts and receipt.
-//! - `GET /v1/admin/settlements?limit=&phase=` — recent paid calls (operator).
-//! - `GET /v1/admin/summary` — captured revenue, pending captures and failures
-//!   across the recent window (operator).
+//! - `GET /v1/admin/settlements?limit=&offset=&phase=` — paid calls, newest
+//!   first, paginated (operator).
+//! - `GET /v1/admin/summary` — lifetime captured revenue (per resource, so
+//!   retired tools stay visible), pending captures and failures (operator).
 //!
 //! The operator token is `TURNSTILE_ADMIN_TOKEN`, presented as
 //! `Authorization: Bearer <token>`. Without it the admin routes answer `503`.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,8 +27,6 @@ use turnstile_core::{reconcile_once, PaymentVerifier, SettlementJournal, Settlem
 
 /// Most rows one admin list call returns.
 const MAX_LIST: usize = 500;
-/// Window the revenue summary aggregates over.
-const SUMMARY_WINDOW: usize = 5_000;
 
 #[derive(Clone)]
 pub struct OperatorState {
@@ -54,7 +52,7 @@ impl OperatorState {
         constant_time_eq(expected.as_bytes(), presented.as_bytes())
     }
 
-    fn require_operator(&self, headers: &HeaderMap) -> Result<(), Response> {
+    pub(crate) fn require_operator(&self, headers: &HeaderMap) -> Result<(), Response> {
         if self.admin_token.is_none() {
             return Err(error(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -77,7 +75,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
+pub(crate) fn error(status: StatusCode, code: &str, message: &str) -> Response {
     (status, Json(json!({ "error": code, "message": message }))).into_response()
 }
 
@@ -123,6 +121,7 @@ pub async fn settlement_for_payer(
 #[derive(Deserialize)]
 pub struct ListQuery {
     limit: Option<usize>,
+    offset: Option<usize>,
     phase: Option<SettlementPhase>,
 }
 
@@ -136,10 +135,21 @@ pub async fn list_settlements(
         return response;
     }
     let limit = query.limit.unwrap_or(100).clamp(1, MAX_LIST);
-    match state.journal.list_recent(limit, query.phase).await {
-        Ok(records) => {
+    let offset = query.offset.unwrap_or(0);
+    // Fetch one extra row to know whether another page exists.
+    match state.journal.list_page(limit + 1, offset, query.phase).await {
+        Ok(mut records) => {
+            let has_more = records.len() > limit;
+            records.truncate(limit);
             let items: Vec<SettlementStatus> = records.iter().map(SettlementStatus::from).collect();
-            Json(json!({ "settlements": items })).into_response()
+            Json(json!({
+                "settlements": items,
+                "offset": offset,
+                "limit": limit,
+                "has_more": has_more,
+                "next_offset": if has_more { Some(offset + limit) } else { None },
+            }))
+            .into_response()
         }
         Err(e) => error(StatusCode::SERVICE_UNAVAILABLE, "journal_unavailable", &e.to_string()),
     }
@@ -191,55 +201,20 @@ pub async fn run_recovery(
     }
 }
 
-/// `GET /v1/admin/summary` — revenue and health across the recent window.
+/// `GET /v1/admin/summary` — lifetime revenue and settlement health.
 pub async fn summary(State(state): State<OperatorState>, headers: HeaderMap) -> Response {
     if let Err(response) = state.require_operator(&headers) {
         return response;
     }
-    let records = match state.journal.list_recent(SUMMARY_WINDOW, None).await {
-        Ok(records) => records,
-        Err(e) => return error(StatusCode::SERVICE_UNAVAILABLE, "journal_unavailable", &e.to_string()),
-    };
-    let mut by_phase: BTreeMap<String, u64> = BTreeMap::new();
-    let mut by_resource: BTreeMap<String, (u64, i64)> = BTreeMap::new();
-    let mut captured_micros: i64 = 0;
-    let mut authorized_pending_micros: i64 = 0;
-    for record in &records {
-        let phase = serde_json::to_value(record.phase)
-            .ok()
-            .and_then(|v| v.as_str().map(str::to_owned))
-            .unwrap_or_default();
-        *by_phase.entry(phase).or_default() += 1;
-        match record.phase {
-            SettlementPhase::Captured | SettlementPhase::TransferComplete => {
-                let amount = record
-                    .actual_micros
-                    .map(|a| a.0)
-                    .unwrap_or(record.authorization.amount_micros.0);
-                captured_micros = captured_micros.saturating_add(amount);
-                let entry = by_resource
-                    .entry(record.authorization.resource.clone())
-                    .or_default();
-                entry.0 += 1;
-                entry.1 = entry.1.saturating_add(amount);
-            }
-            SettlementPhase::Held | SettlementPhase::CapturePending | SettlementPhase::Verifying => {
-                authorized_pending_micros =
-                    authorized_pending_micros.saturating_add(record.authorization.amount_micros.0);
-            }
-            _ => {}
-        }
+    match state.journal.revenue_summary().await {
+        Ok(summary) => Json(json!({
+            "window": summary.total_calls,
+            "captured_micros": summary.captured_micros,
+            "pending_authorized_micros": summary.pending_authorized_micros,
+            "by_phase": summary.by_phase,
+            "by_resource": summary.by_resource,
+        }))
+        .into_response(),
+        Err(e) => error(StatusCode::SERVICE_UNAVAILABLE, "journal_unavailable", &e.to_string()),
     }
-    let resources: Vec<_> = by_resource
-        .into_iter()
-        .map(|(resource, (calls, micros))| json!({ "resource": resource, "paid_calls": calls, "captured_micros": micros }))
-        .collect();
-    Json(json!({
-        "window": records.len(),
-        "captured_micros": captured_micros,
-        "pending_authorized_micros": authorized_pending_micros,
-        "by_phase": by_phase,
-        "by_resource": resources,
-    }))
-    .into_response()
 }

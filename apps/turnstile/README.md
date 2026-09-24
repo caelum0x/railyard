@@ -33,9 +33,19 @@ cargo run -p turnstile-server
 
 ### Put your own endpoints behind the paywall (no Rust)
 
-Point `TURNSTILE_TOOLS_PATH` at a JSON registry and every entry becomes a paid
-tool over HTTP (`POST /v1/tools/<name>/call`) and MCP (`tools/call`), each
-priced independently. Works for upstreams written in anything (Node, Python, Go):
+Paid tools are **runtime-editable**: add, reprice, disable and delete them in
+the console (`GET /admin`, Tools tab) or over the operator API, with no restart.
+Every tool becomes a paid route over HTTP (`<http_method> /v1/tools/<name>/call`)
+and MCP (`tools/call`), each priced independently. Works for upstreams written in
+anything (Node, Python, Go).
+
+Tools persist in Postgres (`turnstile_paid_tools`, migration `0004`) when
+`TURNSTILE_DATABASE_URL` is set, otherwise in process memory (lost on restart).
+Replicas pick up edits within `TURNSTILE_TOOLS_RELOAD_SECS` (default 5).
+
+`TURNSTILE_TOOLS_PATH` is an optional **one-time seed**: a JSON array of tool
+specs applied only while the store is empty, so console edits are never
+overwritten by a restart:
 
 ```json
 [
@@ -56,25 +66,61 @@ priced independently. Works for upstreams written in anything (Node, Python, Go)
   capped at the quote); any other status or a transport error releases the hold,
   so the agent is never charged for a failed call.
 - Upstream credentials are read from the named environment variable; they never
-  live in the registry file.
+  live in the store, the file or any API response.
 - `http_method` (default `POST`; also `GET`, `PUT`, `PATCH`, `DELETE`) is the
   method agents call `/v1/tools/<name>/call` with, and the 402 challenge binds
-  to it. `upstream_method` accepts the same set. A `GET`/`DELETE` upstream gets
-  the caller's query string (HTTP) or the flat scalar MCP arguments as query
-  parameters instead of a body.
+  to it (a wrong method gets `405` with `Allow`). `upstream_method` accepts the
+  same set. A `GET`/`DELETE` upstream gets the caller's query string (HTTP) or
+  the flat scalar MCP arguments as query parameters instead of a body.
 - The built-in `echo` demo tool (priced by `TURNSTILE_PRICE_MICROS`) is served
-  only with `TURNSTILE_DEMO_ECHO=1`. With neither `TURNSTILE_TOOLS_PATH` nor
-  that flag set, the server refuses to start, so a misconfigured deploy cannot
-  charge for an echo.
+  only with `TURNSTILE_DEMO_ECHO=1` and shows as a read-only built-in row in the
+  console. The server refuses to start only when it could never serve a tool:
+  no stored or seeded tools, no demo flag and no admin token to add one.
+
+#### Tool admin API (operator bearer token)
+
+| Route | Purpose |
+|---|---|
+| `GET /v1/admin/tools[?include_deleted=1]` | every tool: spec, enabled, version, live status (`live`/`disabled`/`error`/`deleted`), credential env vars available, upstream policy |
+| `POST /v1/admin/tools` | create (body = tool spec); `409` if the name is live; re-creating a deleted name restores it |
+| `GET /v1/admin/tools/:name` | one tool |
+| `PUT /v1/admin/tools/:name` | replace the spec; send `If-Match: <version>` to get `409` instead of overwriting someone else's edit |
+| `POST /v1/admin/tools/:name/enable` / `/disable` | toggle |
+| `DELETE /v1/admin/tools/:name` | soft delete: the route disappears, revenue and settlement history stay |
+| `GET /v1/admin/tool-audit[?tool=&limit=]` | who changed what and when, with old and new values |
+
+Writes get the same checks as the seed file (name, price, methods, timeout,
+unique name, credential env var set on this server), and `422` with the reason
+otherwise. Optional header `X-Turnstile-Operator: <name>` labels the audit entry.
+
+Edit semantics: a reprice applies to new challenges; a challenge already issued
+is honored at the price it quoted (the nonce store binds the exact challenge, and
+the capture ceiling is the authorized amount). Disable/delete removes the route
+immediately, so outstanding challenges for it can no longer be paid; calls
+already admitted settle normally and recovery keeps working.
+
+Guardrails for API-edited tools (a leaked admin token must not become an SSRF
+proxy or a secret-exfiltration channel); unchanged values of an existing tool
+are not re-checked:
+
+- `TURNSTILE_UPSTREAM_ALLOW_HOSTS` — optional host allowlist (`api.example.com,*.example.com`).
+- Private, loopback, link-local (incl. `169.254.169.254`), CGNAT and multicast
+  upstreams, literal or DNS-resolved, are refused unless
+  `TURNSTILE_UPSTREAM_ALLOW_PRIVATE=1`.
+- `upstream_auth_env` must be `TURNSTILE_UPSTREAM_*` or listed in
+  `TURNSTILE_UPSTREAM_AUTH_ENVS`; Turnstile's own secrets are never allowed.
+  To add a new authenticated upstream, set its variable on every replica and
+  restart once; afterwards all edits are live.
 
 ### Operator console and settlement access
 
-- `TURNSTILE_ADMIN_TOKEN` (24+ chars) enables `GET /v1/admin/summary` (captured
-  revenue, pending captures, per-tool revenue) and
-  `GET /v1/admin/settlements?limit=&phase=` (recent paid calls) and
-  `POST /v1/admin/recovery` (run a settlement recovery pass now, using the
-  same lease protocol as the background reaper). `GET /admin` is the console
-  over those endpoints, with a "Run recovery now" action on the Paid Calls tab.
+- `TURNSTILE_ADMIN_TOKEN` (24+ chars) enables the console at `GET /admin` and:
+  `GET /v1/admin/summary` (lifetime captured revenue, pending captures, per-tool
+  revenue including retired tools), `GET /v1/admin/settlements?limit=&offset=&phase=`
+  (paginated paid calls, with `has_more`/`next_offset`), `POST /v1/admin/recovery`
+  (run a settlement recovery pass now, using the same lease protocol as the
+  background reaper) and the tool admin API above. Console tabs: Tools (editor),
+  Revenue, Paid Calls (with "Run recovery now"), Change History and Settlement Lookup.
 - `GET /v1/settlements/:request_id` is scoped to the payer: present the exact
   `AITP-Authorization` you paid with (or the operator bearer token). A bare
   request id no longer reveals payer, amounts or the receipt.
@@ -87,10 +133,12 @@ The demo defaults to port `8101`, leaving Mint's default `8080` free.
 The reference server also exposes:
 
 - `GET /v1/tools` and `GET /.well-known/aitp-tools` — an OPEN discovery catalog
-  of the provider's priced tools (payee, currency, and price per tool), built
-  from the same config the gate quotes so it can never drift.
-- `POST /mcp` — a minimal JSON-RPC MCP endpoint exposing the SAME paid `echo`
-  tool over the Model Context Protocol. Agents pay by putting their signed
+  of the provider's live priced tools (payee, currency, and price per tool),
+  built from the same registry snapshot the gates quote so it can never drift.
+- `POST /mcp` — a minimal JSON-RPC MCP endpoint exposing the SAME paid tools
+  over the Model Context Protocol (`listChanged: true`; `GET /mcp` with
+  `Accept: text/event-stream` streams `notifications/tools/list_changed` on
+  every tool edit). Agents pay by putting their signed
   `AITP-Authorization` in the reserved `_aitp_authorization` tool argument; an
   unpaid `tools/call` returns a JSON-RPC error whose `data` carries the AITP-402
   challenge, and a paid call captures actual usage and returns the signed receipt

@@ -14,11 +14,13 @@ turnstile-core = { workspace = true, features = ["postgres"] }
 turnstile-axum.workspace = true
 aitp-client.workspace = true
 axum.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["time"] }
 serde_json.workspace = true
 serde.workspace = true
 # Upstream proxying for config-declared paid tools.
 reqwest.workspace = true
+# Stream adapter for the MCP `GET /mcp` list_changed notification stream.
+futures-util = { version = "0.3", default-features = false }
 
 [dev-dependencies]
 # e2e_paywall.rs runs the full 402 -> authorize (REAL aitp-client Ed25519 signer +

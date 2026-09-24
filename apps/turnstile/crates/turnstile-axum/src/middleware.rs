@@ -1,6 +1,7 @@
 //! The gating middleware: run [`Turnstile::admit`], short-circuit `402`, and
 //! settle the hold around the inner handler.
 
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Request, State};
@@ -23,7 +24,23 @@ const HEADER_AUTHORIZATION: &str = "aitp-authorization";
 ///    - [`Admit::Admitted`] → insert a [`PaidContext`], run the inner handler,
 ///      then capture the reported actual (default: full price) on a `2xx` or
 ///      release the hold otherwise.
-pub async fn admit(State(gate): State<Arc<Turnstile>>, mut req: Request, next: Next) -> Response {
+pub async fn admit(State(gate): State<Arc<Turnstile>>, req: Request, next: Next) -> Response {
+    gate_request(&gate, req, |req| next.run(req)).await
+}
+
+/// The gate as a plain async function, for servers that resolve the gate per
+/// request (e.g. a runtime-editable tool registry) instead of binding one
+/// fixed gate with `from_fn_with_state`. `inner` runs only for an admitted
+/// request, with a [`PaidContext`] in its extensions.
+///
+/// The capture ceiling and default charge are the amount the payer actually
+/// authorized (the price quoted when the challenge was issued), so a request
+/// paid against a challenge issued before a reprice settles at its quoted price.
+pub async fn gate_request<F, Fut>(gate: &Turnstile, mut req: Request, inner: F) -> Response
+where
+    F: FnOnce(Request) -> Fut,
+    Fut: Future<Output = Response>,
+{
     let resource = format!("{} {}", req.method(), req.uri().path());
     let authorization = req
         .headers()
@@ -44,11 +61,12 @@ pub async fn admit(State(gate): State<Arc<Turnstile>>, mut req: Request, next: N
             Err(_) => response::unavailable(&error),
         },
         Admit::Admitted(settled) => {
+            let quoted = settled.quoted();
             let reported = Arc::new(Mutex::new(None));
             req.extensions_mut()
-                .insert(PaidContext::new(reported.clone(), gate.price()));
+                .insert(PaidContext::new(reported.clone(), quoted));
 
-            let response = next.run(req).await;
+            let response = inner(req).await;
             let succeeded = response.status().is_success();
 
             // Success-only: capture what the handler reported (or the full quoted
@@ -57,7 +75,7 @@ pub async fn admit(State(gate): State<Arc<Turnstile>>, mut req: Request, next: N
                 .lock()
                 .map(|g| *g)
                 .unwrap_or(None)
-                .unwrap_or_else(|| gate.price());
+                .unwrap_or(quoted);
 
             if succeeded {
                 match settled.capture(actual).await {

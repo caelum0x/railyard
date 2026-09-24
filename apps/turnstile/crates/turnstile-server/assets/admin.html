@@ -65,13 +65,45 @@
   .empty, .loading { padding: 28px; color: var(--muted); text-align: center; }
   .count { color: var(--muted); font-size: 12px; }
   code { background: var(--row); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  select, textarea {
+    font: inherit; color: var(--fg); background: var(--row);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
+  }
+  textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; min-height: 120px; resize: vertical; }
+  button:disabled { opacity: .55; cursor: default; }
+  button.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+  button.small { padding: 3px 9px; font-size: 12px; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge.live { color: var(--ok); border-color: var(--ok); }
+  .badge.error, .badge.deleted { color: var(--danger); border-color: var(--danger); }
+  .badge.disabled, .badge.pending { color: var(--muted); }
+  .form { padding: 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; }
+  .form .full { grid-column: 1 / -1; }
+  .form label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
+  .form label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--fg); font-size: 14px; }
+  .form input, .form select, .form textarea { min-width: 0; width: 100%; }
+  .form label.check input { width: auto; }
+  .form .hint { font-size: 11.5px; color: var(--muted); }
+  .form-error {
+    grid-column: 1 / -1; color: var(--danger); border: 1px solid var(--danger);
+    border-radius: 6px; padding: 9px 12px; background: rgba(242, 102, 139, .08);
+  }
+  .form-actions { grid-column: 1 / -1; display: flex; gap: 10px; justify-content: flex-end; }
+  .signin { padding: 40px 28px; text-align: center; color: var(--muted); }
+  .signin h2 { color: var(--fg); font-size: 16px; margin: 0 0 8px; }
+  .pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; padding: 10px 14px; }
+  .diff { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .diff .old { color: var(--danger); }
+  .diff .new { color: var(--ok); }
 </style>
 </head>
 <body>
 <header>
   <h1>Turnstile Admin</h1>
   <input id="token" type="password" placeholder="Operator token (TURNSTILE_ADMIN_TOKEN)" autocomplete="off" />
+  <input id="operator" type="text" placeholder="Your name (audit log)" autocomplete="off" style="min-width:160px" />
   <button id="save-token" class="primary">Connect</button>
+  <button id="sign-out">Sign out</button>
   <div class="spacer"></div>
   <span id="status">Ready</span>
 </header>
@@ -109,35 +141,72 @@
       + ' <span class="badge">' + esc(micros) + " µ$</span>";
   }
 
-  function badge(text) {
-    if (text === null || text === undefined || text === "") return "—";
-    return '<span class="badge">' + esc(text) + "</span>";
+  // Exact dollars → integer micros (no float rounding): "0.0025" → 2500.
+  function dollarsToMicros(text) {
+    const t = String(text).trim().replace(/^\$/, "");
+    const m = /^(\d{1,12})(?:\.(\d{0,6}))?$/.exec(t);
+    if (!m) return null;
+    return Number(m[1]) * 1_000_000 + Number((m[2] || "").padEnd(6, "0"));
   }
 
-  // Discovery is open; settlement data needs the operator token, sent as
+  function microsToDollars(micros) {
+    const n = Number(micros) || 0;
+    const whole = Math.floor(n / 1_000_000);
+    const frac = String(n % 1_000_000).padStart(6, "0").replace(/0+$/, "");
+    return frac ? whole + "." + frac : String(whole);
+  }
+
+  function badge(text, cls) {
+    if (text === null || text === undefined || text === "") return "—";
+    return '<span class="badge ' + esc(cls || "") + '">' + esc(text) + "</span>";
+  }
+
+  function when(ms) {
+    if (!ms) return "—";
+    const d = new Date(Number(ms));
+    return Number.isNaN(d.getTime()) ? "—" : esc(d.toLocaleString());
+  }
+
+  // Settlement data and tool editing need the operator token, sent as
   // `Authorization: Bearer <TURNSTILE_ADMIN_TOKEN>`. Kept in session storage only.
   const TOKEN_KEY = "turnstile_admin_token";
+  const OPERATOR_KEY = "turnstile_operator_name";
   el("token").value = sessionStorage.getItem(TOKEN_KEY) || "";
+  el("operator").value = sessionStorage.getItem(OPERATOR_KEY) || "";
+  const hasToken = () => Boolean(sessionStorage.getItem(TOKEN_KEY));
   el("save-token").onclick = () => {
     sessionStorage.setItem(TOKEN_KEY, el("token").value.trim());
+    sessionStorage.setItem(OPERATOR_KEY, el("operator").value.trim());
     run();
   };
-  async function api(path, method, body) {
-    const headers = { "Accept": "application/json" };
+  el("token").addEventListener("keydown", (e) => { if (e.key === "Enter") el("save-token").click(); });
+  el("sign-out").onclick = () => {
+    sessionStorage.removeItem(TOKEN_KEY);
+    el("token").value = "";
+    setStatus("Signed out", "");
+    run();
+  };
+
+  async function api(path, method, body, extraHeaders) {
+    const headers = Object.assign({ "Accept": "application/json" }, extraHeaders || {});
     const token = sessionStorage.getItem(TOKEN_KEY);
     if (token) headers["Authorization"] = "Bearer " + token;
+    const operator = sessionStorage.getItem(OPERATOR_KEY);
+    // Header values must be printable ASCII; the server trims to 64 chars.
+    const operatorAscii = operator ? operator.replace(/[^\x20-\x7e]/g, "").trim() : "";
+    if (operatorAscii) headers["X-Turnstile-Operator"] = operatorAscii;
     const opts = { headers, method: method || "GET" };
     if (body !== undefined) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
     const res = await fetch(path, opts);
-    if (res.status === 404) throw new Error("Not found: " + path);
-    if (res.status === 401) throw new Error("Operator token required or invalid.");
-    if (res.status === 503) {
-      let msg = "Service unavailable";
-      try { const j = await res.json(); msg = j.message || msg; } catch (_) {}
-      throw new Error(msg);
-    }
-    if (!res.ok) throw new Error("HTTP " + res.status + " on " + path);
-    return res.json();
+    let data = null;
+    try { data = await res.json(); } catch (_) { data = null; }
+    if (res.ok) return data;
+    let msg = (data && (data.message || data.error)) || ("HTTP " + res.status + " on " + path);
+    if (res.status === 401) msg = "Operator token required or invalid.";
+    const err = new Error(msg);
+    err.status = res.status;
+    err.data = data;
+    throw err;
   }
 
   function row(label, valueHtml, mono) {
@@ -146,26 +215,38 @@
   }
 
   const NOTES = {
-    registry: 'This is the deployment\'s live priced-tool catalog from the OPEN '
-      + '<b>GET /v1/tools</b> discovery endpoint — the single source of truth for what '
-      + 'this Turnstile charges (payee, currency, per-tool price and scheme).',
-    revenue: 'Captured revenue, authorized-but-pending amounts and settlement health across '
-      + 'the most recent paid calls, from <b>GET /v1/admin/summary</b>.',
-    calls: 'Recent paid calls from the durable settlement journal '
-      + '(<b>GET /v1/admin/settlements</b>). Filter by phase to find stuck captures '
-      + '(<code>capture_pending</code>) or rejections.',
+    tools: 'Paid tools served by this deployment. Changes apply immediately on this replica and within '
+      + 'seconds on the others (<b>/v1/admin/tools</b>). A reprice applies to new <code>402</code> challenges; '
+      + 'challenges already issued are honored at the price they quoted. Disable or delete removes the route '
+      + 'at once; settlement history and revenue for the tool are kept.',
+    revenue: 'Lifetime captured revenue, authorized-but-pending amounts and settlement health from '
+      + '<b>GET /v1/admin/summary</b>. Revenue of disabled or deleted tools stays listed by resource.',
+    calls: 'Paid calls from the durable settlement journal (<b>GET /v1/admin/settlements</b>), newest first. '
+      + 'Filter by phase to find stuck captures (<code>capture_pending</code>) or rejections.',
+    audit: 'Every tool change with who made it, when, and the old and new values '
+      + '(<b>GET /v1/admin/tool-audit</b>).',
     settlement: 'Look up one paid request by the <code>AITP-Request-Id</code> a client '
       + 'received (<b>GET /v1/settlements/:request_id</b>). Payers can read their own '
       + 'settlement by presenting the AITP-Authorization they paid with.',
   };
 
   const TABS = [
+    { id: "tools", label: "Tools", load: loadTools },
     { id: "revenue", label: "Revenue", load: loadSummary },
     { id: "calls", label: "Paid Calls", load: loadCalls },
-    { id: "registry", label: "Tool Catalog", load: loadCatalog },
+    { id: "audit", label: "Change History", load: loadAudit },
     { id: "settlement", label: "Settlement Lookup", load: loadSettlement },
   ];
   let active = TABS[0];
+  let callsOffset = 0;
+  const CALLS_PAGE = 100;
+  let showDeleted = false;
+  let toolsData = null;
+
+  function switchTab(id) {
+    active = TABS.find((t) => t.id === id) || TABS[0];
+    renderTabs(); renderToolbar(); el("note").innerHTML = NOTES[active.id];
+  }
 
   function renderTabs() {
     const nav = el("tabs");
@@ -174,9 +255,17 @@
       const b = document.createElement("button");
       b.textContent = t.label;
       b.className = t.id === active.id ? "active" : "";
-      b.onclick = () => { active = t; renderTabs(); renderToolbar(); el("note").innerHTML = NOTES[active.id]; run(); };
+      b.onclick = () => { callsOffset = 0; switchTab(t.id); run(); };
       nav.appendChild(b);
     });
+  }
+
+  function button(label, onclick, cls) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.onclick = onclick;
+    return b;
   }
 
   function renderToolbar() {
@@ -189,77 +278,314 @@
       input.autocomplete = "off";
       input.addEventListener("keydown", (e) => { if (e.key === "Enter") run(); });
       bar.appendChild(input);
-      const btn = document.createElement("button");
-      btn.className = "primary";
-      btn.textContent = "Look up";
-      btn.onclick = run;
-      bar.appendChild(btn);
+      bar.appendChild(button("Look up", run, "primary"));
+      return;
+    }
+    if (active.id === "tools") {
+      bar.appendChild(button("Add tool", () => openEditor(null), "primary"));
+      const label = document.createElement("label");
+      label.style.cssText = "display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px";
+      const cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = showDeleted; cb.style.minWidth = "0";
+      cb.onchange = () => { showDeleted = cb.checked; run(); };
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode("Show deleted"));
+      bar.appendChild(label);
+    }
+    if (active.id === "audit") {
+      const input = document.createElement("input");
+      input.id = "audit_tool";
+      input.placeholder = "Filter by tool name";
+      input.style.minWidth = "200px";
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") run(); });
+      bar.appendChild(input);
+    }
+    if (active.id === "calls") {
+      const sel = document.createElement("select");
+      sel.id = "phase";
+      ["", "captured", "capture_pending", "held", "released", "release_pending", "rejected", "verifying", "transfer_complete"]
+        .forEach((p) => { const o = document.createElement("option"); o.value = p; o.textContent = p || "all phases"; sel.appendChild(o); });
+      sel.onchange = () => { callsOffset = 0; run(); };
+      bar.appendChild(sel);
+    }
+    bar.appendChild(button("Refresh", run));
+    if (active.id === "calls") {
+      const rec = button("Run recovery now", null);
+      rec.title = "Replay abandoned holds and pending captures/releases whose lease expired";
+      rec.onclick = async () => {
+        rec.disabled = true;
+        setStatus("Running settlement recovery...", "");
+        try {
+          const r = await api("/v1/admin/recovery", "POST", { limit: 200 });
+          setStatus("Recovery pass: " + r.claimed + " claimed, " + r.completed + " completed, " + r.failed + " failed", r.failed ? "err" : "ok");
+          await loadCalls();
+        } catch (e) {
+          setStatus(e.message, "err");
+        } finally {
+          rec.disabled = false;
+        }
+      };
+      bar.appendChild(rec);
+    }
+    const c = document.createElement("span");
+    c.id = "count"; c.className = "count";
+    bar.appendChild(c);
+  }
+
+  // ---------------------------------------------------------------- Tools --
+
+  function routesOf(t) {
+    const s = t.spec || {};
+    const parts = [];
+    if (t.builtin) {
+      parts.push("POST /v1/echo");
+      parts.push("MCP echo");
     } else {
-      if (active.id === "calls") {
-        const sel = document.createElement("select");
-        sel.id = "phase";
-        ["", "captured", "capture_pending", "held", "released", "release_pending", "rejected", "verifying", "transfer_complete"]
-          .forEach((p) => { const o = document.createElement("option"); o.value = p; o.textContent = p || "all phases"; sel.appendChild(o); });
-        sel.onchange = run;
-        sel.style.cssText = "font:inherit;color:inherit;background:var(--row);border:1px solid var(--border);border-radius:6px;padding:7px 10px";
-        bar.appendChild(sel);
+      if (s.http) parts.push(esc(s.http_method || "POST") + " /v1/tools/" + esc(t.name) + "/call");
+      if (s.mcp) parts.push("MCP " + esc(t.name));
+    }
+    return parts.map((p) => '<div class="mono">' + p + "</div>").join("");
+  }
+
+  function renderTools(data) {
+    toolsData = data;
+    const tools = Array.isArray(data.tools) ? data.tools : [];
+    const c = el("count");
+    const userTools = tools.filter((t) => !t.builtin);
+    if (c) c.textContent = userTools.length + " tool" + (userTools.length === 1 ? "" : "s") + " · revision " + data.revision;
+    const meta = "<table class=\"kv\"><tbody>"
+      + row("Payee", esc(data.payee), true)
+      + row("Currency", badge(data.currency))
+      + row("Upstream hosts", data.policy && data.policy.allow_hosts && data.policy.allow_hosts.length
+        ? esc(data.policy.allow_hosts.join(", ")) : "any public host")
+      + row("Private upstreams", badge(data.policy && data.policy.allow_private ? "allowed" : "blocked"))
+      + "</tbody></table>";
+    if (!tools.length) {
+      el("view").innerHTML = meta + '<div class="empty">No paid tools yet. Use <b>Add tool</b> to put an upstream '
+        + "endpoint behind the paywall.</div>";
+      return;
+    }
+    const body = tools.map((t) => {
+      const s = t.spec || {};
+      let actions = "";
+      if (t.builtin) {
+        actions = '<span class="count">Built-in demo (set by TURNSTILE_DEMO_ECHO)</span>';
+      } else if (t.deleted) {
+        actions = '<button class="small" data-act="restore" data-name="' + esc(t.name) + '">Restore</button>';
+      } else {
+        actions = '<button class="small" data-act="edit" data-name="' + esc(t.name) + '">Edit</button>'
+          + (t.enabled
+            ? '<button class="small" data-act="disable" data-name="' + esc(t.name) + '">Disable</button>'
+            : '<button class="small" data-act="enable" data-name="' + esc(t.name) + '">Enable</button>')
+          + '<button class="small danger" data-act="delete" data-name="' + esc(t.name) + '">Delete</button>';
       }
-      const btn = document.createElement("button");
-      btn.textContent = "Refresh";
-      btn.onclick = run;
-      bar.appendChild(btn);
-      if (active.id === "calls") {
-        const rec = document.createElement("button");
-        rec.textContent = "Run recovery now";
-        rec.title = "Replay abandoned holds and pending captures/releases whose lease expired";
-        rec.onclick = async () => {
-          rec.disabled = true;
-          setStatus("Running settlement recovery...", "");
-          try {
-            const r = await api("/v1/admin/recovery", "POST", { limit: 200 });
-            setStatus("Recovery pass: " + r.claimed + " claimed, " + r.completed + " completed, " + r.failed + " failed", r.failed ? "err" : "ok");
-            await loadCalls();
-          } catch (e) {
-            setStatus(e.message, "err");
-          } finally {
-            rec.disabled = false;
-          }
-        };
-        bar.appendChild(rec);
-      }
-      const c = document.createElement("span");
-      c.id = "count"; c.className = "count";
-      bar.appendChild(c);
+      return "<tr><td><b>" + esc(t.name) + "</b><div class=\"count\">" + esc(s.description) + "</div></td>"
+        + "<td>" + routesOf(t) + "</td>"
+        + '<td class="mono">' + (t.builtin ? "built-in" : esc(s.upstream_method) + " " + esc(s.upstream_url)) + "</td>"
+        + "<td>" + usd(s.price_micros) + "</td>"
+        + "<td>" + badge(t.status, t.status) + (t.error ? '<div class="count" style="color:var(--danger)">' + esc(t.error) + "</div>" : "") + "</td>"
+        + "<td>" + (t.builtin ? "—" : esc(t.version)) + '<div class="count">' + when(t.updated_at_ms) + "</div></td>"
+        + '<td><div class="actions">' + actions + "</div></td></tr>";
+    }).join("");
+    el("view").innerHTML = meta + '<div class="section-title">Paid tools</div>'
+      + "<table><thead><tr><th>Tool</th><th>Routes</th><th>Upstream</th><th>Price</th><th>Status</th>"
+      + "<th>Version</th><th></th></tr></thead><tbody>" + body + "</tbody></table>";
+    el("view").querySelectorAll("button[data-act]").forEach((b) => {
+      b.onclick = () => toolAction(b.dataset.act, b.dataset.name, b);
+    });
+  }
+
+  function findTool(name) {
+    return ((toolsData && toolsData.tools) || []).find((t) => t.name === name && !t.builtin);
+  }
+
+  async function toolAction(act, name, btn) {
+    const tool = findTool(name);
+    if (!tool) return;
+    if (act === "edit") return openEditor(tool, false);
+    if (act === "restore") return openEditor(tool, true);
+    if (act === "delete" && !confirm("Delete paid tool \"" + name + "\"? Its route disappears immediately; "
+      + "settlement history and revenue are kept, and it can be restored later.")) return;
+    btn.disabled = true;
+    try {
+      const path = "/v1/admin/tools/" + encodeURIComponent(name);
+      if (act === "delete") await api(path, "DELETE");
+      else await api(path + "/" + act, "POST");
+      setStatus("Tool " + name + " " + (act === "delete" ? "deleted" : act + "d"), "ok");
+      await loadTools();
+    } catch (e) {
+      setStatus(e.message, "err");
+      btn.disabled = false;
     }
   }
 
-  function renderCatalog(cat) {
-    if (!cat || typeof cat !== "object") {
-      el("view").innerHTML = '<div class="empty">No catalog.</div>';
-      return;
-    }
-    const meta =
-      "<table class=\"kv\"><tbody>"
-      + row("AITP Version", esc(cat.aitp_version))
-      + row("Payee", esc(cat.payee), true)
-      + row("Currency", badge(cat.currency))
-      + "</tbody></table>";
-    const tools = Array.isArray(cat.tools) ? cat.tools : [];
-    let table;
-    if (tools.length === 0) {
-      table = '<div class="empty">No tools advertised.</div>';
-    } else {
-      const body = tools.map((t) =>
-        "<tr><td>" + esc(t.name) + "</td><td class=\"mono\">" + esc(t.resource) + "</td><td>"
-        + esc(t.description) + "</td><td>" + usd(t.price_micros) + "</td><td>"
-        + badge(t.scheme) + "</td></tr>").join("");
-      table = "<table><thead><tr><th>Name</th><th>Resource</th><th>Description</th>"
-        + "<th>Price</th><th>Scheme</th></tr></thead><tbody>" + body + "</tbody></table>";
-    }
-    const view = el("view");
-    view.innerHTML = meta + '<div class="section-title">Priced Tools</div>' + table;
-    const c = el("count"); if (c) c.textContent = tools.length + " tool" + (tools.length === 1 ? "" : "s");
+  const METHODS = ["POST", "GET", "PUT", "PATCH", "DELETE"];
+
+  function methodSelect(id, value) {
+    return '<select id="' + id + '">' + METHODS.map((m) =>
+      '<option value="' + m + '"' + (m === (value || "POST") ? " selected" : "") + ">" + m + "</option>").join("")
+      + "</select>";
   }
+
+  // `tool` null → create; `restore` → create with a deleted tool's last spec.
+  function openEditor(tool, restore) {
+    const creating = !tool || restore;
+    const s = (tool && tool.spec) || {};
+    const envs = (toolsData && toolsData.auth_envs) || [];
+    const prefix = (toolsData && toolsData.policy && toolsData.policy.auth_env_prefix) || "TURNSTILE_UPSTREAM_";
+    const datalist = '<datalist id="f_envs">' + envs.map((e) =>
+      '<option value="' + esc(e.name) + '">' + esc(e.name) + (e.set ? "" : " (not set)") + "</option>").join("") + "</datalist>";
+    el("toolbar").innerHTML = "";
+    el("note").innerHTML = creating
+      ? "Create a paid tool. Agents pay the price per call; the call is proxied to the upstream and only a 2xx is charged."
+      : "Editing <b>" + esc(tool.name) + "</b> (version " + esc(tool.version) + "). Saving fails if someone else changed it meanwhile.";
+    el("view").innerHTML = '<form class="form" id="tool-form" novalidate>'
+      + '<div id="f_error" class="form-error" hidden></div>'
+      + '<label>Name<input id="f_name" required maxlength="64" pattern="[a-z0-9_-]+" value="' + esc(tool ? tool.name : "") + '"'
+      + (creating && !restore ? "" : " readonly") + ' /><span class="hint">Lowercase letters, digits, - and _. Cannot be changed later.</span></label>'
+      + '<label>Price per call (USD)<input id="f_price" required inputmode="decimal" value="'
+      + esc(s.price_micros !== undefined ? microsToDollars(s.price_micros) : "") + '" placeholder="0.002" />'
+      + '<span class="hint" id="f_price_hint">Up to 6 decimals (1 µ$ = $0.000001).</span></label>'
+      + '<label class="full">Description<input id="f_description" required maxlength="500" value="' + esc(s.description || "") + '" /></label>'
+      + '<label class="full">Upstream URL<input id="f_upstream_url" required type="url" value="' + esc(s.upstream_url || "") + '" placeholder="https://api.example.com/v1/search" /></label>'
+      + "<label>Upstream method" + methodSelect("f_upstream_method", s.upstream_method) + "</label>"
+      + "<label>Agent HTTP method" + methodSelect("f_http_method", s.http_method)
+      + '<span class="hint">Method agents use on /v1/tools/&lt;name&gt;/call.</span></label>'
+      + '<label>Credential env var<input id="f_auth_env" list="f_envs" value="' + esc(s.upstream_auth_env || "") + '" placeholder="' + esc(prefix) + 'SEARCH_KEY" />'
+      + '<span class="hint">Name of a server environment variable holding the upstream secret. Must start with '
+      + esc(prefix) + " or be allowlisted. Leave empty for none.</span></label>"
+      + '<label>Credential header<input id="f_auth_header" value="' + esc(s.upstream_auth_header || "authorization") + '" /></label>'
+      + '<label>Usage header (metered billing)<input id="f_usage_header" value="' + esc(s.usage_header || "") + '" placeholder="x-usage-micros" />'
+      + '<span class="hint">If the upstream returns this header (µ$), that amount is charged, capped at the price.</span></label>'
+      + '<label>Timeout (ms)<input id="f_timeout" type="number" min="1" max="300000" value="' + esc(s.timeout_ms || 30000) + '" /></label>'
+      + '<label class="full">MCP input schema (JSON)<textarea id="f_schema" spellcheck="false" placeholder=\'{"type":"object","properties":{"q":{"type":"string"}}}\'>'
+      + esc(s.input_schema ? JSON.stringify(s.input_schema, null, 2) : "") + "</textarea>"
+      + '<span class="hint">Optional. Defaults to any object.</span></label>'
+      + '<label class="check"><input id="f_http" type="checkbox"' + (s.http === false ? "" : " checked") + " /> Expose over HTTP</label>"
+      + '<label class="check"><input id="f_mcp" type="checkbox"' + (s.mcp === false ? "" : " checked") + " /> Expose over MCP</label>"
+      + datalist
+      + '<div class="form-actions"><button type="button" id="f_cancel">Cancel</button>'
+      + '<button type="submit" class="primary" id="f_save">' + (creating ? "Create tool" : "Save changes") + "</button></div>"
+      + "</form>";
+    const priceInput = el("f_price");
+    const priceHint = () => {
+      const m = dollarsToMicros(priceInput.value);
+      el("f_price_hint").textContent = m === null ? "Enter dollars with up to 6 decimals, e.g. 0.002." : "= " + m + " µ$ per call";
+    };
+    priceInput.addEventListener("input", priceHint);
+    if (priceInput.value) priceHint();
+    el("f_cancel").onclick = () => { switchTab("tools"); run(); };
+    el("tool-form").onsubmit = (e) => { e.preventDefault(); saveTool(tool, creating); };
+  }
+
+  function formError(msg) {
+    const box = el("f_error");
+    box.textContent = msg;
+    box.hidden = !msg;
+    if (msg) box.scrollIntoView({ block: "nearest" });
+  }
+
+  function readForm() {
+    const name = el("f_name").value.trim();
+    if (!/^[a-z0-9_-]{1,64}$/.test(name)) throw new Error("Name must be 1-64 characters of a-z, 0-9, - or _.");
+    const price = dollarsToMicros(el("f_price").value);
+    if (price === null) throw new Error("Price must be a dollar amount with up to 6 decimals.");
+    const description = el("f_description").value.trim();
+    if (!description) throw new Error("Description is required.");
+    const url = el("f_upstream_url").value.trim();
+    if (!/^https?:\/\//i.test(url)) throw new Error("Upstream URL must start with http:// or https://.");
+    const timeout = Number(el("f_timeout").value);
+    if (!Number.isInteger(timeout) || timeout < 1 || timeout > 300000) throw new Error("Timeout must be 1 to 300000 ms.");
+    let schema = null;
+    const rawSchema = el("f_schema").value.trim();
+    if (rawSchema) {
+      try { schema = JSON.parse(rawSchema); } catch (err) { throw new Error("MCP input schema is not valid JSON: " + err.message); }
+      if (!schema || typeof schema !== "object" || Array.isArray(schema)) throw new Error("MCP input schema must be a JSON object.");
+    }
+    const http = el("f_http").checked;
+    const mcp = el("f_mcp").checked;
+    if (!http && !mcp) throw new Error("Expose the tool over HTTP, MCP, or both.");
+    const spec = {
+      name, description, price_micros: price, upstream_url: url,
+      upstream_method: el("f_upstream_method").value,
+      http_method: el("f_http_method").value,
+      upstream_auth_header: el("f_auth_header").value.trim() || "authorization",
+      http, mcp, timeout_ms: timeout,
+    };
+    const env = el("f_auth_env").value.trim();
+    if (env) spec.upstream_auth_env = env;
+    const usage = el("f_usage_header").value.trim();
+    if (usage) spec.usage_header = usage;
+    if (schema) spec.input_schema = schema;
+    return spec;
+  }
+
+  async function saveTool(tool, creating) {
+    formError("");
+    let spec;
+    try { spec = readForm(); } catch (e) { formError(e.message); return; }
+    const save = el("f_save");
+    save.disabled = true;
+    setStatus("Saving " + spec.name + "...", "");
+    try {
+      let saved;
+      if (creating) {
+        saved = await api("/v1/admin/tools", "POST", spec);
+      } else {
+        saved = await api("/v1/admin/tools/" + encodeURIComponent(tool.name), "PUT", spec,
+          { "If-Match": String(tool.version) });
+      }
+      setStatus("Saved " + saved.name + " (version " + saved.version + ", " + saved.status + ")"
+        + (saved.warning ? " — " + saved.warning : ""), saved.status === "error" ? "err" : "ok");
+      switchTab("tools");
+      await run();
+    } catch (e) {
+      formError(e.message);
+      setStatus("Not saved", "err");
+      save.disabled = false;
+    }
+  }
+
+  async function loadTools() {
+    const data = await api("/v1/admin/tools" + (showDeleted ? "?include_deleted=1" : ""));
+    renderTools(data);
+  }
+
+  // ---------------------------------------------------------------- Audit --
+
+  function describeChange(entry) {
+    const oldS = entry.old_spec || {};
+    const newS = entry.new_spec || {};
+    const keys = Array.from(new Set(Object.keys(oldS).concat(Object.keys(newS)))).sort();
+    const lines = [];
+    if (entry.old_enabled !== null && entry.old_enabled !== undefined && entry.old_enabled !== entry.new_enabled) {
+      lines.push("enabled: <span class=\"old\">" + esc(entry.old_enabled) + "</span> → <span class=\"new\">" + esc(entry.new_enabled) + "</span>");
+    }
+    if (!entry.old_spec) {
+      if (newS.price_micros !== undefined) lines.push("price " + esc(newS.price_micros) + " µ$ → " + esc(newS.upstream_url));
+    } else {
+      keys.forEach((k) => {
+        const a = JSON.stringify(oldS[k]);
+        const b = JSON.stringify(newS[k]);
+        if (a !== b) lines.push(esc(k) + ': <span class="old">' + esc(a === undefined ? "—" : a) + '</span> → <span class="new">' + esc(b === undefined ? "—" : b) + "</span>");
+      });
+    }
+    return '<div class="diff">' + (lines.join("<br>") || "no field changes") + "</div>";
+  }
+
+  async function loadAudit() {
+    const filter = el("audit_tool") ? el("audit_tool").value.trim() : "";
+    const data = await api("/v1/admin/tool-audit?limit=200" + (filter ? "&tool=" + encodeURIComponent(filter) : ""));
+    const entries = data.entries || [];
+    const c = el("count"); if (c) c.textContent = entries.length + " change" + (entries.length === 1 ? "" : "s");
+    if (!entries.length) { el("view").innerHTML = '<div class="empty">No tool changes recorded yet.</div>'; return; }
+    el("view").innerHTML = "<table><thead><tr><th>When</th><th>Tool</th><th>Action</th><th>By</th><th>Change</th></tr></thead><tbody>"
+      + entries.map((e) => "<tr><td>" + when(e.at_ms) + "</td><td><b>" + esc(e.tool) + "</b></td><td>" + badge(e.action)
+        + "</td><td>" + esc(e.actor) + "</td><td>" + describeChange(e) + "</td></tr>").join("")
+      + "</tbody></table>";
+  }
+
+  // ----------------------------------------------------- Revenue / calls --
 
   function renderSettlement(s) {
     if (!s || typeof s !== "object") {
@@ -302,9 +628,9 @@
     const phases = Object.entries(s.by_phase || {});
     const resources = Array.isArray(s.by_resource) ? s.by_resource : [];
     el("view").innerHTML = "<table class=\"kv\"><tbody>"
-      + row("Captured revenue", usd(s.captured_micros))
+      + row("Captured revenue (lifetime)", usd(s.captured_micros))
       + row("Authorized, not yet captured", usd(s.pending_authorized_micros))
-      + row("Calls in window", esc(s.window))
+      + row("Paid calls recorded", esc(s.window))
       + "</tbody></table>"
       + '<div class="section-title">By phase</div>'
       + (phases.length ? "<table><thead><tr><th>Phase</th><th>Calls</th></tr></thead><tbody>"
@@ -319,31 +645,38 @@
 
   async function loadCalls() {
     const phase = el("phase") ? el("phase").value : "";
-    const data = await api("/v1/admin/settlements?limit=200" + (phase ? "&phase=" + encodeURIComponent(phase) : ""));
+    const data = await api("/v1/admin/settlements?limit=" + CALLS_PAGE + "&offset=" + callsOffset
+      + (phase ? "&phase=" + encodeURIComponent(phase) : ""));
     const items = data.settlements || [];
-    const c = el("count"); if (c) c.textContent = items.length + " call" + (items.length === 1 ? "" : "s");
-    if (!items.length) { el("view").innerHTML = '<div class="empty">No paid calls match.</div>'; return; }
+    const c = el("count");
+    if (c) c.textContent = items.length
+      ? "calls " + (callsOffset + 1) + "–" + (callsOffset + items.length)
+      : "0 calls";
+    if (!items.length) {
+      el("view").innerHTML = '<div class="empty">No paid calls match.</div>'
+        + (callsOffset > 0 ? '<div class="pager"><button id="prev-page">Previous page</button></div>' : "");
+      if (el("prev-page")) el("prev-page").onclick = () => { callsOffset = Math.max(0, callsOffset - CALLS_PAGE); run(); };
+      return;
+    }
     el("view").innerHTML = "<table><thead><tr><th>Request</th><th>Resource</th><th>Payer</th><th>Phase</th>"
       + "<th>Authorized</th><th>Captured</th><th>Error</th></tr></thead><tbody>"
       + items.map((s) => '<tr><td class="mono"><a href="#" data-id="' + esc(s.request_id) + '" style="color:var(--accent)">'
         + esc(s.request_id) + '</a></td><td class="mono">' + esc(s.resource) + '</td><td class="mono">' + esc(s.payer)
         + "</td><td>" + badge(s.phase) + "</td><td>" + usd(s.authorized_micros) + "</td><td>"
-        + (s.actual_micros === undefined ? "—" : usd(s.actual_micros)) + "</td><td>" + esc(s.error || "") + "</td></tr>").join("")
-      + "</tbody></table>";
+        + (s.actual_micros === undefined || s.actual_micros === null ? "—" : usd(s.actual_micros)) + "</td><td>" + esc(s.error || "") + "</td></tr>").join("")
+      + "</tbody></table>"
+      + '<div class="pager"><button id="prev-page"' + (callsOffset > 0 ? "" : " disabled") + ">Previous page</button>"
+      + '<button id="next-page"' + (data.has_more ? "" : " disabled") + ">Next page</button></div>";
+    el("prev-page").onclick = () => { callsOffset = Math.max(0, callsOffset - CALLS_PAGE); run(); };
+    el("next-page").onclick = () => { callsOffset = data.next_offset || callsOffset + CALLS_PAGE; run(); };
     el("view").querySelectorAll("a[data-id]").forEach((a) => {
-      a.onclick = async (e) => {
+      a.onclick = (e) => {
         e.preventDefault();
-        active = TABS.find((t) => t.id === "settlement");
-        renderTabs(); renderToolbar(); el("note").innerHTML = NOTES[active.id];
+        switchTab("settlement");
         el("request_id").value = a.dataset.id;
         run();
       };
     });
-  }
-
-  async function loadCatalog() {
-    const cat = await api("/v1/tools");
-    renderCatalog(cat);
   }
 
   async function loadSettlement() {
@@ -358,13 +691,32 @@
     renderSettlement(data);
   }
 
+  function renderSignIn(message) {
+    el("view").innerHTML = '<div class="signin"><h2>Connect to this Turnstile</h2>'
+      + "<p>" + esc(message || "Paste the operator token (TURNSTILE_ADMIN_TOKEN) above and press Connect.") + "</p>"
+      + "<p>The token is kept in this browser tab's session storage only.</p></div>";
+  }
+
   async function run() {
+    el("sign-out").hidden = !hasToken();
+    if (!hasToken()) {
+      renderSignIn();
+      setStatus("Not connected", "");
+      el("token").focus();
+      return;
+    }
     el("view").innerHTML = '<div class="loading">Loading…</div>';
     try {
       await active.load();
-      setStatus("OK", "ok");
+      setStatus("Connected", "ok");
     } catch (e) {
-      el("view").innerHTML = '<div class="empty">' + esc(e.message) + "</div>";
+      if (e.status === 401) {
+        renderSignIn("That token was rejected. Check TURNSTILE_ADMIN_TOKEN and connect again.");
+      } else if (e.status === 503 && e.data && e.data.error === "admin_disabled") {
+        renderSignIn("The operator API is disabled: set TURNSTILE_ADMIN_TOKEN (24+ characters) on the server.");
+      } else {
+        el("view").innerHTML = '<div class="empty">' + esc(e.message) + "</div>";
+      }
       setStatus(e.message, "err");
     }
   }

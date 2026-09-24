@@ -34,5 +34,5 @@ pub mod status;
 
 pub use discovery::discover;
 pub use extractor::{PaidContext, PaidRequest};
-pub use middleware::admit;
+pub use middleware::{admit, gate_request};
 pub use status::{settlement_status, SettlementStatus};

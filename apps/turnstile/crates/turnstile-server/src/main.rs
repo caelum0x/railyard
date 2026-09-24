@@ -3,13 +3,15 @@
 //! Wires the REAL stack — [`ReqwestTransport`](aitp_client::ReqwestTransport) →
 //! [`MintVerifier`] → [`Turnstile`] — against a live mint-server, exposing:
 //! - `GET  /healthz`  — open liveness probe;
-//! - `POST /v1/echo`  — ONE paid HTTP tool, gated by `turnstile-axum`;
+//! - `<method> /v1/tools/:name/call` — every live paid tool, routed through the
+//!   runtime-editable registry (see [`live`]) and gated by its own priced gate;
+//! - `POST /v1/echo`  — the built-in demo tool (only with `TURNSTILE_DEMO_ECHO=1`);
 //! - `GET  /v1/settlements/:request_id` — poll the terminal settlement state and
 //!   signed receipt for a paid request by its `AITP-Request-Id`;
 //! - `GET  /v1/tools` and `GET /.well-known/aitp-tools` — open discovery of the
-//!   provider's priced-tool catalog (payee, currency, price per tool);
-//! - `POST /mcp` — a minimal JSON-RPC MCP endpoint exposing the SAME paid `echo`
-//!   tool over the Model Context Protocol, gated by the same Turnstile gate.
+//!   live priced-tool catalog (payee, currency, price per tool);
+//! - `POST /mcp` — JSON-RPC MCP endpoint exposing the same paid tools, and
+//!   `GET /mcp` — the server stream pushing `notifications/tools/list_changed`.
 //!
 //! It proves the full loop: an unpaid call gets a `402` + `AITP-Challenge`; a
 //! call bearing a valid `AITP-Authorization` is verified against the mint, the
@@ -21,41 +23,55 @@
 //! `TURNSTILE_PRICE_MICROS`. Optional: `TURNSTILE_CURRENCY`,
 //! `TURNSTILE_CHALLENGE_TTL_MS`, `BIND_ADDR` (default `0.0.0.0:8101`).
 //!
-//! Production mode: set `TURNSTILE_TOOLS_PATH` to a JSON tool registry (see
-//! [`tools`]) and every declared upstream endpoint becomes a paid tool over
-//! HTTP (`POST /v1/tools/<name>/call`) and MCP, each priced independently. The
-//! built-in `echo` tool (priced by `TURNSTILE_PRICE_MICROS`) is served only
-//! when explicitly requested with `TURNSTILE_DEMO_ECHO=1`; with neither set the
-//! server refuses to start.
+//! Paid tools are runtime-editable. They persist in Postgres
+//! (`TURNSTILE_DATABASE_URL`, table `turnstile_paid_tools`) or, without a
+//! database, in process memory. `TURNSTILE_TOOLS_PATH` is an optional JSON seed
+//! applied only while the store is empty. Operators add, reprice, disable and
+//! delete tools from the console or `/v1/admin/tools` without a restart; other
+//! replicas pick edits up within `TURNSTILE_TOOLS_RELOAD_SECS` (default 5).
+//! The server refuses to start only when it could never serve a tool: no seed
+//! file, no stored tools, no demo echo and no admin token to add one.
 //!
-//! Operator access: `TURNSTILE_ADMIN_TOKEN` enables `GET /v1/admin/settlements`,
-//! `GET /v1/admin/summary` (captured revenue, pending captures, failures) and
-//! `POST /v1/admin/recovery` (run a settlement recovery pass now).
+//! Operator access: `TURNSTILE_ADMIN_TOKEN` enables the console at `/admin`,
+//! `GET /v1/admin/settlements`, `GET /v1/admin/summary`,
+//! `POST /v1/admin/recovery` and the tool editor API (`/v1/admin/tools`,
+//! `/v1/admin/tool-audit`). Upstream guardrails for API-edited tools:
+//! `TURNSTILE_UPSTREAM_ALLOW_HOSTS`, `TURNSTILE_UPSTREAM_ALLOW_PRIVATE`,
+//! `TURNSTILE_UPSTREAM_AUTH_ENVS` (see [`policy`]).
 
+mod admin_tools;
+mod live;
 mod mcp;
 mod operator;
+mod policy;
 mod tools;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use aitp_client::{ReqwestTransport, Scheme};
+use aitp_client::ReqwestTransport;
 use axum::http::StatusCode;
 use axum::middleware::from_fn_with_state;
 use axum::response::IntoResponse;
-use axum::routing::{get, on, post, MethodFilter};
+use axum::routing::{any, get, post};
 use axum::Router;
-use turnstile_axum::{admit, discover, PaidRequest};
+use turnstile_axum::{admit, PaidRequest};
 use turnstile_core::{
-    spawn_reaper, spawn_settlement_reaper, AmountMicros, ChallengeIssuer, InMemoryNonceStore,
-    InMemorySettlementJournal, McpPaywall, MintVerifier, NonceStore, PostgresNonceStore,
-    PostgresSettlementJournal, SettlementJournal, ToolDescriptor, ToolRegistry, Turnstile,
-    TurnstileConfig,
+    spawn_reaper, spawn_settlement_reaper, AmountMicros, InMemoryNonceStore,
+    InMemorySettlementJournal, InMemoryToolStore, MintVerifier, NonceStore, PaymentVerifier,
+    PostgresNonceStore, PostgresSettlementJournal, PostgresToolStore, SettlementJournal,
+    ToolStore, TurnstileConfig,
 };
 
-use crate::mcp::{echo_schema, mcp_endpoint, McpState, McpTool, McpToolKind, MCP_ECHO_RESOURCE};
+use crate::admin_tools::AdminToolsState;
+use crate::live::{call_tool, discover_live, spawn_reloader, BuiltinEcho, GateFactory, LiveRegistry};
+use crate::mcp::{mcp_endpoint, mcp_stream, McpState};
 use crate::operator::{list_settlements, run_recovery, settlement_for_payer, summary, OperatorState};
-use crate::tools::{load_specs, proxy_http, UpstreamTool};
+use crate::policy::UpstreamPolicy;
+use crate::tools::load_specs;
+
+/// Default seconds between checks for tool edits made on another replica.
+const DEFAULT_RELOAD_SECS: u64 = 5;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -63,32 +79,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Production wiring: a real reqwest-backed transport to the mint-server.
     let transport = Arc::new(ReqwestTransport::new(config.mint_server_url.clone())?);
-    let verifier = Arc::new(MintVerifier::new(
+    let verifier: Arc<dyn PaymentVerifier> = Arc::new(MintVerifier::new(
         transport,
         config.api_key.clone(),
         config.payee.clone(),
     ));
     let mut _nonce_reaper = None;
-    let (nonces, settlements): (Arc<dyn NonceStore>, Arc<dyn SettlementJournal>) =
-        match std::env::var("TURNSTILE_DATABASE_URL") {
-            Ok(url) if !url.trim().is_empty() => {
-                let durable = Arc::new(PostgresNonceStore::connect(&url).await?);
-                durable.migrate().await?;
-                _nonce_reaper = Some(spawn_reaper(durable.clone(), Duration::from_secs(60)));
-                let settlements =
-                    Arc::new(PostgresSettlementJournal::from_pool(durable.pool().clone()));
-                (durable, settlements)
-            }
-            _ => {
-                eprintln!(
-                "TURNSTILE_DATABASE_URL is unset; challenge and settlement recovery are process-local (single replica only)"
+    let (nonces, settlements, tool_store): (
+        Arc<dyn NonceStore>,
+        Arc<dyn SettlementJournal>,
+        Arc<dyn ToolStore>,
+    ) = match std::env::var("TURNSTILE_DATABASE_URL") {
+        Ok(url) if !url.trim().is_empty() => {
+            let durable = Arc::new(PostgresNonceStore::connect(&url).await?);
+            durable.migrate().await?;
+            _nonce_reaper = Some(spawn_reaper(durable.clone(), Duration::from_secs(60)));
+            let settlements = Arc::new(PostgresSettlementJournal::from_pool(durable.pool().clone()));
+            let tools = Arc::new(PostgresToolStore::from_pool(durable.pool().clone()));
+            (durable, settlements, tools)
+        }
+        _ => {
+            eprintln!(
+                "TURNSTILE_DATABASE_URL is unset; challenges, settlement recovery and tool edits are process-local (single replica only, tool edits are lost on restart)"
             );
-                (
-                    Arc::new(InMemoryNonceStore::new()),
-                    Arc::new(InMemorySettlementJournal::new()),
-                )
-            }
-        };
+            (
+                Arc::new(InMemoryNonceStore::new()),
+                Arc::new(InMemorySettlementJournal::new()),
+                Arc::new(InMemoryToolStore::new()),
+            )
+        }
+    };
     // Keep a handle to the journal for the settlement-status/operator APIs.
     let status_journal = settlements.clone();
     let settlement_lease = Duration::from_secs(30);
@@ -99,133 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         settlement_lease,
         100,
     );
-    // One gate per price point, all sharing the nonce store, Mint verifier and
-    // settlement journal (so recovery and replay protection span every tool).
-    let make_gate = |price: AmountMicros| {
-        let mut priced = config.clone();
-        priced.price_micros = price;
-        Arc::new(Turnstile::with_journal(
-            ChallengeIssuer::new(priced, nonces.clone()),
-            verifier.clone(),
-            nonces.clone(),
-            settlements.clone(),
-            settlement_lease,
-        ))
-    };
 
-    let mut registry = ToolRegistry::from_config(&config);
-    let mut mcp_tools: Vec<McpTool> = Vec::new();
-    let mut paid_routes: Router = Router::new();
-
-    match std::env::var("TURNSTILE_TOOLS_PATH") {
-        Ok(path) if !path.trim().is_empty() => {
-            // Production mode: operator-declared upstream tools.
-            let specs = load_specs(path.trim())?;
-            for spec in specs {
-                let price = AmountMicros::new(spec.price_micros);
-                let gate = make_gate(price);
-                let upstream = Arc::new(UpstreamTool::new(spec.clone())?);
-                if spec.http {
-                    registry = registry.with_tool(ToolDescriptor::new(
-                        spec.name.clone(),
-                        spec.http_resource(),
-                        spec.description.clone(),
-                        price,
-                        Scheme::Hold,
-                    ));
-                    let method: axum::http::Method = spec
-                        .http_method
-                        .parse()
-                        .map_err(|_| format!("tool {}: invalid http_method", spec.name))?;
-                    let filter = MethodFilter::try_from(method)
-                        .map_err(|_| format!("tool {}: unsupported http_method", spec.name))?;
-                    let route = Router::new()
-                        .route(
-                            &spec.http_path(),
-                            on(filter, proxy_http)
-                                .route_layer(from_fn_with_state(gate.clone(), admit)),
-                        )
-                        .with_state(upstream.clone());
-                    paid_routes = paid_routes.merge(route);
-                }
-                if spec.mcp {
-                    registry = registry.with_tool(ToolDescriptor::new(
-                        spec.name.clone(),
-                        spec.mcp_resource(),
-                        spec.description.clone(),
-                        price,
-                        Scheme::Hold,
-                    ));
-                    mcp_tools.push(McpTool {
-                        name: spec.name.clone(),
-                        resource: spec.mcp_resource(),
-                        input_schema: spec
-                            .input_schema
-                            .clone()
-                            .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
-                        paywall: McpPaywall::new(gate.clone()),
-                        kind: McpToolKind::Upstream(upstream.clone()),
-                    });
-                }
-                println!("paid tool {} -> {} ({} micros)", spec.name, spec.upstream_url, spec.price_micros);
-            }
-        }
-        _ if !demo_echo_enabled() => {
-            return Err(
-                "TURNSTILE_TOOLS_PATH must point at a paid-tool registry (set TURNSTILE_DEMO_ECHO=1 to run the built-in echo demo instead)"
-                    .into(),
-            );
-        }
-        _ => {
-            // Demo mode (explicit TURNSTILE_DEMO_ECHO=1): the built-in echo tool
-            // at TURNSTILE_PRICE_MICROS. Never served by accident, so a
-            // misconfigured deploy cannot charge real money for an echo.
-            eprintln!("TURNSTILE_DEMO_ECHO=1: serving the built-in echo demo tool");
-            let gate = make_gate(config.price_micros);
-            // <10 lines to gate a route: attach the admit middleware as a route layer.
-            let protected = post(echo).route_layer(from_fn_with_state(gate.clone(), admit));
-            paid_routes = paid_routes.route("/v1/echo", protected);
-            registry = registry
-                .with_tool(ToolDescriptor::priced_by(
-                    "echo",
-                    "POST /v1/echo",
-                    "Echo the request body back, billing one microdollar per byte.",
-                    &config,
-                ))
-                .with_tool(ToolDescriptor::priced_by(
-                    "echo",
-                    MCP_ECHO_RESOURCE,
-                    "Echo the `text` argument back over MCP, billing per byte.",
-                    &config,
-                ));
-            mcp_tools.push(McpTool {
-                name: "echo".into(),
-                resource: MCP_ECHO_RESOURCE.into(),
-                input_schema: echo_schema(),
-                paywall: McpPaywall::new(gate),
-                kind: McpToolKind::Echo,
-            });
-        }
-    }
-    let catalog = Arc::new(registry.catalog());
-
-    // Discovery API: an OPEN (free, ungated) catalog of priced tools an agent
-    // can read before it spends anything.
-    let discovery_api = Router::new()
-        .route("/v1/tools", get(discover))
-        .route("/.well-known/aitp-tools", get(discover))
-        .with_state(catalog.clone());
-
-    // MCP API: every paid tool over JSON-RPC, each gated by its own priced gate.
-    let mcp_state = Arc::new(McpState {
-        tools: mcp_tools,
-        catalog,
-    });
-    let mcp_api = Router::new()
-        .route("/mcp", post(mcp_endpoint))
-        .with_state(mcp_state);
-
-    // Settlement access: payer-scoped status + operator list/summary.
     let admin_token = std::env::var("TURNSTILE_ADMIN_TOKEN")
         .ok()
         .map(|t| t.trim().to_string())
@@ -233,11 +127,110 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if admin_token.as_ref().is_some_and(|t| t.len() < 24) {
         return Err("TURNSTILE_ADMIN_TOKEN must be at least 24 characters".into());
     }
+
+    // Optional one-time seed: the file only populates an EMPTY store, so edits
+    // made in the console are never overwritten by a restart.
+    if let Some(path) = std::env::var("TURNSTILE_TOOLS_PATH")
+        .ok()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+    {
+        let specs = load_specs(&path)?;
+        let seed: Vec<(String, serde_json::Value)> = specs
+            .iter()
+            .map(|spec| Ok((spec.name.clone(), serde_json::to_value(spec)?)))
+            .collect::<Result<_, serde_json::Error>>()?;
+        let seeded = tool_store
+            .seed_if_empty(&seed, &format!("seed file {path}"))
+            .await?;
+        if seeded > 0 {
+            println!("seeded {seeded} paid tool(s) from {path}");
+        } else {
+            println!("tool store already populated; {path} not re-applied (edit tools in /admin)");
+        }
+    }
+
+    // One gate per price point, all sharing the nonce store, Mint verifier and
+    // settlement journal (so recovery and replay protection span every tool).
+    let factory = GateFactory::new(
+        config.clone(),
+        nonces.clone(),
+        verifier.clone(),
+        settlements.clone(),
+        settlement_lease,
+    );
+    let echo = if demo_echo_enabled() {
+        // Demo mode (explicit TURNSTILE_DEMO_ECHO=1): the built-in echo tool at
+        // TURNSTILE_PRICE_MICROS. Never served by accident, so a misconfigured
+        // deploy cannot charge real money for an echo.
+        eprintln!("TURNSTILE_DEMO_ECHO=1: serving the built-in echo demo tool");
+        Some(BuiltinEcho {
+            gate: factory.gate(config.price_micros),
+        })
+    } else {
+        None
+    };
+    let registry = Arc::new(LiveRegistry::new(tool_store.clone(), factory, echo.clone()));
+    let snapshot = registry.reload().await?;
+    for tool in snapshot.tools.values() {
+        println!(
+            "paid tool {} -> {} ({} micros)",
+            tool.spec.name, tool.spec.upstream_url, tool.spec.price_micros
+        );
+    }
+    if snapshot.tools.is_empty() && echo.is_none() && admin_token.is_none() {
+        return Err(
+            "no paid tools: set TURNSTILE_TOOLS_PATH to a seed registry, or TURNSTILE_ADMIN_TOKEN to add tools from /admin (or TURNSTILE_DEMO_ECHO=1 for the demo)"
+                .into(),
+        );
+    }
+    if snapshot.tools.is_empty() && echo.is_none() {
+        eprintln!("no paid tools yet; add one at /admin (Tools tab) or POST /v1/admin/tools");
+    }
+    let reload_every = std::env::var("TURNSTILE_TOOLS_RELOAD_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .unwrap_or(DEFAULT_RELOAD_SECS);
+    let _tool_reloader = spawn_reloader(registry.clone(), Duration::from_secs(reload_every));
+
+    // Paid HTTP tools: one dynamic route resolves the live tool per request.
+    let mut paid_routes: Router = Router::new().route(
+        "/v1/tools/:name/call",
+        any(call_tool).with_state(registry.clone()),
+    );
+    if let Some(echo) = &echo {
+        // <10 lines to gate a route: attach the admit middleware as a route layer.
+        let protected = post(echo_handler).route_layer(from_fn_with_state(echo.gate.clone(), admit));
+        paid_routes = paid_routes.route("/v1/echo", protected);
+    }
+
+    // Discovery API: an OPEN (free, ungated) live catalog of priced tools an
+    // agent can read before it spends anything.
+    let discovery_api = Router::new()
+        .route("/v1/tools", get(discover_live))
+        .route("/.well-known/aitp-tools", get(discover_live))
+        .with_state(registry.clone());
+
+    // MCP API: every paid tool over JSON-RPC, each gated by its own priced gate.
+    let mcp_state = Arc::new(McpState {
+        registry: registry.clone(),
+    });
+    let mcp_api = Router::new()
+        .route("/mcp", post(mcp_endpoint).get(mcp_stream))
+        .with_state(mcp_state);
+
+    // Settlement access: payer-scoped status + operator list/summary.
     let operator_state = OperatorState {
         journal: status_journal,
         admin_token: admin_token.map(Arc::from),
         verifier: verifier.clone(),
         lease: settlement_lease,
+    };
+    let admin_tools_state = AdminToolsState {
+        operator: operator_state.clone(),
+        registry: registry.clone(),
+        policy: Arc::new(UpstreamPolicy::from_env()),
     };
     let status_api = Router::new()
         .route("/v1/settlements/:request_id", get(settlement_for_payer))
@@ -245,6 +238,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/admin/summary", get(summary))
         .route("/v1/admin/recovery", post(run_recovery))
         .with_state(operator_state);
+    let tools_admin_api = Router::new()
+        .route(
+            "/v1/admin/tools",
+            get(admin_tools::list_tools).post(admin_tools::create_tool),
+        )
+        .route(
+            "/v1/admin/tools/:name",
+            get(admin_tools::get_tool)
+                .put(admin_tools::update_tool)
+                .delete(admin_tools::delete_tool),
+        )
+        .route("/v1/admin/tools/:name/enable", post(admin_tools::enable_tool))
+        .route("/v1/admin/tools/:name/disable", post(admin_tools::disable_tool))
+        .route("/v1/admin/tool-audit", get(admin_tools::tool_audit))
+        .with_state(admin_tools_state);
 
     let app = Router::new()
         .route("/healthz", get(healthz))
@@ -252,7 +260,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(paid_routes)
         .merge(discovery_api)
         .merge(mcp_api)
-        .merge(status_api);
+        .merge(status_api)
+        .merge(tools_admin_api);
 
     let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8101".to_string());
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
@@ -280,7 +289,7 @@ async fn healthz() -> impl IntoResponse {
 }
 
 /// `GET /admin` — a self-contained operator console (static HTML + vanilla JS, no
-/// build step): the priced-tool catalog, revenue summary, recent paid calls and
+/// build step): the paid-tool editor, revenue summary, recent paid calls and
 /// per-request settlement lookup. Every data call carries the operator's
 /// `Authorization: Bearer <TURNSTILE_ADMIN_TOKEN>`; the page itself holds no data.
 async fn admin_page() -> axum::response::Html<&'static str> {
@@ -290,7 +299,7 @@ async fn admin_page() -> axum::response::Html<&'static str> {
 /// The paid tool. Echoes the body and reports ACTUAL usage (here: one microdollar
 /// per request byte, capped at the quoted price) so the middleware captures only
 /// what was used — success-only billing.
-async fn echo(paid: PaidRequest, body: String) -> impl IntoResponse {
+async fn echo_handler(paid: PaidRequest, body: String) -> impl IntoResponse {
     let quoted = paid.price().get();
     let used = (body.len() as i64).clamp(0, quoted);
     paid.report_actual(AmountMicros::new(used));

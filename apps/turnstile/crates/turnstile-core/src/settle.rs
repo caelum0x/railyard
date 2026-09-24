@@ -80,6 +80,15 @@ impl Settled {
         &self.nonce
     }
 
+    /// The amount the payer actually authorized (the challenge's quoted price at
+    /// the moment it was issued). This — not the tool's CURRENT price — is the
+    /// capture ceiling: a challenge issued before an operator repriced the tool
+    /// is honored at the price it quoted.
+    #[must_use]
+    pub fn quoted(&self) -> AmountMicros {
+        self.quoted
+    }
+
     fn lease_until(&self) -> i64 {
         now_ms().saturating_add(self.lease.as_millis() as i64)
     }

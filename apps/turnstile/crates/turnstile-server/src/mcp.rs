@@ -4,24 +4,30 @@
 //! MCP speaks JSON-RPC 2.0 over HTTP (Streamable HTTP transport). This handler
 //! implements just enough of the protocol — `initialize`, `tools/list`,
 //! `tools/call`, `ping`, and the `notifications/initialized` acknowledgement —
-//! to expose ONE paid tool (`echo`) gated by the SAME [`Turnstile`] gate the
-//! HTTP `POST /v1/echo` route uses. Payment rides inside the tool arguments
+//! to expose every live paid tool, each gated by the SAME priced gate its HTTP
+//! route uses. The tool list is read from the runtime-editable registry on
+//! every request, and `GET /mcp` (Streamable HTTP server stream) pushes
+//! `notifications/tools/list_changed` whenever an operator edits the tool set. Payment rides inside the tool arguments
 //! (reserved key `_aitp_authorization`); an unpaid call returns a JSON-RPC error
 //! carrying an AITP-402 challenge, and a paid call captures actual usage and
 //! attaches the signed receipt to the result `_meta`.
 
+use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{header, HeaderMap, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
 use turnstile_core::mcp::{
     extract_authorization, receipt_meta, tool_arguments, MCP_PAYMENT_REQUIRED,
 };
-use turnstile_core::{AmountMicros, McpAdmit, McpPaywall, ToolCatalog};
+use turnstile_core::{AmountMicros, McpAdmit, McpPaywall};
 
+use crate::live::LiveRegistry;
 use crate::tools::UpstreamTool;
 
 /// Stable resource identity for the paid MCP echo tool. The gate challenges and
@@ -50,12 +56,11 @@ pub struct McpTool {
     pub kind: McpToolKind,
 }
 
-/// Shared state for the MCP endpoint: every paid tool and the discovery catalog
-/// used to price/describe tools in `tools/list`.
+/// Shared state for the MCP endpoint: the live tool registry (its snapshot
+/// carries both the MCP tools and the discovery catalog used in `tools/list`).
 #[derive(Clone)]
 pub struct McpState {
-    pub tools: Vec<McpTool>,
-    pub catalog: Arc<ToolCatalog>,
+    pub registry: Arc<LiveRegistry>,
 }
 
 /// The input schema of the built-in echo tool.
@@ -87,7 +92,8 @@ pub async fn mcp_endpoint(State(state): State<Arc<McpState>>, Json(req): Json<Va
 fn initialize_result() -> Value {
     json!({
         "protocolVersion": MCP_PROTOCOL_VERSION,
-        "capabilities": { "tools": { "listChanged": false } },
+        // Tools are edited at runtime; `GET /mcp` streams list_changed.
+        "capabilities": { "tools": { "listChanged": true } },
         "serverInfo": { "name": "turnstile-server", "version": env!("CARGO_PKG_VERSION") },
         "instructions": "Paid MCP tools. Pay per call with an AITP-402 \
                          authorization in the `_aitp_authorization` argument; an \
@@ -100,14 +106,15 @@ fn initialize_result() -> Value {
 /// carries its AITP price/scheme/resource in `_meta.aitp` so agents can see the
 /// cost before calling.
 fn tools_list_result(state: &McpState) -> Value {
-    let catalog = &state.catalog;
+    let snapshot = state.registry.snapshot();
+    let catalog = &snapshot.catalog;
     let tools: Vec<Value> = catalog
         .tools
         .iter()
         .filter(|tool| tool.resource.starts_with("tools/call#"))
         .map(|tool| {
-            let mut schema = state
-                .tools
+            let mut schema = snapshot
+                .mcp
                 .iter()
                 .find(|t| t.resource == tool.resource)
                 .map(|t| t.input_schema.clone())
@@ -149,9 +156,19 @@ fn tools_list_result(state: &McpState) -> Value {
 async fn handle_tool_call(state: &McpState, id: Option<Value>, params: Option<&Value>) -> Response {
     let params = params.cloned().unwrap_or_else(|| json!({}));
     let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
-    let Some(tool) = state.tools.iter().find(|t| t.name == name) else {
+    // Resolve against one snapshot; the call keeps its gate even if the tool
+    // is edited while it runs.
+    let Some(tool) = state
+        .registry
+        .snapshot()
+        .mcp
+        .iter()
+        .find(|t| t.name == name)
+        .cloned()
+    else {
         return rpc_error(id, -32602, "unknown tool", Some(json!({ "tool": name })));
     };
+    let tool = &tool;
     if let McpToolKind::Upstream(upstream) = &tool.kind {
         return handle_upstream_call(tool, upstream, id, &params).await;
     }
@@ -174,9 +191,9 @@ async fn handle_tool_call(state: &McpState, id: Option<Value>, params: Option<&V
                 .to_string();
 
             // Success-only: bill one microdollar per echoed byte, capped at the
-            // quoted price (the hold caps it too). Zero-length echo releases the
-            // hold and charges nothing.
-            let quoted = tool.paywall.gate().price().get();
+            // authorized price (the hold caps it too). Zero-length echo releases
+            // the hold and charges nothing.
+            let quoted = settled.quoted().get();
             let used = (text.len() as i64).clamp(0, quoted);
 
             match settled.capture(AmountMicros::new(used)).await {
@@ -253,7 +270,9 @@ async fn handle_upstream_call(
                     return rpc_error(id, -32603, "upstream call failed", Some(json!({ "error": error, "charged": false })));
                 }
             };
-            let quoted = tool.paywall.gate().price().get();
+            // The ceiling is what the payer authorized (the price quoted when the
+            // challenge was issued), not the tool's current price.
+            let quoted = settled.quoted().get();
             let amount = upstream.billable(quoted, reply.usage_micros);
             let text = String::from_utf8_lossy(&reply.body).into_owned();
             match settled.capture(amount).await {
@@ -281,6 +300,39 @@ async fn handle_upstream_call(
             }
         }
     }
+}
+
+/// `GET /mcp` — the Streamable HTTP server-to-client stream. Emits
+/// `notifications/tools/list_changed` every time the live tool set changes so
+/// MCP clients re-fetch `tools/list` (and see current prices) instead of
+/// caching a stale list.
+pub async fn mcp_stream(State(state): State<Arc<McpState>>, headers: HeaderMap) -> Response {
+    let wants_sse = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|accept| accept.contains("text/event-stream"));
+    if !wants_sse {
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(header::ALLOW, "POST")],
+            "GET /mcp requires Accept: text/event-stream\n",
+        )
+            .into_response();
+    }
+    let mut changes = state.registry.subscribe();
+    changes.mark_unchanged();
+    let stream = futures_util::stream::unfold(changes, |mut changes| async move {
+        changes.changed().await.ok()?;
+        let notification = json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/tools/list_changed",
+        });
+        let event = Event::default().event("message").data(notification.to_string());
+        Some((Ok::<_, Infallible>(event), changes))
+    });
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(20)))
+        .into_response()
 }
 
 /// A JSON-RPC 2.0 success response.

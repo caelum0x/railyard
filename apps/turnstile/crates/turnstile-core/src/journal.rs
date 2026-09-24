@@ -4,7 +4,7 @@
 //! command state for another Turnstile replica to replay verification,
 //! capture, or release without running the protected handler again.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 
 use aitp_client::{AmountMicros, HoldRef, PaymentAuthorization, Receipt, Scheme};
@@ -55,6 +55,96 @@ impl SettlementRecord {
     #[must_use]
     pub fn nonce(&self) -> &str {
         &self.authorization.nonce
+    }
+}
+
+/// Captured revenue for one gated resource.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResourceRevenue {
+    pub resource: String,
+    pub paid_calls: u64,
+    pub captured_micros: i64,
+}
+
+/// Lifetime revenue and settlement health across the whole journal.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct RevenueSummary {
+    /// Settlement commands counted.
+    pub total_calls: u64,
+    /// Captured (or transfer-complete) revenue in µ$.
+    pub captured_micros: i64,
+    /// Authorized but not yet captured (held / capture pending / verifying).
+    pub pending_authorized_micros: i64,
+    /// Command count per phase tag.
+    pub by_phase: BTreeMap<String, u64>,
+    /// Captured revenue per resource, ordered by resource.
+    pub by_resource: Vec<ResourceRevenue>,
+}
+
+impl RevenueSummary {
+    /// Aggregate a set of records (used by journals without native aggregates).
+    #[must_use]
+    pub fn from_records(records: &[SettlementRecord]) -> Self {
+        let mut summary = Self {
+            total_calls: records.len() as u64,
+            ..Self::default()
+        };
+        let mut by_resource: BTreeMap<String, (u64, i64)> = BTreeMap::new();
+        for record in records {
+            *summary
+                .by_phase
+                .entry(record.phase.tag().to_string())
+                .or_default() += 1;
+            match record.phase {
+                SettlementPhase::Captured | SettlementPhase::TransferComplete => {
+                    let amount = record
+                        .actual_micros
+                        .map_or(record.authorization.amount_micros.0, |a| a.0);
+                    summary.captured_micros = summary.captured_micros.saturating_add(amount);
+                    let entry = by_resource
+                        .entry(record.authorization.resource.clone())
+                        .or_default();
+                    entry.0 += 1;
+                    entry.1 = entry.1.saturating_add(amount);
+                }
+                SettlementPhase::Held
+                | SettlementPhase::CapturePending
+                | SettlementPhase::Verifying => {
+                    summary.pending_authorized_micros = summary
+                        .pending_authorized_micros
+                        .saturating_add(record.authorization.amount_micros.0);
+                }
+                SettlementPhase::ReleasePending
+                | SettlementPhase::Released
+                | SettlementPhase::Rejected => {}
+            }
+        }
+        summary.by_resource = by_resource
+            .into_iter()
+            .map(|(resource, (paid_calls, captured_micros))| ResourceRevenue {
+                resource,
+                paid_calls,
+                captured_micros,
+            })
+            .collect();
+        summary
+    }
+}
+
+impl SettlementPhase {
+    /// The stable snake_case tag (same as the serde / database form).
+    #[must_use]
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::Verifying => "verifying",
+            Self::Held => "held",
+            Self::CapturePending => "capture_pending",
+            Self::Captured => "captured",
+            Self::ReleasePending => "release_pending",
+            Self::Released => "released",
+            Self::TransferComplete => "transfer_complete",
+            Self::Rejected => "rejected",
+        }
     }
 }
 
@@ -145,6 +235,25 @@ pub trait SettlementJournal: Send + Sync {
         Err(TurnstileError::Storage(
             "this settlement journal does not support listing".into(),
         ))
+    }
+
+    /// One page of settlement commands, newest first, skipping `offset` rows.
+    /// Durable journals override this with a native `LIMIT/OFFSET`.
+    async fn list_page(
+        &self,
+        limit: usize,
+        offset: usize,
+        phase: Option<SettlementPhase>,
+    ) -> Result<Vec<SettlementRecord>, TurnstileError> {
+        let rows = self.list_recent(limit.saturating_add(offset), phase).await?;
+        Ok(rows.into_iter().skip(offset).take(limit).collect())
+    }
+
+    /// Lifetime revenue and health across every recorded command (not just a
+    /// recent window), so revenue from retired tools stays visible.
+    async fn revenue_summary(&self) -> Result<RevenueSummary, TurnstileError> {
+        let rows = self.list_recent(usize::MAX, None).await?;
+        Ok(RevenueSummary::from_records(&rows))
     }
 }
 

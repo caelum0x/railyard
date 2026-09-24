@@ -1,8 +1,10 @@
 //! Config-driven paid tools: put ANY upstream HTTP endpoint behind a Turnstile
 //! paywall without writing Rust.
 //!
-//! `TURNSTILE_TOOLS_PATH` points at a JSON array of [`ToolSpec`]s. For each
-//! tool the server:
+//! Tools live in the runtime-editable tool store (see [`crate::live`] and the
+//! `/v1/admin/tools` API). `TURNSTILE_TOOLS_PATH` optionally points at a JSON
+//! array of [`ToolSpec`]s used as a one-time seed while the store is empty.
+//! For each enabled tool the server:
 //! - builds its OWN gate priced at `price_micros` (so every 402 quotes exactly
 //!   that tool's price) sharing the nonce store, Mint verifier and settlement
 //!   journal;
@@ -24,10 +26,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Bytes;
-use axum::extract::{RawQuery, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
+use axum::extract::{FromRequestParts, Request};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use turnstile_axum::PaidRequest;
 use turnstile_core::AmountMicros;
@@ -52,7 +54,7 @@ fn default_timeout_ms() -> u64 {
 }
 
 /// One operator-declared paid tool.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolSpec {
     /// Stable tool name: `[a-z0-9_-]{1,64}`.
@@ -116,7 +118,7 @@ impl ToolSpec {
         format!("tools/call#{}", self.name)
     }
 
-    fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {
         let name_ok = !self.name.is_empty()
             && self.name.len() <= 64
             && self
@@ -151,18 +153,43 @@ impl ToolSpec {
         if self.timeout_ms == 0 || self.timeout_ms > 300_000 {
             return Err(format!("tool {} timeout_ms must be 1..=300000", self.name));
         }
+        if self.description.trim().is_empty() || self.description.len() > 500 {
+            return Err(format!("tool {} description must be 1..=500 characters", self.name));
+        }
+        if self.upstream_url.len() > 2048 {
+            return Err(format!("tool {} upstream_url is too long", self.name));
+        }
+        if let Some(var) = &self.upstream_auth_env {
+            let ok = !var.is_empty()
+                && var.len() <= 128
+                && var.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+            if !ok {
+                return Err(format!("tool {} upstream_auth_env must be an env var name [A-Za-z0-9_]", self.name));
+            }
+        }
+        if axum::http::HeaderName::from_bytes(self.upstream_auth_header.as_bytes()).is_err() {
+            return Err(format!("tool {} upstream_auth_header is not a valid header name", self.name));
+        }
+        if let Some(header) = &self.usage_header {
+            if axum::http::HeaderName::from_bytes(header.as_bytes()).is_err() {
+                return Err(format!("tool {} usage_header is not a valid header name", self.name));
+            }
+        }
+        if let Some(schema) = &self.input_schema {
+            if !schema.is_object() {
+                return Err(format!("tool {} input_schema must be a JSON object", self.name));
+            }
+        }
         Ok(())
     }
 }
 
-/// Load and validate the tool registry file.
+/// Load and validate the tool seed file. An empty array is allowed (the store
+/// then starts empty and tools are added from the console).
 pub fn load_specs(path: &str) -> Result<Vec<ToolSpec>, String> {
     let raw = std::fs::read_to_string(path).map_err(|e| format!("reading {path}: {e}"))?;
     let specs: Vec<ToolSpec> =
         serde_json::from_str(&raw).map_err(|e| format!("parsing {path}: {e}"))?;
-    if specs.is_empty() {
-        return Err(format!("{path} declares no tools"));
-    }
     let mut seen = std::collections::HashSet::new();
     for spec in &specs {
         spec.validate()?;
@@ -312,19 +339,20 @@ fn percent_encode(input: &str) -> String {
     out
 }
 
-/// `<http_method> /v1/tools/<name>/call` — the paid proxy handler (behind `admit`).
-pub async fn proxy_http(
-    State(tool): State<Arc<UpstreamTool>>,
-    paid: PaidRequest,
-    headers: HeaderMap,
-    RawQuery(query): RawQuery,
-    body: Bytes,
-) -> Response {
-    if body.len() > MAX_BODY_BYTES {
-        return (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response();
-    }
-    let content_type = headers.get("content-type").and_then(|v| v.to_str().ok());
-    match tool.call(content_type, body, query.as_deref()).await {
+/// `<http_method> /v1/tools/<name>/call` — the paid proxy body, run by
+/// [`turnstile_axum::gate_request`] only after the payment was admitted.
+pub async fn proxy_request(tool: Arc<UpstreamTool>, req: Request) -> Response {
+    let (mut parts, body) = req.into_parts();
+    let paid = match PaidRequest::from_request_parts(&mut parts, &()).await {
+        Ok(paid) => paid,
+        Err(response) => return response,
+    };
+    let body = match axum::body::to_bytes(body, MAX_BODY_BYTES).await {
+        Ok(body) => body,
+        Err(_) => return (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response(),
+    };
+    let content_type = parts.headers.get("content-type").and_then(|v| v.to_str().ok());
+    match tool.call(content_type, body, parts.uri.query()).await {
         Ok(reply) => {
             if reply.status.is_success() {
                 paid.report_actual(tool.billable(paid.price().get(), reply.usage_micros));
