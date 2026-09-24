@@ -225,6 +225,10 @@
       + 'Filter by phase to find stuck captures (<code>capture_pending</code>) or rejections.',
     audit: 'Every tool change with who made it, when, and the old and new values '
       + '(<b>GET /v1/admin/tool-audit</b>).',
+    x402: 'USDC payments taken over the open <b>x402</b> standard (<code>X-PAYMENT</code>), '
+      + 'verified and settled by the facilitator, then credited into Mint as a <code>usdc:&lt;tx&gt;</code> deposit '
+      + '(<b>GET /v1/admin/x402/*</b>). <code>unknown</code> means the settle call failed in transit: '
+      + 'check the payer address on-chain before acting.',
     settlement: 'Look up one paid request by the <code>AITP-Request-Id</code> a client '
       + 'received (<b>GET /v1/settlements/:request_id</b>). Payers can read their own '
       + 'settlement by presenting the AITP-Authorization they paid with.',
@@ -234,6 +238,7 @@
     { id: "tools", label: "Tools", load: loadTools },
     { id: "revenue", label: "Revenue", load: loadSummary },
     { id: "calls", label: "Paid Calls", load: loadCalls },
+    { id: "x402", label: "x402 Payments", load: loadX402 },
     { id: "audit", label: "Change History", load: loadAudit },
     { id: "settlement", label: "Settlement Lookup", load: loadSettlement },
   ];
@@ -309,6 +314,22 @@
       bar.appendChild(sel);
     }
     bar.appendChild(button("Refresh", run));
+    if (active.id === "x402") {
+      const credit = button("Credit pending into Mint", null);
+      credit.onclick = async () => {
+        credit.disabled = true;
+        try {
+          const r = await api("/v1/admin/x402/credit", "POST", {});
+          setStatus("Mint credit pass: " + r.attempted + " payment(s) attempted", "ok");
+          await loadX402();
+        } catch (e) {
+          setStatus(e.message, "err");
+        } finally {
+          credit.disabled = false;
+        }
+      };
+      bar.appendChild(credit);
+    }
     if (active.id === "calls") {
       const rec = button("Run recovery now", null);
       rec.title = "Replay abandoned holds and pending captures/releases whose lease expired";
@@ -677,6 +698,46 @@
         run();
       };
     });
+  }
+
+  async function loadX402() {
+    let s;
+    try {
+      s = await api("/v1/admin/x402/summary");
+    } catch (e) {
+      if (e.status === 404) {
+        el("view").innerHTML = '<div class="empty">x402 is not enabled on this Turnstile. Set '
+          + '<code>TURNSTILE_X402_PAY_TO</code> (your USDC receive address; use the Mint USDC treasury to have '
+          + 'revenue credited into Mint) and, on mainnet, <code>TURNSTILE_X402_FACILITATOR_URL</code>, then restart.</div>';
+        return;
+      }
+      throw e;
+    }
+    const data = await api("/v1/admin/x402/payments?limit=200");
+    const items = data.payments || [];
+    const sum = s.summary || {};
+    const cfg = s.config || {};
+    const c = el("count");
+    if (c) c.textContent = items.length + " payment(s)";
+    el("view").innerHTML = "<table class=\"kv\"><tbody>"
+      + row("Settled on-chain", usd(sum.settled_micros) + " in " + esc(sum.settled_count) + " payment(s)")
+      + row("Credited into Mint", usd(sum.credited_micros))
+      + row("Mint credit pending / failed", esc(sum.pending_credit_count) + " / " + esc(sum.failed_credit_count))
+      + row("Abandoned (not charged)", esc(sum.abandoned_count))
+      + row("Unknown outcome (reconcile)", esc(sum.unknown_count))
+      + row("Network", esc(cfg.network), true)
+      + row("Pay to", esc(cfg.pay_to), true)
+      + row("Facilitator", esc(cfg.facilitator_url), true)
+      + row("Mint account", esc(cfg.mint_account || "not configured"), true)
+      + "</tbody></table>"
+      + '<div class="section-title">Recent payments</div>'
+      + (items.length ? "<table><thead><tr><th>When</th><th>Resource</th><th>Payer</th><th>Amount</th>"
+        + "<th>Phase</th><th>Mint</th><th>Transaction</th><th>Error</th></tr></thead><tbody>"
+        + items.map((p) => "<tr><td>" + when(p.created_at_ms) + '</td><td class="mono">' + esc(p.resource)
+          + '</td><td class="mono">' + esc(p.payer) + "</td><td>" + usd(p.amount_micros) + "</td><td>"
+          + badge(p.phase) + "</td><td>" + badge(p.mint_status) + '</td><td class="mono">'
+          + esc(p.transaction || "") + "</td><td>" + esc(p.last_error || "") + "</td></tr>").join("")
+        + "</tbody></table>" : '<div class="empty">No x402 payments yet.</div>');
   }
 
   async function loadSettlement() {

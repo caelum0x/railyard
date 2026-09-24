@@ -35,8 +35,9 @@ use turnstile_axum::gate_request;
 use turnstile_core::{
     AmountMicros, ChallengeIssuer, McpPaywall, NonceStore, PaymentVerifier, SettlementJournal,
     StoredTool, ToolCatalog, ToolDescriptor, ToolRegistry, ToolStore, ToolStoreError, Turnstile,
-    TurnstileConfig,
+    TurnstileConfig, X402Gate,
 };
+use turnstile_core::x402::{PaymentRequirements, X402_VERSION};
 
 use crate::mcp::{echo_schema, McpTool, McpToolKind, MCP_ECHO_RESOURCE};
 use crate::tools::{proxy_request, ToolSpec, UpstreamTool};
@@ -52,6 +53,7 @@ pub struct GateFactory {
     verifier: Arc<dyn PaymentVerifier>,
     settlements: Arc<dyn SettlementJournal>,
     lease: Duration,
+    x402: Option<Arc<X402Gate>>,
 }
 
 impl GateFactory {
@@ -68,7 +70,19 @@ impl GateFactory {
             verifier,
             settlements,
             lease,
+            x402: None,
         }
+    }
+
+    /// Every gate this factory builds also speaks x402 through `gate`.
+    #[must_use]
+    pub fn with_x402(mut self, gate: Option<Arc<X402Gate>>) -> Self {
+        self.x402 = gate;
+        self
+    }
+
+    pub fn x402(&self) -> Option<&Arc<X402Gate>> {
+        self.x402.as_ref()
     }
 
     pub fn config(&self) -> &TurnstileConfig {
@@ -77,15 +91,24 @@ impl GateFactory {
 
     /// A gate quoting `price` on every challenge it issues.
     pub fn gate(&self, price: AmountMicros) -> Arc<Turnstile> {
+        self.gate_described(price, "Paid API call")
+    }
+
+    /// A priced gate whose x402 requirements carry `description`.
+    pub fn gate_described(&self, price: AmountMicros, description: &str) -> Arc<Turnstile> {
         let mut priced = self.config.clone();
         priced.price_micros = price;
-        Arc::new(Turnstile::with_journal(
+        let gate = Turnstile::with_journal(
             ChallengeIssuer::new(priced, self.nonces.clone()),
             self.verifier.clone(),
             self.nonces.clone(),
             self.settlements.clone(),
             self.lease,
-        ))
+        );
+        Arc::new(match &self.x402 {
+            Some(x402) => gate.with_x402(x402.clone(), description),
+            None => gate,
+        })
     }
 }
 
@@ -224,7 +247,9 @@ impl LiveRegistry {
             .map_err(|_| "invalid http_method".to_string())?;
         let upstream = Arc::new(UpstreamTool::new(spec.clone())?);
         Ok(Arc::new(LiveTool {
-            gate: self.factory.gate(AmountMicros::new(spec.price_micros)),
+            gate: self
+                .factory
+                .gate_described(AmountMicros::new(spec.price_micros), &spec.description),
             spec,
             version: row.version,
             upstream,
@@ -362,6 +387,38 @@ pub async fn call_tool(
     }
     let upstream = tool.upstream.clone();
     gate_request(&tool.gate, req, move |req| proxy_request(upstream, req)).await
+}
+
+/// `GET /.well-known/x402` — x402 discovery: every live HTTP tool as x402
+/// `PaymentRequirements` (the same objects its `402` advertises), so x402
+/// clients and directories can list the tools before paying.
+pub async fn discover_x402(State(registry): State<Arc<LiveRegistry>>) -> Response {
+    let snapshot = registry.snapshot();
+    let mut accepts: Vec<PaymentRequirements> = snapshot
+        .http
+        .values()
+        .filter_map(|tool| tool.gate.x402_requirements(&tool.spec.http_path()))
+        .collect();
+    accepts.sort_by(|a, b| a.resource.cmp(&b.resource));
+    match registry.factory.x402() {
+        Some(x402) => Json(json!({
+            "x402Version": X402_VERSION,
+            "network": x402.config().network,
+            "payTo": x402.config().pay_to,
+            "asset": x402.config().asset,
+            "facilitator": x402.config().facilitator_url,
+            "accepts": accepts,
+        }))
+        .into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "x402_disabled",
+                "message": "this Turnstile does not accept x402 payments (set TURNSTILE_X402_PAY_TO)",
+            })),
+        )
+            .into_response(),
+    }
 }
 
 /// `GET /v1/tools` and `GET /.well-known/aitp-tools` — the live priced catalog.

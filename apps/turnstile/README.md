@@ -149,8 +149,67 @@ AI agents."* It makes any HTTP endpoint or MCP tool **paid-per-call in under 10
 lines**: the calling agent pays with a fiat-backed, gasless, **success-only**
 AITP-402 handshake, and the money settles on **Mint**.
 
-**One-liner:** make any endpoint or MCP tool paid-per-call in <10 lines; the agent
-pays via AITP-402 and it settles on Mint — fiat-backed, gasless, success-only.
+**One-liner:** make any endpoint or MCP tool paid-per-call in <10 lines. The agent
+pays with x402 (USDC) or AITP-402 (a fiat-backed, gasless Mint balance).
+Either way the money settles on Mint, and only successful calls are charged.
+
+## x402: the open HTTP 402 standard, next to AITP-402
+
+Turnstile speaks **[x402](https://www.x402.org/)** (x402 Foundation; Coinbase
+CDP and Stripe machine payments implement it) on every paid HTTP tool, in
+addition to AITP-402. One `402` answers both protocols:
+
+- **Body**: the x402 `PaymentRequiredBody` JSON: `{"x402Version":1,"error":...,
+  "accepts":[{scheme:"exact", network, maxAmountRequired, resource, payTo, asset, ...}]}`.
+  USDC has 6 decimals, the same scale as Railyard microdollars, so
+  `maxAmountRequired` equals the tool's `price_micros`.
+- **Headers**: `AITP-Challenge` + `AITP-Version`, unchanged, so AITP clients
+  keep working.
+
+An x402 client retries with `X-PAYMENT` (base64 JSON EIP-3009 authorization).
+Turnstile then:
+
+1. checks scheme, network, recipient (`payTo`), amount and expiry locally;
+2. claims the authorization nonce in `turnstile_x402_payments` (primary key =
+   replay guard, shared by every replica) **before** anything runs;
+3. calls the facilitator `POST /verify`;
+4. runs the tool. Only on a `2xx` does it call the facilitator `POST /settle`,
+   so a failed tool never charges the payer (success-only billing, ADR-0002);
+5. returns `X-PAYMENT-RESPONSE` (base64 `{success, transaction, network, payer}`);
+6. credits the settled USDC into Mint with `POST /v1/mint`
+   (`deposit_ref = usdc:<tx hash>`). Mint's USDC ramp re-reads the transaction
+   receipt on-chain before minting, and idempotency is keyed on the tx, so a
+   retry never double-credits. Credits that cannot confirm yet (chain not final)
+   are retried every 30 s, up to 30 attempts.
+
+If the settle call fails in transit, the payment is journaled as `unknown` and
+the tool response is withheld (`503`). It is **not** retried blindly, because
+the transfer may have landed. The operator reconciles it against the payer
+address. `exact` moves a fixed amount, so an x402 call is charged the quoted
+price; metered capture below the quote stays on the AITP/Mint-hold rail.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `TURNSTILE_X402_PAY_TO` | (unset = x402 off) | USDC receive address. To credit revenue into Mint, set this to the Mint `usdc` provider's `deposit_address` (treasury). |
+| `TURNSTILE_X402_NETWORK` | `base-sepolia` | `base` for mainnet |
+| `TURNSTILE_X402_FACILITATOR_URL` | `https://x402.org/facilitator` on Base Sepolia; **required** on mainnet | any x402 facilitator |
+| `TURNSTILE_X402_FACILITATOR_AUTH` | (none) | sent verbatim as `Authorization` |
+| `TURNSTILE_X402_ASSET` | USDC on Base / Base Sepolia | required on other networks |
+| `TURNSTILE_X402_MINT_ACCOUNT` | (none) | Mint account credited with settled USDC |
+| `TURNSTILE_PUBLIC_URL` | (none) | origin used for absolute `resource` URLs |
+| `TURNSTILE_X402_MAX_TIMEOUT_SECS` | `60` | advertised `maxTimeoutSeconds` |
+
+A half-configured rail stops the server at startup with the variable to fix.
+Coinbase CDP's hosted facilitator signs each request with a short-lived JWT.
+A static `TURNSTILE_X402_FACILITATOR_AUTH` cannot hold that, so on mainnet use
+a facilitator that takes a static key, or run the open-source facilitator
+yourself. Signing CDP JWTs per request is not built yet.
+
+Endpoints: `GET /.well-known/x402` (free discovery of every tool's
+requirements), `GET /v1/admin/x402/summary`, `GET /v1/admin/x402/payments`,
+`POST /v1/admin/x402/credit` (operator token), and the **x402 Payments** tab
+in `/admin`. MCP `tools/call` stays on AITP-402. MCP has no ratified x402
+transport yet.
 
 ## Full plan
 

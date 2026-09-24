@@ -11,6 +11,7 @@ aitp-client.workspace = true
 axum.workspace = true
 tower.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 # middleware_402.rs spins a real axum Router gated by the admit layer, driving it
@@ -23,3 +24,4 @@ http.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 async-trait.workspace = true
 serde_json.workspace = true
+base64 = "0.22"

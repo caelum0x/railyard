@@ -32,6 +32,11 @@
 //! The server refuses to start only when it could never serve a tool: no seed
 //! file, no stored tools, no demo echo and no admin token to add one.
 //!
+//! x402: set `TURNSTILE_X402_PAY_TO` (and, off testnet,
+//! `TURNSTILE_X402_FACILITATOR_URL`) to also accept x402 `X-PAYMENT` USDC
+//! payments on every paid HTTP tool; `GET /.well-known/x402` lists them and
+//! `/v1/admin/x402/*` reports settlements (see [`turnstile_core::x402`]).
+//!
 //! Operator access: `TURNSTILE_ADMIN_TOKEN` enables the console at `/admin`,
 //! `GET /v1/admin/settlements`, `GET /v1/admin/summary`,
 //! `POST /v1/admin/recovery` and the tool editor API (`/v1/admin/tools`,
@@ -45,6 +50,7 @@ mod mcp;
 mod operator;
 mod policy;
 mod tools;
+mod x402_admin;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -60,15 +66,22 @@ use turnstile_core::{
     spawn_reaper, spawn_settlement_reaper, AmountMicros, InMemoryNonceStore,
     InMemorySettlementJournal, InMemoryToolStore, MintVerifier, NonceStore, PaymentVerifier,
     PostgresNonceStore, PostgresSettlementJournal, PostgresToolStore, SettlementJournal,
-    ToolStore, TurnstileConfig,
+    ToolStore, TurnstileConfig, X402Config, X402Gate,
+};
+use turnstile_core::x402::{
+    spawn_x402_credit_reaper, HttpFacilitator, InMemoryX402Journal, MintDepositPoster,
+    PostgresX402Journal, X402Journal,
 };
 
 use crate::admin_tools::AdminToolsState;
-use crate::live::{call_tool, discover_live, spawn_reloader, BuiltinEcho, GateFactory, LiveRegistry};
+use crate::live::{
+    call_tool, discover_live, discover_x402, spawn_reloader, BuiltinEcho, GateFactory, LiveRegistry,
+};
 use crate::mcp::{mcp_endpoint, mcp_stream, McpState};
 use crate::operator::{list_settlements, run_recovery, settlement_for_payer, summary, OperatorState};
 use crate::policy::UpstreamPolicy;
 use crate::tools::load_specs;
+use crate::x402_admin::{X402AdminState, MAX_CREDIT_ATTEMPTS};
 
 /// Default seconds between checks for tool edits made on another replica.
 const DEFAULT_RELOAD_SECS: u64 = 5;
@@ -84,11 +97,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.api_key.clone(),
         config.payee.clone(),
     ));
+    // x402 (open HTTP-402 standard) next to AITP-402: off unless
+    // TURNSTILE_X402_PAY_TO is set; a half-configured rail refuses to start.
+    let x402_config = X402Config::from_env()?;
     let mut _nonce_reaper = None;
-    let (nonces, settlements, tool_store): (
+    let (nonces, settlements, tool_store, x402_journal): (
         Arc<dyn NonceStore>,
         Arc<dyn SettlementJournal>,
         Arc<dyn ToolStore>,
+        Arc<dyn X402Journal>,
     ) = match std::env::var("TURNSTILE_DATABASE_URL") {
         Ok(url) if !url.trim().is_empty() => {
             let durable = Arc::new(PostgresNonceStore::connect(&url).await?);
@@ -96,7 +113,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             _nonce_reaper = Some(spawn_reaper(durable.clone(), Duration::from_secs(60)));
             let settlements = Arc::new(PostgresSettlementJournal::from_pool(durable.pool().clone()));
             let tools = Arc::new(PostgresToolStore::from_pool(durable.pool().clone()));
-            (durable, settlements, tools)
+            let x402 = Arc::new(PostgresX402Journal::from_pool(durable.pool().clone()));
+            (durable, settlements, tools, x402)
         }
         _ => {
             eprintln!(
@@ -106,9 +124,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Arc::new(InMemoryNonceStore::new()),
                 Arc::new(InMemorySettlementJournal::new()),
                 Arc::new(InMemoryToolStore::new()),
+                Arc::new(InMemoryX402Journal::new()),
             )
         }
     };
+    let x402_gate: Option<Arc<X402Gate>> = match x402_config {
+        Some(cfg) => {
+            let facilitator = HttpFacilitator::new(
+                Arc::new(ReqwestTransport::new(cfg.facilitator_url.clone())?),
+                cfg.facilitator_auth.clone(),
+            );
+            let mint = cfg.mint_account.clone().map(|account| {
+                ReqwestTransport::new(config.mint_server_url.clone()).map(|transport| {
+                    Arc::new(MintDepositPoster::new(
+                        Arc::new(transport),
+                        config.api_key.clone(),
+                        account,
+                    ))
+                })
+            });
+            let mint = mint.transpose()?;
+            if mint.is_none() {
+                eprintln!(
+                    "x402: TURNSTILE_X402_MINT_ACCOUNT is unset; settled USDC is journaled in Turnstile but not credited into Mint"
+                );
+            }
+            println!(
+                "x402 enabled: network {} payTo {} facilitator {}",
+                cfg.network, cfg.pay_to, cfg.facilitator_url
+            );
+            Some(Arc::new(X402Gate::new(
+                cfg,
+                Arc::new(facilitator),
+                x402_journal.clone(),
+                mint,
+            )))
+        }
+        None => None,
+    };
+    let _x402_credit_reaper = x402_gate.clone().and_then(|gate| {
+        spawn_x402_credit_reaper(gate, Duration::from_secs(30), MAX_CREDIT_ATTEMPTS)
+    });
     // Keep a handle to the journal for the settlement-status/operator APIs.
     let status_journal = settlements.clone();
     let settlement_lease = Duration::from_secs(30);
@@ -158,7 +214,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         verifier.clone(),
         settlements.clone(),
         settlement_lease,
-    );
+    )
+    .with_x402(x402_gate.clone());
     let echo = if demo_echo_enabled() {
         // Demo mode (explicit TURNSTILE_DEMO_ECHO=1): the built-in echo tool at
         // TURNSTILE_PRICE_MICROS. Never served by accident, so a misconfigured
@@ -210,6 +267,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let discovery_api = Router::new()
         .route("/v1/tools", get(discover_live))
         .route("/.well-known/aitp-tools", get(discover_live))
+        .route("/.well-known/x402", get(discover_x402))
         .with_state(registry.clone());
 
     // MCP API: every paid tool over JSON-RPC, each gated by its own priced gate.
@@ -232,6 +290,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         registry: registry.clone(),
         policy: Arc::new(UpstreamPolicy::from_env()),
     };
+    let x402_admin_api = Router::new()
+        .route("/v1/admin/x402/summary", get(x402_admin::summary))
+        .route("/v1/admin/x402/payments", get(x402_admin::payments))
+        .route("/v1/admin/x402/credit", post(x402_admin::credit_now))
+        .with_state(X402AdminState {
+            operator: operator_state.clone(),
+            gate: x402_gate.clone(),
+        });
     let status_api = Router::new()
         .route("/v1/settlements/:request_id", get(settlement_for_payer))
         .route("/v1/admin/settlements", get(list_settlements))
@@ -261,7 +327,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(discovery_api)
         .merge(mcp_api)
         .merge(status_api)
-        .merge(tools_admin_api);
+        .merge(tools_admin_api)
+        .merge(x402_admin_api);
 
     let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8101".to_string());
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;

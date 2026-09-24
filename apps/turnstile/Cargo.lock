@@ -2273,6 +2273,7 @@ dependencies = [
  "aitp-client",
  "async-trait",
  "axum",
+ "base64",
  "http",
  "serde",
  "serde_json",
@@ -2287,6 +2288,7 @@ version = "0.1.0"
 dependencies = [
  "aitp-client",
  "async-trait",
+ "base64",
  "hex",
  "rand 0.8.7",
  "serde",

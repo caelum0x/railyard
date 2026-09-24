@@ -15,6 +15,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 rand.workspace = true
 hex = "0.4"
+# x402 `X-PAYMENT` / `X-PAYMENT-RESPONSE` headers are base64-encoded JSON.
+base64 = "0.22"
 
 # Durable Postgres NonceStore, off by default. Enabling `postgres` pulls in sqlx
 # (runtime query API, no DATABASE_URL needed) and compiles the `pg` module.

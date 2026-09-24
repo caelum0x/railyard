@@ -8,6 +8,7 @@ use aitp_client::codec::{encode_challenge, encode_receipt, AITP_VERSION};
 use aitp_client::{PaymentChallenge, Receipt};
 use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
+use turnstile_core::x402::{PaymentRequiredBody, SettleResponse, HEADER_PAYMENT_RESPONSE};
 use turnstile_core::TurnstileError;
 
 const H_CHALLENGE: &str = "aitp-challenge";
@@ -23,7 +24,22 @@ fn header_name(name: &'static str) -> HeaderName {
 
 /// A `402 Payment Required` carrying the challenge and protocol version.
 pub fn challenge(challenge: &PaymentChallenge) -> Response {
-    let mut resp = (StatusCode::PAYMENT_REQUIRED, "payment required\n").into_response();
+    challenge_with(challenge, None)
+}
+
+/// The `402` body: the x402 `PaymentRequiredBody` JSON when x402 is enabled
+/// (x402 clients read the body; AITP clients read the headers), else text.
+fn payment_required(x402: Option<&PaymentRequiredBody>) -> Response {
+    match x402 {
+        Some(body) => (StatusCode::PAYMENT_REQUIRED, axum::Json(body)).into_response(),
+        None => (StatusCode::PAYMENT_REQUIRED, "payment required\n").into_response(),
+    }
+}
+
+/// A `402` carrying the AITP challenge headers and, when given, the x402
+/// `accepts[]` body — one response both protocols understand.
+pub fn challenge_with(challenge: &PaymentChallenge, x402: Option<&PaymentRequiredBody>) -> Response {
+    let mut resp = payment_required(x402);
     let headers = resp.headers_mut();
     if let Ok(encoded) = encode_challenge(challenge) {
         if let Ok(value) = HeaderValue::from_str(&encoded) {
@@ -43,7 +59,16 @@ pub fn challenge(challenge: &PaymentChallenge) -> Response {
 /// A `402` for a present-but-invalid payment: re-challenge with a fresh nonce and
 /// surface the rejection reason in an `AITP-Error` header (best effort).
 pub fn rejected(error: &TurnstileError, fresh: &PaymentChallenge) -> Response {
-    let mut resp = challenge(fresh);
+    rejected_with(error, fresh, None)
+}
+
+/// [`rejected`] plus the x402 body.
+pub fn rejected_with(
+    error: &TurnstileError,
+    fresh: &PaymentChallenge,
+    x402: Option<&PaymentRequiredBody>,
+) -> Response {
+    let mut resp = challenge_with(fresh, x402);
     if let Ok(value) = HeaderValue::from_str(&error.to_string()) {
         resp.headers_mut().insert(header_name(H_ERROR), value);
     }
@@ -136,4 +161,51 @@ pub fn attach_request_id(mut response: Response, request_id: Option<&str>) -> Re
         }
     }
     response
+}
+
+/// A `402` for an `X-PAYMENT` that could not be accepted: the x402 body names
+/// the reason in `error` and re-advertises `accepts[]`; a fresh AITP challenge
+/// is attached when one could be issued so either rail can retry.
+pub fn x402_rejected(body: &PaymentRequiredBody, fresh: Option<&PaymentChallenge>) -> Response {
+    match fresh {
+        Some(challenge) => challenge_with(challenge, Some(body)),
+        None => {
+            let mut resp = payment_required(Some(body));
+            resp.headers_mut().insert(
+                header_name(H_VERSION),
+                HeaderValue::from_static(AITP_VERSION),
+            );
+            resp
+        }
+    }
+}
+
+/// A `503` when the x402 facilitator or journal is unavailable: not the
+/// payer's fault, nothing was charged, safe to retry the same payment later
+/// only if it was never reserved (the body says which).
+pub fn x402_unavailable(code: &str, message: &str) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        axum::Json(serde_json::json!({
+            "x402Version": turnstile_core::x402::X402_VERSION,
+            "error": code,
+            "message": message,
+        })),
+    )
+        .into_response()
+}
+
+/// Attach the base64 `X-PAYMENT-RESPONSE` settlement header.
+pub fn attach_x402_settlement(mut resp: Response, settled: &SettleResponse) -> Response {
+    if let Ok(encoded) = turnstile_core::x402::wire::encode_header(settled) {
+        if let Ok(value) = HeaderValue::from_str(&encoded) {
+            resp.headers_mut()
+                .insert(HeaderName::from_static(HEADER_PAYMENT_RESPONSE), value);
+        }
+    }
+    resp.headers_mut().insert(
+        HeaderName::from_static("access-control-expose-headers"),
+        HeaderValue::from_static("x-payment-response"),
+    );
+    resp
 }

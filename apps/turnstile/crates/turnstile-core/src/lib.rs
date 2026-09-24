@@ -17,6 +17,10 @@
 //! when no authorization is present, else validate + replay-check the nonce
 //! ([`nonce`]), forward to the mint ([`verifier`]), and hand back a
 //! [`settle::Settled`] hold the edge captures/releases.
+//!
+//! The [`x402`] module adds the open x402 standard (USDC `exact` payments
+//! verified and settled through a facilitator, credited into Mint) as a second
+//! rail on the same gate; AITP-402 keeps working unchanged.
 
 pub mod challenge;
 pub mod clock;
@@ -37,6 +41,7 @@ pub mod registry;
 pub mod settle;
 pub mod tool_store;
 pub mod verifier;
+pub mod x402;
 
 // Re-export the whole reused crate plus the wire types callers touch directly,
 // so integrations depend on `turnstile_core::*` without a second import.
@@ -69,3 +74,4 @@ pub use tool_store::{
     InMemoryToolStore, StoredTool, ToolAction, ToolAuditEntry, ToolStore, ToolStoreError,
 };
 pub use verifier::{FakeVerifier, MintVerifier, PaymentVerifier, VerifiedHold};
+pub use x402::{X402Config, X402Gate};

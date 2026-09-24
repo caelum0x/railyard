@@ -23,6 +23,7 @@ use crate::journal::{InMemorySettlementJournal, SettlementJournal};
 use crate::nonce::NonceStore;
 use crate::settle::Settled;
 use crate::verifier::PaymentVerifier;
+use crate::x402::{PaymentRequirements, X402Gate, DEFAULT_MIME};
 
 /// The outcome of [`Turnstile::admit`].
 pub enum Admit {
@@ -42,6 +43,10 @@ pub struct Turnstile {
     nonces: Arc<dyn NonceStore>,
     settlements: Arc<dyn SettlementJournal>,
     settlement_lease: Duration,
+    /// Optional x402 rail advertised and accepted next to AITP-402.
+    x402: Option<Arc<X402Gate>>,
+    /// Description placed in this gate's x402 `PaymentRequirements`.
+    description: String,
 }
 
 impl Turnstile {
@@ -74,7 +79,36 @@ impl Turnstile {
             nonces,
             settlements,
             settlement_lease,
+            x402: None,
+            description: "Paid API call".to_string(),
         }
+    }
+
+    /// Also speak x402 on this gate: advertise `accepts[]` in every `402` and
+    /// accept `X-PAYMENT` settled through `gate`.
+    #[must_use]
+    pub fn with_x402(mut self, gate: Arc<X402Gate>, description: impl Into<String>) -> Self {
+        self.x402 = Some(gate);
+        let description = description.into();
+        if !description.trim().is_empty() {
+            self.description = description;
+        }
+        self
+    }
+
+    /// The x402 rail, when enabled.
+    #[must_use]
+    pub fn x402(&self) -> Option<&Arc<X402Gate>> {
+        self.x402.as_ref()
+    }
+
+    /// The x402 requirements for `path` at this gate's price (`None` when x402
+    /// is disabled or the price is zero).
+    #[must_use]
+    pub fn x402_requirements(&self, path: &str) -> Option<PaymentRequirements> {
+        self.x402
+            .as_ref()?
+            .requirements(path, &self.description, self.price(), DEFAULT_MIME)
     }
 
     fn lease_until(&self) -> i64 {
