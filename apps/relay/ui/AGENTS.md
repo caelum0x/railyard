@@ -6,6 +6,8 @@
 
 ## Autopilot Feature (Internal Only)
 
+> **Relay:** Autopilot is turned off in Relay (every `/autopilot` route renders the "not available" page, see `app/routes/autopilot/layout.tsx`). The upstream specs in `e2e_tests/autopilot/` are explicitly skipped; `e2e_tests/autopilot-unavailable.spec.ts` covers the unavailable page. The notes below describe the upstream setup only.
+
 > **Note for external contributors:** The Autopilot feature depends on a closed-source internal API. The tests in `e2e_tests/autopilot/` require access to the private `autopilot` repository and cannot be run by external contributors. These tests are run in CI via repository dispatch from the autopilot repo.
 
 If you're an internal contributor with access to the autopilot repository:

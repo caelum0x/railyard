@@ -3,6 +3,16 @@ import { v7 } from "uuid";
 import { insertEvent, queryEventPayloads } from "./helpers/db";
 import { createSession } from "./helpers/session";
 
+// Relay does not offer Autopilot: it depends on TensorZero's hosted Autopilot
+// service, so every /autopilot route renders the "not available" page
+// (app/routes/autopilot/layout.tsx) and these upstream session flows cannot
+// run. Skipped explicitly; the unavailable page itself is covered by
+// e2e_tests/autopilot-unavailable.spec.ts.
+test.skip(
+  true,
+  "Autopilot is not available in Relay (/autopilot renders the unavailable page)",
+);
+
 // ── Types ──────────────────────────────────────────────────────────────
 
 type AnswerPayload = {

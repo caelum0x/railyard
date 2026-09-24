@@ -1,6 +1,16 @@
 import { test, expect } from "@playwright/test";
 import { v7 } from "uuid";
 
+// Relay does not offer Autopilot: it depends on TensorZero's hosted Autopilot
+// service, so every /autopilot route renders the "not available" page
+// (app/routes/autopilot/layout.tsx) and these upstream session flows cannot
+// run. Skipped explicitly; the unavailable page itself is covered by
+// e2e_tests/autopilot-unavailable.spec.ts.
+test.skip(
+  true,
+  "Autopilot is not available in Relay (/autopilot renders the unavailable page)",
+);
+
 test("should interrupt an active session", async ({ page }) => {
   // Increase timeout for this test since it involves LLM responses
   test.setTimeout(120000);

@@ -6,6 +6,16 @@ import * as path from "path";
 import { parse as parseToml } from "smol-toml";
 import { deterministicTestAndAttempt } from "./helpers";
 
+// Relay does not offer Autopilot: it depends on TensorZero's hosted Autopilot
+// service, so every /autopilot route renders the "not available" page
+// (app/routes/autopilot/layout.tsx) and these upstream session flows cannot
+// run. Skipped explicitly; the unavailable page itself is covered by
+// e2e_tests/autopilot-unavailable.spec.ts.
+test.skip(
+  true,
+  "Autopilot is not available in Relay (/autopilot renders the unavailable page)",
+);
+
 // Path to the autopilot repo config directory (from host perspective).
 // Uses AUTOPILOT_REPO env var (documented in ui/AGENTS.md), falling back to ~/autopilot.
 const AUTOPILOT_REPO =
