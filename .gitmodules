@@ -1,0 +1,4 @@
+[submodule "apps/rithub-forge"]
+	path = apps/rithub-forge
+	url = https://github.com/caelum0x/rithub-forge.git
+	branch = main
