@@ -57,6 +57,10 @@ pub fn notice_text(code: &str) -> Option<(&'static str, bool)> {
         "top_up_invalid" => ("Enter a positive number of credits (at most 1,000,000).", true),
         "wallet_unavailable" => ("This wallet cannot be topped up.", true),
         "subscription_cancelled" => ("Your subscription was cancelled.", false),
+        "downgrade_scheduled" => ("Your plan change is scheduled. You keep your current plan until the end of this billing period.", false),
+        "downgrade_kept" => ("The scheduled plan change was cancelled. You stay on your current plan.", false),
+        "downgrade_unavailable" => ("That plan change is not available for this subscription.", true),
+        "cancel_not_confirmed" => ("Tick the confirmation box to cancel the subscription.", true),
         "subscription_unavailable" => ("This subscription can no longer be cancelled.", true),
         "payment_method_unavailable" => ("Payment methods are managed by the seller for this account.", true),
         _ => return None,
@@ -103,6 +107,8 @@ pub struct PortalView<'a> {
     pub usage: &'a [UsageBlock],
     pub wallets: &'a [Wallet],
     pub can_manage_payment_method: bool,
+    /// Scheduled downgrades: (current subscription id, next plan name, date).
+    pub scheduled: &'a [(uuid::Uuid, String, NaiveDate)],
 }
 
 fn section(title: &str, body: String) -> String {
@@ -210,8 +216,20 @@ fn subscriptions_html(v: &PortalView<'_>) -> String {
             SubscriptionStatus::Pending => "<span class=\"pill warn\">Starts soon</span>",
             _ => "<span class=\"pill ok\">Active</span>",
         };
+        let change = v
+            .scheduled
+            .iter()
+            .find(|(id, _, _)| *id == sub.id)
+            .map(|(_, next, at)| {
+                format!(
+                    "<div class=\"muted\">Changes to {} on {}</div>",
+                    esc(next),
+                    at.format("%Y-%m-%d")
+                )
+            })
+            .unwrap_or_default();
         rows.push_str(&format!(
-            "<tr><td>{name}</td><td>{status}</td><td>{since}</td><td class=\"num\"><form class=\"inline\" method=\"post\" action=\"/portal/{t}/subscriptions/{id}/cancel\"><button class=\"danger\" type=\"submit\">Cancel subscription</button></form></td></tr>",
+            "<tr><td>{name}{change}</td><td>{status}</td><td>{since}</td><td class=\"num\"><a class=\"btn\" href=\"/portal/{t}/subscriptions/{id}/cancel\">Change or cancel</a></td></tr>",
             name = esc(sub.name.as_deref().filter(|n| !n.is_empty()).unwrap_or(plan_name)),
             since = sub.started_at.map(|t| t.format("%Y-%m-%d").to_string()).unwrap_or_else(|| "-".into()),
             t = esc(v.token),
@@ -219,7 +237,7 @@ fn subscriptions_html(v: &PortalView<'_>) -> String {
         ));
     }
     format!(
-        "<table><thead><tr><th>Plan</th><th>Status</th><th>Since</th><th class=\"num\"></th></tr></thead><tbody>{rows}</tbody></table><p class=\"body muted\">Cancelling ends the subscription now. Usage up to now is billed on your final invoice.</p>"
+        "<table><thead><tr><th>Plan</th><th>Status</th><th>Since</th><th class=\"num\"></th></tr></thead><tbody>{rows}</tbody></table>"
     )
 }
 
@@ -239,6 +257,100 @@ pub fn home(v: &PortalView<'_>) -> String {
             ),
         ));
     }
+    let notice = v
+        .notice
+        .and_then(notice_text)
+        .map(|(text, bad)| format!("<div class=\"notice{}\" role=\"status\">{}</div>", if bad { " bad" } else { "" }, esc(text)))
+        .unwrap_or_default();
+    fill(v.org_name, v.customer_name, v.expires_at, &notice, &content)
+}
+
+/// A plan the customer can move down to.
+pub struct DowngradeOption {
+    pub plan_id: uuid::Uuid,
+    pub name: String,
+    pub price: String,
+}
+
+/// Everything the "change or cancel" page shows.
+pub struct ManageView<'a> {
+    pub token: &'a str,
+    pub org_name: &'a str,
+    pub customer_name: &'a str,
+    pub expires_at: DateTime<Utc>,
+    pub notice: Option<&'a str>,
+    pub subscription_id: uuid::Uuid,
+    pub subscription_name: &'a str,
+    pub plan_price: String,
+    pub active: bool,
+    /// When a downgrade would take effect (the end of the current period).
+    pub period_end: Option<NaiveDate>,
+    /// An already scheduled change: (plan name, date).
+    pub scheduled: Option<(String, NaiveDate)>,
+    pub options: &'a [DowngradeOption],
+}
+
+/// The confirmation page behind "Change or cancel": downgrade options first,
+/// then an explicit, confirmed cancellation.
+pub fn manage_subscription(v: &ManageView<'_>) -> String {
+    let t = esc(v.token);
+    let id = v.subscription_id;
+    let mut content = format!(
+        "<p class=\"body\"><a href=\"/portal/{t}\">Back to billing</a></p>"
+    );
+    content.push_str(&section(
+        v.subscription_name,
+        format!(
+            "<div class=\"body\">Current price: <strong>{}</strong>{}</div>",
+            esc(&v.plan_price),
+            if v.active { "" } else { " <span class=\"pill warn\">Starts soon</span>" }
+        ),
+    ));
+    if let Some((next, at)) = &v.scheduled {
+        content.push_str(&section(
+            "Scheduled plan change",
+            format!(
+                "<div class=\"body\">You move to <strong>{}</strong> on {}. Until then nothing changes.</div><div class=\"body\"><form class=\"inline\" method=\"post\" action=\"/portal/{t}/subscriptions/{id}/keep_plan\"><button type=\"submit\">Keep my current plan</button></form></div>",
+                esc(next),
+                at.format("%Y-%m-%d")
+            ),
+        ));
+    }
+    if v.active && !v.options.is_empty() {
+        let when = v
+            .period_end
+            .map(|d| format!("on {}", d.format("%Y-%m-%d")))
+            .unwrap_or_else(|| "at the end of this billing period".into());
+        let mut rows = String::new();
+        for o in v.options {
+            rows.push_str(&format!(
+                "<tr><td>{}</td><td class=\"num\">{}</td><td class=\"num\"><form class=\"inline\" method=\"post\" action=\"/portal/{t}/subscriptions/{id}/downgrade\"><input type=\"hidden\" name=\"plan_id\" value=\"{}\"><button type=\"submit\">Switch {}</button></form></td></tr>",
+                esc(&o.name),
+                esc(&o.price),
+                o.plan_id,
+                esc(&when),
+            ));
+        }
+        content.push_str(&section(
+            "Switch to a smaller plan",
+            format!(
+                "<p class=\"body muted\">Keep your subscription on a cheaper plan instead of cancelling. You keep the current plan until the period ends; the new price applies from {}.</p><table><thead><tr><th>Plan</th><th class=\"num\">Price</th><th class=\"num\"></th></tr></thead><tbody>{rows}</tbody></table>",
+                esc(&when)
+            ),
+        ));
+    }
+    let consequence = if v.active {
+        "Cancelling ends the subscription immediately. Your access stops now and usage up to now is billed on your final invoice. This cannot be undone."
+    } else {
+        "Cancelling stops this subscription before it starts. This cannot be undone."
+    };
+    content.push_str(&section(
+        "Cancel subscription",
+        format!(
+            "<div class=\"body\"><p>{}</p><form method=\"post\" action=\"/portal/{t}/subscriptions/{id}/cancel\"><p><label><input type=\"checkbox\" name=\"confirm\" value=\"yes\" required> I understand, cancel my subscription</label></p><button class=\"danger\" type=\"submit\">Cancel subscription</button></form></div>",
+            esc(consequence)
+        ),
+    ));
     let notice = v
         .notice
         .and_then(notice_text)
@@ -296,6 +408,30 @@ mod tests {
     fn unknown_notice_codes_render_nothing() {
         assert!(notice_text("<script>").is_none());
         assert!(notice_text("invoice_paid").is_some());
+    }
+
+    #[test]
+    fn manage_page_requires_confirmation_and_offers_downgrades() {
+        let options = [DowngradeOption { plan_id: uuid::Uuid::nil(), name: "Starter <b>".into(), price: "9.00 USD".into() }];
+        let html = manage_subscription(&ManageView {
+            token: "tok",
+            org_name: "Acme",
+            customer_name: "Ada",
+            expires_at: Utc::now(),
+            notice: None,
+            subscription_id: uuid::Uuid::nil(),
+            subscription_name: "Pro",
+            plan_price: "29.00 USD".into(),
+            active: true,
+            period_end: NaiveDate::from_ymd_opt(2026, 10, 1),
+            scheduled: None,
+            options: &options,
+        });
+        assert!(html.contains("name=\"confirm\" value=\"yes\" required"));
+        assert!(html.contains("/downgrade"));
+        assert!(html.contains("Starter &lt;b&gt;"));
+        assert!(html.contains("on 2026-10-01"));
+        assert!(!html.contains("{{"));
     }
 
     #[test]

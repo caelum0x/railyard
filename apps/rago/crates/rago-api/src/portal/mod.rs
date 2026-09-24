@@ -10,7 +10,10 @@
 //! * current-period usage per billable metric, priced by the billing engine;
 //! * prepaid wallet balances with a top-up that creates the paid-credit
 //!   invoice and takes the customer straight to payment;
-//! * subscription cancellation through the same terminate service as the API;
+//! * a "change or cancel" page per subscription: switch to a cheaper plan at
+//!   the end of the period (scheduled downgrade, see [`crate::plan_change`]) or
+//!   cancel now after an explicit confirmation (same terminate service as the
+//!   API);
 //! * payment-method updates, offered only when Stripe is the provider (the
 //!   only one with a hosted payment-method page).
 //!
@@ -207,8 +210,17 @@ async fn render_home(st: &AppState, a: &Access, notice: Option<&str>) -> ApiResu
     let subs = st.db.subscriptions_for_customer(a.customer.id, 100, 0).await?;
     let mut subscriptions = Vec::new();
     let mut usage = Vec::new();
+    let mut scheduled = Vec::new();
     for sub in subs {
         if !matches!(sub.status, SubscriptionStatus::Active | SubscriptionStatus::Pending) {
+            continue;
+        }
+        // A scheduled downgrade is shown on the subscription it replaces.
+        if sub.previous_subscription_id.is_some() && matches!(sub.status, SubscriptionStatus::Pending) {
+            if let (Some(prev), Some(at)) = (sub.previous_subscription_id, sub.subscription_at) {
+                let next = st.db.find_plan(sub.plan_id).await?;
+                scheduled.push((prev, next.name.clone(), at.date_naive()));
+            }
             continue;
         }
         let plan = st.db.find_plan(sub.plan_id).await?;
@@ -246,6 +258,7 @@ async fn render_home(st: &AppState, a: &Access, notice: Option<&str>) -> ApiResu
         usage: &usage,
         wallets: &wallets,
         can_manage_payment_method,
+        scheduled: &scheduled,
     }))
 }
 
@@ -397,8 +410,169 @@ pub async fn top_up(
     resp
 }
 
-/// `POST /portal/:token/subscriptions/:subscription_id/cancel`.
+/// The customer's own live subscription (active, or pending that is not a
+/// scheduled downgrade), or `None`.
+async fn own_subscription(st: &AppState, a: &Access, subscription_id: Uuid) -> ApiResult<Option<rago_core::models::Subscription>> {
+    let subs = st.db.subscriptions_for_customer(a.customer.id, 100, 0).await?;
+    Ok(subs.into_iter().find(|s| {
+        s.id == subscription_id
+            && s.organization_id == a.claims.organization_id
+            && (matches!(s.status, SubscriptionStatus::Active)
+                || (matches!(s.status, SubscriptionStatus::Pending) && s.previous_subscription_id.is_none()))
+    }))
+}
+
+fn plan_price(plan: &rago_core::models::Plan) -> String {
+    let interval = plan.interval.map(|i| format!(" / {}", i.as_str())).unwrap_or_default();
+    format!("{}{interval}", pages::money(plan.amount_cents.unwrap_or(0), &plan.amount_currency))
+}
+
+/// `GET /portal/:token/subscriptions/:subscription_id/cancel` — the change or
+/// cancel page: cheaper plans to switch to at period end, and a cancellation
+/// that must be explicitly confirmed.
+pub async fn manage_subscription(
+    State(st): State<AppState>,
+    Path((raw, subscription_id)): Path<(String, Uuid)>,
+    Query(q): Query<PageQuery>,
+) -> Response {
+    let a = match authorize(&st, &raw).await {
+        Ok(Some(a)) => a,
+        Ok(None) => return invalid(),
+        Err(e) => return server_error(e),
+    };
+    match render_manage(&st, &a, subscription_id, q.notice.as_deref()).await {
+        Ok(Some(html)) => harden((StatusCode::OK, Html(html)).into_response()),
+        Ok(None) => back(&a.token, "subscription_unavailable"),
+        Err(e) => server_error(e),
+    }
+}
+
+async fn render_manage(st: &AppState, a: &Access, subscription_id: Uuid, notice: Option<&str>) -> ApiResult<Option<String>> {
+    let Some(sub) = own_subscription(st, a, subscription_id).await? else { return Ok(None) };
+    let org = a.claims.organization_id;
+    let plan = st.db.find_plan(sub.plan_id).await?;
+    let active = matches!(sub.status, SubscriptionStatus::Active);
+    let options = if active {
+        crate::plan_change::downgrade_options(st, org, &plan)
+            .await?
+            .into_iter()
+            .map(|p| pages::DowngradeOption { plan_id: p.id, price: plan_price(&p), name: p.name })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let scheduled = match st.db.scheduled_downgrade_for(sub.id).await? {
+        Some(next) => {
+            let next_plan = st.db.find_plan(next.plan_id).await?;
+            next.subscription_at.map(|at| (next_plan.name, at.date_naive()))
+        }
+        None => None,
+    };
+    let org_name = st.db.organization_name(org).await?.unwrap_or_else(|| "Billing".into());
+    let customer_name = a
+        .customer
+        .name
+        .clone()
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| a.customer.external_id.clone());
+    let sub_name = sub.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| plan.name.clone());
+    Ok(Some(pages::manage_subscription(&pages::ManageView {
+        token: &a.token,
+        org_name: &org_name,
+        customer_name: &customer_name,
+        expires_at: a.expires_at,
+        notice,
+        subscription_id: sub.id,
+        subscription_name: &sub_name,
+        plan_price: plan_price(&plan),
+        active,
+        period_end: active.then(|| crate::plan_change::effective_at(&sub, &plan).date_naive()),
+        scheduled,
+        options: &options,
+    })))
+}
+
+fn form_value(body: &[u8], key: &str) -> Option<String> {
+    let form = crate::checkout_webhooks::parse_form(std::str::from_utf8(body).ok()?);
+    form.into_iter().find(|(k, _)| k == key).map(|(_, v)| v)
+}
+
+/// 303 to the change-or-cancel page with a notice code.
+fn back_to_manage(token: &str, subscription_id: Uuid, notice: &str) -> Response {
+    let target = format!("/portal/{token}/subscriptions/{subscription_id}/cancel?notice={notice}");
+    harden((StatusCode::SEE_OTHER, [(header::LOCATION, target)]).into_response())
+}
+
+/// `POST /portal/:token/subscriptions/:subscription_id/cancel` (form
+/// `confirm=yes`). Without the confirmation the customer is sent back to the
+/// confirmation page and nothing changes.
 pub async fn cancel_subscription(
+    State(st): State<AppState>,
+    Path((raw, subscription_id)): Path<(String, Uuid)>,
+    body: Bytes,
+) -> Response {
+    let a = match authorize(&st, &raw).await {
+        Ok(Some(a)) => a,
+        Ok(None) => return invalid(),
+        Err(e) => return server_error(e),
+    };
+    let sub = match own_subscription(&st, &a, subscription_id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return back(&a.token, "subscription_unavailable"),
+        Err(e) => return server_error(e),
+    };
+    if form_value(&body, "confirm").as_deref() != Some("yes") {
+        return back_to_manage(&a.token, sub.id, "cancel_not_confirmed");
+    }
+    match crate::handlers::terminate_subscription_now(&st, a.claims.organization_id, sub).await {
+        Ok(_) => back(&a.token, "subscription_cancelled"),
+        Err(e) => server_error(e),
+    }
+}
+
+/// `POST /portal/:token/subscriptions/:subscription_id/downgrade` (form
+/// `plan_id`) — schedule a switch to a cheaper plan at the end of the period.
+pub async fn downgrade_subscription(
+    State(st): State<AppState>,
+    Path((raw, subscription_id)): Path<(String, Uuid)>,
+    body: Bytes,
+) -> Response {
+    let a = match authorize(&st, &raw).await {
+        Ok(Some(a)) => a,
+        Ok(None) => return invalid(),
+        Err(e) => return server_error(e),
+    };
+    let org = a.claims.organization_id;
+    let sub = match own_subscription(&st, &a, subscription_id).await {
+        Ok(Some(s)) if matches!(s.status, SubscriptionStatus::Active) => s,
+        Ok(_) => return back(&a.token, "subscription_unavailable"),
+        Err(e) => return server_error(e),
+    };
+    let Some(plan_id) = form_value(&body, "plan_id").and_then(|v| Uuid::parse_str(v.trim()).ok()) else {
+        return back_to_manage(&a.token, sub.id, "downgrade_unavailable");
+    };
+    let current = match st.db.find_plan(sub.plan_id).await {
+        Ok(p) => p,
+        Err(e) => return server_error(e),
+    };
+    // Only plans offered on the page are accepted.
+    let target = match crate::plan_change::downgrade_options(&st, org, &current).await {
+        Ok(options) => options.into_iter().find(|p| p.id == plan_id),
+        Err(e) => return server_error(e),
+    };
+    let Some(target) = target else {
+        return back_to_manage(&a.token, sub.id, "downgrade_unavailable");
+    };
+    match crate::plan_change::schedule(&st, org, &sub, &target).await {
+        Ok(_) => back(&a.token, "downgrade_scheduled"),
+        Err(ApiError::Validation(_)) => back_to_manage(&a.token, sub.id, "downgrade_unavailable"),
+        Err(e) => server_error(e),
+    }
+}
+
+/// `POST /portal/:token/subscriptions/:subscription_id/keep_plan` — cancel a
+/// scheduled downgrade.
+pub async fn keep_plan(
     State(st): State<AppState>,
     Path((raw, subscription_id)): Path<(String, Uuid)>,
 ) -> Response {
@@ -407,19 +581,13 @@ pub async fn cancel_subscription(
         Ok(None) => return invalid(),
         Err(e) => return server_error(e),
     };
-    let subs = match st.db.subscriptions_for_customer(a.customer.id, 100, 0).await {
-        Ok(s) => s,
+    let sub = match own_subscription(&st, &a, subscription_id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return back(&a.token, "subscription_unavailable"),
         Err(e) => return server_error(e),
     };
-    let Some(sub) = subs.into_iter().find(|s| {
-        s.id == subscription_id
-            && s.organization_id == a.claims.organization_id
-            && matches!(s.status, SubscriptionStatus::Active | SubscriptionStatus::Pending)
-    }) else {
-        return back(&a.token, "subscription_unavailable");
-    };
-    match crate::handlers::terminate_subscription_now(&st, a.claims.organization_id, sub).await {
-        Ok(_) => back(&a.token, "subscription_cancelled"),
+    match crate::plan_change::cancel(&st, a.claims.organization_id, &sub).await {
+        Ok(_) => back(&a.token, "downgrade_kept"),
         Err(e) => server_error(e),
     }
 }

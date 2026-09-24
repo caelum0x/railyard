@@ -194,6 +194,7 @@ impl Db {
         let rows = sqlx::query(
             "SELECT id, organization_id, customer_id, external_id FROM subscriptions \
              WHERE status = 0 AND subscription_at IS NOT NULL AND subscription_at <= $1 \
+               AND previous_subscription_id IS NULL \
              ORDER BY subscription_at",
         )
         .bind(now)

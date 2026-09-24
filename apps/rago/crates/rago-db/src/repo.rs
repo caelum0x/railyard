@@ -757,7 +757,8 @@ impl Db {
         org: Uuid,
         external_id: &str,
     ) -> Result<Option<Subscription>> {
-        let row = sqlx::query("SELECT * FROM subscriptions WHERE organization_id = $1 AND external_id = $2 AND status != 2 ORDER BY created_at DESC LIMIT 1")
+        let row = sqlx::query("SELECT * FROM subscriptions WHERE organization_id = $1 AND external_id = $2 AND status != 2 \
+             ORDER BY (status = 1) DESC, created_at DESC LIMIT 1")
             .bind(org).bind(external_id).fetch_optional(&self.pool).await?;
         row.as_ref().map(mapping::subscription).transpose()
     }

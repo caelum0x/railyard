@@ -103,6 +103,7 @@ pub async fn create_customer(
             c
         }
     };
+    let address = save_customer_address(&st, customer.id, p).await?;
     // EU customers with a (new) VAT number are validated against VIES
     // (`customer.vies_check`, emitted by the queued job).
     rago_jobs::vies::enqueue_vies_check_logged(&st.db, customer.id).await;
@@ -120,7 +121,48 @@ pub async fn create_customer(
         json!({ "lago_id": customer.id, "external_id": customer.external_id, "name": customer.name, "email": customer.email }),
     )
     .await;
-    Ok(Json(json!({ "customer": ser::customer(&customer) })))
+    Ok(Json(json!({ "customer": customer_json(&customer, &address) })))
+}
+
+/// Longest accepted address field.
+const MAX_ADDRESS_FIELD_LEN: usize = 255;
+
+/// Apply the address fields present in `p` (Lago's `address_line1`,
+/// `address_line2`, `city`, `state`, `zipcode`, `phone`, plus
+/// `identity_number`) to the customer's stored address. Absent fields keep
+/// their value; an empty string clears one.
+pub(crate) async fn save_customer_address(
+    st: &AppState,
+    customer_id: Uuid,
+    p: &Value,
+) -> ApiResult<rago_db::CustomerAddress> {
+    let current = st.db.customer_address(customer_id).await?;
+    let mut next = current.clone();
+    for field in rago_db::CustomerAddress::FIELDS {
+        let Some(v) = p.get(field) else { continue };
+        let value = match v {
+            Value::Null => None,
+            Value::String(s) => Some(s.as_str()),
+            _ => return Err(ApiError::validation(field, "value_is_invalid")),
+        };
+        if value.is_some_and(|s| s.chars().count() > MAX_ADDRESS_FIELD_LEN) {
+            return Err(ApiError::validation(field, "value_is_too_long"));
+        }
+        next = next.with(field, value);
+    }
+    if next != current {
+        st.db.set_customer_address(customer_id, &next).await?;
+    }
+    Ok(next)
+}
+
+/// The customer JSON with its billing address.
+pub(crate) fn customer_json(c: &Customer, address: &rago_db::CustomerAddress) -> Value {
+    let mut body = ser::customer(c);
+    for (k, v) in address.pairs() {
+        body[k] = json!(v);
+    }
+    body
 }
 
 pub async fn show_customer(
@@ -133,7 +175,8 @@ pub async fn show_customer(
         .find_customer_by_external_id(auth.organization.id, &external_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("customer".into()))?;
-    Ok(Json(json!({ "customer": ser::customer(&c) })))
+    let address = st.db.customer_address(c.id).await?;
+    Ok(Json(json!({ "customer": customer_json(&c, &address) })))
 }
 
 pub async fn list_customers(
@@ -366,6 +409,8 @@ pub(crate) async fn terminate_subscription_now(
     mut sub: Subscription,
 ) -> ApiResult<Value> {
     let plan = st.db.find_plan(sub.plan_id).await?;
+    // A downgrade scheduled to replace this subscription goes with it.
+    crate::plan_change::cancel(st, organization_id, &sub).await?;
     let was_pending = matches!(sub.status, SubscriptionStatus::Pending);
     if was_pending {
         sub.status = SubscriptionStatus::Canceled;
@@ -794,7 +839,17 @@ pub async fn create_credit_note(
     }
 
     let refund = match i64_of(p, "refund_amount_cents") {
-        Some(r) if r > 0 => CreditRefund::Split { refund_amount_cents: r },
+        Some(r) if r > 0 => {
+            // Refuse up front a refund the provider cannot perform (Creem only
+            // refunds whole payments), so no credit note is left half done.
+            if let Some(rejection) = rago_jobs::refunds::refund_precheck(&st.db, &invoice, r)
+                .await
+                .map_err(job_error)?
+            {
+                return Err(ApiError::validation("refund_amount_cents", &rejection.code()));
+            }
+            CreditRefund::Split { refund_amount_cents: r }
+        }
         _ => CreditRefund::CreditOnly,
     };
     let seq = st.db.next_credit_note_sequential_id(invoice.id).await?;

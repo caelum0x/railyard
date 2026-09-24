@@ -70,8 +70,14 @@ a Stripe customer on first charge, and charges use their saved payment method.
 Creem and Dodo Payments (merchants of record) and Iyzico collect through a
 hosted checkout. The invoice's payment waits for the customer, its pay link is
 sent in `payment.requires_action` and shown in the customer portal, and the
-signed provider webhook settles it. Creem's API can only refund whole payments;
-Dodo and Iyzico refund any amount.
+signed provider webhook settles it. Creem's API can only refund whole payments
+(`POST /v1/refunds` takes a transaction id and no amount), so a partial refund
+to a Creem payment is refused up front with `partial_refund_unsupported` (no
+credit note is created) and must be issued from the Creem dashboard. Dodo and
+Iyzico refund any amount. Iyzico needs each customer's name, email, country,
+`address_line1`, `city` and `identity_number` (TC kimlik no for Turkish
+buyers) on the customer record; an incomplete customer is refused with
+`customer_details_missing` naming the fields, and nothing is sent to Iyzico.
 
 ### Customer portal
 
@@ -80,7 +86,14 @@ link to `/portal/:token` (24 hours by default, 30 days at most;
 `DELETE` on the same path revokes every open link). The portal is free and works
 with any provider or none. It shows invoices with PDF download and a Pay
 button, usage this period per billable metric, and wallet balances with top-up.
-Customers can cancel subscriptions there, and can update their payment method
+Customers manage a subscription on a confirmation page: they can switch to a
+cheaper plan (same currency and interval) at the end of the current period, or
+cancel immediately after ticking an explicit confirmation. A scheduled
+downgrade is activated by the billing clock (`activate_subscriptions`): the
+outgoing plan's closing period is billed, then the old subscription is
+terminated and the new one started in one transaction. Operators do the same
+with `GET/POST/DELETE /api/v1/subscriptions/:external_id/plan_change`
+(`{ "plan_change": { "plan_code": "starter" } }`). Customers can update their payment method
 when Stripe is the provider. `GET /customers/:external_id/portal_url` returns
 a portal link whenever the organization does not collect with Stripe.
 
@@ -97,7 +110,14 @@ and does not store it, while `flag` stores it and reports `event.error`. If Mint
 is unreachable, `reject` answers 503 and fails closed. When the invoice is
 finalized, the holds are captured to `RAGO_MINT_PAYEE_ACCOUNT` up to the amount
 due and applied as prepaid credit, and any surplus is released. Voiding an
-invoice releases holds that are still reserved for it. Set `RAGO_MINT_URL`,
+invoice releases holds that are still reserved for it and moves money already
+captured for it back from `RAGO_MINT_PAYEE_ACCOUNT` to the customer's Mint
+account (one idempotent Mint transfer per captured hold; failures are kept on
+the hold and retried with `POST /api/v1/wallets/:id/realtime/reversals`). The
+console's wallet page links to a real-time screen (`GET
+/api/v1/wallets/:id/realtime/overview` and `/holds`) with the live Mint
+balance, holds by event, top-ups, the Mint ledger, and a hosted top-up link
+(`POST /api/v1/wallets/:id/realtime/top_ups`). Set `RAGO_MINT_URL`,
 `RAGO_MINT_API_KEY` and `RAGO_MINT_PAYEE_ACCOUNT` to enable real-time wallets.
 
 ## Configuration

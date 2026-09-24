@@ -91,13 +91,23 @@
     { name: "country", label: "Country (ISO)", value: c.country, placeholder: "US" },
     { name: "timezone", label: "Timezone", value: c.timezone, placeholder: "UTC" },
     { name: "tax_identification_number", label: "Tax ID", value: c.tax_identification_number },
+    { name: "address_line1", label: "Address line 1", value: c.address_line1 },
+    { name: "address_line2", label: "Address line 2", value: c.address_line2 },
+    { name: "city", label: "City", value: c.city },
+    { name: "state", label: "State / province", value: c.state },
+    { name: "zipcode", label: "Postal code", value: c.zipcode },
+    { name: "phone", label: "Phone", value: c.phone },
+    { name: "identity_number", label: "Personal ID number", value: c.identity_number, help: "Required by Iyzico (Turkish TC kimlik no, or a passport number)." },
   ];
+  const ADDRESS_FIELDS = ["address_line1", "address_line2", "city", "state", "zipcode", "phone", "identity_number"];
   function customerForm(existing, after) {
     R.openForm({
       title: existing ? "Edit customer" : "New customer",
       fields: CUSTOMER_FIELDS(existing || {}),
       submitLabel: existing ? "Save" : "Create customer",
       onSubmit: async (v) => {
+        // Editing: an emptied address field is cleared, not kept.
+        if (existing) for (const f of ADDRESS_FIELDS) if (v[f] === undefined && existing[f]) v[f] = "";
         const res = await api.post("/api/v1/customers", { customer: v });
         return "Customer " + res.customer.external_id + " saved";
       },
@@ -141,7 +151,9 @@
       '<div class="grid2">' +
       card("Details", '<div class="body">' + kv([
         ["Lago ID", '<span class="mono">' + esc(cu.lago_id) + "</span>"], ["Email", esc(cu.email)], ["Currency", esc(cu.currency)],
-        ["Country", esc(cu.country)], ["Timezone", esc(cu.timezone)], ["Tax ID", esc(cu.tax_identification_number)], ["Created", datetime(cu.created_at)],
+        ["Country", esc(cu.country)], ["Timezone", esc(cu.timezone)], ["Tax ID", esc(cu.tax_identification_number)],
+        ["Address", esc([cu.address_line1, cu.address_line2, [cu.zipcode, cu.city].filter(Boolean).join(" "), cu.state].filter(Boolean).join(", "))],
+        ["Phone", esc(cu.phone)], ["Personal ID", esc(cu.identity_number)], ["Created", datetime(cu.created_at)],
       ]) + "</div>") +
       card("Current usage", '<div class="body" id="usage-box">' + usagePicker(subs.subscriptions || []) + "</div>") +
       "</div>" + '<div id="integration-box"></div>' +
@@ -280,6 +292,16 @@
     const s = (await api.get(base)).subscription;
     let lifetime = null;
     try { lifetime = (await api.get(base + "/lifetime_usage")).lifetime_usage; } catch (_) { lifetime = null; }
+    let change = null;
+    if (s.status === "active") { try { change = (await api.get(base + "/plan_change")).plan_change; } catch (_) { change = null; } }
+    const scheduled = change && change.scheduled;
+    const planChangeCard = change ? card("Plan change", '<div class="body">' + (scheduled
+      ? kv([["Moves to", esc(scheduled.plan_name) + ' <span class="mono">(' + esc(scheduled.plan_code) + ")</span>"],
+          ["New amount", money(scheduled.plan_amount_cents, s.plan_amount_currency)], ["Takes effect", datetime(scheduled.effective_at)]])
+      : (change.downgrade_options.length
+        ? "No change scheduled. A downgrade takes effect at the end of the current period (" + datetime(change.effective_at) + "); the current period is billed on the current plan."
+        : "No cheaper plan with the same currency and interval exists.")) + "</div>",
+      scheduled ? btn("keepplan", "Cancel change", "close") : (change.downgrade_options.length ? btn("downgrade", "Schedule downgrade", "plans") : "")) : "";
     const view = $("#view");
     view.innerHTML = head(s.name || s.external_id, "Plan " + esc(s.plan_code) + " for " + '<a href="#/customers/' + enc(s.external_customer_id) + '">' + esc(s.external_customer_id) + "</a>",
       (s.status === "active" ? btn("bill", "Bill current period", "invoices") + btn("preview", "Preview invoice", "invoices") : "") +
@@ -291,7 +313,7 @@
         ["Started", datetime(s.started_at)], ["Ending", datetime(s.ending_at)], ["Terminated", datetime(s.terminated_at)],
       ]) + "</div>") +
       card("Lifetime usage", '<div class="body">' + (lifetime ? kv(Object.entries(lifetime).filter(([, v]) => typeof v !== "object").map(([k, v]) => [k.replace(/_/g, " "), /cents$/.test(k) ? money(v, s.plan_amount_currency) : esc(v)])) : '<div class="empty">No usage recorded.</div>') + "</div>") +
-      "</div>" + '<div id="thresholds-box"></div><div id="integration-box"></div>';
+      "</div>" + planChangeCard + '<div id="thresholds-box"></div><div id="integration-box"></div>';
     R.thresholdsPanel($("#thresholds-box", view), base + "/usage_thresholds", s.plan_amount_currency, { subscription: true });
     if (R.integrationPanel) R.integrationPanel("subscription", s, $("#integration-box", view));
     finish(view, {
@@ -313,7 +335,19 @@
         onSubmit: async (v) => { await api.put(base, { subscription: v }); return "Subscription updated"; },
         after: R.render,
       }),
-      terminate: () => R.confirmAction("Terminate subscription", "Terminate " + s.external_id + " now? Remaining usage is billed on its final invoice.", "Terminate", async () => {
+      downgrade: () => R.openForm({
+        title: "Schedule downgrade",
+        intro: "The subscription stays on its current plan until " + String(change.effective_at || "").slice(0, 10) + ", then moves to the plan below. No credit note is issued.",
+        fields: [{ name: "plan_code", label: "New plan", type: "select", options: change.downgrade_options.map((o) => [o.plan_code, o.name + " (" + (Number(o.amount_cents || 0) / 100).toFixed(2) + " " + o.amount_currency + ")"]) }],
+        submitLabel: "Schedule",
+        onSubmit: async (v) => { await api.post(base + "/plan_change", { plan_change: { plan_code: v.plan_code } }); return "Downgrade scheduled"; },
+        after: R.render,
+      }),
+      keepplan: () => R.confirmAction("Cancel plan change", "Keep " + s.external_id + " on its current plan.", "Cancel change", async () => {
+        await api.del(base + "/plan_change");
+        return "Scheduled plan change cancelled";
+      }),
+      terminate: () => R.confirmAction("Terminate subscription", "Terminate " + s.external_id + " now? Remaining usage is billed on its final invoice. A scheduled plan change is cancelled too.", "Terminate", async () => {
         await api.del(base);
         return "Subscription terminated";
       }),

@@ -86,10 +86,10 @@ pub struct IyzicoPaymentProviderInput {
     pub secret_key: Option<String>,
     /// `live` (default) or `sandbox`.
     pub mode: Option<String>,
-    /// Billing city / street Iyzico requires on every form when the customer
-    /// has no address of their own.
-    pub default_city: String,
-    pub default_address: String,
+    /// Deprecated and ignored: the buyer address and identity number are read
+    /// from each customer record (Iyzico refuses to pay placeholders).
+    pub default_city: Option<String>,
+    pub default_address: Option<String>,
     pub default_country: Option<String>,
     pub success_redirect_url: Option<String>,
 }

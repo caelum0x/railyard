@@ -31,6 +31,9 @@
   button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
   button.danger { color: var(--danger); border-color: #5a2a3a; }
   button.ghost { background: transparent; }
+  a.btn { display: inline-flex; align-items: center; gap: 6px; color: var(--fg); background: var(--row); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; }
+  a.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+  a.btn:hover { text-decoration: none; filter: brightness(1.1); }
   button:hover:not(:disabled) { filter: brightness(1.1); }
 
   .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }

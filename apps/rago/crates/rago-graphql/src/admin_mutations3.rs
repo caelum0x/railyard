@@ -220,9 +220,6 @@ impl AdminMutation3 {
         let settings = json!({
             "api_key": required(&input.api_key, "api_key")?,
             "mode": provider_mode(&input.mode, "sandbox")?,
-            "default_city": required(&input.default_city, "default_city")?,
-            "default_address": required(&input.default_address, "default_address")?,
-            "default_country": input.default_country.as_deref().map(str::trim).filter(|c| !c.is_empty()).unwrap_or("Turkey"),
         });
         let row = db(ctx)
             .upsert_payment_provider(org.id, "iyzico", &input.code, Some(&input.name), mask(&input.secret_key).as_deref(), input.success_redirect_url.as_deref(), &settings)

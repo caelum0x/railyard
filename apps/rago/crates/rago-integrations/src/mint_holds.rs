@@ -154,6 +154,78 @@ impl<T: HttpTransport> MintHoldsClient<T> {
             .await?;
         Self::hold_from(&Self::parse(resp.status, &resp.body)?, Some(hold_id))
     }
+
+    /// `POST /v1/transfers`: move `amount_micros` from `from` to `to`
+    /// (idempotent on `idem_key`). Returns whether Mint replayed it.
+    pub async fn transfer(
+        &self,
+        from: &str,
+        to: &str,
+        amount_micros: i64,
+        idem_key: &str,
+        reference: &str,
+    ) -> Result<bool, MintError> {
+        let body = json!({ "from": from, "to": to, "amount_micros": amount_micros, "idem_key": idem_key, "ref": reference });
+        let resp = self
+            .transport
+            .post(&format!("{}/v1/transfers", self.base_url), &self.headers(), body.to_string())
+            .await?;
+        let data = Self::parse(resp.status, &resp.body)?;
+        Ok(data["idempotent_replay"].as_bool().unwrap_or(false))
+    }
+
+    /// `GET /v1/accounts/:id/balance` → `(available_micros, held_micros)`.
+    pub async fn balance(&self, account: &str) -> Result<(i64, i64), MintError> {
+        let resp = self
+            .transport
+            .get(&format!("{}/v1/accounts/{}/balance", self.base_url, path_segment(account)), &self.headers())
+            .await?;
+        let data = Self::parse(resp.status, &resp.body)?;
+        Ok((
+            data["available_micros"].as_i64().unwrap_or(0),
+            data["held_micros"].as_i64().unwrap_or(0),
+        ))
+    }
+
+    /// `GET /v1/accounts/:id/statement?from_ms=&to_ms=` — the account's ledger
+    /// for the period (opening/closing balance, signed entries, totals), as
+    /// Mint reports it.
+    pub async fn statement(&self, account: &str, from_ms: i64, to_ms: i64) -> Result<Value, MintError> {
+        let resp = self
+            .transport
+            .get(
+                &format!(
+                    "{}/v1/accounts/{}/statement?from_ms={from_ms}&to_ms={to_ms}",
+                    self.base_url,
+                    path_segment(account)
+                ),
+                &self.headers(),
+            )
+            .await?;
+        Self::parse(resp.status, &resp.body)
+    }
+
+    /// `GET /v1/providers` — funding providers and whether each can open a
+    /// hosted checkout.
+    pub async fn providers(&self) -> Result<Value, MintError> {
+        let resp = self
+            .transport
+            .get(&format!("{}/v1/providers", self.base_url), &self.headers())
+            .await?;
+        Self::parse(resp.status, &resp.body)
+    }
+
+    /// `POST /v1/checkouts` — a hosted checkout that funds `account` with
+    /// `amount_micros` once paid. Returns Mint's checkout object
+    /// (`checkout_url`, `checkout_id`, ...).
+    pub async fn create_checkout(&self, provider: &str, account: &str, amount_micros: i64) -> Result<Value, MintError> {
+        let body = json!({ "provider": provider, "account_id": account, "amount_micros": amount_micros });
+        let resp = self
+            .transport
+            .post(&format!("{}/v1/checkouts", self.base_url), &self.headers(), body.to_string())
+            .await?;
+        Self::parse(resp.status, &resp.body)
+    }
 }
 
 fn path_segment(s: &str) -> String {
@@ -195,6 +267,27 @@ mod tests {
         let t = MockTransport::always(404, r#"{"success":false,"error":{"code":"hold_not_found","message":""}}"#);
         let c = MintHoldsClient::new("https://mint.test", "mk", &t);
         assert!(matches!(c.release("h", "k", "r").await, Err(MintError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn transfer_and_balance_hit_the_account_endpoints() {
+        let ok = |b: &str| Ok(HttpResponse { status: 200, body: b.into() });
+        let t = MockTransport::scripted(
+            vec![
+                ok(r#"{"success":true,"data":{"first_seq":9,"idempotent_replay":false}}"#),
+                ok(r#"{"success":true,"data":{"account_id":"acct_c","available_micros":1500000,"held_micros":250000}}"#),
+            ],
+            HttpResponse { status: 500, body: "{}".into() },
+        );
+        let c = MintHoldsClient::new("https://mint.test", "mk", &t);
+        assert!(!c.transfer("acct_seller", "acct_c", 900, "rev-k", "void INV-1").await.unwrap());
+        assert_eq!(c.balance("acct_c").await.unwrap(), (1_500_000, 250_000));
+        let reqs = t.requests();
+        assert_eq!(reqs[0].url, "https://mint.test/v1/transfers");
+        let body: Value = serde_json::from_str(&reqs[0].body).unwrap();
+        assert_eq!(body["from"], "acct_seller");
+        assert_eq!(body["to"], "acct_c");
+        assert_eq!(reqs[1].url, "https://mint.test/v1/accounts/acct_c/balance");
     }
 
     #[tokio::test]

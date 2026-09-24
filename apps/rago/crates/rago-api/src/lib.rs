@@ -35,6 +35,7 @@ pub mod reads;
 pub mod refunds;
 pub mod phase14;
 pub mod phase15;
+pub mod plan_change;
 pub mod portal;
 pub mod resources;
 pub mod sdk_parity;
@@ -44,6 +45,7 @@ pub mod subs;
 pub mod tenancy;
 pub mod thresholds;
 pub mod usage;
+pub mod wallet_console;
 pub mod webhooks;
 
 use axum::routing::{get, post, put};
@@ -96,6 +98,7 @@ pub fn router(state: AppState) -> Router {
         .route("/subscriptions", post(handlers::create_subscription).get(breadth::list_subscriptions))
         .route("/subscriptions/:external_id", get(subs::show_subscription).put(subs::update_subscription).delete(handlers::terminate_subscription))
         .route("/subscriptions/:external_id/invoices", post(handlers::bill_subscription))
+        .route("/subscriptions/:external_id/plan_change", get(plan_change::show).post(plan_change::create).delete(plan_change::destroy))
         .route("/subscriptions/:external_id/lifetime_usage", get(subs::subscription_lifetime_usage))
         .route("/subscriptions/:external_id/usage_thresholds", get(thresholds::list_subscription_thresholds).put(thresholds::replace_subscription_thresholds))
         .route("/subscriptions/:external_id/usage_thresholds/check", post(thresholds::check_subscription_thresholds))
@@ -155,6 +158,10 @@ pub fn router(state: AppState) -> Router {
         .route("/wallets", post(handlers::create_wallet).get(sdk_parity::list_wallets))
         .route("/wallets/:id", get(handlers::show_wallet).put(crud::update_wallet).delete(crud::terminate_wallet))
         .route("/wallets/:id/realtime", get(crud::show_wallet_realtime).put(crud::update_wallet_realtime))
+        .route("/wallets/:id/realtime/overview", get(wallet_console::overview))
+        .route("/wallets/:id/realtime/holds", get(wallet_console::holds))
+        .route("/wallets/:id/realtime/top_ups", post(wallet_console::create_top_up))
+        .route("/wallets/:id/realtime/reversals", post(wallet_console::retry_reversals))
         .route("/wallets/:id/transactions", get(reads::wallet_transactions))
         .route("/wallet_transactions", post(handlers::create_wallet_transaction))
         .route("/coupons", post(handlers::create_coupon).get(crud::list_coupons))
@@ -265,7 +272,9 @@ pub fn router(state: AppState) -> Router {
         .route("/portal/:token/invoices/:invoice_id/download", get(portal::download_invoice))
         .route("/portal/:token/invoices/:invoice_id/pay", post(portal::pay_invoice))
         .route("/portal/:token/wallets/:wallet_id/top_up", post(portal::top_up))
-        .route("/portal/:token/subscriptions/:subscription_id/cancel", post(portal::cancel_subscription))
+        .route("/portal/:token/subscriptions/:subscription_id/cancel", get(portal::manage_subscription).post(portal::cancel_subscription))
+        .route("/portal/:token/subscriptions/:subscription_id/downgrade", post(portal::downgrade_subscription))
+        .route("/portal/:token/subscriptions/:subscription_id/keep_plan", post(portal::keep_plan))
         .route("/portal/:token/payment_method", post(portal::payment_method))
         .route("/webhooks/creem/:organization_id", post(checkout_webhooks::creem_webhook))
         .route("/webhooks/dodo/:organization_id", post(checkout_webhooks::dodo_webhook))

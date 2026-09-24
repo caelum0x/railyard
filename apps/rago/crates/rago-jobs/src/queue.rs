@@ -46,6 +46,9 @@ pub async fn enqueue_billing_cycle(
         if !force && !due_for_billing(interval, anniversary, sub_at, billing_date) {
             continue;
         }
+        if !force && crate::scheduler::started_on_or_after(&sub, &plan, billing_date) {
+            continue;
+        }
         let payload = json!({
             "organization_id": sub.organization_id.to_string(),
             "subscription_external_id": sub.external_id,

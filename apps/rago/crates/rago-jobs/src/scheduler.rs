@@ -83,6 +83,9 @@ pub async fn run_billing_cycle<T: HttpTransport>(
         if !force && !due_for_billing(interval, anniversary, sub_at, billing_date) {
             continue;
         }
+        if !force && started_on_or_after(&subscription, &plan, billing_date) {
+            continue;
+        }
 
         match bill_and_collect(db, transport, &subscription, &plan, interval, anniversary, billing_date, cfg.charge_customers).await {
             Ok(outcome) => {
@@ -478,6 +481,21 @@ fn plan_interval(interval: &Option<PlanInterval>) -> Interval {
         Some(PlanInterval::Yearly) => Interval::Yearly,
         _ => Interval::Monthly,
     }
+}
+
+/// Whether a pay-in-arrears subscription started on or after `billing_date`:
+/// it did not exist in the period that closed, so there is nothing to bill yet
+/// (e.g. a scheduled downgrade that took effect at this boundary; the outgoing
+/// plan billed the closed period).
+pub fn started_on_or_after(
+    subscription: &Subscription,
+    plan: &rago_core::models::Plan,
+    billing_date: NaiveDate,
+) -> bool {
+    !plan.pay_in_advance
+        && subscription
+            .started_at
+            .is_some_and(|t| t.date_naive() >= billing_date)
 }
 
 /// Public alias for the billing `Interval` of a plan (used by the queue).

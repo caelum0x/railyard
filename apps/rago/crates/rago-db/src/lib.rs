@@ -12,6 +12,7 @@
 //! Queries are runtime (`sqlx::query`) so the crate builds without a live
 //! database; the domain math lives in `rago-billing`.
 
+pub mod billing_gaps;
 pub mod charge_filters;
 pub mod collection;
 pub mod data_api;
@@ -49,6 +50,7 @@ pub use dunning::{
     DunningCampaignPolicy, DunningCandidate, DunningOverviewRow, DunningThresholdRow,
     OverdueInvoiceRow,
 };
+pub use billing_gaps::{CustomerAddress, HoldListRow, HoldTotals, ReversibleCapture};
 pub use collection::{PaymentAttemptState, ProviderCredentials, StoreSecretError};
 pub use portal::PortalSession;
 pub use provider_checkouts::CheckoutPayment;

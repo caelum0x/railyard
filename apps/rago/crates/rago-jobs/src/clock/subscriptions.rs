@@ -31,7 +31,7 @@ use crate::JobError;
 /// re-run or a concurrent tick never emits a duplicate webhook.
 pub async fn activate_subscriptions(db: &Db) -> Result<u64, JobError> {
     let now = Utc::now().naive_utc();
-    let mut activated: u64 = 0;
+    let mut activated: u64 = apply_scheduled_downgrades(db).await?;
 
     for sub in db.pending_subscriptions_due(now).await? {
         if activation_blocked_on_payment_method(db, &sub).await? {
@@ -74,6 +74,83 @@ pub async fn activate_subscriptions(db: &Db) -> Result<u64, JobError> {
         }
     }
     Ok(activated)
+}
+
+/// Scheduled downgrades whose boundary arrived (`Subscriptions::PlanUpgradeService`
+/// for the queued next subscription): bill the outgoing plan's closing period,
+/// then atomically terminate it and activate the downgraded subscription.
+///
+/// * The closing period of a pay-in-arrears outgoing plan is billed here (the
+///   billing run only bills active subscriptions, and the outgoing one is
+///   terminated right after). The bill is guarded per (subscription, period),
+///   so a billing run that already billed it is not repeated. A billing error
+///   leaves both subscriptions untouched and the swap is retried next tick.
+/// * A pay-in-advance outgoing plan already collected its fee for the closing
+///   period at the start of it, so nothing is billed.
+/// * An outgoing subscription that is no longer active (terminated by the
+///   operator meanwhile) cancels the scheduled downgrade.
+pub async fn apply_scheduled_downgrades(db: &Db) -> Result<u64, JobError> {
+    let now = Utc::now().naive_utc();
+    let transport = rago_integrations::default_transport();
+    let mut applied = 0;
+    for (outgoing, incoming) in db.due_downgrades(now).await? {
+        if !matches!(outgoing.status, rago_core::enums::SubscriptionStatus::Active) {
+            for canceled in db.cancel_scheduled_downgrades(outgoing.id).await? {
+                record_webhook(
+                    db,
+                    canceled.organization_id,
+                    WebhookKind::SubscriptionCanceled,
+                    json!({ "lago_id": canceled.id, "external_id": canceled.external_id, "status": "canceled" }),
+                )
+                .await?;
+            }
+            continue;
+        }
+        let boundary = incoming.subscription_at.unwrap_or_else(Utc::now);
+        let plan = db.find_plan(outgoing.plan_id).await?;
+        if !plan.pay_in_advance {
+            let interval = crate::scheduler::interval_of(&plan.interval);
+            let anniversary = matches!(outgoing.billing_time, rago_core::enums::BillingTime::Anniversary);
+            if let Err(e) = crate::scheduler::bill_and_collect(
+                db,
+                &transport,
+                &outgoing,
+                &plan,
+                interval,
+                anniversary,
+                boundary.date_naive(),
+                true,
+            )
+            .await
+            {
+                tracing::error!(
+                    subscription_id = %outgoing.id,
+                    error = %e,
+                    "closing invoice before a scheduled downgrade failed; retrying next tick"
+                );
+                continue;
+            }
+        }
+        if !db.swap_downgrade(outgoing.id, incoming.id, boundary.naive_utc()).await? {
+            continue;
+        }
+        applied += 1;
+        record_webhook(
+            db,
+            outgoing.organization_id,
+            WebhookKind::SubscriptionTerminated,
+            json!({ "lago_id": outgoing.id, "external_id": outgoing.external_id, "status": "terminated", "next_subscription_id": incoming.id }),
+        )
+        .await?;
+        record_webhook(
+            db,
+            incoming.organization_id,
+            WebhookKind::SubscriptionStarted,
+            json!({ "lago_id": incoming.id, "external_id": incoming.external_id, "status": "active", "previous_subscription_id": outgoing.id }),
+        )
+        .await?;
+    }
+    Ok(applied)
 }
 
 fn subscription_object(sub: &SubscriptionRef, status: &str) -> serde_json::Value {

@@ -107,9 +107,6 @@ fn env_settings(kind: &str) -> Value {
         "currency": env_nonempty("RAGO_CREEM_PRODUCT_CURRENCY"),
         "mode": env_nonempty("RAGO_PAYMENT_PROVIDER_MODE"),
         "api_key": env_nonempty("RAGO_IYZICO_API_KEY"),
-        "default_city": env_nonempty("RAGO_IYZICO_DEFAULT_CITY"),
-        "default_address": env_nonempty("RAGO_IYZICO_DEFAULT_ADDRESS"),
-        "default_country": env_nonempty("RAGO_IYZICO_DEFAULT_COUNTRY"),
     })
 }
 
@@ -151,22 +148,30 @@ pub fn iyzico_provider<T: HttpTransport>(
     Some(iyzico)
 }
 
-fn iyzico_buyer(settings: &Value, customer: &Customer) -> IyzicoBuyer {
-    IyzicoBuyer {
+/// The Iyzico buyer, read entirely from the customer record (name, email,
+/// country and the stored billing address / identity number). Missing fields
+/// stay empty so the provider refuses with the list of what to complete.
+async fn iyzico_buyer(db: &Db, customer: &Customer) -> Result<IyzicoBuyer, JobError> {
+    let address = db.customer_address(customer.id).await?;
+    let street = [address.address_line1.as_deref(), address.address_line2.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter(|l| !l.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let city = address.city.clone().unwrap_or_default();
+    Ok(IyzicoBuyer {
         id: customer.external_id.clone(),
         name: customer.name.clone().unwrap_or_default(),
         email: customer.email.clone(),
-        country: customer
-            .country
-            .clone()
-            .filter(|c| !c.trim().is_empty())
-            .or_else(|| setting(settings, "default_country"))
-            .unwrap_or_default(),
-        city: setting(settings, "default_city").unwrap_or_default(),
-        address: setting(settings, "default_address").unwrap_or_default(),
-        identity_number: customer.tax_identification_number.clone(),
+        country: customer.country.clone().unwrap_or_default(),
+        city,
+        address: if address.address_line1.as_deref().is_some_and(|l| !l.trim().is_empty()) { street } else { String::new() },
+        zip_code: address.zipcode,
+        phone: address.phone,
+        identity_number: address.identity_number.or_else(|| customer.tax_identification_number.clone()),
         ip: None,
-    }
+    })
 }
 
 /// Resolve the organization's payment provider: a dashboard-configured
@@ -368,7 +373,7 @@ pub async fn collect_invoice<T: HttpTransport>(
             if iyzico_provider(&provider, invoice.organization_id, transport).is_none() {
                 return Ok(CollectOutcome::Skipped(SkipReason::ProviderNotConfigured));
             }
-            let buyer = iyzico_buyer(&provider.settings, &customer);
+            let buyer = iyzico_buyer(db, &customer).await?;
             let org = invoice.organization_id;
             charge_invoice_with(db, invoice, &customer.external_id, None, |_attempt| {
                 let iyzico = iyzico_provider(&provider, org, transport)

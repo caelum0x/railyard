@@ -13,8 +13,10 @@
 //! of the period, and **no mid-period credit is issued**. At the next billing
 //! boundary the current subscription is terminated and the pending one activated.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Months, NaiveDate, Utc};
 use rago_core::enums::SubscriptionStatus;
+
+use crate::dates::{due_for_billing, Interval};
 use rago_core::models::{Plan, Subscription};
 use uuid::Uuid;
 
@@ -80,6 +82,105 @@ pub fn apply_pending_downgrade(
     activated.updated_at = boundary;
 
     (terminated, activated)
+}
+
+/// Why a plan change cannot be scheduled as a downgrade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DowngradeRefusal {
+    /// The target is the current plan.
+    SamePlan,
+    /// The target bills in another currency or interval.
+    Incompatible,
+    /// The target is not cheaper (that is an upgrade).
+    NotCheaper,
+}
+
+impl DowngradeRefusal {
+    pub fn code(&self) -> &'static str {
+        match self {
+            DowngradeRefusal::SamePlan => "plan_is_current",
+            DowngradeRefusal::Incompatible => "plan_currency_or_interval_differs",
+            DowngradeRefusal::NotCheaper => "plan_is_not_a_downgrade",
+        }
+    }
+}
+
+/// Whether moving from `current` to `target` is a downgrade Rago can schedule:
+/// a different plan, same currency and interval, with a lower base amount.
+pub fn check_downgrade(current: &Plan, target: &Plan) -> Result<(), DowngradeRefusal> {
+    if current.id == target.id {
+        return Err(DowngradeRefusal::SamePlan);
+    }
+    if !current.amount_currency.eq_ignore_ascii_case(&target.amount_currency)
+        || current.interval != target.interval
+    {
+        return Err(DowngradeRefusal::Incompatible);
+    }
+    if target.amount_cents.unwrap_or(0) >= current.amount_cents.unwrap_or(0) {
+        return Err(DowngradeRefusal::NotCheaper);
+    }
+    Ok(())
+}
+
+/// The next billing date strictly after `today`: the day the current period
+/// rolls over, which is when a scheduled downgrade takes effect.
+pub fn next_billing_date(
+    interval: Interval,
+    anniversary: bool,
+    subscription_at: NaiveDate,
+    today: NaiveDate,
+) -> NaiveDate {
+    for days in 1..=400 {
+        let day = today + Duration::days(days);
+        if due_for_billing(interval, anniversary, subscription_at, day) {
+            return day;
+        }
+    }
+    // Anniversary quarterly / semiannual / yearly: step whole periods from the
+    // subscription date.
+    let step = match interval {
+        Interval::Quarterly => 3,
+        Interval::Semiannual => 6,
+        Interval::Weekly | Interval::Monthly => 1,
+        Interval::Yearly => 12,
+    };
+    let mut periods: u32 = 1;
+    loop {
+        let candidate = subscription_at
+            .checked_add_months(Months::new(step * periods))
+            .unwrap_or(today + Duration::days(1));
+        if candidate > today || periods > 1200 {
+            return candidate.max(today + Duration::days(1));
+        }
+        periods += 1;
+    }
+}
+
+#[cfg(test)]
+mod schedule_tests {
+    use super::*;
+
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    #[test]
+    fn calendar_monthly_rolls_over_on_the_first() {
+        assert_eq!(next_billing_date(Interval::Monthly, false, d(2026, 1, 10), d(2026, 9, 24)), d(2026, 10, 1));
+        assert_eq!(next_billing_date(Interval::Monthly, false, d(2026, 1, 10), d(2026, 9, 1)), d(2026, 10, 1));
+    }
+
+    #[test]
+    fn anniversary_monthly_uses_the_subscription_day() {
+        assert_eq!(next_billing_date(Interval::Monthly, true, d(2026, 1, 15), d(2026, 9, 24)), d(2026, 10, 15));
+        assert_eq!(next_billing_date(Interval::Monthly, true, d(2026, 1, 15), d(2026, 9, 10)), d(2026, 9, 15));
+    }
+
+    #[test]
+    fn anniversary_yearly_steps_whole_years() {
+        assert_eq!(next_billing_date(Interval::Yearly, true, d(2025, 3, 5), d(2026, 9, 24)), d(2027, 3, 5));
+        assert_eq!(next_billing_date(Interval::Quarterly, true, d(2026, 1, 5), d(2026, 9, 24)), d(2026, 10, 5));
+    }
 }
 
 #[cfg(test)]

@@ -11,8 +11,11 @@
 //!   invoice's open holds to the seller's Mint account, up to the amount due,
 //!   releases the rest, and applies the captured amount to the invoice as
 //!   prepaid credit. A fully covered invoice is paid with no provider charge.
-//! * [`release_invoice_holds`]: called on void. It releases holds that are
-//!   still reserved for the voided invoice.
+//! * [`settle_void`]: called on void. It releases holds that are still
+//!   reserved for the voided invoice ([`release_invoice_holds`]) and moves money
+//!   already captured for it back from the seller's Mint account to the
+//!   customer's ([`reverse_invoice_captures`], one idempotent transfer per
+//!   captured hold).
 //!
 //! Mint connection: `RAGO_MINT_URL`, `RAGO_MINT_API_KEY` and
 //! `RAGO_MINT_PAYEE_ACCOUNT` (the seller's Mint account that captures are paid
@@ -325,4 +328,81 @@ pub async fn release_invoice_holds<T: HttpTransport>(db: &Db, transport: &T, inv
         }
     }
     Ok(released)
+}
+
+/// What voiding an invoice did to its real-time wallet money.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VoidSettlement {
+    /// Holds still reserved for the invoice that were released.
+    pub released: usize,
+    /// Captured holds whose money was moved back to the customer.
+    pub reversed: usize,
+    pub reversed_micros: i64,
+    /// Captured holds whose reversal failed (kept `captured` with the error;
+    /// retried from the console or by voiding again).
+    pub failed: usize,
+}
+
+/// Idempotency key of the reversal of one captured hold (a retry never moves
+/// the money twice).
+pub fn reversal_idem_key(hold_row_id: Uuid) -> String {
+    format!("rago:reverse:{hold_row_id}")
+}
+
+/// Move the money captured for a **voided** invoice back from the seller's
+/// Mint account to the customer's: one idempotent Mint transfer per captured
+/// hold, for exactly the captured amount. Holds of invoices that are not
+/// voided are never touched.
+pub async fn reverse_invoice_captures<T: HttpTransport>(
+    db: &Db,
+    transport: &T,
+    invoice_id: Uuid,
+) -> Result<VoidSettlement, JobError> {
+    let captures = db.reversible_captures_for_invoice(invoice_id).await?;
+    let mut out = VoidSettlement::default();
+    if captures.is_empty() {
+        return Ok(out);
+    }
+    let Some(config) = mint_config() else {
+        for c in &captures {
+            db.mark_hold_reversal(c.hold.id, None, Some("mint_not_configured")).await?;
+        }
+        out.failed = captures.len();
+        return Ok(out);
+    };
+    let number = db.find_invoice(invoice_id).await?.map(|i| i.number).unwrap_or_default();
+    let client = MintHoldsClient::new(config.url.clone(), config.api_key.clone(), transport);
+    for c in &captures {
+        if c.mint_account_id.is_empty() {
+            db.mark_hold_reversal(c.hold.id, None, Some("wallet_has_no_mint_account")).await?;
+            out.failed += 1;
+            continue;
+        }
+        let reference = format!("rago:void:{number}");
+        match client
+            .transfer(&config.payee_account, &c.mint_account_id, c.hold.captured_micros, &reversal_idem_key(c.hold.id), &reference)
+            .await
+        {
+            Ok(_) => {
+                db.mark_hold_reversal(c.hold.id, Some(c.hold.captured_micros), None).await?;
+                out.reversed += 1;
+                out.reversed_micros += c.hold.captured_micros;
+            }
+            Err(e) => {
+                tracing::error!(invoice_id = %invoice_id, hold = %c.hold.id, error = %e, "mint reversal failed");
+                db.mark_hold_reversal(c.hold.id, None, Some(&format!("reversal_failed: {e}"))).await?;
+                out.failed += 1;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Everything a void does to real-time wallet money: release what is still
+/// reserved for the invoice and reverse what was already captured.
+pub async fn settle_void<T: HttpTransport>(db: &Db, transport: &T, invoice_id: Uuid) -> Result<VoidSettlement, JobError> {
+    let released = release_invoice_holds(db, transport, invoice_id).await?;
+    let mut out = reverse_invoice_captures(db, transport, invoice_id).await?;
+    out.released = released;
+    Ok(out)
 }

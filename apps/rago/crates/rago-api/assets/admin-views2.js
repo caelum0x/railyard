@@ -69,6 +69,7 @@
     const active = wa.status === "active";
     const view = $("#view");
     view.innerHTML = head(wa.name || "Wallet", "Customer " + '<a href="#/customers/' + enc(wa.external_customer_id) + '">' + esc(wa.external_customer_id) + "</a>",
+      '<a class="btn" href="#/wallets/' + enc(wa.lago_id) + '/mint">Real-time (Mint)</a>' +
       (active ? btn("topup", "Top up", "plus", "primary") + btn("rule", "Recurring top-up", "retry") + btn("edit", "Edit", "edit") + btn("terminate", "Terminate", "trash", "danger") : ""), '<a href="#/wallets">Wallets</a>') +
       '<div class="grid2">' +
       card("Balance", '<div class="body">' + kv([
@@ -135,6 +136,116 @@
         after: R.render,
       }),
       terminate: () => R.confirmAction("Terminate wallet", "Remaining credits are forfeited.", "Terminate", async () => { await api.del(base); return "Wallet terminated"; }),
+    });
+  });
+
+  // ---- real-time (Mint) wallet console -------------------------------------------------
+  // Live Mint balance, the wallet's holds, top-ups and the Mint ledger. Amounts
+  // at Mint are microdollars (1 cent = 10,000 micros).
+  const microsToCents = (m) => (m === null || m === undefined ? null : Math.round(Number(m) / 10000));
+  const usd = (micros) => money(microsToCents(micros), "USD");
+  R.route("/wallets/:id/mint", async (p, q) => {
+    const base = "/api/v1/wallets/" + enc(p.id);
+    const pg = page(q);
+    const status = q.status || "";
+    const [ov, hl] = await Promise.all([
+      api.get(base + "/realtime/overview?days=30"),
+      api.get(base + "/realtime/holds?per_page=" + PER_PAGE + "&page=" + pg + (status ? "&status=" + enc(status) : "")),
+    ]);
+    const o = ov.wallet_realtime_overview;
+    const m = o.mint || {};
+    const h = o.holds || {};
+    const statement = m.statement || {};
+    const entries = (statement.entries || []).slice().reverse();
+    const providers = ((m.providers && (m.providers.providers || m.providers)) || []).filter((x) => x && x.checkout);
+    const view = $("#view");
+    let lastLink = null;
+    const actions = (o.realtime_enabled && m.configured && o.mint_account_id ? btn("topup", "Top-up link", "plus", "primary") : "") +
+      (h.failed_reversals > 0 ? btn("reverse", "Retry reversals", "retry") : "") + btn("settings", "Real-time settings", "settings");
+    const filters = ["", "open", "captured", "reversed", "released", "flagged"].map((st) =>
+      '<a class="btn' + (st === status ? " primary" : "") + '" href="#/wallets/' + enc(p.id) + "/mint" + (st ? "?status=" + st : "") + '">' + esc(st || "all") + "</a>").join(" ");
+    view.innerHTML = head((o.wallet_name || "Wallet") + " real-time", "Usage is reserved at Mint as it happens and captured when the invoice is finalized.", actions,
+      '<a href="#/wallets/' + enc(p.id) + '">Wallet</a>') +
+      (m.error ? '<div class="card"><div class="body">' + esc(m.error) + "</div></div>" : "") +
+      '<div class="grid2">' +
+      card("Mint balance", '<div class="body">' + kv([
+        ["Real-time debit", badge(o.realtime_enabled ? "active" : "disabled")], ["On shortfall", esc(o.realtime_policy)],
+        ["Mint account", '<span class="mono">' + esc(o.mint_account_id || "-") + "</span>"],
+        ["Available", m.available_micros === undefined ? "-" : usd(m.available_micros)],
+        ["Held at Mint", m.held_micros === undefined ? "-" : usd(m.held_micros)],
+      ]) + "</div>") +
+      card("Holds", '<div class="body">' + kv([
+        ["Open (reserved)", money(h.open_cents, "USD") + ' <span class="muted">(' + esc(h.open_count) + ")</span>"],
+        ["Captured to seller", usd(h.captured_micros)],
+        ["Reversed on void", usd(h.reversed_micros)],
+        ["Flagged shortfall", money(h.flagged_cents, "USD") + ' <span class="muted">(' + esc(h.flagged_count) + ")</span>"],
+        ["Failed reversals", h.failed_reversals > 0 ? badge("failed") + " " + esc(h.failed_reversals) : "0"],
+      ]) + "</div>") + "</div>" +
+      card("Holds by event", '<div class="body">' + filters + "</div>" + table([
+        { h: "Event", f: (r) => esc(r.event_transaction_id), cls: "mono" },
+        { h: "At", f: (r) => datetime(r.event_timestamp) },
+        { h: "Status", f: (r) => badge(r.status) },
+        { h: "Amount", f: (r) => money(r.amount_cents, "USD"), cls: "num" },
+        { h: "Captured", f: (r) => usd(r.captured_micros), cls: "num" },
+        { h: "Reversed", f: (r) => usd(r.reversed_micros), cls: "num" },
+        { h: "Invoice", f: (r) => (r.lago_invoice_id ? '<a href="#/invoices/' + esc(r.lago_invoice_id) + '">' + esc(r.invoice_number || "view") + "</a>" : "-") },
+        { h: "Note", f: (r) => esc(r.last_error || "") },
+      ], hl.holds, { empty: "No holds yet." }) + R.pager(hl.meta, pg)) +
+      card("Top-ups (last " + esc(o.ledger_days) + " days)", table([
+        { h: "When", f: (r) => datetime(new Date(Number(r.ts)).toISOString()) },
+        { h: "Type", f: (r) => badge(r.op === "Mint" ? "deposit" : "transfer in") },
+        { h: "Amount", f: (r) => usd(r.delta_micros), cls: "num" },
+        { h: "Balance after", f: (r) => usd(r.available_after_micros), cls: "num" },
+      ], (m.top_ups || []).slice().reverse(), { empty: "No top-ups in this period." })) +
+      card("Mint ledger (last " + esc(o.ledger_days) + " days)",
+        (statement.totals ? '<div class="body">' + kv([
+          ["Opening", usd((statement.opening || {}).available_micros)], ["Money in", usd(statement.totals.credits_micros)],
+          ["Money out", usd(statement.totals.debits_micros)], ["Closing", usd((statement.closing || {}).available_micros)],
+        ]) + "</div>" : "") + table([
+          { h: "When", f: (r) => datetime(new Date(Number(r.ts)).toISOString()) },
+          { h: "Operation", f: (r) => esc(r.op) },
+          { h: "Change", f: (r) => usd(r.delta_micros), cls: "num" },
+          { h: "Available after", f: (r) => usd(r.available_after_micros), cls: "num" },
+          { h: "Held after", f: (r) => usd(r.held_after_micros), cls: "num" },
+          { h: "Receipt", f: (r) => esc(String(r.receipt_hash || "").slice(0, 12)), cls: "mono" },
+        ], entries, { empty: m.error ? "Ledger unavailable." : "No ledger entries in this period." }));
+    finish(view, {
+      topup: () => R.openForm({
+        title: "Top-up link",
+        intro: "Creates a hosted checkout at Mint. Send the link to the customer; their Mint balance rises once they pay.",
+        fields: [
+          { name: "amount", label: "Amount (USD)", type: "money", required: true },
+          providers.length
+            ? { name: "provider", label: "Payment provider", type: "select", options: providers.map((x) => [x.provider, x.provider]) }
+            : { name: "provider", label: "Payment provider", required: true, placeholder: "stripe", help: "Mint did not report an active checkout provider." },
+        ],
+        submitLabel: "Create link",
+        onSubmit: async (v) => {
+          const r = await api.post(base + "/realtime/top_ups", { top_up: { amount_cents: v.amount, provider: v.provider } });
+          const url = (r.top_up || {}).checkout_url;
+          if (!url) throw new Error("Mint returned no checkout link.");
+          lastLink = { checkout_url: url, amount: (v.amount / 100).toFixed(2) + " USD", provider: v.provider };
+          return "Top-up link created";
+        },
+        after: () => { if (lastLink) R.showJson("Top-up link", lastLink); },
+      }),
+      reverse: () => R.confirmAction("Retry reversals", "Move money captured for voided invoices back from the seller's Mint account to the customer's.", "Retry", async () => {
+        const r = (await api.post(base + "/realtime/reversals", {})).reversals;
+        if (r.failed > 0) throw new Error(r.failed + " reversal(s) still failing. Check the notes on the holds.");
+        return r.reversed + " hold(s) reversed";
+      }),
+      settings: () => R.openForm({
+        title: "Real-time settings",
+        intro: "Real-time wallets reserve each event's price at Mint. Wallet currency must be USD.",
+        fields: [
+          { name: "realtime_enabled", label: "Reserve usage in real time", type: "checkbox", value: o.realtime_enabled },
+          { name: "realtime_policy", label: "When the customer cannot cover an event", type: "select", value: o.realtime_policy,
+            options: [["reject", "Reject the event"], ["flag", "Accept it and flag the shortfall"]] },
+          { name: "mint_account_id", label: "Customer Mint account", value: o.mint_account_id || "" },
+        ],
+        onSubmit: async (v) => { await api.put(base + "/realtime", { wallet: v }); return "Real-time settings saved"; },
+        after: R.render,
+      }),
     });
   });
 
@@ -607,9 +718,6 @@
             { name: "apiKey", label: "API key", required: true, value: settings.api_key || "" },
             { name: "secretKey", label: "Secret key (also verifies notifications)", type: "password", required: !editing, placeholder: secretHint },
             { name: "mode", label: "Mode (live or sandbox)", value: settings.mode || "live" },
-            { name: "defaultCity", label: "Billing city sent to Iyzico", required: true, value: settings.default_city || "" },
-            { name: "defaultAddress", label: "Billing address sent to Iyzico", required: true, value: settings.default_address || "" },
-            { name: "defaultCountry", label: "Billing country for customers without one", value: settings.default_country || "Turkey" },
             { name: "successRedirectUrl", label: "Return URL after payment", type: "url", value: existing ? existing.successRedirectUrl : "" },
           ],
           mutation: "mutation($input: IyzicoPaymentProviderInput!) { addIyzicoPaymentProvider(input: $input) { id } }",
@@ -619,7 +727,7 @@
         title: (editing ? "Edit " : "Connect ") + PROVIDER_LABEL[kind],
         intro: "Credentials are encrypted at rest (requires RAGO_ENCRYPTION_KEY on the server); only their last 4 characters are shown afterwards. " +
           (kind === "iyzico"
-            ? "Rago sends buyers to Iyzico's hosted form and receives them back at " + webhookUrl(kind) + " (set RAGO_PUBLIC_URL on the server). Add the same URL as the merchant notification URL in the Iyzico panel."
+            ? "Rago sends buyers to Iyzico's hosted form and receives them back at " + webhookUrl(kind) + " (set RAGO_PUBLIC_URL on the server). Add the same URL as the merchant notification URL in the Iyzico panel. Each customer needs a name, email, country, address, city and personal ID number on their record; invoices of incomplete customers are not sent to Iyzico."
             : "Create a webhook in " + PROVIDER_LABEL[kind] + " pointing at " + webhookUrl(kind) + " and paste its signing secret here so payment and refund events are verified for this organization.") +
           (kind === "creem" || kind === "dodo" ? " Invoices are collected through a hosted checkout link sent with the payment.requires_action webhook." : ""),
         fields: common.concat(spec.fields),

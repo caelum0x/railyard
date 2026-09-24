@@ -50,6 +50,9 @@ pub enum RefundRejection {
     ProviderNotConfigured(String),
     /// Nothing to refund (`amount <= 0`).
     NothingToRefund,
+    /// The provider's API refunds whole payments only (Creem) and the amount
+    /// is less than what is still refundable.
+    PartialRefundUnsupported { provider: String, refundable_cents: i64 },
 }
 
 impl RefundRejection {
@@ -61,8 +64,43 @@ impl RefundRejection {
             }
             RefundRejection::ProviderNotConfigured(p) => format!("payment_provider_not_configured: {p}"),
             RefundRejection::NothingToRefund => "nothing_to_refund".into(),
+            RefundRejection::PartialRefundUnsupported { provider, refundable_cents } => format!(
+                "partial_refund_unsupported: {provider} refunds whole payments only; refund the full \
+                 {refundable_cents} cents or issue the partial refund from the {provider} dashboard"
+            ),
         }
     }
+}
+
+/// Providers whose refund API cannot refund part of a payment.
+const WHOLE_PAYMENT_REFUND_PROVIDERS: &[&str] = &["creem"];
+
+/// Whether refunding `amount_cents` of a payment at `provider` with
+/// `refundable_cents` left (and `already_refunded_cents` refunded) is a
+/// partial refund the provider's API refuses.
+pub fn partial_refund_unsupported(provider: &str, amount_cents: i64, refundable_cents: i64, already_refunded_cents: i64) -> bool {
+    WHOLE_PAYMENT_REFUND_PROVIDERS.contains(&provider)
+        && (amount_cents < refundable_cents || already_refunded_cents > 0)
+}
+
+/// Check, before anything is created, that refunding `amount_cents` of the
+/// invoice's captured payment can be done at its provider. `None` = fine (or
+/// nothing captured at a provider: a manual refund is recorded instead).
+pub async fn refund_precheck(db: &Db, invoice: &Invoice, amount_cents: i64) -> Result<Option<RefundRejection>, JobError> {
+    let Some(payment) = db.refundable_payment(invoice.id).await? else {
+        return Ok(None);
+    };
+    let remaining = payment.remaining_cents();
+    if amount_cents > remaining {
+        return Ok(Some(RefundRejection::AmountExceedsRefundable { refundable_cents: remaining }));
+    }
+    if partial_refund_unsupported(&payment.provider, amount_cents, remaining, payment.refunded_cents) {
+        return Ok(Some(RefundRejection::PartialRefundUnsupported {
+            provider: payment.provider.clone(),
+            refundable_cents: remaining,
+        }));
+    }
+    Ok(None)
 }
 
 /// Lago credit-note reason integer → reason code.
@@ -103,6 +141,12 @@ pub async fn refund_invoice<T: HttpTransport>(
     }
     if amount > remaining {
         return Ok(Err(RefundRejection::AmountExceedsRefundable { refundable_cents: remaining }));
+    }
+    if partial_refund_unsupported(&payment.provider, amount, remaining, payment.refunded_cents) {
+        return Ok(Err(RefundRejection::PartialRefundUnsupported {
+            provider: payment.provider.clone(),
+            refundable_cents: remaining,
+        }));
     }
     let Some(provider) = resolve_provider_of_kind(db, invoice.organization_id, &payment.provider).await? else {
         return Ok(Err(RefundRejection::ProviderNotConfigured(payment.provider.clone())));
@@ -343,4 +387,20 @@ pub async fn apply_refund_notification(
         }
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn creem_refunds_only_whole_payments() {
+        assert!(!partial_refund_unsupported("creem", 2_599, 2_599, 0));
+        assert!(partial_refund_unsupported("creem", 1_000, 2_599, 0));
+        assert!(partial_refund_unsupported("creem", 1_599, 1_599, 1_000));
+        assert!(!partial_refund_unsupported("dodo", 1_000, 2_599, 0));
+        assert!(RefundRejection::PartialRefundUnsupported { provider: "creem".into(), refundable_cents: 2_599 }
+            .code()
+            .contains("2599 cents"));
+    }
 }

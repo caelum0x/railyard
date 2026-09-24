@@ -15,10 +15,11 @@
 //! synchronously, so a `success` response means the refund succeeded.
 //!
 //! Buyer data: Iyzico requires a buyer and a billing address on every form.
-//! Rago sends the customer's name, email and country. City and street come from
-//! the provider's configured merchant defaults. A buyer without a Turkish
-//! identity number is sent with `11111111111`, the value Iyzico documents for
-//! buyers who do not have one.
+//! Rago sends the customer's own record: name, email, country, street address,
+//! city, postal code, phone and identity number (TC kimlik no for Turkish
+//! buyers). Nothing is filled with placeholders: a customer missing any
+//! required field is refused before Iyzico is called, with an error naming the
+//! missing fields so the operator can complete the customer.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -41,8 +42,6 @@ const SANDBOX_BASE: &str = "https://sandbox-api.iyzipay.com";
 /// Currencies Iyzico settles.
 pub const SUPPORTED_CURRENCIES: &[&str] = &["TRY", "USD", "EUR", "GBP", "NOK", "CHF", "RUB", "IRR"];
 
-/// Iyzico's documented identity number for buyers without a TC kimlik no.
-pub const NO_IDENTITY_NUMBER: &str = "11111111111";
 
 static NONCE: AtomicU64 = AtomicU64::new(0);
 
@@ -55,9 +54,53 @@ pub struct IyzicoBuyer {
     pub country: String,
     pub city: String,
     pub address: String,
-    /// Turkish identity number, when the customer has one (11 digits).
+    pub zip_code: Option<String>,
+    pub phone: Option<String>,
+    /// Identity number: the 11-digit TC kimlik no for Turkish buyers, or
+    /// another national id / passport number (5 to 20 letters and digits).
     pub identity_number: Option<String>,
     pub ip: Option<String>,
+}
+
+/// Whether `country` names Turkey (ISO code or name).
+fn is_turkey(country: &str) -> bool {
+    matches!(country.trim().to_ascii_uppercase().as_str(), "TR" | "TUR" | "TURKEY" | "TURKIYE" | "TÜRKIYE")
+        || country.trim().eq_ignore_ascii_case("türkiye")
+}
+
+/// A usable identity number for a buyer in `country`, or `None`.
+pub fn valid_identity_number(raw: Option<&str>, country: &str) -> Option<String> {
+    let n: String = raw?.chars().filter(|c| !c.is_whitespace()).collect();
+    let ok = if is_turkey(country) {
+        n.len() == 11 && n.bytes().all(|b| b.is_ascii_digit()) && !n.starts_with('0') && n != "11111111111"
+    } else {
+        (5..=20).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_alphanumeric())
+    };
+    ok.then_some(n)
+}
+
+/// The customer fields Iyzico needs that `buyer` lacks (empty = complete).
+pub fn missing_buyer_fields(buyer: &IyzicoBuyer) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if buyer.name.trim().is_empty() {
+        missing.push("name");
+    }
+    if !buyer.email.as_deref().is_some_and(|e| e.contains('@')) {
+        missing.push("email");
+    }
+    if buyer.country.trim().is_empty() {
+        missing.push("country");
+    }
+    if buyer.city.trim().is_empty() {
+        missing.push("city");
+    }
+    if buyer.address.trim().is_empty() {
+        missing.push("address_line1");
+    }
+    if valid_identity_number(buyer.identity_number.as_deref(), &buyer.country).is_none() {
+        missing.push("identity_number");
+    }
+    missing
 }
 
 /// A resolved (authenticated) checkout form or payment.
@@ -205,24 +248,19 @@ impl<T: HttpTransport> PaymentProvider for IyzicoProvider<T> {
             }
         })?;
         let buyer = self.buyer.clone().unwrap_or_default();
-        let email = buyer.email.clone().filter(|e| e.contains('@')).ok_or_else(|| {
-            PaymentError::Provider {
-                code: Some("customer_email_required".into()),
-                message: "Iyzico requires the customer's email address".into(),
-            }
-        })?;
-        if buyer.city.trim().is_empty() || buyer.address.trim().is_empty() {
+        let missing = missing_buyer_fields(&buyer);
+        if !missing.is_empty() {
             return Err(PaymentError::Provider {
-                code: Some("billing_address_required".into()),
-                message: "set the default city and address on the Iyzico provider".into(),
+                code: Some("customer_details_missing".into()),
+                message: format!(
+                    "Iyzico needs the customer's {}; add them to the customer record and retry",
+                    missing.join(", ")
+                ),
             });
         }
+        let email = buyer.email.clone().unwrap_or_default();
+        let identity = valid_identity_number(buyer.identity_number.as_deref(), &buyer.country).unwrap_or_default();
         let (first, last) = split_name(&buyer.name, &req.provider_customer_id);
-        let identity = buyer
-            .identity_number
-            .clone()
-            .filter(|n| n.len() == 11 && n.bytes().all(|b| b.is_ascii_digit()))
-            .unwrap_or_else(|| NO_IDENTITY_NUMBER.to_string());
         let price = minor_to_decimal(req.amount_cents);
         let full_name = format!("{first} {last}");
         let body = json!({
@@ -244,6 +282,8 @@ impl<T: HttpTransport> PaymentProvider for IyzicoProvider<T> {
                 "registrationAddress": buyer.address,
                 "city": buyer.city,
                 "country": buyer.country,
+                "zipCode": buyer.zip_code,
+                "gsmNumber": buyer.phone,
                 "ip": buyer.ip.clone().unwrap_or_else(|| "127.0.0.1".into()),
             },
             "billingAddress": {
@@ -251,6 +291,7 @@ impl<T: HttpTransport> PaymentProvider for IyzicoProvider<T> {
                 "city": buyer.city,
                 "country": buyer.country,
                 "address": buyer.address,
+                "zipCode": buyer.zip_code,
             },
             "basketItems": [{
                 "id": req.reference,
@@ -405,7 +446,9 @@ mod tests {
             country: "Turkey".into(),
             city: "Istanbul".into(),
             address: "Levent Mah. 1".into(),
-            identity_number: None,
+            zip_code: Some("34330".into()),
+            phone: Some("+905350000000".into()),
+            identity_number: Some("10000000146".into()),
             ip: None,
         }
     }
@@ -432,7 +475,9 @@ mod tests {
         assert_eq!(body["currency"], "TRY");
         assert_eq!(body["basketId"], Uuid::from_u128(5).to_string());
         assert_eq!(body["buyer"]["surname"], "Yilmaz");
-        assert_eq!(body["buyer"]["identityNumber"], NO_IDENTITY_NUMBER);
+        assert_eq!(body["buyer"]["identityNumber"], "10000000146");
+        assert_eq!(body["buyer"]["city"], "Istanbul");
+        assert_eq!(body["billingAddress"]["zipCode"], "34330");
         // The signature covers exactly the body that was sent.
         let rnd = sent.headers.iter().find(|(k, _)| k == "x-iyzi-rnd").unwrap().1.clone();
         assert_eq!(
@@ -455,9 +500,26 @@ mod tests {
         assert!(matches!(no_cb.create_payment(&req).await, Err(PaymentError::Provider { code: Some(c), .. }) if c == "callback_url_missing"));
         let mut b = buyer();
         b.email = None;
-        let no_email = IyzicoProvider::new("k", "s", &t).with_callback_url("https://x").with_buyer(b);
-        assert!(matches!(no_email.create_payment(&req).await, Err(PaymentError::Provider { code: Some(c), .. }) if c == "customer_email_required"));
+        b.city = " ".into();
+        b.identity_number = Some("11111111111".into());
+        let incomplete = IyzicoProvider::new("k", "s", &t).with_callback_url("https://x").with_buyer(b);
+        match incomplete.create_payment(&req).await {
+            Err(PaymentError::Provider { code: Some(c), message }) => {
+                assert_eq!(c, "customer_details_missing");
+                assert!(message.contains("email, city, identity_number"), "{message}");
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
         assert!(t.requests().is_empty());
+    }
+
+    #[test]
+    fn identity_numbers_follow_the_buyer_country() {
+        assert_eq!(valid_identity_number(Some("10000000146"), "TR").as_deref(), Some("10000000146"));
+        assert!(valid_identity_number(Some("11111111111"), "Turkey").is_none());
+        assert!(valid_identity_number(Some("1234"), "TR").is_none());
+        assert_eq!(valid_identity_number(Some("X1234567"), "DE").as_deref(), Some("X1234567"));
+        assert!(valid_identity_number(None, "DE").is_none());
     }
 
     #[tokio::test]
