@@ -1,24 +1,94 @@
-# Relay: the maintained TensorZero fork
+# Relay
 
-TensorZero archived its GitHub repository on 2026-06-12. Relay is a
-**maintained fork of TensorZero 2026.6.0**: same `gateway` binary, same
-`tensorzero.toml` config, same `/inference` and `/openai/v1/*` endpoints and
-the same `TENSORZERO_*` storage variables. Railyard maintains it in this
-repository (engine fixes, provider/model updates, security patches) and adds
-opt-in features TensorZero never had:
-success-only billing on Mint, a price catalog and quote API, AITP-402
-pay-per-call challenges, provider hedging, spend caps, and white-label resale
-through [Vend](../vend/README.md).
+Relay is an open-source LLM gateway and the maintained fork of
+[TensorZero](https://github.com/tensorzero/tensorzero) 2026.6.0. TensorZero
+archived its repository on 2026-06-12. Relay keeps the same `gateway` binary,
+the same `tensorzero.toml` config, the same `/inference` and `/openai/v1/*`
+endpoints and the same `TENSORZERO_*` variables, and keeps shipping engine
+fixes, provider and model updates, and security patches.
 
-- Switching over: [`docs/MIGRATING-FROM-TENSORZERO.md`](docs/MIGRATING-FROM-TENSORZERO.md).
+On top of the TensorZero engine, Relay adds (all opt-in):
+
+- **Budgets.** Per-API-key cost recording and monthly spend caps that stop a
+  key with `429` before any provider is called.
+- **Price catalog.** One price list for quotes and for metering, with exact
+  integer micro-USD math and optional list-price refresh from OpenRouter.
+- **Fallback routing.** Per-provider retries, provider failover, fallback
+  variants across model families, and cost-bounded latency hedging with
+  circuit breaking.
+- **Operator UI.** Provider keys stored encrypted, a price editor, spend by key
+  and model, and spend caps.
+- **Prepaid billing.** Success-only charging (hold, then capture exact usage)
+  and AITP-402 pay-per-call challenges for agents.
+
+Relay is free to use under the Apache License 2.0. It is an independent
+project, not affiliated with or endorsed by TensorZero or its authors.
+
+## Quickstart
+
+You need Docker and one provider key.
+
+```bash
+git clone <this repository> relay && cd relay
+export OPENAI_API_KEY=sk-...
+docker compose -f docker-compose.quickstart.yml up --build
+```
+
+The first build compiles the gateway from source and takes several minutes.
+Then, in another terminal:
+
+```bash
+curl http://localhost:3000/openai/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "tensorzero::function_name::chat",
+    "messages": [{"role": "user", "content": "Say hello in five words."}]
+  }'
+```
+
+Or use any OpenAI SDK by changing the base URL:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:3000/openai/v1", api_key="relay-quickstart")
+reply = client.chat.completions.create(
+    model="tensorzero::function_name::chat",
+    messages=[{"role": "user", "content": "Say hello in five words."}],
+)
+print(reply.choices[0].message.content)
+```
+
+The quickstart runs one stateless gateway with
+[`config/quickstart/tensorzero.toml`](config/quickstart/tensorzero.toml): no
+database and no auth, for local development only. Set `OPENROUTER_API_KEY` as
+well and a failed OpenAI call is retried on OpenRouter.
+
+## Examples
+
+| Example | Shows |
+| --- | --- |
+| [`examples/relay/openai-client`](examples/relay/openai-client) | OpenAI Python and Node SDKs and curl: functions, named models, streaming, embeddings. |
+| [`examples/relay/fallback-routing`](examples/relay/fallback-routing) | Retries, provider failover, fallback variants, latency hedging. |
+| [`examples/relay/budgets`](examples/relay/budgets) | API keys, cost recording and per-key monthly spend caps (adds Postgres). |
+| [`examples/relay/price-catalog`](examples/relay/price-catalog) | Publishing your own prices and getting exact quotes. |
+
+## Documentation
+
+- Coming from TensorZero: [`docs/MIGRATING-FROM-TENSORZERO.md`](docs/MIGRATING-FROM-TENSORZERO.md).
   An existing config runs unchanged.
+- Gateway configuration reference: [`docs/`](docs) (inherited from TensorZero
+  and still accurate for the engine).
+- What changed since the fork: [`CHANGELOG.md`](CHANGELOG.md).
+- Production: the [`Dockerfile`](Dockerfile) and
+  [`config/tensorzero.toml`](config/tensorzero.toml), described under
+  [Production container](#production-container) below.
 - Attribution: [`NOTICE`](NOTICE) and [`LICENSE`](LICENSE) (Apache-2.0).
-  Upstream files keep their notices and history.
-- Code boundary: [`OWNERSHIP.md`](OWNERSHIP.md).
+  Upstream files keep their notices and history. Code boundary:
+  [`OWNERSHIP.md`](OWNERSHIP.md).
 
-Relay is an independent project. It is not affiliated with or endorsed by
-TensorZero or its authors. The TensorZero README kept further down describes
-the upstream project and its claims, not Relay.
+The TensorZero README kept further down describes the upstream project and its
+claims, not Relay.
 
 ## Relay product integration
 
