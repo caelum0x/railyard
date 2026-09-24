@@ -1,6 +1,95 @@
 # Vend
 
-**White-label metered inference gateway + reserve-backed wallet (Stripe-meets-OpenRouter).**
+**Your own OpenRouter, white-labelled.** Vend lets an AI founder launch a
+branded LLM API: one OpenAI-compatible endpoint across every model Relay
+routes, a wallet for each of the founder's users, the founder's own price per
+model, spend caps, card/MoR top-ups, and automatic revenue splits paid out
+on Mint.
+
+## The product: a white-label LLM API kit
+
+OpenRouter is a destination: its users are OpenRouter's customers, at
+OpenRouter's prices. Vend is the thing you run **as** your API. Your users,
+your prices, your margin. It is built for founders that Stripe does not serve,
+because top-ups go through Mint's Creem, Polar, PayPal, iyzico or USDC
+checkouts as well as Stripe.
+
+| What a founder gets | How it works |
+|---|---|
+| **Signup** | `POST /v1/auth/signup` (or the "Create a workspace" form at `/console`) creates the workspace, the first app, a live `vk_live_` provisioning key and the owner session in one step. The operator opts in with `VEND_SIGNUP_ENABLED=true`. |
+| **One API, many models** | `POST /v1/chat/completions` (OpenAI-compatible, streaming included) goes through [Relay](../relay/README.md). `GET /v1/models` lists each model at *your* price. |
+| **End-user wallets** | With `funding_mode = end_user_reserve`, every request is held and captured on the calling user's own Mint wallet (`Vend-End-User: <your user id>`). The app account is never charged. Create wallets from your backend with `POST /v1/wallets` or from the console. |
+| **Top-ups** | `POST /v1/wallets/:user/top-ups {provider, amount_micros}` returns a hosted checkout. The provider can be `creem`, `polar`, `paypal`, `stripe`, `iyzico` or `usdc`. The provider's signed webhook deposits straight into that user's Mint wallet. Vend never keeps a separate local balance. |
+| **Per-model markup** | Set a default markup per app, then override it for any model (`PUT /v1/customer/apps/:app/model-pricing`). The next request uses the new price, and `/v1/models` shows it. |
+| **Spend caps** | Each key has a daily cap and a per-end-user daily cap. Both are checked atomically in the same transaction that reserves usage, so concurrent requests cannot overshoot them. |
+| **Success-only billing** | A hold is placed first and only the exact provider cost plus your markup is captured. Upstream errors, missing usage and client disconnects release the hold. |
+| **Payouts** | Each captured charge is split on Mint into provider cost, your margin (sent to your tenant Mint account) and the platform fee. Every leg is idempotent and the reconciler replays interrupted ones. |
+| **Console** | `/console` has these tabs: Apps (keys, usage, app wallet, top-up, model pricing, end-user wallets), Earnings (revenue, margin, payouts), Team and Account. |
+| **Operator console** | `/admin` has tenants, apps, keys, usage, users, **Model Pricing**, **Tenant Earnings** and **Payouts**. |
+
+### Launch in five calls
+
+```bash
+# 1. Sign up (when the operator enabled self-serve signup)
+curl -s $VEND/v1/auth/signup -H 'Content-Type: application/json' -d '{
+  "workspace_name":"Acme AI","email":"founder@acme.dev","display_name":"Ada",
+  "password":"a-long-unique-password","app_name":"Acme API"}'
+# -> tenant_id, app_id, provisioning_key (shown once), session_token
+
+# 2. Price a model at +150% over provider cost (console session)
+curl -s -X PUT $VEND/v1/customer/apps/$APP/model-pricing \
+  -H "Authorization: Bearer $SESSION" -H 'Content-Type: application/json' \
+  -d '{"model":"tensorzero::model_name::openai::gpt-4o-mini","markup_bps":15000}'
+
+# 3. Give one of your users a wallet (from your backend)
+curl -s $VEND/v1/wallets -H "Authorization: Bearer $VK" \
+  -H 'Content-Type: application/json' -d '{"external_ref":"user_42"}'
+
+# 4. Send that user a $10 top-up link
+curl -s $VEND/v1/wallets/user_42/top-ups -H "Authorization: Bearer $VK" \
+  -H 'Content-Type: application/json' -d '{"provider":"creem","amount_micros":10000000}'
+
+# 5. Call models on the user's behalf. Their wallet pays and you earn the margin.
+curl -s $VEND/v1/chat/completions -H "Authorization: Bearer $VK" \
+  -H 'Vend-End-User: user_42' -H 'Idempotency-Key: req_1' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"tensorzero::model_name::openai::gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
+```
+
+`GET /v1/wallets/user_42` returns the live balance, the amount held by
+in-flight requests and today's spend. The TypeScript and Python SDKs cover
+every call above. See `signup`, `createWallet`/`create_wallet`,
+`createWalletTopUp`, `setModelMarkup` and `earnings`.
+
+### Wallet and pricing API reference
+
+| Route | Auth | Purpose |
+|---|---|---|
+| `GET /v1/auth/signup` | none | whether self-serve signup is on, plus the default terms |
+| `POST /v1/auth/signup` | none (rate limited per email and platform-wide) | create a workspace and sign in |
+| `POST /v1/wallets` | provisioning key (app or tenant scope) | create a wallet (idempotent) |
+| `GET /v1/wallets/:external_ref` | provisioning key (an end-user key can read only its own wallet) | balance, held amount and today's spend |
+| `POST /v1/wallets/:external_ref/top-ups` | provisioning key | hosted checkout into the wallet |
+| `GET/PUT/DELETE /v1/customer/apps/:app/model-pricing` | console session (writes need admin) | price sheet with per-model overrides |
+| `GET/POST /v1/customer/apps/:app/wallets` | console session | list wallets with live balances; create one |
+| `POST /v1/customer/apps/:app/wallets/:external_ref/top-ups` | console session (admin) | top-up link for a user |
+| `GET /v1/customer/earnings?from=&to=` | console session | revenue, provider cost, platform fee, your net, payouts |
+| `GET/PUT/DELETE /v1/control/apps/:app/model-pricing` | operator token | same price sheet, operator side |
+| `GET /v1/control/payouts?pending=true` | operator token | platform-wide split payouts and totals |
+| `GET /v1/control/tenants/:tenant/earnings` | operator token | one tenant's revenue |
+
+**Owner-gated setup.** None of this needs code, but it needs an operator to:
+
+- configure Mint's checkout providers (Creem/Polar/PayPal/Stripe keys in Mint's environment). Until then, top-up calls return Mint's provider error;
+- set the `VEND_SIGNUP_*` launch economics (see `.env.example`) to open signup;
+- deploy Relay with provider keys, and choose `VEND_MODEL_RATES_JSON`.
+
+**Platform fee.** Customers never set it. Apps a customer creates inherit the
+highest platform fee the operator set on that tenant.
+
+## Engine
+
+White-label metered inference gateway + reserve-backed wallet.
 
 Vend is a REAL service: it calls the live **mint-server** (accounts / holds /
 capture / release / reserve) and **Relay** (inference) over HTTP through
@@ -158,8 +247,11 @@ hold/payout reconcilers are the recovery path. Streaming responses include
 `Vend-Charge-Id` and `Vend-Model` up front, but cannot include final cost/price
 headers because those values do not exist until after HTTP headers are sent.
 
-Sx0 supports `tenant_reserve` only. Mint reserves the app's configured funding
-account and captures the full rated customer charge into `VEND_CLEARING_ACCOUNT`.
+Two funding modes are live. `tenant_reserve` holds on the app's configured Mint
+account. `end_user_reserve` holds on the calling end user's own wallet, and a
+request without a provisioned wallet is refused, never billed to the app. BYOK
+is rejected. In both modes Mint captures the full rated customer charge into
+`VEND_CLEARING_ACCOUNT`.
 Vend first persists an immutable payout plan, then transfers exactly
 `provider_cost_micros` to `VEND_PROVIDER_PAYOUT_ACCOUNT`, `tenant_net_micros` to
 the tenant's configured Mint account, and `platform_fee_micros` to
@@ -248,7 +340,8 @@ competing local wallet credit.
 
 `VEND_MODELS`, `VEND_MARKUP_BPS`, `VEND_MIN_FEE_MICROS`,
 `VEND_PLATFORM_FEE_BPS`, and a positive `VEND_DAILY_CAP_MICROS` are explicit,
-required launch decisions. The bootstrap path supports `tenant_reserve` only.
+required launch decisions. The bootstrap path supports `tenant_reserve` and
+`end_user_reserve`.
 `VEND_ZDR`, `VEND_KEY_ENV`, and `VEND_PER_END_USER_DAILY_CAP_MICROS` are
 optional. Vend records the supplied Mint account id but does not preflight its
 existence or funding; operators must verify that in Mint before bootstrap.
@@ -433,12 +526,11 @@ curl --fail-with-body http://127.0.0.1:8090/v1/control/apps/$APP_ID/end-users \
 
 Unknown `Vend-End-User` values are rejected. End-user-funded apps never fall
 back to charging the app account, and end-user-scoped keys resolve their bound
-typed id before accepting a matching external reference. New app creation is
-currently limited to `tenant_reserve`; the end-user mapping is retained for
-attribution and a future audited `end_user_reserve` launch.
+typed id before accepting a matching external reference. For
+`end_user_reserve` apps, prefer `POST /v1/wallets`: it opens the Mint wallet
+for you. Mapping an existing Mint account by hand is still supported.
 
-The remaining product gaps include BYOK/end-user funding and broader operator
-automation. The atomic request claim prevents concurrent duplicate execution,
+BYOK funding is still not built. The atomic request claim prevents concurrent duplicate execution,
 and `vend-reconcile` closes pre-attachment, attached-hold, lost local-capture,
 and incomplete-payout crash windows by converging against Mint.
 Non-tenant funding modes are rejected until their settlement paths are audited.

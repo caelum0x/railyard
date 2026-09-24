@@ -77,6 +77,14 @@ pub enum VendError {
     /// Missing/invalid startup configuration (env var).
     #[error("config error: {0}")]
     Config(String),
+    /// The end user exists for attribution only and has no Mint wallet, so it
+    /// cannot fund `end_user_reserve` requests or receive top-ups.
+    #[error("end user has no wallet; it was provisioned for attribution only")]
+    WalletUnprovisioned,
+    /// An optional product surface is switched off by deployment config. The
+    /// message names the setting to change and carries no secret.
+    #[error("{0}")]
+    FeatureDisabled(String),
 }
 
 impl VendError {
@@ -103,6 +111,8 @@ impl VendError {
             VendError::Storage(_) => "storage_error",
             VendError::Upstream { .. } => "upstream_error",
             VendError::Config(_) => "config_error",
+            VendError::WalletUnprovisioned => "wallet_unprovisioned",
+            VendError::FeatureDisabled(_) => "feature_disabled",
         }
     }
 
@@ -123,6 +133,8 @@ impl VendError {
             VendError::Overflow => 400,
             VendError::Upstream { status, .. } => *status,
             VendError::Transport(_) | VendError::Storage(_) | VendError::Config(_) => 502,
+            VendError::WalletUnprovisioned => 409,
+            VendError::FeatureDisabled(_) => 503,
         }
     }
 

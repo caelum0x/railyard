@@ -44,6 +44,7 @@ fn make_tenant(name: &str, markup_bps: u32, min_fee: i64) -> TenantFixture {
             funding_mode: FundingMode::TenantReserve,
         },
         mint_account_id: format!("acct_{name}_app"),
+        model_markups: Default::default(),
     };
 
     // Mint the key ONCE, bound to the real app id, so its hash + prefix match the

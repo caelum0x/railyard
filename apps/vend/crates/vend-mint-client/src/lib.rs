@@ -14,7 +14,8 @@ use std::time::Duration;
 use mint_protocol::{decode_receipt, HEADER_RECEIPT};
 use vend_core::error::VendError;
 use vend_core::transport::{
-    CaptureRequest, CaptureResponse, CheckoutRequest, CheckoutResponse, HoldRequest, HoldResponse,
+    CaptureRequest, CaptureResponse, CheckoutRequest, CheckoutResponse, CreateAccountRequest,
+    CreateAccountResponse, HoldRequest, HoldResponse,
     HoldView, MintBalance, MintTransport, ReleaseRequest, ReleaseResponse, SettlementProof, TransferRequest,
     TransferResponse,
 };
@@ -314,6 +315,19 @@ impl MintTransport for MintClient {
         }
         self.get_json(&format!("/v1/accounts/{account_id}/balance"))
             .await
+    }
+
+    async fn create_account(
+        &self,
+        req: CreateAccountRequest,
+    ) -> Result<CreateAccountResponse, VendError> {
+        if !matches!(req.kind.as_str(), "user" | "org") {
+            return Err(VendError::InvalidAmount);
+        }
+        if req.owner_ref.as_ref().is_some_and(|owner| owner.len() > 256) {
+            return Err(VendError::InvalidAmount);
+        }
+        self.post_json("/v1/accounts", &req).await
     }
 }
 

@@ -61,7 +61,7 @@ impl AdminAuth {
         Ok(Self { current, next })
     }
 
-    fn authorizes(&self, headers: &HeaderMap) -> bool {
+    pub(crate) fn authorizes(&self, headers: &HeaderMap) -> bool {
         let Some(secret) = headers
             .get(AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
@@ -1040,11 +1040,21 @@ async fn customer_list_apps(
 async fn customer_create_app(
     State(state): State<ControlState>,
     Extension(principal): Extension<CustomerPrincipal>,
-    Json(input): Json<CreateApp>,
+    Json(mut input): Json<CreateApp>,
 ) -> Response {
     if let Err(response) = require_role(&principal, CustomerRole::Admin) {
         return response;
     }
+    // The platform fee is the operator's economics, not the customer's: new
+    // customer apps inherit the highest fee the operator set on this tenant.
+    let operator_fee = match state.repo.list_apps(&principal.tenant_id).await {
+        Ok(apps) => apps.iter().map(|app| app.markup_policy.platform_fee_bps).max(),
+        Err(error) => return control_error(error),
+    };
+    let Some(platform_fee_bps) = operator_fee else {
+        return control_error(VendError::NotFound);
+    };
+    input.markup_policy.platform_fee_bps = platform_fee_bps;
     result(state.repo.create_app(&principal.tenant_id, input).await)
 }
 

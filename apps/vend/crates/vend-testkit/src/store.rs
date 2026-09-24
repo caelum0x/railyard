@@ -19,15 +19,15 @@ use vend_keys::KeyRepo;
 use vend_tenancy::{App, EndUser, Tenant, TenantRepo};
 
 #[derive(Default)]
-struct State {
-    tenants: HashMap<String, Tenant>,
-    apps: HashMap<String, App>,
-    end_users: HashMap<String, EndUser>, // key: "{app_id}\u{0}{external_ref}"
+pub(crate) struct State {
+    pub(crate) tenants: HashMap<String, Tenant>,
+    pub(crate) apps: HashMap<String, App>,
+    pub(crate) end_users: HashMap<String, EndUser>, // key: "{app_id}\u{0}{external_ref}"
     sub_keys: HashMap<String, SubKeyRecord>, // key: prefix
-    usage: HashMap<String, MeteredUsage>, // key: charge_id
+    pub(crate) usage: HashMap<String, MeteredUsage>, // key: charge_id
     reserve: HashMap<String, i64>,
     idempotency: HashMap<String, IdempotencyRecord>,
-    payouts: HashMap<String, PayoutExecution>,
+    pub(crate) payouts: HashMap<String, PayoutExecution>,
 }
 
 #[derive(Clone)]
@@ -91,6 +91,11 @@ impl InMemoryStore {
             .unwrap()
             .reserve
             .insert(tenant_id.as_str().to_string(), micros);
+    }
+
+    /// Run `f` against the locked state (crate-internal repo impls).
+    pub(crate) fn with_state<T>(&self, f: impl FnOnce(&mut State) -> T) -> T {
+        f(&mut self.inner.lock().unwrap())
     }
 
     /// Read one metered usage row for integration assertions.

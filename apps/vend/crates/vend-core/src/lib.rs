@@ -21,11 +21,12 @@ pub mod payout;
 pub mod ports;
 pub mod records;
 pub mod transport;
+pub mod whitelabel;
 
 pub use envelope::{ErrorBody, ErrorEnvelope, SuccessEnvelope};
 pub use error::VendError;
 pub use ids::{AppId, ChargeId, EndUserId, SubKeyId, TenantId};
-pub use money::{price, Charge, FundingMode, MarkupPolicy, Micros, SpendCap};
+pub use money::{price, Charge, FundingMode, MarkupPolicy, Micros, ModelMarkup, SpendCap};
 pub use payout::{PayoutExecution, PayoutLeg, PayoutRepo, PayoutState};
 pub use ports::{
     IdempotencyClaim, IdempotencyRepo, MeteredUsage, ReadinessRepo, ReserveRepo, UsageOutcome,
@@ -33,8 +34,12 @@ pub use ports::{
 };
 pub use records::{KeyScope, KeyStatus, SubKeyRecord};
 pub use transport::{
-    parse_usage, CaptureRequest, CaptureResponse, CheckoutRequest, CheckoutResponse, HoldRequest,
+    parse_usage, CaptureRequest, CaptureResponse, CheckoutRequest, CheckoutResponse,
+    CreateAccountRequest, CreateAccountResponse, HoldRequest,
     HoldResponse, HoldStatus, HoldView, MintBalance, MintTransport, RelayByteStream, RelayRequest,
     RelayResponse, RelayStreamResponse, RelayTransport, ReleaseRequest, ReleaseResponse,
     TransferRequest, TransferResponse, Usage,
+};
+pub use whitelabel::{
+    EarningsDay, ModelMarkupEntry, PayoutRow, PayoutTotals, WalletSummary, WhiteLabelRepo,
 };

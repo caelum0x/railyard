@@ -261,6 +261,52 @@
         { h: "Created", f: (r) => esc((r.created_at || "").slice(0, 10)) },
       ],
     },
+    {
+      id: "pricing", label: "Model Pricing",
+      params: [{ key: "app_id", label: "App ID", required: true }],
+      path: (p) => "/v1/control/apps/" + encodeURIComponent(p.app_id) + "/model-pricing",
+      rows: (payload) => payload.models,
+      cols: [
+        { h: "Model", f: (r) => esc(r.model), mono: true },
+        { h: "Provider in / out (per 1M)", f: (r) => usd(r.provider_input_micros_per_million_tokens) + " / " + usd(r.provider_output_micros_per_million_tokens) },
+        { h: "Markup", f: (r) => esc(r.effective_markup_bps) + " bps " + badge(r.override ? "override" : "default") },
+        { h: "End-user price in / out (per 1M)", f: (r) => usd(r.input_micros_per_million_tokens) + " / " + usd(r.output_micros_per_million_tokens) },
+      ],
+    },
+    {
+      id: "earnings", label: "Tenant Earnings",
+      params: [
+        { key: "tenant_id", label: "Tenant ID", required: true },
+        { key: "from", label: "From (YYYY-MM-DD)", required: false },
+        { key: "to", label: "To (YYYY-MM-DD)", required: false },
+      ],
+      path: (p) => "/v1/control/tenants/" + encodeURIComponent(p.tenant_id) + "/earnings?"
+        + (p.from ? "from=" + encodeURIComponent(p.from) + "&" : "") + (p.to ? "to=" + encodeURIComponent(p.to) : ""),
+      rows: (payload) => payload.days,
+      cols: [
+        { h: "UTC Day", f: (r) => esc(r.utc_day) },
+        { h: "Captured", f: (r) => num(r.captured_requests) },
+        { h: "End users paid", f: (r) => usd(r.charge_micros) },
+        { h: "Provider cost", f: (r) => usd(r.provider_cost_micros) },
+        { h: "Platform fee", f: (r) => usd(r.platform_fee_micros) },
+        { h: "Tenant net", f: (r) => usd(r.tenant_net_micros) },
+      ],
+    },
+    {
+      id: "payouts", label: "Payouts",
+      params: [{ key: "pending", label: "Pending only (true/false)", required: false }],
+      path: (p) => "/v1/control/payouts?limit=200" + (p.pending === "true" ? "&pending=true" : ""),
+      rows: (payload) => payload.payouts,
+      cols: [
+        { h: "Charge", f: (r) => esc(r.charge_id), mono: true },
+        { h: "Tenant", f: (r) => esc(r.tenant_id), mono: true },
+        { h: "Charged", f: (r) => usd(r.captured_charge_micros) },
+        { h: "Provider", f: (r) => usd(r.provider_cost_micros) + " " + bool(r.provider_transferred) },
+        { h: "Tenant net", f: (r) => usd(r.tenant_net_micros) + " " + bool(r.tenant_transferred) },
+        { h: "Platform", f: (r) => usd(r.platform_fee_micros) + " " + bool(r.platform_transferred) },
+        { h: "State", f: (r) => badge(r.state) + (r.last_error ? '<div class="hint">' + esc(r.last_error) + "</div>" : "") },
+      ],
+    },
   ];
 
   // ---- write actions (every one hits a real /v1/control endpoint) ------------
@@ -293,6 +339,7 @@
       + field("b-min", "Min fee per request ($)", 'type="number" value="0" step="0.0001"')
       + field("b-plat", "Platform fee bps", 'type="number" value="1000"')
       + field("b-cap", "Key daily cap ($)", 'type="number" value="100" step="0.01"')
+      + fundingSelect("b")
       + '</div><div class="toolbar"><button class="primary" id="b-go">Bootstrap</button></div><div id="b-out"></div>',
     apps: () => paramState.tenant_id ? '<h3>Create app for ' + esc(paramState.tenant_id) + '</h3><div class="form-grid">'
       + field("a-name", "App name") + field("a-acct", "Mint reserve account", 'placeholder="acct_..."')
@@ -301,6 +348,7 @@
       + field("a-min", "Min fee per request ($)", 'type="number" value="0" step="0.0001"')
       + field("a-plat", "Platform fee bps", 'type="number" value="1000"')
       + '<label>ZDR<select id="a-zdr"><option value="false">off</option><option value="true">on</option></select></label>'
+      + fundingSelect("a")
       + '</div><div class="toolbar"><button class="primary" id="a-go">Create app</button></div>' : "",
     keys: () => paramState.app_id ? '<h3>Issue key for ' + esc(paramState.app_id) + '</h3><div class="form-grid">'
       + '<label>Environment<select id="k-env"><option value="live">live</option><option value="test">test</option></select></label>'
@@ -315,13 +363,23 @@
       + '<label>Role<select id="u-role"><option value="viewer">viewer</option><option value="admin">admin</option><option value="owner">owner</option></select></label>'
       + '</div><div class="toolbar"><button class="primary" id="u-go">Invite</button></div><div id="u-out"></div>' : "",
     usage: () => "",
+    pricing: () => paramState.app_id ? '<h3>Set a per-model markup for ' + esc(paramState.app_id) + '</h3><div class="form-grid">'
+      + field("m-model", "Model id", 'placeholder="tensorzero::model_name::..."')
+      + field("m-bps", "Markup bps (10000 = +100%)", 'type="number" min="0" max="1000000" value="2000"')
+      + field("m-min", "Min fee per request ($, optional)", 'type="number" min="0" step="0.0001"')
+      + '</div><div class="toolbar"><button class="primary" id="m-go">Save markup</button></div>' : "",
   };
+
+  function fundingSelect(prefix) {
+    return '<label>Who pays<select id="' + prefix + '-fund"><option value="tenant_reserve">app wallet (tenant_reserve)</option>'
+      + '<option value="end_user_reserve">each end user\'s wallet (end_user_reserve)</option></select></label>';
+  }
 
   const policy = (p) => ({
     markup_bps: Number(el(p + "-bps").value || 0),
     min_fee_micros: dollars(el(p + "-min").value),
     platform_fee_bps: Number(el(p + "-plat").value || 0),
-    funding_mode: "tenant_reserve",
+    funding_mode: el(p + "-fund") ? el(p + "-fund").value : "tenant_reserve",
   });
 
   function bindForms() {
@@ -357,6 +415,12 @@
         external_ref: el("e-ref").value.trim(), mint_account_id: el("e-acct").value.trim(),
       }), "End user provisioned");
     });
+    on("m-go", async () => {
+      const body = { model: el("m-model").value.trim(), markup_bps: Number(el("m-bps").value || 0) };
+      if (el("m-min").value) body.min_fee_micros = dollars(el("m-min").value);
+      const out = await act(() => api("/v1/control/apps/" + encodeURIComponent(paramState.app_id) + "/model-pricing", "PUT", body), "Markup saved");
+      if (out) load();
+    });
     on("u-go", async () => {
       const out = await act(() => api("/v1/control/tenants/" + encodeURIComponent(paramState.tenant_id) + "/users", "POST", {
         email: el("u-email").value.trim(), display_name: el("u-name").value.trim(), role: el("u-role").value,
@@ -368,11 +432,14 @@
   // Per-row buttons: click-through navigation plus the real write endpoints.
   const ROW_ACTIONS = {
     tenants: (r) => '<button class="small" data-go="apps" data-tenant="' + esc(r.id) + '">Apps</button> '
-      + '<button class="small" data-go="users" data-tenant="' + esc(r.id) + '">Users</button>',
+      + '<button class="small" data-go="users" data-tenant="' + esc(r.id) + '">Users</button> '
+      + '<button class="small" data-go="earnings" data-tenant="' + esc(r.id) + '">Earnings</button>',
     apps: (r) => '<button class="small" data-go="keys" data-app="' + esc(r.id) + '">Keys</button> '
+      + '<button class="small" data-go="pricing" data-app="' + esc(r.id) + '">Pricing</button> '
       + '<button class="small" data-go="usage" data-app="' + esc(r.id) + '">Usage</button> '
       + '<button class="small' + (r.enabled ? " danger" : "") + '" data-toggle="' + esc(r.id) + '" data-enabled="' + (r.enabled ? "1" : "") + '">'
       + (r.enabled ? "Disable" : "Enable") + "</button>",
+    pricing: (r) => r.override ? '<button class="small danger" data-reset-model="' + esc(r.model) + '">Reset to default</button>' : "",
     keys: (r) => r.status === "revoked" ? "" : '<button class="small danger" data-revoke="' + esc(r.id) + '">Revoke</button>',
     users: (r) => '<select class="small" data-role="' + esc(r.id) + '">' + ["viewer", "admin", "owner"].map((x) =>
         '<option value="' + x + '"' + (r.role === x ? " selected" : "") + ">" + x + "</option>").join("") + "</select> "
@@ -401,6 +468,13 @@
         if (ok !== null) load();
       };
     });
+    view.querySelectorAll("button[data-reset-model]").forEach((b) => {
+      b.onclick = async () => {
+        const ok = await act(() => api("/v1/control/apps/" + encodeURIComponent(paramState.app_id) + "/model-pricing?model="
+          + encodeURIComponent(b.dataset.resetModel), "DELETE"), "Markup reset");
+        if (ok !== null) load();
+      };
+    });
     const userPatch = async (id, body, msg) => {
       const ok = await act(() => api("/v1/control/tenants/" + encodeURIComponent(paramState.tenant_id) + "/users/"
         + encodeURIComponent(id), "PATCH", body), msg);
@@ -424,6 +498,22 @@
   async function renderExtra() {
     const box = el("extra");
     box.innerHTML = "";
+    if (active.id === "payouts" || (active.id === "earnings" && paramState.tenant_id)) {
+      try {
+        const data = await api(active.path(paramState));
+        const t = active.id === "payouts" ? data.totals : data.payouts.totals;
+        const sum = active.id === "earnings" ? data.summary : null;
+        box.innerHTML = '<div class="actions"><h3>' + (sum ? "Range " + esc(data.from) + " to " + esc(data.to) : "Platform payouts") + "</h3>"
+          + (sum ? "End users paid <b>" + usd(sum.charge_micros) + "</b> &middot; tenant net <b>" + usd(sum.tenant_net_micros)
+            + "</b> &middot; platform fee <b>" + usd(sum.platform_fee_micros) + "</b><br>" : "")
+          + "Paid to tenants <b>" + usd(t.tenant_paid_micros) + "</b> &middot; owed on pending <b>" + usd(t.tenant_pending_micros)
+          + "</b> &middot; platform fee collected <b>" + usd(t.platform_paid_micros) + "</b> &middot; "
+          + esc(t.complete_count) + " complete / " + esc(t.pending_count) + " pending</div>";
+      } catch (e) {
+        box.innerHTML = '<div class="actions"><span class="hint">' + esc(e.message) + "</span></div>";
+      }
+      return;
+    }
     if (active.id !== "usage" || !paramState.app_id) return;
     try {
       const b = await api("/v1/control/apps/" + encodeURIComponent(paramState.app_id) + "/balance");
@@ -491,7 +581,7 @@
 
   function renderRows(payload) {
     const view = el("view");
-    const rows = active.single ? (payload ? [payload] : []) : payload;
+    const rows = active.rows ? (payload ? active.rows(payload) : []) : (active.single ? (payload ? [payload] : []) : payload);
     if (!Array.isArray(rows) || rows.length === 0) {
       view.innerHTML = '<div class="empty">No ' + esc(active.label.toLowerCase()) + " found.</div>";
       const c = el("count"); if (c) c.textContent = "0 rows";

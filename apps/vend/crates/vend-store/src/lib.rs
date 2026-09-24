@@ -13,6 +13,7 @@ mod payouts;
 mod pool;
 mod reconciliation;
 mod security_ops;
+mod whitelabel;
 
 pub use pool::PostgresPoolConfig;
 pub use reconciliation::{captured_recovery_replay, AttachedHoldCandidate, PayoutCandidate};
@@ -305,6 +306,10 @@ pub trait ControlPlaneRepo: Send + Sync {
         input: CreateApp,
     ) -> Result<AppSummary, VendError>;
     async fn set_app_enabled(&self, id: &AppId, enabled: bool) -> Result<AppSummary, VendError>;
+    /// Point an app at a different Mint reserve account. Refused while the app
+    /// has pending (unsettled) usage, so no open hold can straddle the change.
+    async fn set_app_mint_account(&self, id: &AppId, mint_account_id: &str)
+        -> Result<(), VendError>;
     async fn list_app_keys(&self, app_id: &AppId) -> Result<Vec<KeySummary>, VendError>;
     async fn issue_app_key(
         &self,
@@ -687,7 +692,7 @@ impl VendStore {
                 .model_allowlist
                 .iter()
                 .any(|model| !valid_relay_model(model))
-            || config.markup_policy.funding_mode != FundingMode::TenantReserve
+            || !launchable_funding_mode(config.markup_policy.funding_mode)
             || config.markup_policy.markup_bps > 10_000
             || config.markup_policy.platform_fee_bps > 10_000
             || config.markup_policy.min_fee_micros < 0
@@ -944,6 +949,31 @@ impl ControlPlaneRepo for VendStore {
         ControlPlaneRepo::get_app(self, id)
             .await?
             .ok_or(VendError::NotFound)
+    }
+
+    async fn set_app_mint_account(
+        &self,
+        id: &AppId,
+        mint_account_id: &str,
+    ) -> Result<(), VendError> {
+        let account = mint_account_id.trim();
+        if account.is_empty() || account.len() > 128 {
+            return Err(VendError::BadId);
+        }
+        let changed = sqlx::query(
+            "UPDATE apps SET mint_account_id = $2 WHERE id = $1 \
+             AND NOT EXISTS (SELECT 1 FROM metered_usage \
+                             WHERE app_id = $1 AND outcome = 'pending')",
+        )
+        .bind(id.as_str())
+        .bind(account)
+        .execute(&self.pool)
+        .await
+        .map_err(store_err)?;
+        if changed.rows_affected() == 0 {
+            return Err(VendError::IdempotencyInProgress);
+        }
+        Ok(())
     }
 
     async fn list_app_keys(&self, app_id: &AppId) -> Result<Vec<KeySummary>, VendError> {
@@ -1735,7 +1765,7 @@ fn validate_app_input(input: &CreateApp) -> Result<(), VendError> {
     if input.name.trim().is_empty()
         || input.mint_account_id.trim().is_empty()
         || input.model_allowlist.is_empty()
-        || input.markup_policy.funding_mode != FundingMode::TenantReserve
+        || !launchable_funding_mode(input.markup_policy.funding_mode)
         || input.markup_policy.markup_bps > 10_000
         || input.markup_policy.platform_fee_bps > 10_000
         || input.markup_policy.min_fee_micros < 0
@@ -1747,6 +1777,13 @@ fn validate_app_input(input: &CreateApp) -> Result<(), VendError> {
         return Err(VendError::InvalidAmount);
     }
     Ok(())
+}
+
+/// Funding modes with an audited settlement path: the app wallet
+/// (`tenant_reserve`) or each end user's own Mint wallet (`end_user_reserve`),
+/// both captured into clearing and split-paid identically. BYOK is not.
+fn launchable_funding_mode(mode: FundingMode) -> bool {
+    matches!(mode, FundingMode::TenantReserve | FundingMode::EndUserReserve)
 }
 
 fn valid_relay_model(model: &str) -> bool {
@@ -1974,7 +2011,10 @@ impl TenantRepo for VendStore {
     async fn load_app(&self, id: &AppId) -> Result<Option<App>, VendError> {
         let row = sqlx::query(
             "SELECT a.id, a.tenant_id, a.name, a.model_allowlist, a.zdr, a.enabled, a.mint_account_id, \
-             m.markup_bps, m.min_fee_micros, m.platform_fee_bps, m.funding_mode \
+             m.markup_bps, m.min_fee_micros, m.platform_fee_bps, m.funding_mode, \
+             COALESCE((SELECT jsonb_object_agg(o.model, jsonb_strip_nulls(jsonb_build_object( \
+                 'markup_bps', o.markup_bps, 'min_fee_micros', o.min_fee_micros))) \
+               FROM app_model_markups o WHERE o.app_id = a.id), '{}'::jsonb) AS model_markups \
              FROM apps a JOIN markup_policy m ON m.app_id = a.id WHERE a.id = $1",
         )
         .bind(id.as_str())
@@ -1990,6 +2030,9 @@ impl TenantRepo for VendStore {
         let markup_bps: i32 = r.try_get("markup_bps").map_err(store_err)?;
         let platform_fee_bps: i32 = r.try_get("platform_fee_bps").map_err(store_err)?;
         let funding_mode: String = r.try_get("funding_mode").map_err(store_err)?;
+        let markups_json: serde_json::Value = r.try_get("model_markups").map_err(store_err)?;
+        let model_markups = serde_json::from_value(markups_json)
+            .map_err(|e| VendError::Storage(format!("model_markups: {e}")))?;
 
         Ok(Some(App {
             id: AppId::parse(&r.try_get::<String, _>("id").map_err(store_err)?)?,
@@ -2006,6 +2049,7 @@ impl TenantRepo for VendStore {
                 funding_mode: funding_from_str(&funding_mode)?,
             },
             mint_account_id: r.try_get("mint_account_id").map_err(store_err)?,
+            model_markups,
         }))
     }
 

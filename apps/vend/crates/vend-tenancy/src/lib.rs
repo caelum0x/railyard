@@ -6,12 +6,14 @@
 //! logic here is pure over the [`TenantRepo`] port; the concrete impl lives in
 //! `vend-store`.
 
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use vend_core::error::VendError;
 use vend_core::ids::{AppId, EndUserId, TenantId};
-use vend_core::money::MarkupPolicy;
+use vend_core::money::{FundingMode, MarkupPolicy, ModelMarkup};
 use vend_core::records::{KeyScope, KeyStatus, SubKeyRecord};
 
 /// A reseller. Owns apps; its Mint account is the tenant-net payout destination.
@@ -45,12 +47,23 @@ pub struct App {
     pub markup_policy: MarkupPolicy,
     /// Back-pointer to the app's Mint account (funding source).
     pub mint_account_id: String,
+    /// Per-model markup overrides (model id -> markup). Models without an
+    /// entry use `markup_policy` unchanged.
+    #[serde(default)]
+    pub model_markups: BTreeMap<String, ModelMarkup>,
 }
 
 impl App {
     /// `true` iff `model` is permitted by the allowlist (empty allowlist = all).
     pub fn allows_model(&self, model: &str) -> bool {
         self.model_allowlist.is_empty() || self.model_allowlist.iter().any(|m| m == model)
+    }
+
+    /// The effective pricing policy for one model: the app policy with that
+    /// model's markup override applied.
+    pub fn policy_for(&self, model: &str) -> MarkupPolicy {
+        self.markup_policy
+            .with_override(self.model_markups.get(model))
     }
 }
 
@@ -125,23 +138,8 @@ pub async fn resolve<R: TenantRepo + ?Sized>(
     key: &SubKeyRecord,
     external_ref: Option<&str>,
 ) -> Result<ResolvedContext, VendError> {
-    if key.status == KeyStatus::Revoked {
-        return Err(VendError::Unauthorized);
-    }
-
-    let tenant = repo
-        .load_tenant(&key.tenant_id)
-        .await?
-        .ok_or(VendError::NotFound)?;
-
-    let app_id = key.app_id.clone().ok_or(VendError::Unauthorized)?;
-    let app = repo.load_app(&app_id).await?.ok_or(VendError::NotFound)?;
-    if app.tenant_id != key.tenant_id {
-        return Err(VendError::Unauthorized);
-    }
-    if !app.enabled {
-        return Err(VendError::Unauthorized);
-    }
+    let (tenant, app) = resolve_app(repo, key).await?;
+    let app_id = app.id.clone();
 
     let end_user = match key.scope {
         KeyScope::EndUser => {
@@ -166,11 +164,14 @@ pub async fn resolve<R: TenantRepo + ?Sized>(
         },
     };
 
-    if app.markup_policy.funding_mode == vend_core::money::FundingMode::EndUserReserve
-        && end_user.is_none()
+    if app.markup_policy.funding_mode == FundingMode::EndUserReserve
+        && end_user
+            .as_ref()
+            .and_then(|eu| eu.mint_account_id.as_deref())
+            .is_none_or(str::is_empty)
     {
         // Never silently charge the app account for an end-user-funded product.
-        // A control-plane caller must provision the end user with a Mint account.
+        // The end user must exist AND have a Mint wallet (`POST /v1/wallets`).
         return Err(VendError::NotFound);
     }
 
@@ -182,15 +183,40 @@ pub async fn resolve<R: TenantRepo + ?Sized>(
     })
 }
 
+/// Verify a key's app binding without resolving an end user: the key must be
+/// active and bound to an enabled app owned by the key's tenant. Used by the
+/// wallet API, which manages end users rather than acting as one.
+pub async fn resolve_app<R: TenantRepo + ?Sized>(
+    repo: &R,
+    key: &SubKeyRecord,
+) -> Result<(Tenant, App), VendError> {
+    if key.status == KeyStatus::Revoked {
+        return Err(VendError::Unauthorized);
+    }
+    let tenant = repo
+        .load_tenant(&key.tenant_id)
+        .await?
+        .ok_or(VendError::NotFound)?;
+    let app_id = key.app_id.clone().ok_or(VendError::Unauthorized)?;
+    let app = repo.load_app(&app_id).await?.ok_or(VendError::NotFound)?;
+    if app.tenant_id != key.tenant_id || !app.enabled {
+        return Err(VendError::Unauthorized);
+    }
+    Ok((tenant, app))
+}
+
 /// Choose the Mint account that should back a request's hold, honoring the app's
-/// funding mode: an end-user reserve when present, else the app account.
-pub fn funding_account_id(ctx: &ResolvedContext) -> &str {
+/// funding mode: the end user's wallet for `end_user_reserve`, else the app
+/// account. BYOK has no Vend-held funding account.
+pub fn funding_account_id(ctx: &ResolvedContext) -> Result<&str, VendError> {
     match ctx.app.markup_policy.funding_mode {
-        vend_core::money::FundingMode::EndUserReserve => ctx
+        FundingMode::EndUserReserve => ctx
             .end_user
             .as_ref()
             .and_then(|eu| eu.mint_account_id.as_deref())
-            .expect("resolved EndUserReserve context must have a Mint account"),
-        _ => &ctx.app.mint_account_id,
+            .filter(|account| !account.is_empty())
+            .ok_or(VendError::NotFound),
+        FundingMode::TenantReserve => Ok(&ctx.app.mint_account_id),
+        FundingMode::Byok => Err(VendError::FundingModeUnsupported),
     }
 }

@@ -119,7 +119,15 @@
       '<div class="divider">first time here?</div>' +
       '<div class="field"><label>Setup token (from your invitation)</label><input id="s-token" autocomplete="off" /></div>' +
       '<div class="field"><label>Choose a password</label><input id="s-pass" type="password" autocomplete="new-password" /></div>' +
-      '<button id="s-go" style="width:100%">Set password</button></div>';
+      '<button id="s-go" style="width:100%">Set password</button></div>' +
+      '<div class="panel auth" id="signup" hidden><h2>Create a workspace</h2>' +
+      '<div class="muted" id="su-note"></div>' +
+      '<div class="field"><label>Workspace name</label><input id="su-ws" maxlength="120" /></div>' +
+      '<div class="field"><label>Your name</label><input id="su-name" maxlength="120" autocomplete="name" /></div>' +
+      '<div class="field"><label>Email</label><input id="su-email" type="email" autocomplete="email" /></div>' +
+      '<div class="field"><label>Password (12+ characters)</label><input id="su-pass" type="password" autocomplete="new-password" /></div>' +
+      '<div class="field"><label>API product name (optional)</label><input id="su-app" maxlength="120" /></div>' +
+      '<button id="su-go" class="primary" style="width:100%">Create workspace</button><div id="su-out"></div></div>';
     function tenantId() { var t = $("l-tenant").value.trim(); if (t) localStorage.setItem(TENANT, t); return t; }
     $("l-go").onclick = function () {
       var t = tenantId();
@@ -132,6 +140,24 @@
       location.href = "/v1/auth/" + provider + "/start?tenant_id=" + encodeURIComponent(t); }
     $("o-gh").onclick = function () { oauth("github"); };
     $("o-gg").onclick = function () { oauth("google"); };
+    api("GET", "/v1/auth/signup").then(function (o) {
+      if (!o || !o.enabled) return;
+      $("signup").hidden = false;
+      $("su-note").textContent = "Launch your own branded LLM API: " + (o.funding_mode === "end_user_reserve" ? "each of your users gets a prepaid wallet" : "requests are paid from your app wallet") +
+        ", default markup " + (o.default_markup_bps / 100) + "% over provider cost, " + o.models.length + " model(s) available.";
+      $("su-go").onclick = function () {
+        var btn = $("su-go"); btn.disabled = true;
+        api("POST", "/v1/auth/signup", { workspace_name: $("su-ws").value.trim(), display_name: $("su-name").value.trim(),
+          email: $("su-email").value.trim(), password: $("su-pass").value, app_name: $("su-app").value.trim() || null })
+          .then(function (r) {
+            localStorage.setItem(TENANT, r.tenant_id);
+            st.token = r.session_token; sessionStorage.setItem(SESSION, st.token);
+            st.appId = r.app_id; st.tab = "apps"; st.newKey = r.provisioning_key;
+            setStatus("Workspace created", "ok"); render();
+          })
+          .catch(function (e) { btn.disabled = false; setStatus(e.message, "err"); });
+      };
+    }).catch(function () {});
     $("s-go").onclick = function () {
       api("POST", "/v1/auth/setup", { setup_token: $("s-token").value.trim(), password: $("s-pass").value })
         .then(function (u) { localStorage.setItem(TENANT, u.tenant_id); setStatus("Password set. Sign in with " + u.email + ".", "ok"); renderAuth(); })
@@ -140,7 +166,7 @@
   }
 
   // ---- Shell ------------------------------------------------------------------
-  var TABS = [["apps", "Apps"], ["team", "Team"], ["account", "Account"]];
+  var TABS = [["apps", "Apps"], ["earnings", "Earnings"], ["team", "Team"], ["account", "Account"]];
   function renderTabs() {
     var nav = $("tabs"); nav.innerHTML = "";
     if (!st.token) return;
@@ -158,6 +184,7 @@
       $("who").textContent = st.tenant.name + " (" + st.tenant.id + ")";
       if (st.tab === "apps") return st.appId ? renderApp(st.appId) : renderApps();
       if (st.tab === "team") return renderTeam();
+      if (st.tab === "earnings") return renderEarnings();
       return renderAccount();
     }).catch(function (e) { main.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
   }
@@ -170,14 +197,15 @@
         apps.map(function (a) {
           return "<tr><td><b>" + esc(a.name) + '</b><div class="mono muted">' + esc(a.id) + "</div></td><td>" + (a.enabled ? '<span class="badge on">enabled</span>' : '<span class="badge off">disabled</span>') +
             "</td><td>" + (a.model_allowlist.length ? esc(a.model_allowlist.join(", ")) : '<span class="muted">all priced models</span>') +
-            "</td><td>" + esc(a.markup_policy.markup_bps) + ' bps</td><td><button data-open="' + esc(a.id) + '">Open</button></td></tr>';
+            "</td><td>" + esc(a.markup_policy.markup_bps) + ' bps<div class="muted">' + (a.markup_policy.funding_mode === "end_user_reserve" ? "end-user wallets" : "app wallet") + '</div></td><td><button data-open="' + esc(a.id) + '">Open</button></td></tr>';
         }).join("") + "</tbody></table>" : '<div class="empty">No apps yet.</div>') + "</div>" +
         '<div class="panel"><h2>New app</h2><div class="cards">' +
         '<div class="field"><label>Name</label><input id="na-name" /></div>' +
         '<div class="field"><label>Mint reserve account</label><input id="na-acct" placeholder="acct_..." value="' + esc(st.tenant.mint_account_id) + '" /></div>' +
         '<div class="field"><label>Allowed models (comma separated, blank = all)</label><input id="na-models" /></div>' +
         '<div class="field"><label>Markup (bps)</label><input id="na-bps" type="number" value="2000" min="0" /></div>' +
-        '<div class="field"><label>Minimum fee per request ($)</label><input id="na-min" type="number" value="0" min="0" step="0.0001" /></div></div>' +
+        '<div class="field"><label>Minimum fee per request ($)</label><input id="na-min" type="number" value="0" min="0" step="0.0001" /></div>' +
+        '<div class="field"><label>Who pays</label><select id="na-fund"><option value="end_user_reserve">Each end user, from their own wallet</option><option value="tenant_reserve">My app wallet</option></select></div></div>' +
         '<button id="na-go" class="primary">Create app</button></div>';
       main.innerHTML = html;
       main.querySelectorAll("button[data-open]").forEach(function (b) { b.onclick = function () { st.appId = b.dataset.open; render(); }; });
@@ -185,7 +213,7 @@
         var models = $("na-models").value.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
         api("POST", "/v1/customer/apps", {
           name: $("na-name").value.trim(), mint_account_id: $("na-acct").value.trim(), model_allowlist: models, zdr: false,
-          markup_policy: { markup_bps: Number($("na-bps").value || 0), min_fee_micros: Math.round(Number($("na-min").value || 0) * 1e6), platform_fee_bps: 0, funding_mode: "tenant_reserve" }
+          markup_policy: { markup_bps: Number($("na-bps").value || 0), min_fee_micros: Math.round(Number($("na-min").value || 0) * 1e6), platform_fee_bps: 0, funding_mode: $("na-fund").value }
         }).then(function (a) { setStatus("App created", "ok"); st.appId = a.id; render(); }).catch(function (e) { setStatus(e.message, "err"); });
       };
     }).catch(function (e) { main.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
@@ -221,6 +249,8 @@
         days.slice().reverse().filter(function (d) { return d.usage.requests; }).map(function (d) {
           var u = d.usage; return "<tr><td>" + esc(d.utc_day) + "</td><td>" + u.requests + "</td><td>" + u.captured_requests + "</td><td>" + u.released_requests + "</td><td>" + u.pending_requests + "</td><td>" + usd(u.captured_charge_micros) + "</td></tr>";
         }).join("") + "</tbody></table>" + (reqs ? "" : '<div class="empty">No traffic in the last 30 days.</div>') + "</div>" +
+        '<div id="mp" class="panel"><h2>Model pricing</h2><div class="loading">Loading prices...</div></div>' +
+        '<div id="wl" class="panel"><h2>End-user wallets</h2><div class="loading">Loading wallets...</div></div>' +
         '<div class="panel"><h2>Provisioning keys</h2>' + (keys.length ? "<table><thead><tr><th>Prefix</th><th>Scope</th><th>Status</th><th>Daily cap</th><th>Per end-user cap</th><th></th></tr></thead><tbody>" +
           keys.map(function (k) {
             return '<tr><td class="mono">' + esc(k.prefix) + "</td><td>" + esc(k.scope) + "</td><td>" + esc(k.status) + "</td><td>" + usd(k.daily_cap_micros) + "</td><td>" + usd(k.per_end_user_daily_cap_micros) +
@@ -232,6 +262,9 @@
         '<div class="panel"><h2>End users</h2><div class="muted">Provision an end user with their own Mint reserve account, then pass their reference in the <code>Vend-End-User</code> header.</div>' +
         '<div class="row" style="margin-top:10px"><input id="eu-ref" placeholder="external reference (your user id)" /><input id="eu-acct" placeholder="acct_... (Mint account)" /><button id="eu-go">Provision</button></div></div>';
 
+      if (st.newKey) { main.insertAdjacentHTML("afterbegin", '<div class="panel">' + secretBox("Your live provisioning key", st.newKey,
+        "Copy it now. Call /v1/chat/completions with it as a Bearer token; it will not be shown again.") + "</div>"); st.newKey = null; }
+      renderPricing(base); renderWallets(base, app);
       $("back").onclick = function () { st.appId = null; render(); };
       $("toggle").onclick = function () {
         api("PATCH", base + "/enabled", { enabled: !app.enabled }).then(function () { setStatus(app.enabled ? "App disabled" : "App enabled", "ok"); render(); }).catch(function (e) { setStatus(e.message, "err"); });
@@ -261,6 +294,100 @@
       };
     }).catch(function (e) { main.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
   }
+  // ---- Model pricing (per-model markup over provider cost) ---------------------
+  function perM(m) { return "$" + (Number(m) / 1e6).toFixed(4) + " / 1M"; }
+  function renderPricing(base) {
+    api("GET", base + "/model-pricing").then(function (sheet) {
+      var box = $("mp"); if (!box) return;
+      box.innerHTML = '<h2>Model pricing</h2><div class="muted">Default markup ' + esc(sheet["default"].markup_bps) + ' bps over provider cost. Override any model; the next request uses the new price.</div>' +
+        (sheet.models.length ? '<table style="margin-top:10px"><thead><tr><th>Model</th><th>Provider in / out</th><th>Your price in / out</th><th>Markup (bps)</th><th></th></tr></thead><tbody>' +
+          sheet.models.map(function (m, i) {
+            return '<tr><td class="mono">' + esc(m.model) + "</td><td>" + perM(m.provider_input_micros_per_million_tokens) + "<br>" + perM(m.provider_output_micros_per_million_tokens) +
+              "</td><td>" + perM(m.input_micros_per_million_tokens) + "<br>" + perM(m.output_micros_per_million_tokens) +
+              '</td><td><input data-bps="' + i + '" type="number" min="0" max="1000000" style="width:110px" value="' + esc(m.effective_markup_bps) + '" />' +
+              (m.override ? '<div class="muted">override</div>' : '<div class="muted">default</div>') + '</td><td><button data-save="' + i + '">Save</button>' +
+              (m.override ? ' <button class="danger" data-reset="' + i + '">Reset</button>' : "") + "</td></tr>";
+          }).join("") + "</tbody></table>" : '<div class="empty">No priced models are allowed for this app.</div>');
+      box.querySelectorAll("button[data-save]").forEach(function (b) {
+        b.onclick = function () {
+          var m = sheet.models[Number(b.dataset.save)];
+          var bps = Number(box.querySelector('input[data-bps="' + b.dataset.save + '"]').value);
+          if (!(bps >= 0)) { setStatus("Markup must be zero or more basis points", "err"); return; }
+          api("PUT", base + "/model-pricing", { model: m.model, markup_bps: Math.round(bps) })
+            .then(function () { setStatus("Price updated for " + m.model, "ok"); renderPricing(base); })
+            .catch(function (e) { setStatus(e.message, "err"); });
+        };
+      });
+      box.querySelectorAll("button[data-reset]").forEach(function (b) {
+        b.onclick = function () {
+          var m = sheet.models[Number(b.dataset.reset)];
+          api("DELETE", base + "/model-pricing?model=" + encodeURIComponent(m.model))
+            .then(function () { setStatus("Back to the default markup", "ok"); renderPricing(base); })
+            .catch(function (e) { setStatus(e.message, "err"); });
+        };
+      });
+    }).catch(function (e) { var box = $("mp"); if (box) box.innerHTML = '<h2>Model pricing</h2><div class="empty">' + esc(e.message) + "</div>"; });
+  }
+
+  // ---- End-user wallets -----------------------------------------------------------
+  function renderWallets(base, app) {
+    api("GET", base + "/wallets?limit=50").then(function (data) {
+      var box = $("wl"); if (!box) return;
+      var wallets = data.wallets || [];
+      var walletMode = data.funding_mode === "end_user_reserve";
+      box.innerHTML = '<h2>End-user wallets</h2><div class="muted">' + (walletMode
+          ? "Each request is paid from the calling user's wallet (send <code>Vend-End-User: &lt;reference&gt;</code>). Create wallets from your backend with <code>POST /v1/wallets</code> or here."
+          : "This app is paid from its app wallet. Wallets still work for attribution and per-user caps.") + "</div>" +
+        (wallets.length ? '<table style="margin-top:10px"><thead><tr><th>User reference</th><th>Available</th><th>Held</th><th>Spent today</th><th>Top-up link</th></tr></thead><tbody>' +
+          wallets.map(function (w, i) {
+            return '<tr><td class="mono">' + esc(w.external_ref) + "</td><td>" + (w.balance_error ? '<span class="muted">' + esc(w.balance_error) + "</span>" : usd(w.available_micros)) +
+              "</td><td>" + (w.balance_error ? "-" : usd(w.held_micros)) + "</td><td>" + usd(w.spent_today_micros) + "</td><td>" +
+              (w.mint_account_id ? '<button data-topup="' + i + '">Create link</button>' : '<span class="muted">no wallet</span>') + "</td></tr>";
+          }).join("") + "</tbody></table>" : '<div class="empty">No wallets yet.</div>') +
+        '<div class="row" style="margin-top:12px"><input id="w-ref" placeholder="your user id" /><button id="w-go" class="primary">Create wallet</button>' +
+        '<select id="w-prov"><option value="creem">Creem</option><option value="polar">Polar</option><option value="paypal">PayPal</option><option value="stripe">Card (Stripe)</option><option value="iyzico">iyzico</option><option value="usdc">USDC</option></select>' +
+        '<input id="w-amt" type="number" min="1" step="1" value="10" style="width:100px" /><span class="muted">USD per top-up link</span></div><div id="w-out"></div>';
+      $("w-go").onclick = function () {
+        api("POST", base + "/wallets", { external_ref: $("w-ref").value.trim() })
+          .then(function (w) { setStatus(w.created ? "Wallet created" : "Wallet already existed", "ok"); renderWallets(base, app); })
+          .catch(function (e) { setStatus(e.message, "err"); });
+      };
+      box.querySelectorAll("button[data-topup]").forEach(function (b) {
+        b.onclick = function () {
+          var w = wallets[Number(b.dataset.topup)];
+          var cents = Math.round(Number($("w-amt").value) * 100);
+          if (!(cents > 0)) { setStatus("Enter a top-up amount", "err"); return; }
+          api("POST", base + "/wallets/" + encodeURIComponent(w.external_ref) + "/top-ups", { provider: $("w-prov").value, amount_micros: cents * 10000 })
+            .then(function (c) { $("w-out").innerHTML = '<div class="secret"><b>Top-up link for ' + esc(w.external_ref) + '</b><div class="muted">Send this checkout to the user. Paid funds land in their wallet.</div><code>' + esc(c.checkout_url) + "</code></div>"; setStatus("Top-up link created", "ok"); })
+            .catch(function (e) { setStatus(e.message, "err"); });
+        };
+      });
+    }).catch(function (e) { var box = $("wl"); if (box) box.innerHTML = '<h2>End-user wallets</h2><div class="empty">' + esc(e.message) + "</div>"; });
+  }
+
+  // ---- Earnings -------------------------------------------------------------------
+  function renderEarnings() {
+    main.innerHTML = '<div class="loading">Loading earnings...</div>';
+    api("GET", "/v1/customer/earnings?from=" + dayOffset(-29) + "&to=" + dayOffset(0)).then(function (r) {
+      var s = r.summary, t = r.payouts.totals, recent = r.payouts.recent || [];
+      var max = Math.max.apply(null, r.days.map(function (d) { return d.tenant_net_micros; }).concat([1]));
+      main.innerHTML = '<div class="panel"><h2>Last 30 days</h2><div class="cards">' +
+        '<div class="card"><div class="muted">Your users paid</div><div class="big">' + usd(s.charge_micros) + '</div><div class="muted">' + esc(s.captured_requests) + " requests</div></div>" +
+        '<div class="card"><div class="muted">Provider cost</div><div class="big">' + usd(s.provider_cost_micros) + "</div></div>" +
+        '<div class="card"><div class="muted">Platform fee</div><div class="big">' + usd(s.platform_fee_micros) + "</div></div>" +
+        '<div class="card"><div class="muted">Your earnings</div><div class="big">' + usd(s.tenant_net_micros) + "</div></div></div>" +
+        '<div class="bars">' + r.days.map(function (d) { return '<div title="' + esc(d.utc_day) + ": " + usd(d.tenant_net_micros) + '" style="height:' + Math.max(1, Math.round(88 * d.tenant_net_micros / max)) + 'px"></div>'; }).join("") + "</div></div>" +
+        '<div class="panel"><h2>Payouts to your Mint account</h2><div class="cards">' +
+        '<div class="card"><div class="muted">Paid out</div><div class="big">' + usd(t.tenant_paid_micros) + '</div><div class="muted">' + esc(t.complete_count) + " settled charges</div></div>" +
+        '<div class="card"><div class="muted">In progress</div><div class="big">' + usd(t.tenant_pending_micros) + '</div><div class="muted">' + esc(t.pending_count) + " pending</div></div></div>" +
+        (recent.length ? '<table style="margin-top:12px"><thead><tr><th>Charge</th><th>Charged</th><th>Your share</th><th>Status</th></tr></thead><tbody>' +
+          recent.map(function (p) {
+            return '<tr><td class="mono">' + esc(p.charge_id) + "</td><td>" + usd(p.captured_charge_micros) + "</td><td>" + usd(p.tenant_net_micros) + "</td><td>" +
+              (p.tenant_transferred ? '<span class="badge on">paid</span>' : '<span class="badge">' + esc(p.state) + "</span>") + (p.last_error ? '<div class="muted">' + esc(p.last_error) + "</div>" : "") + "</td></tr>";
+          }).join("") + "</tbody></table>" : '<div class="empty">No payouts yet.</div>') + "</div>";
+    }).catch(function (e) { main.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
+  }
+
   function dayOffset(n) { var d = new Date(); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 
   // ---- Team -------------------------------------------------------------------

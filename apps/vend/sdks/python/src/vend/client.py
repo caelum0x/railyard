@@ -277,6 +277,85 @@ class VendClient:
             {"current_password": current_password, "new_password": new_password},
         )
 
+    def signup(
+        self,
+        *,
+        workspace_name: str,
+        email: str,
+        display_name: str,
+        password: str,
+        app_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Self-serve workspace signup (if the operator enabled it); signs in."""
+        body: JsonObject = {
+            "workspace_name": workspace_name,
+            "email": email,
+            "display_name": display_name,
+            "password": password,
+        }
+        if app_name:
+            body["app_name"] = app_name
+        result = self._control("/v1/auth/signup", "POST", body, authenticated=False)
+        self.customer_session = result["session_token"]
+        return result
+
+    # ---- end-user wallets from your backend (provisioning key) ----------------
+
+    def create_wallet(self, external_ref: str) -> dict[str, Any]:
+        """Create (idempotently) the wallet of one of your users."""
+        return self._keyed("/v1/wallets", "POST", {"external_ref": external_ref})
+
+    def get_wallet(self, external_ref: str) -> dict[str, Any]:
+        """Live wallet balance and today's spend."""
+        return self._keyed(f"/v1/wallets/{_segment(external_ref)}", "GET")
+
+    def create_wallet_top_up(
+        self, external_ref: str, provider: str, amount_micros: int
+    ) -> dict[str, Any]:
+        """Hosted checkout depositing into the user's wallet (whole cents)."""
+        return self._keyed(
+            f"/v1/wallets/{_segment(external_ref)}/top-ups",
+            "POST",
+            {"provider": provider, "amount_micros": amount_micros},
+        )
+
+    # ---- white-label console (customer session) --------------------------------
+
+    def list_wallets(self, app_id: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        return self._control(
+            f"/v1/customer/apps/{_segment(app_id)}/wallets?limit={limit}&offset={offset}",
+            "GET",
+        )
+
+    def model_pricing(self, app_id: str) -> dict[str, Any]:
+        return self._control(f"/v1/customer/apps/{_segment(app_id)}/model-pricing", "GET")
+
+    def set_model_markup(
+        self,
+        app_id: str,
+        model: str,
+        markup_bps: int,
+        min_fee_micros: int | None = None,
+    ) -> dict[str, Any]:
+        body: JsonObject = {"model": model, "markup_bps": markup_bps}
+        if min_fee_micros is not None:
+            body["min_fee_micros"] = min_fee_micros
+        return self._control(
+            f"/v1/customer/apps/{_segment(app_id)}/model-pricing", "PUT", body
+        )
+
+    def clear_model_markup(self, app_id: str, model: str) -> dict[str, Any]:
+        return self._control(
+            f"/v1/customer/apps/{_segment(app_id)}/model-pricing?model={quote(model, safe='')}",
+            "DELETE",
+        )
+
+    def earnings(self, from_day: str | None = None, to_day: str | None = None) -> dict[str, Any]:
+        query = urlencode(
+            [(key, value) for key, value in (("from", from_day), ("to", to_day)) if value]
+        )
+        return self._control(f"/v1/customer/earnings?{query}", "GET")
+
     def rotate_session(self) -> dict[str, Any]:
         """Rotate the current session; the client switches to the new token."""
         session = self._control("/v1/customer/session/rotate", "POST")
@@ -353,6 +432,24 @@ class VendClient:
             if not self.customer_session:
                 raise ValueError("customer_session is required for this operation")
             headers["Authorization"] = f"Bearer {self.customer_session}"
+        status, response_headers, raw = self._request(path, method, body, headers)
+        payload = _decode_json(raw)
+        if (
+            not 200 <= status < 300
+            or not isinstance(payload, dict)
+            or payload.get("success") is not True
+            or "data" not in payload
+        ):
+            raise VendApiError(status, payload, _settlement_headers(response_headers))
+        return payload["data"]
+
+    def _keyed(self, path: str, method: str, body: Any = None) -> Any:
+        if not self.provisioning_key:
+            raise ValueError("provisioning_key is required for wallet operations")
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {self.provisioning_key}",
+        }
         status, response_headers, raw = self._request(path, method, body, headers)
         payload = _decode_json(raw)
         if (

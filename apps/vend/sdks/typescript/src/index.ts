@@ -6,7 +6,7 @@ export interface MarkupPolicy {
   markup_bps: number;
   min_fee_micros: number;
   platform_fee_bps: number;
-  funding_mode: "tenant_reserve";
+  funding_mode: "tenant_reserve" | "end_user_reserve";
 }
 
 export interface CustomerUser {
@@ -154,6 +154,102 @@ export interface VendModel {
     max_input_tokens: number;
     max_output_tokens: number;
   };
+}
+
+export interface Wallet {
+  external_ref: string;
+  end_user_id: string;
+  mint_account_id: string;
+  available_micros: number;
+  held_micros: number;
+  spent_today_micros: number;
+  funding_mode: MarkupPolicy["funding_mode"];
+  created: boolean;
+}
+
+export type TopUpProvider = "creem" | "polar" | "paypal" | "stripe" | "iyzico" | "usdc";
+
+export interface WalletListItem {
+  end_user_id: string;
+  external_ref: string;
+  mint_account_id: string | null;
+  spent_today_micros: number;
+  created_at_ms: number;
+  available_micros?: number;
+  held_micros?: number;
+  balance_error?: string;
+}
+
+export interface ModelMarkup {
+  markup_bps: number;
+  min_fee_micros?: number;
+}
+
+export interface ModelPrice {
+  model: string;
+  provider_input_micros_per_million_tokens: number;
+  provider_output_micros_per_million_tokens: number;
+  override: ModelMarkup | null;
+  effective_markup_bps: number;
+  effective_min_fee_micros: number;
+  input_micros_per_million_tokens: number;
+  output_micros_per_million_tokens: number;
+}
+
+export interface PriceSheet {
+  app_id: string;
+  default: MarkupPolicy;
+  models: ModelPrice[];
+}
+
+export interface EarningsReport {
+  from: string;
+  to: string;
+  summary: {
+    captured_requests: number;
+    charge_micros: number;
+    provider_cost_micros: number;
+    platform_fee_micros: number;
+    tenant_net_micros: number;
+  };
+  days: Array<{
+    utc_day: string;
+    captured_requests: number;
+    charge_micros: number;
+    provider_cost_micros: number;
+    platform_fee_micros: number;
+    tenant_net_micros: number;
+  }>;
+  payouts: {
+    totals: {
+      complete_count: number;
+      pending_count: number;
+      tenant_paid_micros: number;
+      tenant_pending_micros: number;
+      platform_paid_micros: number;
+    };
+    recent: Array<Record<string, unknown>>;
+  };
+}
+
+export interface SignupInput {
+  workspace_name: string;
+  email: string;
+  display_name: string;
+  password: string;
+  app_name?: string;
+}
+
+export interface SignupResult {
+  tenant_id: string;
+  app_id: string;
+  app_mint_account_id: string;
+  tenant_mint_account_id: string;
+  key_id: string;
+  provisioning_key: string;
+  session_token: string;
+  expires_at: string;
+  funding_mode: MarkupPolicy["funding_mode"];
 }
 
 export interface VendClientOptions {
@@ -377,6 +473,68 @@ export class VendClient {
   }
 
   /** Rotate the current session; the client switches to the new token. */
+  /** Self-serve workspace signup (when the operator enabled it). Signs in. */
+  async signup(input: SignupInput): Promise<SignupResult> {
+    const result = await this.control<SignupResult>("/v1/auth/signup", "POST", input, false);
+    this.customerSession = result.session_token;
+    return result;
+  }
+
+  // ---- End-user wallets from your backend (provisioning key) ------------------
+
+  /** Create (idempotently) the wallet of one of your users. */
+  createWallet(externalRef: string): Promise<Wallet> {
+    return this.keyed<Wallet>("/v1/wallets", "POST", { external_ref: externalRef });
+  }
+
+  /** Live wallet balance and today's spend. */
+  getWallet(externalRef: string): Promise<Wallet> {
+    return this.keyed<Wallet>(`/v1/wallets/${segment(externalRef)}`, "GET");
+  }
+
+  /** Hosted checkout that deposits into the user's wallet. Whole cents only. */
+  createWalletTopUp(
+    externalRef: string,
+    provider: TopUpProvider,
+    amountMicros: number,
+  ): Promise<FundingCheckout> {
+    return this.keyed<FundingCheckout>(`/v1/wallets/${segment(externalRef)}/top-ups`, "POST", {
+      provider,
+      amount_micros: amountMicros,
+    });
+  }
+
+  // ---- White-label console (customer session) -----------------------------------
+
+  listWallets(appId: string, limit = 50, offset = 0): Promise<{ funding_mode: string; wallets: WalletListItem[] }> {
+    return this.control(`/v1/customer/apps/${segment(appId)}/wallets?limit=${limit}&offset=${offset}`, "GET");
+  }
+
+  getModelPricing(appId: string): Promise<PriceSheet> {
+    return this.control<PriceSheet>(`/v1/customer/apps/${segment(appId)}/model-pricing`, "GET");
+  }
+
+  setModelMarkup(appId: string, model: string, markup: ModelMarkup): Promise<PriceSheet> {
+    return this.control<PriceSheet>(`/v1/customer/apps/${segment(appId)}/model-pricing`, "PUT", {
+      model,
+      ...markup,
+    });
+  }
+
+  clearModelMarkup(appId: string, model: string): Promise<PriceSheet> {
+    return this.control<PriceSheet>(
+      `/v1/customer/apps/${segment(appId)}/model-pricing?model=${encodeURIComponent(model)}`,
+      "DELETE",
+    );
+  }
+
+  earnings(from?: string, to?: string): Promise<EarningsReport> {
+    const query = new URLSearchParams();
+    if (from) query.set("from", from);
+    if (to) query.set("to", to);
+    return this.control<EarningsReport>(`/v1/customer/earnings?${query.toString()}`, "GET");
+  }
+
   async rotateSession(): Promise<CustomerSession> {
     const session = await this.control<CustomerSession>("/v1/customer/session/rotate", "POST");
     this.customerSession = session.session_token;
@@ -434,6 +592,27 @@ export class VendClient {
       if (!this.customerSession) throw new Error("customerSession is required for this operation");
       headers.set("Authorization", `Bearer ${this.customerSession}`);
     }
+    const response = await this.fetcher(resolveUrl(path, this.baseUrl), {
+      method,
+      headers,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      redirect: "manual",
+    });
+    const payload: unknown = await response.json().catch(() => null);
+    if (!response.ok || !isRecord(payload) || payload.success !== true || !("data" in payload)) {
+      throw new VendApiError(response.status, payload, settlementHeaders(response.headers));
+    }
+    return payload.data as T;
+  }
+
+  /** `{success,data}` call authenticated with the provisioning key. */
+  private async keyed<T>(path: string, method: string, body?: unknown): Promise<T> {
+    if (!this.provisioningKey) throw new Error("provisioningKey is required for wallet operations");
+    const headers = new Headers({
+      Accept: "application/json",
+      Authorization: `Bearer ${this.provisioningKey}`,
+    });
+    if (body !== undefined) headers.set("Content-Type", "application/json");
     const response = await this.fetcher(resolveUrl(path, this.baseUrl), {
       method,
       headers,

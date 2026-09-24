@@ -148,6 +148,23 @@ pub struct CheckoutResponse {
     pub amount_micros: i64,
 }
 
+/// `POST /v1/accounts` request: a new Mint account (end-user wallet or a
+/// self-serve tenant's reserve/payout account).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateAccountRequest {
+    /// Mint account kind: `user` for end-user wallets, `org` for tenants.
+    pub kind: String,
+    /// Opaque owner reference recorded on the Mint account (at most 256 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_ref: Option<String>,
+}
+
+/// `POST /v1/accounts` success payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateAccountResponse {
+    pub account_id: String,
+}
+
 /// The Mint data-plane seam. Object-safe (async_trait boxes the futures) so it
 /// can be stored as `Arc<dyn MintTransport>` in the server state.
 #[async_trait]
@@ -174,6 +191,12 @@ pub trait MintTransport: Send + Sync {
     async fn transfer(&self, req: TransferRequest) -> Result<TransferResponse, VendError>;
     /// `GET /v1/accounts/:id/balance` — the reserve wallet's live balance.
     async fn get_balance(&self, account_id: &str) -> Result<MintBalance, VendError>;
+    /// `POST /v1/accounts` — open a new Mint account (end-user wallet or a
+    /// self-serve tenant account). Vend stores only the returned id.
+    async fn create_account(
+        &self,
+        req: CreateAccountRequest,
+    ) -> Result<CreateAccountResponse, VendError>;
 }
 
 // ---------------------------------------------------------------------------

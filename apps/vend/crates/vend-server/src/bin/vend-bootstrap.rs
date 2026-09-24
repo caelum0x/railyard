@@ -122,6 +122,9 @@ fn parse_bool(name: &str, default: bool) -> anyhow::Result<bool> {
 fn funding_mode() -> anyhow::Result<FundingMode> {
     match optional("VEND_FUNDING_MODE").as_deref() {
         None | Some("tenant_reserve") => Ok(FundingMode::TenantReserve),
-        Some(value) => bail!("vend-bootstrap supports tenant_reserve only, got {value}"),
+        Some("end_user_reserve") => Ok(FundingMode::EndUserReserve),
+        Some(value) => {
+            bail!("VEND_FUNDING_MODE must be tenant_reserve or end_user_reserve, got {value}")
+        }
     }
 }

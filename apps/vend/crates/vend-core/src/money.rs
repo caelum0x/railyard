@@ -130,6 +130,46 @@ impl MarkupPolicy {
     }
 }
 
+/// Largest markup an operator may configure: 100x provider cost.
+pub const MAX_MARKUP_BPS: u32 = 1_000_000;
+
+/// A per-model markup override for one app (white-label "your own OpenRouter"
+/// pricing). Replaces the app's `markup_bps` (and, when set, `min_fee_micros`)
+/// for requests to that model; the platform fee and funding mode never change
+/// per model.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct ModelMarkup {
+    /// Markup in basis points over provider cost for this model.
+    pub markup_bps: u32,
+    /// Optional per-request minimum markup for this model, in µ$.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_fee_micros: Option<i64>,
+}
+
+impl ModelMarkup {
+    /// Reject out-of-range values before they reach storage.
+    pub fn validate(&self) -> Result<(), VendError> {
+        if self.markup_bps > MAX_MARKUP_BPS || self.min_fee_micros.is_some_and(|fee| fee < 0) {
+            return Err(VendError::InvalidAmount);
+        }
+        Ok(())
+    }
+}
+
+impl MarkupPolicy {
+    /// This policy with a per-model override applied.
+    pub fn with_override(&self, markup: Option<&ModelMarkup>) -> MarkupPolicy {
+        match markup {
+            Some(m) => MarkupPolicy {
+                markup_bps: m.markup_bps,
+                min_fee_micros: m.min_fee_micros.unwrap_or(self.min_fee_micros),
+                ..*self
+            },
+            None => *self,
+        }
+    }
+}
+
 /// Per-key daily spend caps enforced by the atomic check-and-reserve gate.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct SpendCap {
@@ -245,6 +285,22 @@ mod tests {
             price(Micros::new(-1), &policy(0, 0, 0)),
             Err(VendError::InvalidAmount)
         );
+    }
+
+    #[test]
+    fn model_override_replaces_markup_but_keeps_platform_fee() {
+        let base = policy(2_000, 100, 1_000);
+        let over = ModelMarkup { markup_bps: 5_000, min_fee_micros: None };
+        let effective = base.with_override(Some(&over));
+        assert_eq!(effective.markup_bps, 5_000);
+        assert_eq!(effective.min_fee_micros, 100);
+        assert_eq!(effective.platform_fee_bps, 1_000);
+        assert_eq!(base.with_override(None), base);
+        let c = price(Micros::new(1_000_000), &effective).unwrap();
+        assert_eq!(c.charge_micros, 1_500_000);
+        assert!(ModelMarkup { markup_bps: MAX_MARKUP_BPS + 1, min_fee_micros: None }
+            .validate()
+            .is_err());
     }
 
     #[test]

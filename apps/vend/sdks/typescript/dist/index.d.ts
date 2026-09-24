@@ -5,7 +5,7 @@ export interface MarkupPolicy {
     markup_bps: number;
     min_fee_micros: number;
     platform_fee_bps: number;
-    funding_mode: "tenant_reserve";
+    funding_mode: "tenant_reserve" | "end_user_reserve";
 }
 export interface CustomerUser {
     id: string;
@@ -102,6 +102,130 @@ export interface SSEEvent {
     id: string | null;
     retry: number | null;
 }
+export interface AppBalance {
+    account_id: string;
+    available_micros: number;
+    held_micros: number;
+    updated_seq: number;
+}
+export interface UsageRange {
+    from: string;
+    to: string;
+    days: {
+        utc_day: string;
+        usage: UsageSummary;
+    }[];
+}
+export interface InvitedUser {
+    user: CustomerUser;
+    setup_token: string;
+    setup_expires_at: string;
+}
+export interface EndUser {
+    id: string;
+    app_id: string;
+    external_ref: string;
+    mint_account_id: string | null;
+}
+export interface VendModel {
+    id: string;
+    object: "model";
+    owned_by: string;
+    pricing: {
+        input_micros_per_million_tokens: number;
+        output_micros_per_million_tokens: number;
+        min_fee_micros_per_request: number;
+        max_input_tokens: number;
+        max_output_tokens: number;
+    };
+}
+export interface Wallet {
+    external_ref: string;
+    end_user_id: string;
+    mint_account_id: string;
+    available_micros: number;
+    held_micros: number;
+    spent_today_micros: number;
+    funding_mode: MarkupPolicy["funding_mode"];
+    created: boolean;
+}
+export type TopUpProvider = "creem" | "polar" | "paypal" | "stripe" | "iyzico" | "usdc";
+export interface WalletListItem {
+    end_user_id: string;
+    external_ref: string;
+    mint_account_id: string | null;
+    spent_today_micros: number;
+    created_at_ms: number;
+    available_micros?: number;
+    held_micros?: number;
+    balance_error?: string;
+}
+export interface ModelMarkup {
+    markup_bps: number;
+    min_fee_micros?: number;
+}
+export interface ModelPrice {
+    model: string;
+    provider_input_micros_per_million_tokens: number;
+    provider_output_micros_per_million_tokens: number;
+    override: ModelMarkup | null;
+    effective_markup_bps: number;
+    effective_min_fee_micros: number;
+    input_micros_per_million_tokens: number;
+    output_micros_per_million_tokens: number;
+}
+export interface PriceSheet {
+    app_id: string;
+    default: MarkupPolicy;
+    models: ModelPrice[];
+}
+export interface EarningsReport {
+    from: string;
+    to: string;
+    summary: {
+        captured_requests: number;
+        charge_micros: number;
+        provider_cost_micros: number;
+        platform_fee_micros: number;
+        tenant_net_micros: number;
+    };
+    days: Array<{
+        utc_day: string;
+        captured_requests: number;
+        charge_micros: number;
+        provider_cost_micros: number;
+        platform_fee_micros: number;
+        tenant_net_micros: number;
+    }>;
+    payouts: {
+        totals: {
+            complete_count: number;
+            pending_count: number;
+            tenant_paid_micros: number;
+            tenant_pending_micros: number;
+            platform_paid_micros: number;
+        };
+        recent: Array<Record<string, unknown>>;
+    };
+}
+export interface SignupInput {
+    workspace_name: string;
+    email: string;
+    display_name: string;
+    password: string;
+    app_name?: string;
+}
+export interface SignupResult {
+    tenant_id: string;
+    app_id: string;
+    app_mint_account_id: string;
+    tenant_mint_account_id: string;
+    key_id: string;
+    provisioning_key: string;
+    session_token: string;
+    expires_at: string;
+    funding_mode: MarkupPolicy["funding_mode"];
+}
 export interface VendClientOptions {
     baseUrl: string;
     customerSession?: string;
@@ -147,8 +271,43 @@ export declare class VendClient {
     issueKey(appId: string, input: IssueKey): Promise<IssuedKey>;
     revokeKey(keyId: string): Promise<ProvisioningKey>;
     usage(appId: string, utcDay?: string): Promise<UsageSummary>;
+    /** Inclusive per-day usage series (max 92 days). */
+    usageRange(appId: string, from: string, to: string): Promise<UsageRange>;
+    /** Live Mint balance of the app's reserve wallet. */
+    balance(appId: string): Promise<AppBalance>;
+    provisionEndUser(appId: string, externalRef: string, mintAccountId: string): Promise<EndUser>;
+    listUsers(): Promise<CustomerUser[]>;
+    inviteUser(email: string, displayName: string, role: CustomerRole): Promise<InvitedUser>;
+    updateUser(userId: string, changes: {
+        role?: CustomerRole;
+        disabled?: boolean;
+    }): Promise<CustomerUser>;
+    revokeUserSessions(userId: string): Promise<unknown>;
+    changePassword(currentPassword: string, newPassword: string): Promise<unknown>;
+    /** Rotate the current session; the client switches to the new token. */
+    /** Self-serve workspace signup (when the operator enabled it). Signs in. */
+    signup(input: SignupInput): Promise<SignupResult>;
+    /** Create (idempotently) the wallet of one of your users. */
+    createWallet(externalRef: string): Promise<Wallet>;
+    /** Live wallet balance and today's spend. */
+    getWallet(externalRef: string): Promise<Wallet>;
+    /** Hosted checkout that deposits into the user's wallet. Whole cents only. */
+    createWalletTopUp(externalRef: string, provider: TopUpProvider, amountMicros: number): Promise<FundingCheckout>;
+    listWallets(appId: string, limit?: number, offset?: number): Promise<{
+        funding_mode: string;
+        wallets: WalletListItem[];
+    }>;
+    getModelPricing(appId: string): Promise<PriceSheet>;
+    setModelMarkup(appId: string, model: string, markup: ModelMarkup): Promise<PriceSheet>;
+    clearModelMarkup(appId: string, model: string): Promise<PriceSheet>;
+    earnings(from?: string, to?: string): Promise<EarningsReport>;
+    rotateSession(): Promise<CustomerSession>;
+    /** OpenAI-compatible model list for the provisioning key, with effective rates. */
+    listModels(): Promise<VendModel[]>;
     chatCompletions<T = unknown>(body: Record<string, unknown>, idempotencyKey: string, endUser?: string): Promise<ChatResult<T>>;
     chatCompletionsStream(body: Record<string, unknown>, idempotencyKey: string, endUser?: string): Promise<VendChatStream>;
     private control;
+    /** `{success,data}` call authenticated with the provisioning key. */
+    private keyed;
     private chatRequest;
 }

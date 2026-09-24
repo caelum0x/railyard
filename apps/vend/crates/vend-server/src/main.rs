@@ -14,6 +14,7 @@
 //! - `VEND_CLEARING_ACCOUNT` — Mint account receiving captures (required).
 //! - `VEND_PROVIDER_PAYOUT_ACCOUNT` — provider's Mint destination (required).
 //! - `VEND_PLATFORM_PAYOUT_ACCOUNT` — platform's Mint destination (required).
+//! - `VEND_SIGNUP_*` — optional self-serve signup (see `whitelabel::signup`).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -29,6 +30,9 @@ use vend_server::pricing::PricingCatalog;
 use vend_server::readiness::DependencyReadiness;
 use vend_server::runtime_config::RuntimeConfig;
 use vend_server::security_ops::SecurityOpsConfig;
+use vend_server::whitelabel::{
+    build_console_router, build_wallet_router, ConsoleApiState, SignupConfig, WalletApiState,
+};
 use vend_server::{build_router, AppState, DataPlaneSecurity};
 use vend_server::{observability, shutdown};
 use vend_settlement::PayoutConfig;
@@ -79,6 +83,12 @@ async fn main() -> anyhow::Result<()> {
     .context("invalid customer authentication configuration")?;
     let relay_base_path =
         std::env::var("RELAY_BASE_PATH").unwrap_or_else(|_| "/openai/v1".to_string());
+    // White-label self-serve signup: off unless VEND_SIGNUP_ENABLED=true, and
+    // then every launch-economics variable must be explicit.
+    let signup = SignupConfig::from_env().context("invalid self-serve signup configuration")?;
+    if signup.is_none() {
+        tracing::info!("self-serve signup disabled (set VEND_SIGNUP_ENABLED=true to enable)");
+    }
 
     // Neon Postgres store (runs migrations at startup).
     let store = VendStore::connect_with_config(&database_url, &runtime.postgres)
@@ -114,6 +124,31 @@ async fn main() -> anyhow::Result<()> {
     );
     let metrics = Arc::new(observability::Metrics::default());
 
+    let data_security = DataPlaneSecurity {
+        repo: store.clone(),
+        config: security_config.clone(),
+    };
+    let wallet_api = build_wallet_router(WalletApiState {
+        keys: store.clone(),
+        tenants: store.clone(),
+        usage: store.clone(),
+        mint: mint.clone(),
+        security: Some(data_security.clone()),
+    });
+    let console_api = build_console_router(ConsoleApiState {
+        control: store.clone(),
+        whitelabel: store.clone(),
+        tenants: store.clone(),
+        mint: mint.clone(),
+        pricing: pricing.clone(),
+        admin: admin_auth.clone(),
+        signup,
+        security_repo: store.clone(),
+        security_config: security_config.clone(),
+        session_ttl_seconds: customer_auth.session_ttl_seconds,
+        setup_ttl_seconds: customer_auth.setup_ttl_seconds,
+    });
+
     let state = AppState {
         metrics: metrics.clone(),
         mint: mint.clone(),
@@ -129,21 +164,21 @@ async fn main() -> anyhow::Result<()> {
         relay_key,
         settlement_account,
         payout_config,
-        security_ops: Some(DataPlaneSecurity {
-            repo: store.clone(),
-            config: security_config.clone(),
-        }),
+        security_ops: Some(data_security),
     };
 
     let app = observability::harden_router(
-        build_router(state).merge(build_control_router(
-            store.clone(),
-            store,
-            admin_auth,
-            customer_auth,
-            security_config,
-            mint,
-        )),
+        build_router(state)
+            .merge(build_control_router(
+                store.clone(),
+                store,
+                admin_auth,
+                customer_auth,
+                security_config,
+                mint,
+            ))
+            .merge(wallet_api)
+            .merge(console_api),
         metrics,
         runtime.limits,
     );

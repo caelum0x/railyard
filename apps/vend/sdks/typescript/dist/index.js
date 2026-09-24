@@ -141,6 +141,111 @@ export class VendClient {
             path.searchParams.set("utc_day", utcDay);
         return this.control(path.toString(), "GET");
     }
+    /** Inclusive per-day usage series (max 92 days). */
+    usageRange(appId, from, to) {
+        const path = new URL(resolveUrl(`/v1/customer/apps/${segment(appId)}/usage`, this.baseUrl));
+        path.searchParams.set("from", from);
+        path.searchParams.set("to", to);
+        return this.control(path.toString(), "GET");
+    }
+    /** Live Mint balance of the app's reserve wallet. */
+    balance(appId) {
+        return this.control(`/v1/customer/apps/${segment(appId)}/balance`, "GET");
+    }
+    provisionEndUser(appId, externalRef, mintAccountId) {
+        return this.control(`/v1/customer/apps/${segment(appId)}/end-users`, "POST", {
+            external_ref: externalRef,
+            mint_account_id: mintAccountId,
+        });
+    }
+    listUsers() {
+        return this.control("/v1/customer/users", "GET");
+    }
+    inviteUser(email, displayName, role) {
+        return this.control("/v1/customer/users", "POST", {
+            email,
+            display_name: displayName,
+            role,
+        });
+    }
+    updateUser(userId, changes) {
+        return this.control(`/v1/customer/users/${segment(userId)}`, "PATCH", changes);
+    }
+    revokeUserSessions(userId) {
+        return this.control(`/v1/customer/users/${segment(userId)}/sessions`, "DELETE");
+    }
+    changePassword(currentPassword, newPassword) {
+        return this.control("/v1/customer/password", "PATCH", {
+            current_password: currentPassword,
+            new_password: newPassword,
+        });
+    }
+    /** Rotate the current session; the client switches to the new token. */
+    /** Self-serve workspace signup (when the operator enabled it). Signs in. */
+    async signup(input) {
+        const result = await this.control("/v1/auth/signup", "POST", input, false);
+        this.customerSession = result.session_token;
+        return result;
+    }
+    // ---- End-user wallets from your backend (provisioning key) ------------------
+    /** Create (idempotently) the wallet of one of your users. */
+    createWallet(externalRef) {
+        return this.keyed("/v1/wallets", "POST", { external_ref: externalRef });
+    }
+    /** Live wallet balance and today's spend. */
+    getWallet(externalRef) {
+        return this.keyed(`/v1/wallets/${segment(externalRef)}`, "GET");
+    }
+    /** Hosted checkout that deposits into the user's wallet. Whole cents only. */
+    createWalletTopUp(externalRef, provider, amountMicros) {
+        return this.keyed(`/v1/wallets/${segment(externalRef)}/top-ups`, "POST", {
+            provider,
+            amount_micros: amountMicros,
+        });
+    }
+    // ---- White-label console (customer session) -----------------------------------
+    listWallets(appId, limit = 50, offset = 0) {
+        return this.control(`/v1/customer/apps/${segment(appId)}/wallets?limit=${limit}&offset=${offset}`, "GET");
+    }
+    getModelPricing(appId) {
+        return this.control(`/v1/customer/apps/${segment(appId)}/model-pricing`, "GET");
+    }
+    setModelMarkup(appId, model, markup) {
+        return this.control(`/v1/customer/apps/${segment(appId)}/model-pricing`, "PUT", {
+            model,
+            ...markup,
+        });
+    }
+    clearModelMarkup(appId, model) {
+        return this.control(`/v1/customer/apps/${segment(appId)}/model-pricing?model=${encodeURIComponent(model)}`, "DELETE");
+    }
+    earnings(from, to) {
+        const query = new URLSearchParams();
+        if (from)
+            query.set("from", from);
+        if (to)
+            query.set("to", to);
+        return this.control(`/v1/customer/earnings?${query.toString()}`, "GET");
+    }
+    async rotateSession() {
+        const session = await this.control("/v1/customer/session/rotate", "POST");
+        this.customerSession = session.session_token;
+        return session;
+    }
+    /** OpenAI-compatible model list for the provisioning key, with effective rates. */
+    async listModels() {
+        if (!this.provisioningKey)
+            throw new Error("provisioningKey is required to list models");
+        const response = await this.fetcher(resolveUrl("/v1/models", this.baseUrl), {
+            method: "GET",
+            headers: { Accept: "application/json", Authorization: `Bearer ${this.provisioningKey}` },
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !isRecord(payload) || !Array.isArray(payload.data)) {
+            throw new VendApiError(response.status, payload, settlementHeaders(response.headers));
+        }
+        return payload.data;
+    }
     async chatCompletions(body, idempotencyKey, endUser) {
         const response = await this.chatRequest({ ...body, stream: false }, idempotencyKey, endUser);
         const payload = await response.json().catch(() => null);
@@ -166,6 +271,28 @@ export class VendClient {
                 throw new Error("customerSession is required for this operation");
             headers.set("Authorization", `Bearer ${this.customerSession}`);
         }
+        const response = await this.fetcher(resolveUrl(path, this.baseUrl), {
+            method,
+            headers,
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+            redirect: "manual",
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !isRecord(payload) || payload.success !== true || !("data" in payload)) {
+            throw new VendApiError(response.status, payload, settlementHeaders(response.headers));
+        }
+        return payload.data;
+    }
+    /** `{success,data}` call authenticated with the provisioning key. */
+    async keyed(path, method, body) {
+        if (!this.provisioningKey)
+            throw new Error("provisioningKey is required for wallet operations");
+        const headers = new Headers({
+            Accept: "application/json",
+            Authorization: `Bearer ${this.provisioningKey}`,
+        });
+        if (body !== undefined)
+            headers.set("Content-Type", "application/json");
         const response = await this.fetcher(resolveUrl(path, this.baseUrl), {
             method,
             headers,

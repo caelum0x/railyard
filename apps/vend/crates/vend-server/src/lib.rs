@@ -11,6 +11,7 @@
 //! `vend-testkit` fakes + in-memory store.
 
 pub mod control;
+pub mod whitelabel;
 pub mod observability;
 pub mod pricing;
 pub mod readiness;
@@ -32,7 +33,7 @@ use sha2::{Digest, Sha256};
 
 use vend_core::error::VendError;
 use vend_core::ids::{ChargeId, SubKeyId, TenantId};
-use vend_core::money::{price, FundingMode, Micros};
+use vend_core::money::{price, Micros};
 use vend_core::ports::{
     IdempotencyClaim, IdempotencyRepo, MeteredUsage, ReadinessRepo, UsageOutcome, UsageRepo,
 };
@@ -41,7 +42,7 @@ use vend_core::PayoutRepo;
 use vend_keys::{check_spend_cap, verify, KeyRepo};
 use vend_settlement::{execute_payout, prepare_payout, settle, HoldGuard, PayoutConfig, Terminal};
 use vend_store::{AuditActorKind, AuditOutcome, NewAuditEvent, SecurityOpsRepo};
-use vend_tenancy::{funding_account_id, resolve, TenantRepo};
+use vend_tenancy::{funding_account_id, resolve, resolve_app, TenantRepo};
 
 use crate::security_ops::{clear_rate_limit, enforce_rate_limit, SecurityOpsConfig};
 
@@ -128,17 +129,23 @@ async fn list_models(State(state): State<AppState>, headers: HeaderMap) -> Respo
     let app = match async {
         let secret = bearer(&headers)?;
         let key = verify(state.keys.as_ref(), secret).await?;
-        let ctx = resolve(state.tenants.as_ref(), &key, end_user_ref(&headers).as_deref()).await?;
-        Ok::<_, VendError>(ctx.app)
+        // The price list is per app; a wallet-funded app lists models without
+        // naming an end user.
+        match end_user_ref(&headers) {
+            Some(reference) => {
+                let ctx = resolve(state.tenants.as_ref(), &key, Some(&reference)).await?;
+                Ok::<_, VendError>(ctx.app)
+            }
+            None => Ok(resolve_app(state.tenants.as_ref(), &key).await?.1),
+        }
     }
     .await
     {
         Ok(app) => app,
         Err(error) => return error_response(error),
     };
-    let policy = &app.markup_policy;
-    let marked_up = |micros: i64| -> i64 {
-        let scaled = i128::from(micros) * (10_000 + i128::from(policy.markup_bps)) / 10_000;
+    let marked_up = |micros: i64, markup_bps: u32| -> i64 {
+        let scaled = i128::from(micros) * (10_000 + i128::from(markup_bps)) / 10_000;
         i64::try_from(scaled).unwrap_or(i64::MAX)
     };
     let data: Vec<serde_json::Value> = state
@@ -147,13 +154,14 @@ async fn list_models(State(state): State<AppState>, headers: HeaderMap) -> Respo
         .into_iter()
         .filter(|(model, _)| app.allows_model(model))
         .map(|(model, rate)| {
+            let policy = app.policy_for(&model);
             serde_json::json!({
                 "id": model,
                 "object": "model",
                 "owned_by": "vend",
                 "pricing": {
-                    "input_micros_per_million_tokens": marked_up(rate.input_micros_per_million_tokens),
-                    "output_micros_per_million_tokens": marked_up(rate.output_micros_per_million_tokens),
+                    "input_micros_per_million_tokens": marked_up(rate.input_micros_per_million_tokens, policy.markup_bps),
+                    "output_micros_per_million_tokens": marked_up(rate.output_micros_per_million_tokens, policy.markup_bps),
                     "min_fee_micros_per_request": policy.min_fee_micros,
                     "max_input_tokens": rate.max_input_tokens,
                     "max_output_tokens": rate.max_output_tokens,
@@ -179,7 +187,7 @@ async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Map a [`VendError`] into OpenAI's stable JSON error shape.
-fn error_response(err: VendError) -> Response {
+pub(crate) fn error_response(err: VendError) -> Response {
     let status =
         StatusCode::from_u16(err.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     openai_error(status, err.client_message(), err.code()).into_response()
@@ -244,7 +252,17 @@ async fn chat_completions(
 }
 
 async fn preflight_provisioning_key(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
-    let Some(security) = &state.security_ops else {
+    preflight_key(state.keys.as_ref(), state.security_ops.as_ref(), headers).await
+}
+
+/// Throttle known-prefix provisioning-key guessing before Argon2 verification.
+/// Shared by every provisioning-key surface (inference, models, wallets).
+pub(crate) async fn preflight_key(
+    keys: &dyn KeyRepo,
+    security: Option<&DataPlaneSecurity>,
+    headers: &HeaderMap,
+) -> Result<(), Response> {
+    let Some(security) = security else {
         return Ok(());
     };
     let Ok(secret) = bearer(headers) else {
@@ -253,8 +271,7 @@ async fn preflight_provisioning_key(state: &AppState, headers: &HeaderMap) -> Re
     let Some(prefix) = vend_keys::lookup_prefix(secret) else {
         return Ok(());
     };
-    let record = state
-        .keys
+    let record = keys
         .find_by_prefix(&prefix)
         .await
         .map_err(error_response)?;
@@ -272,7 +289,7 @@ async fn preflight_provisioning_key(state: &AppState, headers: &HeaderMap) -> Re
         security.config.provisioning_key,
     )
     .await?;
-    match verify(state.keys.as_ref(), secret).await {
+    match verify(keys, secret).await {
         Ok(_) => {
             if let Err(error) = clear_rate_limit(
                 &security.repo,
@@ -423,9 +440,10 @@ async fn run_flow(
 
     // Sx0 settles one complete customer charge into one clearing account. BYOK
     // and end-user-reserve need split settlement semantics that are not present.
-    if ctx.app.markup_policy.funding_mode != FundingMode::TenantReserve {
-        return Err(VendError::FundingModeUnsupported);
-    }
+    // tenant_reserve holds on the app wallet; end_user_reserve holds on the
+    // resolved end user's own Mint wallet (never the app's). Both settle into
+    // the same clearing account and split payout. BYOK stays unsupported.
+    let funding_account = funding_account_id(&ctx)?.to_string();
 
     // 2. Validate model/rate and establish a key-scoped replay identity.
     let model = body
@@ -436,6 +454,8 @@ async fn run_flow(
     if !ctx.app.allows_model(&model) {
         return Err(VendError::ModelNotAllowed);
     }
+    // Per-model markup override (white-label pricing) applied to this call.
+    let policy = ctx.app.policy_for(&model);
     let client_key = idempotency_key(headers)?;
     let body_hash = request_hash(&body)?;
     let key_hash = format!("{:x}", Sha256::digest(client_key.as_bytes()));
@@ -464,7 +484,7 @@ async fn run_flow(
             return Err(error);
         }
     };
-    let est_charge = match price(estimate, &ctx.app.markup_policy) {
+    let est_charge = match price(estimate, &policy) {
         Ok(charge) => charge,
         Err(error) => {
             state.idempotency.abort(&replay_key, &body_hash).await?;
@@ -522,7 +542,7 @@ async fn run_flow(
     // 5. Open and attach the Mint hold. Operation-specific suffixes keep Mint's
     // global idempotency namespace collision-free. If Mint rejects the hold,
     // release the local cap reservation and let the caller retry.
-    let account = funding_account_id(&ctx).to_string();
+    let account = funding_account.clone();
     let hold = match state
         .mint
         .create_hold(HoldRequest {
@@ -608,7 +628,7 @@ async fn run_flow(
             Some(usage) => match usage.provider_cost_micros {
                 Some(cost) if cost >= 0 => {
                     let actual_cost = Micros::new(cost);
-                    match price(actual_cost, &ctx.app.markup_policy) {
+                    match price(actual_cost, &policy) {
                         Ok(actual_charge) if actual_charge.charge_micros == 0 => {
                             // Mint correctly rejects zero captures. A truly
                             // free terminal is successful but uncharged.

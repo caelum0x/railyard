@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 
 use vend_core::error::VendError;
 use vend_core::ids::ChargeId;
-use vend_core::money::{price, FundingMode, Micros};
+use vend_core::money::{price, Micros};
 use vend_core::ports::{IdempotencyClaim, MeteredUsage, UsageOutcome};
 use vend_core::transport::{parse_usage, HoldRequest, RelayRequest, RelayStreamResponse};
 use vend_keys::{check_spend_cap, verify};
@@ -37,9 +37,10 @@ pub(crate) async fn run(
     let key = verify(state.keys.as_ref(), secret).await?;
     let ext_ref = end_user_ref(headers);
     let ctx = resolve(state.tenants.as_ref(), &key, ext_ref.as_deref()).await?;
-    if ctx.app.markup_policy.funding_mode != FundingMode::TenantReserve {
-        return Err(VendError::FundingModeUnsupported);
-    }
+    // tenant_reserve holds on the app wallet; end_user_reserve holds on the
+    // resolved end user's own Mint wallet (never the app's). Both settle into
+    // the same clearing account and split payout. BYOK stays unsupported.
+    let funding_account = funding_account_id(&ctx)?.to_string();
 
     let model = body
         .get("model")
@@ -49,6 +50,8 @@ pub(crate) async fn run(
     if !ctx.app.allows_model(&model) {
         return Err(VendError::ModelNotAllowed);
     }
+    // Per-model markup override (white-label pricing) applied to this call.
+    let policy = ctx.app.policy_for(&model);
 
     let client_key = idempotency_key(headers)?;
     let body_hash = request_hash(&body)?;
@@ -71,7 +74,7 @@ pub(crate) async fn run(
             return Err(error);
         }
     };
-    let estimated_charge = match price(estimate, &ctx.app.markup_policy) {
+    let estimated_charge = match price(estimate, &policy) {
         Ok(value) => value,
         Err(error) => {
             state.idempotency.abort(&replay_key, &body_hash).await?;
@@ -125,7 +128,7 @@ pub(crate) async fn run(
     let hold = match state
         .mint
         .create_hold(HoldRequest {
-            from: funding_account_id(&ctx).to_string(),
+            from: funding_account.clone(),
             amount_micros: estimated_charge.charge_micros,
             idem_key: format!("{mint_idem_key}:hold"),
         })
@@ -245,7 +248,7 @@ pub(crate) async fn run(
     let payout_config = state.payout_config.clone();
     let tenant_payout_account = ctx.tenant.mint_account_id.clone();
     let payout_idem_key = guard.idem_key().to_string();
-    let markup = ctx.app.markup_policy;
+    let markup = policy;
     let charge_for_task = charge_id.clone();
     let replay_for_task = replay_key.clone();
     let hash_for_task = body_hash.clone();

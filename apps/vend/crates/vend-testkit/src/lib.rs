@@ -7,6 +7,7 @@
 
 pub mod fixtures;
 pub mod store;
+mod whitelabel;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -15,7 +16,8 @@ use async_trait::async_trait;
 
 use vend_core::error::VendError;
 use vend_core::transport::{
-    CaptureRequest, CaptureResponse, CheckoutRequest, CheckoutResponse, HoldRequest, HoldResponse,
+    CaptureRequest, CaptureResponse, CheckoutRequest, CheckoutResponse, CreateAccountRequest,
+    CreateAccountResponse, HoldRequest, HoldResponse,
     HoldStatus, HoldView, MintBalance, MintTransport, RelayRequest, RelayResponse, RelayTransport,
     ReleaseRequest, ReleaseResponse, SettlementProof, TransferRequest, TransferResponse, Usage,
 };
@@ -39,6 +41,7 @@ struct MintState {
     transfers: HashMap<String, (TransferRequest, TransferResponse)>,
     force_insufficient: bool,
     seq: u64,
+    created_accounts: Vec<(String, CreateAccountRequest)>,
 }
 
 /// A scriptable in-memory Mint. Balances are set up-front; holds move balance
@@ -65,6 +68,7 @@ impl FakeMint {
                 transfers: HashMap::new(),
                 force_insufficient: false,
                 seq: 0,
+                created_accounts: Vec::new(),
             }),
         }
     }
@@ -280,6 +284,36 @@ impl MintTransport for FakeMint {
             held_micros: held,
             updated_seq: s.seq,
         })
+    }
+
+    async fn create_account(
+        &self,
+        req: CreateAccountRequest,
+    ) -> Result<CreateAccountResponse, VendError> {
+        let mut s = self.inner.lock().unwrap();
+        s.seq += 1;
+        let account_id = format!("acct_{}_{}", req.kind, s.seq);
+        s.balances.insert(account_id.clone(), 0);
+        s.created_accounts.push((account_id.clone(), req));
+        Ok(CreateAccountResponse { account_id })
+    }
+}
+
+impl FakeMint {
+    /// Accounts opened through `create_account`, oldest first.
+    pub fn created_accounts(&self) -> Vec<(String, CreateAccountRequest)> {
+        self.inner.lock().unwrap().created_accounts.clone()
+    }
+
+    /// Credit an account as a settled top-up would (test helper).
+    pub fn credit(&self, account: &str, micros: i64) {
+        *self
+            .inner
+            .lock()
+            .unwrap()
+            .balances
+            .entry(account.to_string())
+            .or_insert(0) += micros;
     }
 }
 
