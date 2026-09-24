@@ -4,8 +4,10 @@
 //! when it issues an invoice already finalized.
 //!
 //! Mirrors Lago's `Invoices::FinalizeService` tail: provider taxes (Anrok /
-//! Avalara, when the organization connected one), the `invoice.created` +
-//! `invoice.generated` webhooks, then real-time wallet settlement (captures the
+//! Avalara, when the organization connected one), then the customer's
+//! available credit-note balances (`Credits::CreditNoteService`, after taxes),
+//! the `invoice.created` + `invoice.generated` webhooks, then real-time wallet
+//! settlement (captures the
 //! Mint holds reserved for the invoice's events and applies them as prepaid
 //! credit), then payment collection of whatever is left through the durable
 //! `invoices.collect` job.
@@ -19,7 +21,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::scheduler::invoice_webhook_object;
-use crate::webhook_emit::{record_invoice_generated, record_webhook};
+use crate::webhook_emit::{record_credit_note_generated, record_invoice_generated, record_webhook};
 use crate::JobError;
 
 /// Apply the organization's tax provider to `invoice` when one is connected,
@@ -79,6 +81,8 @@ pub async fn enqueue_collection(db: &Db, invoice: &Invoice) -> Result<bool, JobE
 /// finalized (with provider taxes applied).
 pub async fn on_invoice_finalized(db: &Db, invoice: Invoice, emit_webhooks: bool) -> Result<Invoice, JobError> {
     let invoice = apply_provider_taxes_if_configured(db, invoice).await?;
+    let invoice = apply_credit_notes(db, invoice).await?;
+    announce_finalized_credit_notes(db, &invoice).await?;
     if emit_webhooks {
         let object = invoice_webhook_object(&invoice);
         record_webhook(db, invoice.organization_id, WebhookKind::InvoiceCreated, object.clone()).await?;
@@ -87,6 +91,47 @@ pub async fn on_invoice_finalized(db: &Db, invoice: Invoice, emit_webhooks: bool
     let invoice = settle_realtime_wallets(db, invoice).await?;
     enqueue_collection(db, &invoice).await?;
     Ok(invoice)
+}
+
+/// Draw the customer's available credit-note balances against a finalized
+/// invoice (oldest note first, at most what is still due) and return the
+/// invoice with `credit_notes_amount_cents` / `total_amount_cents` updated.
+/// Exactly-once per invoice; a no-op when there is nothing to apply.
+pub async fn apply_credit_notes(db: &Db, invoice: Invoice) -> Result<Invoice, JobError> {
+    match db.apply_available_credit_notes(invoice.id).await? {
+        Some(applied) => {
+            let total: i64 = applied.applications.iter().map(|a| a.amount_cents).sum();
+            tracing::info!(
+                invoice_id = %invoice.id,
+                credit_notes = applied.applications.len(),
+                applied_cents = total,
+                "credit-note balances applied to invoice"
+            );
+            Ok(applied.invoice)
+        }
+        None => Ok(invoice),
+    }
+}
+
+/// `credit_note.created` + `credit_note.generated` for the credit notes that
+/// were drafts on this invoice and were finalized with it (a termination
+/// credit issued while the upfront invoice was still in its grace period).
+async fn announce_finalized_credit_notes(db: &Db, invoice: &Invoice) -> Result<(), JobError> {
+    for id in db.finalized_credit_note_ids_for_invoice(invoice.id).await? {
+        let Some(note) = db.find_credit_note(id).await? else { continue };
+        let object = json!({
+            "lago_id": note.id,
+            "number": note.number,
+            "lago_invoice_id": note.invoice_id,
+            "credit_amount_cents": note.credit_amount_cents,
+            "taxes_amount_cents": note.taxes_amount_cents,
+            "total_amount_cents": note.total_amount_cents,
+            "currency": note.credit_amount_currency,
+        });
+        record_webhook(db, note.organization_id, WebhookKind::CreditNoteCreated, object.clone()).await?;
+        record_credit_note_generated(db, note.organization_id, note.id, object).await?;
+    }
+    Ok(())
 }
 
 /// Capture the Mint holds reserved for this invoice (real-time wallets) and

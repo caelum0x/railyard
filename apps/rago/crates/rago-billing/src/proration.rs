@@ -215,6 +215,41 @@ impl SubscriptionSpan {
         }
     }
 
+    /// An explicit billing window `[from, to]` (both days inclusive) — operator
+    /// backfills and re-bills. The subscription fee belongs to the plan-interval
+    /// period containing `from` (weekly .. yearly, calendar or anniversary);
+    /// the window's days in that period are billed, so a whole period bills the
+    /// full fee and a part of one a prorated fee. Usage is billed over the
+    /// window, never before the subscription started (fee: its trial end).
+    ///
+    /// `Err` when the window is empty or runs past the end of that period:
+    /// every period has its own invoice (and re-bill guard), so a longer
+    /// backfill is billed one period at a time.
+    pub fn window(&self, from: NaiveDate, to: NaiveDate) -> Result<InvoicePeriod, crate::error::BillingError> {
+        if to < from {
+            return Err(crate::error::BillingError::InvalidPeriod(format!(
+                "window ends ({to}) before it starts ({from})"
+            )));
+        }
+        let period = self.period_containing(from);
+        if to > period.to {
+            return Err(crate::error::BillingError::InvalidPeriod(format!(
+                "window {from}..{to} crosses the billing period boundary {}; bill each period \
+                 ({}..{} first) separately",
+                period.to + Duration::days(1),
+                period.from,
+                period.to
+            )));
+        }
+        let window = DayRange::new(from, to);
+        Ok(InvoicePeriod {
+            fee_period: period,
+            fee_window: window.starting_no_earlier_than(self.first_fee_day()),
+            charges_period: period,
+            charges_window: window.starting_no_earlier_than(self.started_on),
+        })
+    }
+
     /// The in-progress period containing `date` (invoice previews and
     /// operator-triggered current-period invoices): fee and usage of that
     /// period, each starting no earlier than the subscription (fee: its trial
@@ -532,5 +567,58 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn backfill_window_of_a_whole_quarter_bills_the_full_quarterly_fee() {
+        let s = span(Interval::Quarterly, false, false, d(2025, 11, 3));
+        let p = s.window(d(2026, 1, 1), d(2026, 3, 31)).unwrap();
+        assert_eq!(p.fee_period, DayRange::new(d(2026, 1, 1), d(2026, 3, 31)));
+        assert!(matches!(p.fee_proration(), Proration::Full));
+        assert_eq!(fee(9_000, &p), dec!(9000));
+        assert_eq!(p.charges_window, DayRange::new(d(2026, 1, 1), d(2026, 3, 31)));
+    }
+
+    #[test]
+    fn backfill_window_of_one_month_on_a_quarterly_plan_is_prorated_by_quarter_days() {
+        // Q1 2026 = 90 days; January = 31 days: 31 * 9000 / 90 = 3100.
+        let s = span(Interval::Quarterly, false, false, d(2025, 11, 3));
+        let p = s.window(d(2026, 1, 1), d(2026, 1, 31)).unwrap();
+        assert!(matches!(p.fee_proration(), Proration::Prorated { days_to_bill: 31 }));
+        assert_eq!(fee(9_000, &p), dec!(3100));
+        assert_eq!(p.charges_period.days(), 90);
+    }
+
+    #[test]
+    fn backfill_window_follows_anniversary_yearly_and_weekly_periods() {
+        let yearly = span(Interval::Yearly, true, false, d(2025, 6, 15));
+        let p = yearly.window(d(2025, 6, 15), d(2026, 6, 14)).unwrap();
+        assert_eq!(p.fee_period, DayRange::new(d(2025, 6, 15), d(2026, 6, 14)));
+        assert!(matches!(p.fee_proration(), Proration::Full));
+
+        let weekly = span(Interval::Weekly, false, false, d(2026, 1, 1));
+        // 2026-03-02 is a Monday.
+        let p = weekly.window(d(2026, 3, 2), d(2026, 3, 8)).unwrap();
+        assert_eq!(p.fee_period.days(), 7);
+        assert!(matches!(p.fee_proration(), Proration::Full));
+    }
+
+    #[test]
+    fn backfill_window_respects_start_and_trial() {
+        let mut s = span(Interval::Monthly, false, false, d(2026, 3, 11));
+        s.fee_starts_on = Some(d(2026, 3, 21));
+        let p = s.window(d(2026, 3, 1), d(2026, 3, 31)).unwrap();
+        assert_eq!(p.charges_window, DayRange::new(d(2026, 3, 11), d(2026, 3, 31)));
+        assert_eq!(p.fee_window, DayRange::new(d(2026, 3, 21), d(2026, 3, 31)));
+        assert!(matches!(p.fee_proration(), Proration::Prorated { days_to_bill: 11 }));
+    }
+
+    #[test]
+    fn backfill_window_rejects_crossing_a_boundary_or_an_inverted_range() {
+        let s = span(Interval::Monthly, false, false, d(2026, 1, 1));
+        assert!(s.window(d(2026, 1, 1), d(2026, 2, 28)).is_err());
+        assert!(s.window(d(2026, 1, 10), d(2026, 1, 9)).is_err());
+        let q = span(Interval::Quarterly, false, false, d(2026, 1, 1));
+        assert!(q.window(d(2026, 1, 1), d(2026, 2, 28)).is_ok());
     }
 }

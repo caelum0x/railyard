@@ -370,7 +370,10 @@ pub async fn download_credit_note_xml(
 
 async fn invoice_response(st: &AppState, inv: rago_core::models::Invoice) -> ApiResult<Value> {
     let fees = st.db.fees_for_invoice(inv.id).await?;
-    Ok(json!({ "invoice": ser::invoice(&inv, &fees) }))
+    let credits = st.db.credit_note_credits_for_invoice(inv.id).await?;
+    let mut body = ser::invoice(&inv, &fees);
+    body["credits"] = ser::credit_note_credits(&inv, &credits);
+    Ok(json!({ "invoice": body }))
 }
 
 /// `POST /invoices/:id/void`.

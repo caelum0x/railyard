@@ -662,7 +662,7 @@ impl Db {
 
     /// Credit notes for an invoice.
     pub async fn credit_notes_for_invoice(&self, invoice_id: Uuid) -> Result<Vec<CreditNote>> {
-        let rows = sqlx::query("SELECT id FROM credit_notes WHERE invoice_id = $1 ORDER BY created_at DESC")
+        let rows = sqlx::query("SELECT id FROM credit_notes WHERE invoice_id = $1 AND status <> 0 ORDER BY created_at DESC")
             .bind(invoice_id)
             .fetch_all(&self.pool)
             .await?;
@@ -678,7 +678,7 @@ impl Db {
     /// Credit notes for a customer (the `/customers/:id/credit_notes` nested
     /// index). Ordered newest-first like `CreditNotesQuery`.
     pub async fn credit_notes_for_customer(&self, customer_id: Uuid) -> Result<Vec<CreditNote>> {
-        let rows = sqlx::query("SELECT id FROM credit_notes WHERE customer_id = $1 ORDER BY created_at DESC")
+        let rows = sqlx::query("SELECT id FROM credit_notes WHERE customer_id = $1 AND status <> 0 ORDER BY created_at DESC")
             .bind(customer_id)
             .fetch_all(&self.pool)
             .await?;
@@ -700,7 +700,7 @@ impl Db {
         offset: i64,
     ) -> Result<Vec<CreditNote>> {
         let rows = sqlx::query(
-            "SELECT id FROM credit_notes WHERE organization_id = $1 \
+            "SELECT id FROM credit_notes WHERE organization_id = $1 AND status <> 0 \
              ORDER BY created_at DESC LIMIT $2 OFFSET $3",
         )
         .bind(org)
@@ -720,7 +720,7 @@ impl Db {
     /// Total credit notes for an organization (for pagination metadata).
     pub async fn count_credit_notes_for_org(&self, org: Uuid) -> Result<i64> {
         let row = sqlx::query(
-            "SELECT COUNT(*)::bigint AS n FROM credit_notes WHERE organization_id = $1",
+            "SELECT COUNT(*)::bigint AS n FROM credit_notes WHERE organization_id = $1 AND status <> 0",
         )
         .bind(org)
         .fetch_one(&self.pool)

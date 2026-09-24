@@ -691,6 +691,11 @@
         { h: "Tax", f: (r) => money(r.taxes_amount_cents, r.amount_currency), cls: "num" },
         { h: "Total", f: (r) => money(r.total_amount_cents, r.amount_currency), cls: "num" },
       ], inv.fees, { empty: "No fees." })) +
+      ((inv.credits || []).length ? card("Credit notes applied", table([
+        { h: "Credit note", f: (r) => '<a href="#/credit_notes/' + esc(r.item.lago_item_id) + '">' + esc(r.item.code) + "</a>", cls: "mono" },
+        { h: "Applied", f: (r) => datetime(r.created_at) },
+        { h: "Amount", f: (r) => money(r.amount_cents, r.amount_currency), cls: "num" },
+      ], inv.credits, { empty: "No credit notes applied." })) : "") +
       card("Payments", table([
         { h: "Provider", f: (r) => esc(r.payment_provider_type) },
         { h: "Status", f: (r) => badge(r.status) },
@@ -774,6 +779,7 @@
     { h: "Credit", f: (r) => money(r.credit_amount_cents, r.currency), cls: "num" },
     { h: "Refund", f: (r) => money(r.refund_amount_cents, r.currency), cls: "num" },
     { h: "Remaining", f: (r) => money(r.balance_amount_cents, r.currency), cls: "num" },
+    { h: "Credit status", f: (r) => r.credit_status ? badge(r.credit_status) : "" },
   ];
   R.route("/credit_notes", async (_p, q) => {
     const pg = page(q);
@@ -794,6 +800,7 @@
         ["Invoice", '<a href="#/invoices/' + esc(cn.lago_invoice_id) + '">' + esc(cn.lago_invoice_id) + "</a>"], ["Issued", date(cn.issuing_date)],
         ["Reason", esc(cn.reason)], ["Total", money(cn.total_amount_cents, cn.currency)], ["Taxes", money(cn.taxes_amount_cents, cn.currency)],
         ["Credit", money(cn.credit_amount_cents, cn.currency)], ["Refund", money(cn.refund_amount_cents, cn.currency)], ["Refund status", cn.refund_status ? badge(cn.refund_status) : "No refund"], ["Remaining credit", money(cn.balance_amount_cents, cn.currency)],
+        ["Credit status", cn.credit_status ? badge(cn.credit_status) + (cn.credit_status === "available" && cn.balance_amount_cents > 0 ? " <span class=\"muted\">applied to the customer's next finalized invoices once this invoice is paid</span>" : "") : "No credit"],
       ]) + "</div>") + '<div id="integration-box"></div>';
     if (R.integrationPanel) R.integrationPanel("credit_note", cn, $("#integration-box", view));
     finish(view, {

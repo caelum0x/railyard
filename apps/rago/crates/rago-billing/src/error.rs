@@ -18,6 +18,9 @@ pub enum BillingError {
 
     #[error("aggregation failure: {0}")]
     AggregationFailure(String),
+
+    #[error("invalid billing period: {0}")]
+    InvalidPeriod(String),
 }
 
 pub type Result<T> = std::result::Result<T, BillingError>;

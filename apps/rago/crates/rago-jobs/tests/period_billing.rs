@@ -10,7 +10,7 @@
 
 use chrono::{NaiveDate, TimeZone, Utc};
 use rago_core::enums::{
-    AggregationType, BillingTime, ChargeModel, FeeType, PlanInterval, SubscriptionStatus,
+    AggregationType, BillingTime, ChargeModel, FeeType, InvoiceStatus, PlanInterval, SubscriptionStatus,
 };
 use rago_core::models::{BillableMetric, Charge, Customer, Event, Organization, Plan, Subscription};
 use rago_db::Db;
@@ -629,4 +629,92 @@ async fn current_usage_period_follows_the_plan_interval(pool: PgPool) {
         rago_jobs::scheduler::current_usage_period(&y, &yearly, d(2026, 9, 24)),
         (d(2026, 1, 1), d(2026, 12, 31))
     );
+}
+
+async fn mark_paid(w: &World, invoice: Uuid) {
+    sqlx::query("UPDATE invoices SET payment_status = 1 WHERE id = $1")
+        .bind(invoice)
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+}
+
+async fn note_on(w: &World, invoice: Uuid) -> (i32, String, i64, Option<i32>) {
+    sqlx::query_as::<_, (i32, String, i64, Option<i32>)>(
+        "SELECT status, number, balance_amount_cents, credit_status FROM credit_notes WHERE invoice_id = $1",
+    )
+    .bind(invoice)
+    .fetch_one(&w.db.pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "../rago-db/migrations")]
+async fn termination_credit_is_consumed_by_the_final_invoice_when_the_upfront_fee_was_paid(pool: PgPool) {
+    let w = world(pool).await;
+    let plan = w.plan(PlanInterval::Monthly, 3_100, true).await;
+    let sub = w
+        .subscription(&plan, "sub-adv-paid", BillingTime::Calendar, d(2026, 1, 1), SubscriptionStatus::Active, None)
+        .await;
+    let r = run_billing_cycle(&w.db, &transport(), &no_charge(), d(2026, 3, 1), false).await.unwrap();
+    let march = r.billed_invoices[0];
+    mark_paid(&w, march).await;
+
+    w.event(&sub, d(2026, 3, 5), 40).await; // → 1_000 of usage
+    end_mid_period(&w, sub.id, d(2026, 3, 10).and_hms_opt(15, 0, 0).unwrap()).await;
+    assert_eq!(rago_jobs::clock::subscriptions::terminate_ended_subscriptions(&w.db).await.unwrap(), 1);
+
+    let invoices = w.invoices_of(sub.id).await;
+    let final_id = invoices.iter().find(|(id, ..)| *id != march).unwrap().0;
+    let final_invoice = w.db.find_invoice(final_id).await.unwrap().unwrap();
+    // The 21 unused days ($21.00) were credited first, so the final invoice
+    // ($10.00 of usage) is fully covered by the credit note.
+    assert_eq!(final_invoice.credit_notes_amount_cents, 1_000);
+    assert_eq!(final_invoice.total_amount_cents, 0);
+    let (status, _, balance, credit_status) = note_on(&w, march).await;
+    assert_eq!((status, balance, credit_status), (1, 1_100, Some(0)));
+}
+
+#[sqlx::test(migrations = "../rago-db/migrations")]
+async fn termination_during_the_draft_grace_period_keeps_the_credit_as_a_draft_note(pool: PgPool) {
+    let w = world(pool).await;
+    sqlx::query("UPDATE organizations SET invoice_grace_period = 5 WHERE id = $1")
+        .bind(w.org)
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+    let plan = w.plan(PlanInterval::Monthly, 3_100, true).await;
+    let sub = w
+        .subscription(&plan, "sub-adv-draft", BillingTime::Calendar, d(2026, 1, 1), SubscriptionStatus::Active, None)
+        .await;
+    let r = run_billing_cycle(&w.db, &transport(), &no_charge(), d(2026, 3, 1), false).await.unwrap();
+    let march = r.billed_invoices[0];
+    assert_eq!(w.db.find_invoice(march).await.unwrap().unwrap().status, InvoiceStatus::Draft);
+
+    w.event(&sub, d(2026, 3, 5), 40).await;
+    end_mid_period(&w, sub.id, d(2026, 3, 10).and_hms_opt(15, 0, 0).unwrap()).await;
+    assert_eq!(rago_jobs::clock::subscriptions::terminate_ended_subscriptions(&w.db).await.unwrap(), 1);
+
+    // The credit is not lost: a draft note on the draft upfront invoice,
+    // hidden from the credit-note lists until the invoice is finalized.
+    let (status, number, balance, _) = note_on(&w, march).await;
+    assert_eq!((status, balance), (0, 2_100));
+    assert_eq!(number, "DRAFT-CN1");
+    assert!(w.db.credit_notes_for_org(w.org, 50, 0).await.unwrap().is_empty());
+
+    // Finalizing the upfront invoice finalizes and renumbers the note.
+    let finalized = rago_jobs::finalize::finalize_invoice(&w.db, march).await.unwrap().unwrap();
+    let (status, number, balance, credit_status) = note_on(&w, march).await;
+    assert_eq!((status, balance, credit_status), (1, 2_100, Some(0)));
+    assert_eq!(number, format!("{}-CN1", finalized.number));
+    assert_eq!(w.db.credit_notes_for_org(w.org, 50, 0).await.unwrap().len(), 1);
+
+    // Once the upfront invoice is paid, finalizing the (draft) final invoice
+    // consumes the credit.
+    mark_paid(&w, march).await;
+    let final_id = w.invoices_of(sub.id).await.iter().find(|(id, ..)| *id != march).unwrap().0;
+    let final_invoice = rago_jobs::finalize::finalize_invoice(&w.db, final_id).await.unwrap().unwrap();
+    assert_eq!(final_invoice.credit_notes_amount_cents, 1_000);
+    assert_eq!(final_invoice.total_amount_cents, 0);
+    assert_eq!(note_on(&w, march).await.2, 1_100);
 }

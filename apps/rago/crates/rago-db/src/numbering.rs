@@ -162,6 +162,10 @@ pub(crate) async fn finalize_exec(conn: &mut PgConnection, id: Uuid) -> Result<O
     .bind(today)
     .fetch_one(&mut *conn)
     .await?;
+    // Credit notes issued while the invoice was a draft (a termination credit
+    // on an upfront fee still in its grace period) are finalized with it and
+    // numbered after its final number.
+    crate::credit_note_credits::finalize_draft_credit_notes_exec(conn, id, &number).await?;
     Ok(Some(crate::mapping::invoice(&updated)?))
 }
 

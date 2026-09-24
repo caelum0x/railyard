@@ -186,6 +186,7 @@ pub async fn check_usage_thresholds(
         return Ok(None);
     }
 
+    let invoice = crate::finalize::apply_credit_notes(db, invoice).await?;
     let org = subscription.organization_id;
     record_webhook(db, org, WebhookKind::InvoiceCreated, invoice_webhook_object(&invoice)).await?;
     record_invoice_generated(db, org, invoice.id, invoice_webhook_object(&invoice)).await?;

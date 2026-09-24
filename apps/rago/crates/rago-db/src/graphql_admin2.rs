@@ -262,6 +262,8 @@ impl Db {
             tx.commit().await?;
             if done.is_some() {
                 finalized += 1;
+                // Same credit-note consumption as every other finalization.
+                self.apply_available_credit_notes(id).await?;
             }
         }
         Ok(finalized)

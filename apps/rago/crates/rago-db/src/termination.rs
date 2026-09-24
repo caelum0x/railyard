@@ -99,7 +99,11 @@ impl Db {
             .fetch_one(&mut *tx)
             .await?
             .try_get("number")?;
-        let invoice_number = invoice_number.unwrap_or_default();
+        // A draft invoice has no number yet: its draft credit notes are
+        // renumbered after the final invoice number at finalization.
+        let invoice_number = invoice_number
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| "DRAFT".to_string());
         credit_note.sequential_id = seq;
         credit_note.number = format!("{invoice_number}-CN{seq}");
         let cn = &*credit_note;

@@ -242,6 +242,35 @@ pub fn coupon(c: &Coupon) -> Value {
     })
 }
 
+/// `V1::CreditSerializer` for the credit-note draws applied to `invoice`
+/// (the invoice's `credits`, credit-note items only).
+pub fn credit_note_credits(invoice: &Invoice, credits: &[rago_db::InvoiceCreditNoteCredit]) -> Value {
+    Value::Array(
+        credits
+            .iter()
+            .map(|c| {
+                json!({
+                    "lago_id": c.id,
+                    "amount_cents": c.amount_cents,
+                    "amount_currency": c.amount_currency,
+                    "before_taxes": false,
+                    "item": {
+                        "lago_item_id": c.credit_note_id,
+                        "type": "credit_note",
+                        "code": c.credit_note_number,
+                        "name": c.credit_note_number,
+                    },
+                    "invoice": {
+                        "lago_id": invoice.id,
+                        "payment_status": invoice.payment_status.as_str(),
+                    },
+                    "created_at": ts(c.created_at),
+                })
+            })
+            .collect(),
+    )
+}
+
 /// `V1::CreditNoteSerializer` (core keys).
 pub fn credit_note(cn: &CreditNote) -> Value {
     json!({

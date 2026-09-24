@@ -141,6 +141,25 @@ Key ones: `DATABASE_URL`, `RAGO_API_ADDR`, `RAGO_TICK_SECS`, `RAGO_BILLING_HOUR`
 Authentication is API-key bearer (`Authorization: Bearer <key>`) on REST; the
 GraphQL dashboard resolves the same principal.
 
+### Credit notes on later invoices
+
+A credit note's credited amount (`balance_amount_cents`) is spent on the
+customer's next finalized invoices, as in Lago: after coupons and taxes,
+oldest note first, each note giving at most what is still due and keeping the
+rest of its balance. (Rago draws prepaid wallet credit when the invoice is
+created, so on subscription invoices the wallet is applied before credit
+notes; Lago applies credit notes first. Either way nothing is counted twice.) A note used up becomes
+`credit_status: consumed`. Each draw is listed in the invoice's `credits`
+(`GET /api/v1/invoices/:id`) and in the console's invoice page. Voiding an
+invoice gives the balance it used back to its notes.
+
+Two Rago rules on top of Lago: a credit note only becomes spendable once its
+own invoice is paid (an unpaid invoice's credit note already lowers what that
+invoice owes), and a credit note cannot be issued on a draft invoice. A
+termination credit for a pay-in-advance fee whose invoice is still a draft
+(grace period) is kept as a draft credit note and is finalized, numbered and
+announced together with that invoice.
+
 ## Observability
 
 * **Prometheus** metrics at `GET /metrics`: HTTP request counts, in-flight

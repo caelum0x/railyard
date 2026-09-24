@@ -568,6 +568,12 @@ async fn subscription_update_and_alerts(pool: PgPool) {
 
 // ---- invoice actions -------------------------------------------------------
 
+/// A finalized invoice (credit notes can only be issued on finalized ones,
+/// Lago `CreditNotes::CreateService`).
+fn finalized_invoice(org_id: Uuid, customer_id: Uuid) -> m::Invoice {
+    m::Invoice { status: InvoiceStatus::Finalized, ..draft_invoice(org_id, customer_id) }
+}
+
 fn draft_invoice(org_id: Uuid, customer_id: Uuid) -> m::Invoice {
     let now = Utc::now();
     m::Invoice {
@@ -893,7 +899,7 @@ async fn credit_note_index_and_void(pool: PgPool) {
     let (app, db, org) = setup(pool).await;
     let c = customer(org.id, "cust-1");
     db.insert_customer(&c).await.unwrap();
-    let inv = draft_invoice(org.id, c.id);
+    let inv = finalized_invoice(org.id, c.id);
     db.insert_invoice(&inv).await.unwrap();
     // a fee is required for the estimate/create path; use a minimal one-off fee.
     let now = Utc::now();
@@ -930,6 +936,12 @@ async fn credit_note_index_and_void(pool: PgPool) {
         applied_taxes: Vec::new(),
     };
     db.insert_fee(&fee).await.unwrap();
+
+    // A draft invoice cannot be credited.
+    let draft = draft_invoice(org.id, c.id);
+    db.insert_invoice(&draft).await.unwrap();
+    let (status, body) = call(&app, "POST", "/api/v1/credit_notes", Some(json!({ "credit_note": { "invoice_id": draft.id, "items": [{ "fee_id": fee.id, "amount_cents": 500 }] } }))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:?}");
 
     let (status, body) = call(&app, "POST", "/api/v1/credit_notes", Some(json!({ "credit_note": { "invoice_id": inv.id, "items": [{ "fee_id": fee.id, "amount_cents": 500 }] } }))).await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
@@ -1010,7 +1022,7 @@ async fn customer_scoped_credit_notes_and_payments(pool: PgPool) {
     let (app, db, org) = setup(pool).await;
     let c = customer(org.id, "cust-1");
     db.insert_customer(&c).await.unwrap();
-    let inv = draft_invoice(org.id, c.id);
+    let inv = finalized_invoice(org.id, c.id);
     db.insert_invoice(&inv).await.unwrap();
     let now = Utc::now();
     let fee = m::Fee {

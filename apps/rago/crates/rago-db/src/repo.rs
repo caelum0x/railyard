@@ -1314,10 +1314,18 @@ impl Db {
 
     /// Void an invoice (`Invoices::Void` — status → voided).
     pub async fn void_invoice(&self, invoice_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE invoices SET status = 2, updated_at = now() WHERE id = $1")
+        let mut tx = self.pool.begin().await?;
+        let voided = sqlx::query("UPDATE invoices SET status = 2, updated_at = now() WHERE id = $1 AND status <> 2")
             .bind(invoice_id)
-            .execute(&self.pool)
-            .await?;
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        if voided == 1 {
+            // A voided invoice owes nothing: credit-note balance it consumed
+            // goes back to the notes (once, on the transition).
+            crate::credit_note_credits::restore_credit_note_balances_exec(&mut tx, invoice_id).await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 

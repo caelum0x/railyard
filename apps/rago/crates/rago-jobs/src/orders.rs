@@ -200,6 +200,7 @@ pub async fn execute_order(db: &Db, org: Uuid, order_id: Uuid) -> Result<(OrderR
             return Err(e);
         }
     };
+    let invoice = crate::finalize::apply_credit_notes(db, invoice).await?;
     db.accept_quote(quote_id, invoice.id).await?;
     let order = db
         .find_order(order_id)

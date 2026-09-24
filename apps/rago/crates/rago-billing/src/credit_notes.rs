@@ -248,12 +248,190 @@ pub fn create_credit_note(
     }
 }
 
-/// Apply a credit note's credit amount back to its invoice
-/// (`invoice.credit_notes_amount_cents += credit_amount_cents`), reducing the
-/// amount still owed. Returns the updated invoice total.
-pub fn apply_credit_note_to_invoice(invoice: &mut Invoice, credit_note: &CreditNote) {
-    invoice.credit_notes_amount_cents += credit_note.credit_amount_cents;
-    invoice.total_amount_cents = invoice.sub_total_including_taxes_amount_cents
-        - invoice.credit_notes_amount_cents
-        - invoice.prepaid_credit_amount_cents;
+/// A credit note's remaining balance, as a candidate for consumption by a
+/// later invoice. Callers pass candidates oldest first (issuing date, then
+/// creation time), which is the order Lago's `Credits::CreditNoteService`
+/// consumes them in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CreditNoteBalance {
+    pub credit_note_id: Uuid,
+    pub balance_amount_cents: i64,
+}
+
+/// One credit note's contribution to an invoice: the `credits` row to write
+/// and the note's balance after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CreditNoteApplication {
+    pub credit_note_id: Uuid,
+    /// Amount taken from the note and credited on the invoice.
+    pub amount_cents: i64,
+    /// The note's `balance_amount_cents` after this application.
+    pub remaining_balance_cents: i64,
+}
+
+impl CreditNoteApplication {
+    /// Whether this application used the note up (`credit_status` becomes
+    /// `consumed`).
+    pub fn consumed(&self) -> bool {
+        self.remaining_balance_cents == 0
+    }
+}
+
+/// `Credits::CreditNoteService`: consume available credit-note balances
+/// against `amount_due_cents` (the invoice total after coupons and taxes),
+/// oldest note first. Each note gives `min(balance, still_due)`; a note is
+/// only partially drawn when the invoice runs out first, and keeps the rest of
+/// its balance for later invoices. Notes with no balance are skipped, and
+/// nothing is applied to an invoice with nothing due.
+pub fn allocate_credit_notes(
+    amount_due_cents: i64,
+    notes: &[CreditNoteBalance],
+) -> Vec<CreditNoteApplication> {
+    let mut remaining_due = amount_due_cents.max(0);
+    let mut out = Vec::new();
+    for note in notes {
+        if remaining_due == 0 {
+            break;
+        }
+        if note.balance_amount_cents <= 0 {
+            continue;
+        }
+        let amount = note.balance_amount_cents.min(remaining_due);
+        remaining_due -= amount;
+        out.push(CreditNoteApplication {
+            credit_note_id: note.credit_note_id,
+            amount_cents: amount,
+            remaining_balance_cents: note.balance_amount_cents - amount,
+        });
+    }
+    out
+}
+
+/// Apply allocated credit-note amounts to `invoice`: they add to
+/// `credit_notes_amount_cents` and come off `total_amount_cents` (whatever is
+/// still due after taxes and any credit already applied). An invoice brought
+/// to zero owes nothing and is marked paid when it was still pending.
+pub fn apply_credit_note_applications(invoice: &mut Invoice, applications: &[CreditNoteApplication]) {
+    let applied: i64 = applications.iter().map(|a| a.amount_cents).sum();
+    if applied == 0 {
+        return;
+    }
+    invoice.credit_notes_amount_cents += applied;
+    invoice.total_amount_cents = (invoice.total_amount_cents - applied).max(0);
+    if invoice.total_amount_cents == 0
+        && matches!(invoice.payment_status, rago_core::enums::PaymentStatus::Pending)
+    {
+        invoice.payment_status = rago_core::enums::PaymentStatus::Succeeded;
+    }
+}
+
+#[cfg(test)]
+mod allocation_tests {
+    use super::*;
+
+    fn note(balance: i64) -> CreditNoteBalance {
+        CreditNoteBalance {
+            credit_note_id: Uuid::new_v4(),
+            balance_amount_cents: balance,
+        }
+    }
+
+    #[test]
+    fn oldest_note_is_consumed_first() {
+        let notes = [note(300), note(500)];
+        let apps = allocate_credit_notes(400, &notes);
+        assert_eq!(apps.len(), 2);
+        assert_eq!(apps[0].credit_note_id, notes[0].credit_note_id);
+        assert_eq!(apps[0].amount_cents, 300);
+        assert!(apps[0].consumed());
+        assert_eq!(apps[1].credit_note_id, notes[1].credit_note_id);
+        assert_eq!(apps[1].amount_cents, 100);
+        assert_eq!(apps[1].remaining_balance_cents, 400);
+        assert!(!apps[1].consumed());
+    }
+
+    #[test]
+    fn partial_application_keeps_the_rest_of_the_balance() {
+        let notes = [note(1_000)];
+        let apps = allocate_credit_notes(250, &notes);
+        assert_eq!(apps, vec![CreditNoteApplication {
+            credit_note_id: notes[0].credit_note_id,
+            amount_cents: 250,
+            remaining_balance_cents: 750,
+        }]);
+    }
+
+    #[test]
+    fn stops_once_the_invoice_is_covered() {
+        let notes = [note(500), note(500)];
+        let apps = allocate_credit_notes(500, &notes);
+        assert_eq!(apps.len(), 1);
+        assert!(apps[0].consumed());
+    }
+
+    #[test]
+    fn nothing_due_or_no_balance_applies_nothing() {
+        assert!(allocate_credit_notes(0, &[note(100)]).is_empty());
+        assert!(allocate_credit_notes(-5, &[note(100)]).is_empty());
+        let apps = allocate_credit_notes(100, &[note(0), note(-3), note(40)]);
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].amount_cents, 40);
+    }
+
+    #[test]
+    fn total_applied_never_exceeds_due_or_balances() {
+        for due in [0_i64, 1, 99, 100, 101, 250, 10_000] {
+            let notes = [note(37), note(63), note(150)];
+            let apps = allocate_credit_notes(due, &notes);
+            let applied: i64 = apps.iter().map(|a| a.amount_cents).sum();
+            assert_eq!(applied, due.min(250));
+            for (a, n) in apps.iter().zip(notes.iter()) {
+                assert_eq!(a.amount_cents + a.remaining_balance_cents, n.balance_amount_cents);
+            }
+        }
+    }
+
+    #[test]
+    fn applications_reduce_the_invoice_total() {
+        use rago_core::enums::{InvoiceStatus, InvoiceType, PaymentStatus};
+        let now = chrono::Utc::now();
+        let mut invoice = Invoice {
+            id: Uuid::new_v4(),
+            organization_id: Uuid::new_v4(),
+            billing_entity_id: Uuid::new_v4(),
+            customer_id: Some(Uuid::new_v4()),
+            number: "INV-1".into(),
+            sequential_id: Some(1),
+            invoice_type: InvoiceType::Subscription,
+            status: InvoiceStatus::Finalized,
+            payment_status: PaymentStatus::Pending,
+            currency: Some("USD".into()),
+            issuing_date: Some(now.date_naive()),
+            fees_amount_cents: 1_000,
+            coupons_amount_cents: 0,
+            credit_notes_amount_cents: 0,
+            prepaid_credit_amount_cents: 0,
+            progressive_billing_credit_amount_cents: 0,
+            sub_total_excluding_taxes_amount_cents: 1_000,
+            sub_total_including_taxes_amount_cents: 1_200,
+            taxes_amount_cents: 200,
+            taxes_rate: 20.0,
+            total_amount_cents: 1_200,
+            version_number: 4,
+            created_at: now,
+            updated_at: now,
+            applied_taxes: Vec::new(),
+        };
+        let apps = allocate_credit_notes(invoice.total_amount_cents, &[note(500)]);
+        apply_credit_note_applications(&mut invoice, &apps);
+        assert_eq!(invoice.credit_notes_amount_cents, 500);
+        assert_eq!(invoice.total_amount_cents, 700);
+        assert!(matches!(invoice.payment_status, PaymentStatus::Pending));
+
+        let apps = allocate_credit_notes(invoice.total_amount_cents, &[note(900)]);
+        apply_credit_note_applications(&mut invoice, &apps);
+        assert_eq!(invoice.credit_notes_amount_cents, 1_200);
+        assert_eq!(invoice.total_amount_cents, 0);
+        assert!(matches!(invoice.payment_status, PaymentStatus::Succeeded));
+    }
 }

@@ -229,6 +229,8 @@ async fn announce_and_collect<T: HttpTransport>(
             // Issued finalized: apply the connected tax provider (if any)
             // before announcing and collecting the invoice.
             invoice = crate::finalize::apply_provider_taxes_if_configured(db, invoice).await?;
+            // Then the customer's credit-note balances (after taxes).
+            invoice = crate::finalize::apply_credit_notes(db, invoice).await?;
             fees = db.fees_for_invoice(invoice.id).await?;
             if record_webhook(
                 db,

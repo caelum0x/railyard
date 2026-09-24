@@ -39,6 +39,19 @@ use crate::JobError;
 /// Lago `CreditNote.reason` `order_cancellation`.
 const REASON_ORDER_CANCELLATION: i32 = 3;
 
+use rago_db::credit_note_credits::{CREDIT_NOTE_STATUS_DRAFT, CREDIT_NOTE_STATUS_FINALIZED};
+
+/// The status a termination credit note takes from the invoice that billed
+/// the upfront fee: finalized on a finalized invoice, draft on a draft one
+/// (finalized with it), none otherwise.
+pub(crate) fn termination_credit_note_status(invoice_status: InvoiceStatus) -> Option<i32> {
+    match invoice_status {
+        InvoiceStatus::Finalized => Some(CREDIT_NOTE_STATUS_FINALIZED),
+        InvoiceStatus::Draft => Some(CREDIT_NOTE_STATUS_DRAFT),
+        _ => None,
+    }
+}
+
 /// What the final billing of a mid-period termination produced.
 #[derive(Debug, Default)]
 pub struct TerminationBilling {
@@ -98,6 +111,14 @@ pub async fn bill_mid_period_termination<T: HttpTransport>(
     } else {
         None
     };
+    // Credit first, then bill (Lago's TerminateService order): the final
+    // invoice then consumes the credit-note balance when it is issued.
+    let credit_note_id = match &upfront {
+        Some((fee, fee_invoice)) => {
+            credit_unused_advance_days(db, &span, plan, end, fee, fee_invoice).await?
+        }
+        None => None,
+    };
     let invoice = bill_terminating_and_collect(
         db,
         transport,
@@ -108,18 +129,19 @@ pub async fn bill_mid_period_termination<T: HttpTransport>(
         charge,
     )
     .await?;
-    let credit_note_id = match &upfront {
-        Some((fee, fee_invoice)) => {
-            credit_unused_advance_days(db, &span, plan, end, fee, fee_invoice).await?
-        }
-        None => None,
-    };
     Ok(TerminationBilling { invoice, credit_note_id })
 }
 
 /// `CreditNotes::CreateFromTermination`: credit the days of the upfront fee
-/// after the termination day. Only a finalized invoice is credited (a draft is
-/// still editable; a voided one owes nothing).
+/// after the termination day.
+///
+/// * finalized upfront invoice — a finalized credit note, announced now and
+///   spendable on the customer's next invoices;
+/// * draft upfront invoice (its grace period is still open) — a *draft*
+///   credit note on the draft. It is finalized, numbered and announced
+///   together with the invoice, and only then becomes spendable, so the
+///   termination credit is never lost to the grace period;
+/// * any other status (voided, ...) — nothing to credit.
 async fn credit_unused_advance_days(
     db: &Db,
     span: &SubscriptionSpan,
@@ -128,16 +150,19 @@ async fn credit_unused_advance_days(
     fee: &Fee,
     invoice: &Invoice,
 ) -> Result<Option<Uuid>, JobError> {
-    if !matches!(invoice.status, InvoiceStatus::Finalized) {
-        if fee.amount_cents > 0 && span.unused_advance_days(end.date()) > 0 {
-            tracing::warn!(
-                invoice_id = %invoice.id,
-                status = invoice.status.as_str(),
-                "upfront fee invoice is not finalized; no termination credit note issued"
-            );
+    let note_status = match termination_credit_note_status(invoice.status) {
+        Some(status) => status,
+        None => {
+            if fee.amount_cents > 0 && span.unused_advance_days(end.date()) > 0 {
+                tracing::warn!(
+                    invoice_id = %invoice.id,
+                    status = invoice.status.as_str(),
+                    "upfront fee invoice is neither draft nor finalized; no termination credit note issued"
+                );
+            }
+            return Ok(None);
         }
-        return Ok(None);
-    }
+    };
     let period = span.period_of(end.date());
     let plan_amount_cents = fee
         .amount_details
@@ -171,7 +196,7 @@ async fn credit_unused_advance_days(
         reason: REASON_ORDER_CANCELLATION,
         credit_status: Some(0),
         refund_status: None,
-        status: InvoiceStatus::Finalized.as_i32(),
+        status: note_status,
         credit_amount_cents: credit.total_amount_cents,
         credit_amount_currency: currency.clone(),
         balance_amount_cents: credit.total_amount_cents,
@@ -203,6 +228,16 @@ async fn credit_unused_advance_days(
         // Credited meanwhile by a concurrent run; the next run recomputes.
         return Ok(None);
     }
+    if note_status == CREDIT_NOTE_STATUS_DRAFT {
+        // Announced when the invoice is finalized (see `crate::finalize`).
+        tracing::info!(
+            credit_note_id = %note.id,
+            invoice_id = %invoice.id,
+            credit_amount_cents = note.credit_amount_cents,
+            "termination credit note issued as a draft on a draft invoice"
+        );
+        return Ok(Some(note.id));
+    }
     let object = json!({
         "lago_id": note.id,
         "number": note.number,
@@ -216,4 +251,29 @@ async fn credit_unused_advance_days(
     record_webhook(db, note.organization_id, WebhookKind::CreditNoteCreated, object.clone()).await?;
     record_credit_note_generated(db, note.organization_id, note.id, object).await?;
     Ok(Some(note.id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn termination_credit_follows_the_upfront_invoice_status() {
+        assert_eq!(
+            termination_credit_note_status(InvoiceStatus::Finalized),
+            Some(CREDIT_NOTE_STATUS_FINALIZED)
+        );
+        assert_eq!(
+            termination_credit_note_status(InvoiceStatus::Draft),
+            Some(CREDIT_NOTE_STATUS_DRAFT)
+        );
+        for status in [
+            InvoiceStatus::Voided,
+            InvoiceStatus::Generating,
+            InvoiceStatus::Failed,
+            InvoiceStatus::Deleted,
+        ] {
+            assert_eq!(termination_credit_note_status(status), None);
+        }
+    }
 }

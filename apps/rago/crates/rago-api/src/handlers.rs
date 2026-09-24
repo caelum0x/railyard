@@ -407,8 +407,6 @@ pub(crate) async fn terminate_subscription_now(
     mut sub: Subscription,
 ) -> ApiResult<Value> {
     let plan = st.db.find_plan(sub.plan_id).await?;
-    // A downgrade scheduled to replace this subscription goes with it.
-    crate::plan_change::cancel(st, organization_id, &sub).await?;
     let was_pending = matches!(sub.status, SubscriptionStatus::Pending);
     let terminated_at = now();
     if matches!(sub.status, SubscriptionStatus::Active) {
@@ -431,6 +429,11 @@ pub(crate) async fn terminate_subscription_now(
             return Err(ApiError::Internal("final_invoice_failed".into()));
         }
     }
+    // A downgrade scheduled to replace this subscription goes with it — only
+    // once the final invoice is issued: a failed final invoice leaves the
+    // subscription active with its scheduled downgrade intact, and a retry
+    // picks both up again.
+    crate::plan_change::cancel(st, organization_id, &sub).await?;
     if was_pending {
         sub.status = SubscriptionStatus::Canceled;
     } else {
@@ -531,7 +534,10 @@ pub async fn show_invoice(
 ) -> ApiResult<Json<Value>> {
     let inv = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
     let fees = st.db.fees_for_invoice(inv.id).await?;
-    Ok(Json(json!({ "invoice": ser::invoice(&inv, &fees) })))
+    let credits = st.db.credit_note_credits_for_invoice(inv.id).await?;
+    let mut body = ser::invoice(&inv, &fees);
+    body["credits"] = ser::credit_note_credits(&inv, &credits);
+    Ok(Json(json!({ "invoice": body })))
 }
 
 fn blank_invoice(sub: &Subscription, currency: &Currency) -> Invoice {
@@ -830,6 +836,11 @@ pub async fn create_credit_note(
     let invoice_id = Uuid::parse_str(&req_s(p, "invoice_id")?)
         .map_err(|_| ApiError::validation("invoice_id", "value_is_invalid"))?;
     let invoice = st.db.find_invoice(invoice_id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
+    // Lago `CreditNotes::CreateService`: a draft invoice is still editable and
+    // cannot be credited.
+    if matches!(invoice.status, rago_core::enums::InvoiceStatus::Draft) {
+        return Err(ApiError::validation("invoice", "invalid_type_or_status"));
+    }
     let fees = st.db.fees_for_invoice(invoice.id).await?;
 
     let items: Vec<CreditNoteItem> = p
