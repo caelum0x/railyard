@@ -22,5 +22,6 @@ Menivor (`../videogen`) and other products call Railyard over HTTP + shared cont
 
 ## Shared workstreams (from evaluation)
 1. **Shared transactional datastore** — Turnstile and Abacus now ship Postgres ownership + leased recovery; remaining datastore work is concentrated in the apps still using local/file state.
-2. **Per-model price catalog** — relay bills every model at one flat default; needs real per-model pricing.
-3. **Ledgerline atomicity** — the hold+capture+COGS trio needs a durable outbox/compensation.
+2. **Ledgerline atomicity** — the hold+capture+COGS trio needs a durable outbox/compensation.
+
+Relay prices each model at its own list price (111 rows as of 2026-09-24, including the OpenRouter free tier and Groq's published prices). It can also refresh those prices from OpenRouter's public model list on a timer (`RELAY_CATALOG_REFRESH_URL=openrouter`). Operator price edits always take precedence over the feed.
