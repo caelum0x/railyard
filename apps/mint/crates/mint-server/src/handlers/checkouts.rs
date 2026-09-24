@@ -124,12 +124,13 @@ pub async fn create<S: LedgerStore + 'static>(
     let checkout_id = checkout.checkout_id;
     // The mint key is `<provider>:<ref>` where `ref` is what the provider's
     // crediting webhook carries. For PayPal / Creem that IS the checkout id; for
-    // Stripe (PaymentIntent) and Polar (order) the ref only exists once paid,
+    // Stripe (PaymentIntent), Polar (order) and Dodo (payment_id; the checkout
+    // id is only a session handle) the ref only exists once paid,
     // so no deposit_ref is promised up front. Iyzico credits under the
     // `paymentId`, which is only assigned once the buyer pays (the checkout id
     // is the form token).
     let deposit_ref = match provider {
-        ProviderId::Stripe | ProviderId::Polar | ProviderId::Iyzico => None,
+        ProviderId::Stripe | ProviderId::Polar | ProviderId::Iyzico | ProviderId::Dodo => None,
         _ => Some(provider.namespaced(&checkout_id)),
     };
     Ok(ok_status(

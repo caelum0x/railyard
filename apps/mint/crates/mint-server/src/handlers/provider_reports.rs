@@ -100,7 +100,7 @@ const DATE_COLS: &[&str] = &[
 /// `POST /v1/reconciliation/reports` body.
 #[derive(Debug, Deserialize)]
 pub struct ImportReq {
-    /// Provider tag (`stripe`, `paypal`, `creem`, `polar`, `revenuecat`,
+    /// Provider tag (`stripe`, `paypal`, `creem`, `dodo`, `polar`, `revenuecat`,
     /// `adapty`, `usdc`, `iyzico`).
     pub provider: String,
     /// Label shown in the console (usually the file name).
@@ -130,6 +130,7 @@ const KNOWN_PROVIDERS: &[&str] = &[
     "stripe",
     "paypal",
     "creem",
+    "dodo",
     "polar",
     "revenuecat",
     "adapty",

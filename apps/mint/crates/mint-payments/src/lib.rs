@@ -3,7 +3,7 @@
 //! trait), `mint-server` (routing/mint) and `mint-store` stay provider-agnostic.
 //!
 //! Three provider groups, each a folder of small adapters:
-//! - [`card`] — Stripe, Creem, Polar, PayPal (card / merchant-of-record);
+//! - [`card`] — Stripe, Creem, Dodo, Polar, PayPal (card / merchant-of-record);
 //! - [`iap`] — RevenueCat, Adapty (mobile IAP, webhook-only);
 //! - [`crypto_tr`] — USDC (on-chain), Iyzico (Turkish card).
 //!

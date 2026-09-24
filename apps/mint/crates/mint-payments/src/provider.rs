@@ -12,6 +12,8 @@ pub enum ProviderId {
     Stripe,
     /// Creem (merchant-of-record, billing-only).
     Creem,
+    /// Dodo Payments (merchant-of-record, billing-only; second MoR).
+    Dodo,
     /// Polar (merchant-of-record, billing-only).
     Polar,
     /// PayPal (card / wallet).
@@ -28,9 +30,10 @@ pub enum ProviderId {
 
 impl ProviderId {
     /// Every known provider, for registry construction.
-    pub const ALL: [ProviderId; 8] = [
+    pub const ALL: [ProviderId; 9] = [
         ProviderId::Stripe,
         ProviderId::Creem,
+        ProviderId::Dodo,
         ProviderId::Polar,
         ProviderId::PayPal,
         ProviderId::RevenueCat,
@@ -44,6 +47,7 @@ impl ProviderId {
         match self {
             ProviderId::Stripe => "stripe",
             ProviderId::Creem => "creem",
+            ProviderId::Dodo => "dodo",
             ProviderId::Polar => "polar",
             ProviderId::PayPal => "paypal",
             ProviderId::RevenueCat => "revenuecat",

@@ -124,7 +124,7 @@ pub fn build_router<S: LedgerStore + 'static>(state: AppState<S>) -> Router {
     // sit behind the `x-api-key` middleware: providers cannot attach a custom
     // API-key header to their webhook deliveries, so gating on the API key would
     // reject every genuine delivery with 401 before signature verification ever
-    // runs. One route per provider: `stripe`, `creem`, `polar`, `paypal`,
+    // runs. One route per provider: `stripe`, `creem`, `dodo`, `polar`, `paypal`,
     // `revenuecat`, `adapty`, `usdc`, `iyzico` (dispatched by the `:provider` tag).
     let public = Router::new()
         .route("/healthz", get(health::healthz))

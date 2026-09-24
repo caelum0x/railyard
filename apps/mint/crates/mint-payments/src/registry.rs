@@ -15,7 +15,7 @@ use std::sync::Arc;
 use mint_reserve::{Deposit, FakeRamp, Ramp};
 
 use crate::card::{Checkout, CheckoutUrls};
-use crate::card::{CreemRamp, PayPalRamp, PolarRamp, StripeRamp};
+use crate::card::{CreemRamp, DodoRamp, PayPalRamp, PolarRamp, StripeRamp};
 use crate::composite::CompositeRamp;
 use crate::config::{PaymentsConfig, ProviderConfig};
 use crate::crypto_tr::{IyzicoRamp, UsdcRamp};
@@ -99,6 +99,11 @@ impl PaymentRegistry {
             }
             ProviderId::Creem => {
                 CreemRamp::new(self.transport.clone(), cfg)
+                    .create_checkout(account_id, amount_micros, urls)
+                    .await?
+            }
+            ProviderId::Dodo => {
+                DodoRamp::new(self.transport.clone(), cfg)
                     .create_checkout(account_id, amount_micros, urls)
                     .await?
             }
@@ -193,6 +198,7 @@ impl PaymentRegistry {
         match provider {
             ProviderId::Stripe => crate::card::stripe::verify_webhook(cfg, headers, raw),
             ProviderId::Creem => crate::card::creem::verify_webhook(cfg, headers, raw),
+            ProviderId::Dodo => crate::card::dodo::verify_webhook(cfg, headers, raw),
             ProviderId::Polar => crate::card::polar::verify_webhook(cfg, headers, raw),
             // PayPal verifies by echoing the event back to PayPal (transport-backed).
             ProviderId::PayPal => {
@@ -212,7 +218,8 @@ impl PaymentRegistry {
     ///
     /// Reversal mappings: Stripe (`charge.refunded`, `charge.dispute.*`),
     /// PayPal (`PAYMENT.CAPTURE.REFUNDED|REVERSED`, `CUSTOMER.DISPUTE.CREATED`),
-    /// Creem (`refund.created`, `dispute.created`), Polar (`order.refunded`),
+    /// Creem (`refund.created`, `dispute.created`), Dodo (`refund.succeeded`,
+    /// `dispute.opened`), Polar (`order.refunded`),
     /// RevenueCat (`CANCELLATION` with `CUSTOMER_SUPPORT`) and Adapty
     /// (`subscription_refunded`, `non_subscription_purchase_refunded`). USDC
     /// transfers are final (no reversal), and Iyzico refund / cancel /
@@ -232,6 +239,13 @@ impl PaymentRegistry {
             // Transport-backed verification: authenticate exactly once, then
             // classify from the verified payload.
             return PayPalRamp::new(self.transport.clone(), cfg.clone())
+                .verify_event(headers, raw)
+                .await;
+        }
+        if provider == ProviderId::Dodo {
+            // Partial refunds are cumulative only after reading the payment's
+            // refund history, so Dodo classifies through its transport.
+            return DodoRamp::new(self.transport.clone(), cfg.clone())
                 .verify_event(headers, raw)
                 .await;
         }
@@ -305,6 +319,7 @@ fn verify_reversal_sync<H: Headers>(
     match provider {
         ProviderId::Stripe => crate::card::stripe::verify_reversal_webhook(cfg, headers, raw),
         ProviderId::Creem => crate::card::creem::verify_reversal_webhook(cfg, headers, raw),
+        ProviderId::Dodo => crate::card::dodo::verify_reversal_webhook(cfg, headers, raw),
         ProviderId::Polar => crate::card::polar::verify_reversal_webhook(cfg, headers, raw),
         ProviderId::RevenueCat => {
             crate::iap::revenuecat::verify_reversal_webhook(cfg, headers, raw)
@@ -359,6 +374,7 @@ impl PaymentRegistry {
                 let (checkout, payout) = match provider {
                     ProviderId::Stripe | ProviderId::PayPal => (true, true),
                     ProviderId::Creem => (extra("product_id"), false),
+                    ProviderId::Dodo => (extra("product_id"), false),
                     ProviderId::Polar => (extra("product_id"), false),
                     ProviderId::Usdc => (
                         extra("commerce_api_key"),
@@ -383,6 +399,7 @@ fn build_ramp(cfg: ProviderConfig, transport: Arc<dyn HttpTransport>) -> Arc<dyn
     match cfg.provider {
         ProviderId::Stripe => Arc::new(StripeRamp::new(transport, cfg)),
         ProviderId::Creem => Arc::new(CreemRamp::new(transport, cfg)),
+        ProviderId::Dodo => Arc::new(DodoRamp::new(transport, cfg)),
         ProviderId::Polar => Arc::new(PolarRamp::new(transport, cfg)),
         ProviderId::PayPal => Arc::new(PayPalRamp::new(transport, cfg)),
         ProviderId::RevenueCat => Arc::new(RevenueCatRamp::new(transport, cfg)),

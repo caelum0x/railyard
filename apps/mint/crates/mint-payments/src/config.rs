@@ -125,6 +125,15 @@ impl PaymentsConfig {
                 .with_webhook_secret(g("CREEM_WEBHOOK_SECRET")),
         );
         providers.insert(
+            ProviderId::Dodo,
+            base(ProviderId::Dodo, mode)
+                .with_api_key(g("DODO_API_KEY"))
+                // A pay-what-you-want Dodo product: each checkout sets `amount`
+                // (cents) on one unit of it.
+                .with_extra("product_id", g("DODO_PRODUCT_ID"))
+                .with_webhook_secret(g("DODO_WEBHOOK_SECRET")),
+        );
+        providers.insert(
             ProviderId::Polar,
             base(ProviderId::Polar, mode)
                 .with_api_key(g("POLAR_ACCESS_TOKEN"))
@@ -245,6 +254,22 @@ mod tests {
             _ => None,
         });
         assert!(!cfg.get(ProviderId::Stripe).is_active());
+    }
+
+    #[test]
+    fn dodo_keys_extras_and_mode() {
+        let cfg = PaymentsConfig::from_lookup(|k| match k {
+            "MINT_PAYMENTS_MODE" => Some("live".into()),
+            "DODO_API_KEY" => Some("dodo_live".into()),
+            "DODO_PRODUCT_ID" => Some("pdt_1".into()),
+            "DODO_WEBHOOK_SECRET" => Some("whsec_x".into()),
+            _ => None,
+        });
+        let dc = cfg.get(ProviderId::Dodo);
+        assert!(dc.is_active());
+        assert!(dc.has_webhook_secret());
+        assert_eq!(dc.mode, Mode::Live);
+        assert_eq!(dc.extra("product_id"), Some("pdt_1"));
     }
 
     #[test]

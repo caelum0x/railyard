@@ -24,7 +24,7 @@ fn cfg(provider: ProviderId, secret: &str) -> ProviderConfig {
 #[test]
 fn revenuecat_authorized_purchase_yields_deposit_event() {
     let secret = "rc-shared-secret";
-    let body = br#"{"event":{"type":"INITIAL_PURCHASE","id":"evt_1","app_user_id":"acct_9","price_in_purchased_currency":4.99}}"#;
+    let body = br#"{"event":{"type":"INITIAL_PURCHASE","id":"evt_1","app_user_id":"acct_9","price":4.99,"price_in_purchased_currency":4.99}}"#;
     let hdrs = common::headers(&[("authorization", secret)]);
     let ev = mint_payments::iap::revenuecat::verify_webhook(
         &cfg(ProviderId::RevenueCat, secret),

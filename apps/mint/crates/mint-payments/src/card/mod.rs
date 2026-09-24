@@ -1,4 +1,4 @@
-//! Card / merchant-of-record on-ramps: Stripe, Creem, Polar, PayPal.
+//! Card / merchant-of-record on-ramps: Stripe, Creem, Dodo, Polar, PayPal.
 //!
 //! Each provider file exposes a `XRamp` implementing the [`mint_reserve::Ramp`]
 //! trait (real `confirm_deposit` re-confirmation + `initiate_payout` where the
@@ -7,11 +7,13 @@
 //! RAW bytes before any serde parse.
 
 pub mod creem;
+pub mod dodo;
 pub mod paypal;
 pub mod polar;
 pub mod stripe;
 
 pub use creem::CreemRamp;
+pub use dodo::DodoRamp;
 pub use paypal::PayPalRamp;
 pub use polar::PolarRamp;
 pub use stripe::StripeRamp;
