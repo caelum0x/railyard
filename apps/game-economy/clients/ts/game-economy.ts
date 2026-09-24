@@ -121,7 +121,7 @@ async function call<T>(
         ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
         ...init.headers,
       },
-      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+      ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
       signal: controller.signal,
     });
   } catch (err) {
