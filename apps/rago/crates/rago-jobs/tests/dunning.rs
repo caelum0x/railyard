@@ -125,6 +125,32 @@ fn charging_cfg() -> DunningConfig {
     DunningConfig { charge: true }
 }
 
+/// Give the org a dashboard-configured Stripe provider (sealed secret) and the
+/// customer a Stripe account with a saved card — the per-organization
+/// collection path (`collection::collect_invoice`) charges nothing without
+/// them. Dunning no longer has a shared fallback key/customer, so a test that
+/// expects a charge must configure the tenant like production does.
+async fn configure_stripe_collection(db: &Db, org: Uuid, cust: Uuid) {
+    // Same value in every test → safe to set from parallel tests.
+    std::env::set_var(rago_db::secrets::ENCRYPTION_KEY_ENV, "dunning-test-key");
+    let sealed = rago_db::secrets::seal("sk_test_dunning").unwrap();
+    sqlx::query(
+        "INSERT INTO payment_providers (id, organization_id, provider_type, code, name, encrypted_secrets, settings, created_at, updated_at) \
+         VALUES (gen_random_uuid(), $1, 'stripe', 'stripe', 'Stripe', $2, '{}'::jsonb, now(), now())",
+    )
+    .bind(org)
+    .bind(sealed)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    db.upsert_provider_customer(org, cust, "stripe", "cus_acme")
+        .await
+        .unwrap();
+    db.set_provider_customer_payment_method(cust, "stripe", "pm_card_visa")
+        .await
+        .unwrap();
+}
+
 async fn payment_request_count(db: &Db, org: Uuid) -> i64 {
     sqlx::query_scalar("SELECT COUNT(*) FROM payment_requests WHERE organization_id = $1")
         .bind(org)
@@ -153,6 +179,7 @@ async fn fires_threshold_creates_request_links_and_charges(pool: PgPool) {
         .unwrap();
     let cust = customer(org, "acme", "USD");
     db.insert_customer(&cust).await.unwrap();
+    configure_stripe_collection(&db, org, cust.id).await;
     campaign_with_threshold(&db, org, 3, 7, "USD", 5_000).await;
     let inv = overdue_invoice(&db, org, cust.id, "USD", 9_000).await;
 
@@ -262,6 +289,7 @@ async fn days_between_gate_prevents_double_request_and_double_charge(pool: PgPoo
     let org = Uuid::new_v4();
     let cust = customer(org, "acme", "USD");
     db.insert_customer(&cust).await.unwrap();
+    configure_stripe_collection(&db, org, cust.id).await;
     campaign_with_threshold(&db, org, 3, 7, "USD", 5_000).await;
     let inv = overdue_invoice(&db, org, cust.id, "USD", 9_000).await;
 
