@@ -72,15 +72,70 @@
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
   function usd(m) { if (m === null || m === undefined) return "-"; var n = Number(m) / 1e6; return "$" + n.toFixed(n !== 0 && Math.abs(n) < 0.01 ? 6 : 2); }
   function setStatus(m, k) { var s = $("status"); s.textContent = m || ""; s.className = k || ""; }
+  // Friendly wording for Vend's stable error codes ({success:false,error:{code,message}}
+  // on the control plane, {error:{code,message}} on the data plane). Unknown
+  // codes keep the server message, so nothing is hidden.
+  var VEND_ERROR_CODES = {
+    insufficient_funds: "Not enough funds in the reserve to cover this request. Top up and try again.",
+    reserve_insufficient: "The tenant reserve is too low. Top up the reserve and try again.",
+    spend_cap_exceeded: "A daily spend cap would be exceeded. Raise the cap or wait until it resets.",
+    idempotency_conflict: "This Idempotency-Key was already used with a different request.",
+    idempotency_key_required: "An Idempotency-Key header is required for this request.",
+    idempotency_in_progress: "A request with this Idempotency-Key is still running. Wait for it to finish.",
+    streaming_idempotency_consumed: "This streaming Idempotency-Key was already used. Send a new key.",
+    streaming_unsupported: "Streaming is not supported by this Vend deployment.",
+    funding_mode_unsupported: "That funding mode is not supported by this Vend deployment.",
+    capture_exceeds_hold: "The capture is larger than the hold it settles.",
+    unauthorized: "The token was not accepted. Check it and sign in again.",
+    forbidden: "This token is not allowed to do that.",
+    not_found: "Not found. It may have been deleted, or the id is wrong.",
+    invalid_amount: "The amount is not valid. Use a positive amount.",
+    overflow: "The amount is too large.",
+    bad_id: "That id is not in the expected format.",
+    model_not_allowed: "That model is not in this app's allowlist.",
+    wallet_unprovisioned: "This end user has no wallet (attribution only), so it cannot be funded.",
+    provider_unavailable: "That sign-in provider is not configured on this server.",
+    rate_limited: "Too many requests. Wait a moment and try again.",
+    transport_error: "Vend could not reach Mint or Relay. Try again shortly.",
+    storage_error: "Vend could not read or write its database. Try again; check the server logs if it persists.",
+    upstream_error: "Mint or Relay rejected the request.",
+    config_error: "The server is missing configuration for this action.",
+    internal_error: "The server hit an error. Check the server logs if it persists."
+  };
+  var VEND_STATUS_MESSAGES = {
+    400: "The request was not understood. Check the values and try again.",
+    401: "The token was not accepted. Check it and sign in again.",
+    403: "This token is not allowed to do that.",
+    404: "Not found.",
+    409: "This conflicts with a change made meanwhile. Reload and try again.",
+    429: "Too many requests. Wait a moment and try again.",
+    500: "The server hit an error. Check the server logs if it persists.",
+    502: "The server is unreachable right now (bad gateway). Try again shortly.",
+    503: "Vend is not ready yet or a dependency is down. Try again shortly.",
+    504: "The server took too long to answer. Check whether the action went through before retrying."
+  };
+  function friendlyError(status, body) {
+    var err = body && body.error;
+    var code = err && typeof err === "object" ? err.code : (typeof err === "string" ? err : null);
+    var message = err && typeof err === "object" ? err.message : null;
+    if (code === "feature_disabled" && message) return message;
+    if (code === "upstream_error" && message) return VEND_ERROR_CODES.upstream_error + " " + message;
+    if (code && VEND_ERROR_CODES[code]) return VEND_ERROR_CODES[code];
+    if (message) return message;
+    return VEND_STATUS_MESSAGES[status] || ("Request failed (HTTP " + status + ").");
+  }
+
   function api(method, path, body) {
     var opts = { method: method, headers: { "Accept": "application/json" } };
     if (st.token) opts.headers["Authorization"] = "Bearer " + st.token;
     if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
-    return fetch(path, opts).then(function (r) {
+    return fetch(path, opts).catch(function () {
+      throw new Error("Could not reach Vend. Check your connection and try again.");
+    }).then(function (r) {
       return r.text().then(function (t) {
         var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) {}
         if (r.status === 401 && st.token) { signOut("Your session ended. Sign in again."); throw new Error("Session ended"); }
-        if (!r.ok || (j && j.success === false)) throw new Error(j && j.error ? (j.error.message || j.error.code) : ("HTTP " + r.status));
+        if (!r.ok || (j && j.success === false)) throw new Error(friendlyError(r.status, j));
         return j && Object.prototype.hasOwnProperty.call(j, "data") ? j.data : j;
       });
     });

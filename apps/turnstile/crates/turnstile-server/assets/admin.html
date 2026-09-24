@@ -188,6 +188,45 @@
     run();
   };
 
+  // Friendly wording for the admin API's `{ error: code, message }` errors.
+  // Codes whose server message is already specific (validation, conflicts)
+  // keep it; unknown codes fall back to the server message.
+  const ERROR_CODES = {
+    unauthorized: "The operator token is missing or was not accepted. Enter it again.",
+    admin_disabled: "The admin API is off on this server: set TURNSTILE_ADMIN_TOKEN and restart it.",
+    unknown_tool: "That tool no longer exists. It may have been deleted; reload the list.",
+    tool_exists: "A tool with that name already exists. Pick another name or edit the existing tool.",
+    reserved_name: "That name is reserved by the built-in demo tool. Pick another name.",
+    too_large: "The tool spec is too large. Shorten the description or the input schema.",
+    store_unavailable: "The tool store is unavailable right now. Nothing was changed; try again shortly.",
+    journal_unavailable: "The settlement journal is unavailable right now. Try again shortly.",
+    recovery_failed: "Settlement recovery could not run. Check the server logs, then try again.",
+    x402_disabled: "x402 payments are turned off on this server.",
+    method_not_allowed: "This action is not available here.",
+    "unknown request_id": "No settlement with that request id.",
+  };
+  const STATUS_MESSAGES = {
+    400: "The request was not understood. Check the values and try again.",
+    401: ERROR_CODES.unauthorized,
+    403: "This operator token is not allowed to do that.",
+    404: "Not found.",
+    409: "This conflicts with a change made meanwhile. Reload and try again.",
+    413: ERROR_CODES.too_large,
+    429: "Too many requests. Wait a moment and try again.",
+    500: "The server hit an error. Check the server logs if it persists.",
+    502: "Turnstile is unreachable right now (bad gateway). Try again shortly.",
+    503: "Turnstile or one of its stores is unavailable. Try again shortly.",
+    504: "The server took too long to answer. Check whether the change went through before retrying.",
+  };
+  function friendlyError(status, data) {
+    const code = data && typeof data.error === "string" ? data.error : null;
+    const message = data && typeof data.message === "string" ? data.message : null;
+    if (code === "invalid_tool" && message) return "The tool is not valid: " + message;
+    if (code === "version_conflict") return message || STATUS_MESSAGES[409];
+    if (code && ERROR_CODES[code]) return ERROR_CODES[code];
+    return message || STATUS_MESSAGES[status] || ("Request failed (HTTP " + status + ").");
+  }
+
   async function api(path, method, body, extraHeaders) {
     const headers = Object.assign({ "Accept": "application/json" }, extraHeaders || {});
     const token = sessionStorage.getItem(TOKEN_KEY);
@@ -198,13 +237,13 @@
     if (operatorAscii) headers["X-Turnstile-Operator"] = operatorAscii;
     const opts = { headers, method: method || "GET" };
     if (body !== undefined) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
-    const res = await fetch(path, opts);
+    let res;
+    try { res = await fetch(path, opts); }
+    catch (_) { throw new Error("Could not reach Turnstile. Check your connection and that the server is running."); }
     let data = null;
     try { data = await res.json(); } catch (_) { data = null; }
     if (res.ok) return data;
-    let msg = (data && (data.message || data.error)) || ("HTTP " + res.status + " on " + path);
-    if (res.status === 401) msg = "Operator token required or invalid.";
-    const err = new Error(msg);
+    const err = new Error(friendlyError(res.status, data));
     err.status = res.status;
     err.data = data;
     throw err;

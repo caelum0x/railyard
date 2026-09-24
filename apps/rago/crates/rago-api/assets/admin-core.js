@@ -82,14 +82,88 @@
   class ApiError extends Error {
     constructor(status, message, details) { super(message); this.status = status; this.details = details; }
   }
+  // Friendly wording for the API's error codes. Unknown codes fall back to a
+  // readable form of the code itself, so nothing is ever hidden.
+  const ERROR_CODES = {
+    value_is_mandatory: "is required",
+    value_is_missing: "is required",
+    must_not_be_empty: "must not be empty",
+    value_is_invalid: "is not valid",
+    invalid_value: "is not valid",
+    invalid_format: "has an invalid format",
+    value_is_not_valid_number: "must be a number",
+    value_is_out_of_range: "is out of range",
+    value_must_be_positive: "must be greater than zero",
+    must_be_zero_or_positive: "must be zero or more",
+    value_is_too_long: "is too long",
+    must_be_an_array: "must be a list",
+    must_be_in_the_future: "must be in the future",
+    value_already_exist: "is already taken",
+    value_is_missing_or_already_exists: "is missing or already used",
+    invalid_type_or_status: "is not in a state that allows this (for example, the invoice is still a draft)",
+    already_voided: "is already voided",
+    already_accepted: "is already accepted",
+    not_deletable: "cannot be deleted",
+    not_draft_void_instead: "is finalized: void it instead of deleting it",
+    nothing_to_refund: "has nothing left to refund",
+    wallet_is_terminated: "wallet is terminated",
+    wallet_balance_insufficient: "wallet balance is too low",
+    subscription_is_not_active: "subscription is not active",
+    invoices_not_overdue: "the invoices are not overdue",
+    invoices_have_different_currencies: "the invoices use different currencies",
+    email_missing: "the customer has no email address",
+    unsupported_provider: "this payment provider is not supported here",
+    mint_not_configured: "real-time wallets need Mint to be configured on the server",
+    realtime_requires_usd: "real-time wallets only support USD",
+    organization_signing_key_missing: "the organization has no signing key yet",
+    export_not_ready: "the export is not ready yet, try again in a moment",
+    domain_already_claimed: "this domain is already used by another organization",
+    invalid_expression: "the expression could not be parsed",
+    only_draft_versions_can_be_edited: "only draft versions can be edited",
+    only_draft_versions_can_be_approved: "only draft versions can be approved",
+    already_has_a_draft_version: "a draft version already exists",
+    has_no_approved_version: "has no approved version",
+    invoice_finalization_failed: "The invoice was finalized, but a follow-up step (taxes, credit notes or collection) failed. Check the server logs and retry.",
+    final_invoice_failed: "The final invoice could not be issued, so the subscription was not terminated. Nothing changed; try again.",
+  };
+  const STATUS_MESSAGES = {
+    400: "The request was not understood. Check the values and try again.",
+    403: "This API key is not allowed to do that.",
+    404: "Not found. It may have been deleted, or it belongs to another organization.",
+    405: "This action is not available here.",
+    409: "This conflicts with a change made meanwhile. Reload and try again.",
+    413: "The upload is too large.",
+    429: "Too many requests. Wait a moment and try again.",
+    500: "The server hit an error. Nothing was changed unless the page shows otherwise; check the server logs if it persists.",
+    502: "The server is unreachable right now (bad gateway). Try again shortly.",
+    503: "A service this action depends on is unavailable. Try again shortly.",
+    504: "The server took too long to answer. Check whether the action went through before retrying.",
+  };
+  function humanize(code) {
+    return String(code).replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+  }
+  function friendlyCode(code) {
+    return ERROR_CODES[code] || String(code).replace(/_/g, " ");
+  }
   function describeError(status, body) {
-    if (!body) return "HTTP " + status;
-    if (body.error_details) {
-      const parts = Object.entries(body.error_details).map(([k, v]) => k + ": " + (Array.isArray(v) ? v.join(", ") : JSON.stringify(v)));
-      return parts.join("\n") || body.error || "Validation failed";
+    if (!body) return STATUS_MESSAGES[status] || "Request failed (HTTP " + status + ").";
+    if (body.error_details && typeof body.error_details === "object") {
+      const parts = Object.entries(body.error_details).map(([field, v]) => {
+        const codes = Array.isArray(v) ? v : [typeof v === "string" ? v : JSON.stringify(v)];
+        return humanize(field) + " " + codes.map(friendlyCode).join(", ");
+      });
+      return parts.join("\n") || "Some values are not valid.";
     }
-    if (body.code) return (body.error || "Error") + " (" + body.code + ")";
-    return body.error || "HTTP " + status;
+    if (status === 404 && typeof body.code === "string" && body.code.endsWith("_not_found")) {
+      return humanize(body.code.slice(0, -"_not_found".length)) + " not found. It may have been deleted, or it belongs to another organization.";
+    }
+    if (body.code && ERROR_CODES[body.code]) return ERROR_CODES[body.code];
+    if (typeof body.error === "string" && ERROR_CODES[body.error]) return ERROR_CODES[body.error];
+    if (STATUS_MESSAGES[status]) {
+      const extra = body.code ? " (" + body.code + ")" : "";
+      return STATUS_MESSAGES[status] + extra;
+    }
+    return body.error || "Request failed (HTTP " + status + ").";
   }
   async function request(method, path, body, raw) {
     const headers = { "Authorization": "Bearer " + getKey(), "Accept": raw ? "*/*" : "application/json" };
@@ -97,8 +171,8 @@
     if (body !== undefined) { headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
     let res;
     try { res = await fetch(path, init); }
-    catch (e) { throw new ApiError(0, "Network error: " + e.message); }
-    if (res.status === 401) { onUnauthorized(); throw new ApiError(401, "Unauthorized: check the API key."); }
+    catch (e) { throw new ApiError(0, "Could not reach the server. Check your connection and that Rago is running (" + e.message + ")."); }
+    if (res.status === 401) { onUnauthorized(); throw new ApiError(401, "Your API key was not accepted. Enter a valid key for this organization."); }
     if (raw && res.ok) return res;
     let data = null;
     const text = await res.text();
@@ -122,7 +196,7 @@
     async postDownload(path, filename) {
       const headers = { "Authorization": "Bearer " + getKey() };
       const res = await fetch(path, { method: "POST", headers });
-      if (!res.ok) throw new ApiError(res.status, "HTTP " + res.status);
+      if (!res.ok) throw new ApiError(res.status, describeError(res.status, null));
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
