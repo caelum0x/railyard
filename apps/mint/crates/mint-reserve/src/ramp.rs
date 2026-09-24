@@ -143,6 +143,24 @@ pub trait Ramp: Send + Sync {
     /// Confirm an inbound deposit (before a `mint`).
     async fn confirm_deposit(&self, deposit_ref: &str) -> Result<Deposit, RampError>;
 
+    /// Confirm an inbound deposit in the context of the mint it would back:
+    /// the Mint `account` being credited and the requested `amount`.
+    ///
+    /// [`crate::ReserveLedger::mint`] always calls this form. Providers whose
+    /// re-query is keyed on the PAYER rather than the payment (RevenueCat
+    /// `/v1/subscribers/{app_user_id}`, Adapty's profile API) need the account
+    /// to find the transaction at all; they bind the returned deposit to that
+    /// account via [`Deposit::bound_account`]. Every other adapter keeps the
+    /// default, which ignores the context and re-queries by reference alone.
+    async fn confirm_deposit_for(
+        &self,
+        deposit_ref: &str,
+        _account: &str,
+        _amount: Micros,
+    ) -> Result<Deposit, RampError> {
+        self.confirm_deposit(deposit_ref).await
+    }
+
     /// Send a payout out (after a `redeem` burn). Idempotent by `payout_ref`.
     async fn initiate_payout(
         &self,

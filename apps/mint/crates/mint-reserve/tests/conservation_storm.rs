@@ -163,6 +163,7 @@ proptest! {
                                 idem_key: k.clone(),
                                 op_hash: oh("hcreate"),
                                 ref_: None,
+                                expires_at_ms: None,
                             })
                             .await
                         {

@@ -69,7 +69,8 @@
   svg.icon { width: 14px; height: 14px; vertical-align: -2px; stroke: currentColor; fill: none; stroke-width: 2; }
   .badge.frozen, .badge.shortfall, .badge.amount_mismatch, .badge.status_mismatch, .badge.reversal_unrecorded { color: var(--warn); border-color: #6a5130; }
   .badge.closed, .badge.revoked, .badge.missing_in_mint, .badge.missing_at_provider { color: var(--danger); border-color: #6a2c3d; }
-  .badge.active, .badge.matched, .badge.clawed_back { color: var(--ok); border-color: #2c5a41; }
+  .badge.active, .badge.matched, .badge.clawed_back, .badge.reversal_applied { color: var(--ok); border-color: #2c5a41; }
+  label.inline { display: flex; align-items: center; gap: .5rem; }
   button.danger { color: var(--danger); border-color: #6a2c3d; }
   .actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 18px; }
@@ -240,16 +241,12 @@
         <label for="co-account">Account</label><input id="co-account" placeholder="acct_..." />
         <label for="co-amount">Amount (USD)</label><input id="co-amount" type="number" min="0.01" step="0.01" placeholder="25.00" />
         <label for="co-provider">Provider</label>
-        <select id="co-provider">
-          <option value="stripe">Stripe</option>
-          <option value="paypal">PayPal</option>
-          <option value="creem">Creem</option>
-          <option value="polar">Polar</option>
-          <option value="usdc">USDC</option>
-          <option value="iyzico">Iyzico</option>
+        <select id="co-provider" disabled>
+          <option value="">Loading providers...</option>
         </select>
-        <span></span><button id="co-create" class="primary">Create hosted checkout</button>
+        <span></span><button id="co-create" class="primary" disabled>Create hosted checkout</button>
       </div>
+      <div class="result" id="co-providers"></div>
       <div class="result" id="co-result"></div>
     </div>
     <div class="panel">
@@ -284,6 +281,8 @@
         <label for="rp-unit">Amount column unit</label>
         <select id="rp-unit"><option value="major">Dollars (12.34)</option><option value="cents">Cents (1234)</option><option value="micros">Micros</option></select>
         <label for="rp-refcol">Reference column (optional)</label><input id="rp-refcol" placeholder="auto: payment_intent_id, transaction_id, tx_hash, id ..." />
+        <label for="rp-apply">Claw back listed refunds</label>
+        <label class="inline"><input id="rp-apply" type="checkbox" /> Reverse refunds / chargebacks Mint has not recorded yet</label>
         <span></span><button id="rp-import" class="primary">Import and match</button>
       </div>
       <div class="result" id="rp-result"></div>
@@ -931,6 +930,37 @@
   }
 
   // ---- funding ---------------------------------------------------------
+  async function loadProviders() {
+    const select = $("co-provider");
+    const info = $("co-providers");
+    const button = $("co-create");
+    select.disabled = true;
+    button.disabled = true;
+    select.replaceChildren(el("option", { value: "" }, "Loading providers..."));
+    try {
+      const r = await api("GET", "/v1/providers");
+      const usable = r.items.filter((p) => p.checkout);
+      const blocked = r.items.filter((p) => !p.checkout && p.checkout_blocked_reason);
+      if (!usable.length) {
+        select.replaceChildren(el("option", { value: "" }, "No checkout provider configured"));
+        info.textContent = !r.configured
+          ? "Payments are not configured on this deployment. Set a provider's API key (for example STRIPE_API_KEY) and restart Mint."
+          : blocked.length
+            ? blocked.map((p) => p.provider + ": " + p.checkout_blocked_reason).join("; ")
+            : "No active provider supports hosted checkout. Configure Stripe, PayPal, Creem, Polar, Coinbase Commerce or Iyzico.";
+        return;
+      }
+      const label = { stripe: "Stripe", paypal: "PayPal", creem: "Creem", polar: "Polar", usdc: "USDC (Coinbase Commerce)", iyzico: "Iyzico" };
+      select.replaceChildren(...usable.map((p) => el("option", { value: p.provider }, label[p.provider] || p.provider)));
+      select.disabled = false;
+      button.disabled = false;
+      info.textContent = blocked.length ? "Unavailable: " + blocked.map((p) => p.provider + " (" + p.checkout_blocked_reason + ")").join(", ") : "";
+    } catch (e) {
+      select.replaceChildren(el("option", { value: "" }, "Providers unavailable"));
+      info.textContent = "Could not load payment providers: " + e.message;
+    }
+  }
+
   async function createCheckout() {
     const out = $("co-result");
     const dollars = Number($("co-amount").value);
@@ -993,8 +1023,10 @@
       const res = await api("POST", "/v1/reconciliation/reports", {
         provider: $("rp-provider").value, label: file.name, content,
         amount_unit: $("rp-unit").value, reference_column: $("rp-refcol").value.trim() || null,
+        apply_reversals: $("rp-apply").checked,
       });
-      out.textContent = "Imported " + res.report.line_count + " lines; " + res.discrepancies + " discrepancies.";
+      const applied = res.summary.reversal_applied ? res.summary.reversal_applied.count : 0;
+      out.textContent = "Imported " + res.report.line_count + " lines; " + res.discrepancies + " discrepancies" + (applied ? "; " + applied + " refund lines clawed back." : ".");
       $("rp-file").value = "";
       await loadReports();
       renderReport(res);
@@ -1018,6 +1050,7 @@
     $("report-tiles").replaceChildren(
       tile("Matched", s.matched), tile("Amount mismatch", s.amount_mismatch), tile("Status mismatch", s.status_mismatch),
       tile("Missing in Mint", s.missing_in_mint), tile("Refund not clawed back", s.reversal_unrecorded),
+      tile("Refund clawed back on import", s.reversal_applied || { count: 0, micros: 0 }),
       tile("Missing at provider", s.missing_at_provider));
     const showAll = $("rp-all").checked;
     const lines = res.lines.filter((l) => showAll || (l.status !== "matched" && l.status !== "informational"));
@@ -1196,6 +1229,7 @@
     if (name === "accounts") loadAccounts(false);
     if (name === "payouts") loadPayouts(false);
     if (name === "reconcile") loadReports();
+    if (name === "funding") loadProviders();
     if (name === "reversals") loadReversals();
     if (name === "keys") loadKeys();
     if (name === "payerkeys") loadPayerKeys();
@@ -1254,6 +1288,9 @@
   $("rcpt-run").onclick = loadReceipts;
   $("mm-create").onclick = manualMint;
   $("rp-import").onclick = importReport;
+  // Iyzico merchant-panel refunds may never reach the webhook: default to
+  // clawing them back on import; other providers apply refunds by webhook.
+  $("rp-provider").onchange = () => { $("rp-apply").checked = $("rp-provider").value === "iyzico"; };
   $("rp-refresh").onclick = loadReports;
   $("rp-all").onchange = () => currentReport && renderReport(currentReport);
   $("rp-delete").onclick = deleteReport;

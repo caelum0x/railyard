@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::card::{is_whole_cents, Checkout, CheckoutUrls};
 use crate::config::ProviderConfig;
-use crate::event::{DepositEvent, ReversalEvent, ReversalReason, WebhookError};
+use crate::event::{DepositEvent, PayoutEvent, ReversalEvent, ReversalReason, WebhookError};
 use crate::http::{map_status, Headers, HttpTransport};
 use crate::money::cents_to_micros;
 use crate::provider::ProviderId;
@@ -123,10 +123,14 @@ impl Ramp for StripeRamp {
             _ => return Err(RampError::Unsupported),
         };
         let cents = (amount.get() / 10_000).to_string();
+        // `metadata[payout_ref]` is echoed on every later `transfer.*` webhook so
+        // a reversal can be tied back to this payout record.
         let form = form_urlencode(&[
             ("amount", &cents),
             ("currency", "usd"),
             ("destination", &account),
+            ("metadata[payout_ref]", payout_ref),
+            ("transfer_group", payout_ref),
         ]);
         let mut headers = self.auth_headers();
         // Stripe idempotency: keying on payout_ref makes retries exactly-once.
@@ -179,6 +183,73 @@ impl Ramp for StripeRamp {
         }
         Ok(())
     }
+
+    async fn payout_status(
+        &self,
+        _payout_ref: &str,
+        provider_ref: Option<&str>,
+    ) -> Result<PayoutStatus, RampError> {
+        // A transfer settles synchronously, but it can later be reversed.
+        let transfer_id = provider_ref
+            .filter(|id| id.starts_with("tr_"))
+            .ok_or(RampError::Unsupported)?;
+        let url = format!("{API_BASE}/v1/transfers/{transfer_id}");
+        let resp = map_status(self.transport.get(&url, &self.auth_headers()).await)?;
+        let v: Value =
+            serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)?;
+        Ok(if transfer_is_reversed(&v) {
+            PayoutStatus::Failed
+        } else {
+            PayoutStatus::Paid
+        })
+    }
+}
+
+/// A transfer whose funds were (fully or partly) pulled back from the
+/// connected account no longer delivered the payout.
+fn transfer_is_reversed(transfer: &Value) -> bool {
+    transfer["reversed"].as_bool() == Some(true)
+        || transfer["amount_reversed"].as_i64().is_some_and(|a| a > 0)
+}
+
+/// Verify a Stripe webhook over RAW bytes and, when it reports that a payout
+/// transfer Mint sent was reversed (`transfer.reversed`, or `transfer.updated`
+/// with `reversed` / `amount_reversed`), return the payout-state update keyed by
+/// the transfer's `metadata.payout_ref`.
+///
+/// `payout.paid` / `payout.failed` on a connected account describe the
+/// RECIPIENT's own bank payout of funds Mint already delivered to their Stripe
+/// balance; they do not change Mint's payout state and are `Ignored`.
+pub fn verify_payout_webhook<H: Headers>(
+    cfg: &ProviderConfig,
+    headers: &H,
+    raw: &[u8],
+) -> Result<PayoutEvent, WebhookError> {
+    verify_signature(cfg, headers, raw)?;
+    let v: Value =
+        serde_json::from_slice(raw).map_err(|e| WebhookError::Malformed(e.to_string()))?;
+    let event_type = v["type"].as_str().unwrap_or("");
+    let obj = &v["data"]["object"];
+    let reversed = match event_type {
+        "transfer.reversed" => true,
+        "transfer.updated" => transfer_is_reversed(obj),
+        other => return Err(WebhookError::Ignored(other.to_string())),
+    };
+    if !reversed {
+        return Err(WebhookError::Ignored(event_type.to_string()));
+    }
+    let payout_ref = obj["metadata"]["payout_ref"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| WebhookError::Ignored(format!("{event_type} for a non-Mint transfer")))?
+        .to_string();
+    Ok(PayoutEvent {
+        provider: ProviderId::Stripe,
+        payout_ref,
+        provider_ref: obj["id"].as_str().map(str::to_string),
+        status: PayoutStatus::Failed,
+        event_type: event_type.to_string(),
+    })
 }
 
 /// Verify a Stripe webhook over RAW bytes and, when it is a refund or a

@@ -64,10 +64,11 @@ pub async fn verify<S: LedgerStore + 'static>(
     Json(auth): Json<Authorization>,
 ) -> ApiResult {
     let settlement = st.aitp.verify_and_settle(&auth).await?;
-    // A hold settlement stays open for the merchant to capture / release; give
-    // it a deadline (challenge expiry + the AITP settle window) so an abandoned
-    // hold is auto-released instead of locking the payer's funds forever. An
-    // idempotent replay keeps the first deadline.
+    // A hold settlement stays open for the merchant to capture / release. Its
+    // auto-release deadline (authorization expiry + the AITP settle window) is
+    // committed atomically with the hold by `verify_and_settle`; here it is
+    // only read back for the response. A hold created before deadlines were
+    // transactional (no row yet) is repaired on replay.
     let mut hold_expires_at_ms: Option<i64> = None;
     if let Settlement::Hold { hold_id, .. } = &settlement {
         let store = st.ledger.store();

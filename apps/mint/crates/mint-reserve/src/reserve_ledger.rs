@@ -48,7 +48,7 @@ impl<S: LedgerStore, R: Ramp, K: KycGate> ReserveLedger<S, R, K> {
         // 1. Deposit gate: the ramp must confirm a deposit that covers the mint.
         let deposit = self
             .ramp
-            .confirm_deposit(&req.deposit_ref)
+            .confirm_deposit_for(&req.deposit_ref, req.to.as_str(), amount.micros())
             .await
             .map_err(map_deposit_err)?;
         if !deposit.confirmed {
@@ -255,6 +255,52 @@ impl<S: LedgerStore, R: Ramp, K: KycGate> ReserveLedger<S, R, K> {
             // No status API / transient outage: keep the record as-is.
             Err(_) => Ok(Some(rec)),
         }
+    }
+
+    /// Apply a provider-pushed payout settlement update (a verified webhook such
+    /// as PayPal `PAYMENT.PAYOUTS-ITEM.SUCCEEDED` or Stripe `transfer.reversed`)
+    /// to the durable payout record — the push twin of [`Self::refresh_payout`],
+    /// so payout state stays current even when the polling sweep is off.
+    ///
+    /// Transitions: `Pending → Paid | Failed`, `Paid → Failed` (the provider
+    /// returned / reversed funds that had been delivered: the burn stands and
+    /// the payout becomes retryable or cancellable-with-re-credit by an
+    /// operator), and `Failed → Paid` (a payout recorded as failed after a
+    /// timeout that the provider actually delivered). A `Cancelled` payout was
+    /// already re-credited and is never moved; a `Pending` update is a no-op.
+    /// `None` ⇒ no payout under that ref.
+    pub async fn apply_payout_update(
+        &self,
+        payout_ref: &str,
+        status: PayoutStatus,
+        provider_ref: Option<String>,
+        reason: &str,
+    ) -> Result<Option<PayoutRecord>, MintError> {
+        let Some(rec) = self.store.get_payout(payout_ref).await? else {
+            return Ok(None);
+        };
+        let next = record_status(status);
+        let allowed = matches!(
+            (rec.status, next),
+            (PayoutRecordStatus::Pending, PayoutRecordStatus::Paid)
+                | (PayoutRecordStatus::Pending, PayoutRecordStatus::Failed)
+                | (PayoutRecordStatus::Paid, PayoutRecordStatus::Failed)
+                | (PayoutRecordStatus::Failed, PayoutRecordStatus::Paid)
+        );
+        if !allowed {
+            return Ok(Some(rec));
+        }
+        let last_error = (next == PayoutRecordStatus::Failed)
+            .then(|| format!("provider reported {reason}"));
+        self.store
+            .upsert_payout(PayoutRecord {
+                status: next,
+                provider_ref: provider_ref.or(rec.provider_ref.clone()),
+                last_error,
+                ..rec
+            })
+            .await
+            .map(Some)
     }
 
     /// One `initiate_payout` attempt, persisted. Provider errors become a

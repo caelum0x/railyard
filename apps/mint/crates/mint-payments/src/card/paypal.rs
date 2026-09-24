@@ -20,7 +20,9 @@ use serde_json::Value;
 
 use crate::card::{is_whole_cents, Checkout, CheckoutUrls};
 use crate::config::{Mode, ProviderConfig};
-use crate::event::{DepositEvent, ReversalEvent, ReversalReason, VerifiedEvent, WebhookError};
+use crate::event::{
+    DepositEvent, PayoutEvent, ReversalEvent, ReversalReason, VerifiedEvent, WebhookError,
+};
 use crate::http::{map_status, Headers, HttpTransport};
 use crate::money::decimal_to_micros;
 use crate::provider::ProviderId;
@@ -305,6 +307,24 @@ impl PayPalRamp {
                     reason: ReversalReason::Dispute,
                 }))
             }
+            t if t.starts_with("PAYMENT.PAYOUTS-ITEM.") => parse_payout_item(t, resource),
+            "PAYMENT.PAYOUTSBATCH.DENIED" => {
+                let payout_ref = resource["batch_header"]["sender_batch_header"]
+                    ["sender_batch_id"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| WebhookError::Ignored("denied batch without sender id".into()))?
+                    .to_string();
+                Ok(VerifiedEvent::Payout(PayoutEvent {
+                    provider: ProviderId::PayPal,
+                    payout_ref,
+                    provider_ref: resource["batch_header"]["payout_batch_id"]
+                        .as_str()
+                        .map(str::to_string),
+                    status: PayoutStatus::Failed,
+                    event_type: event_type.to_string(),
+                }))
+            }
             other => Err(WebhookError::Ignored(other.to_string())),
         }
     }
@@ -334,6 +354,34 @@ impl PayPalRamp {
                 WebhookError::Ignored(format!("capture {capture_id} is not tied to an order"))
             })
     }
+}
+
+/// Map a verified `PAYMENT.PAYOUTS-ITEM.<STATE>` event onto the payout record
+/// it settles. Mint sends one item per batch with `sender_item_id` =
+/// `sender_batch_id` = the raw payout ref.
+fn parse_payout_item(event_type: &str, resource: &Value) -> Result<VerifiedEvent, WebhookError> {
+    let state = event_type.trim_start_matches("PAYMENT.PAYOUTS-ITEM.");
+    let status = match state {
+        "SUCCEEDED" => PayoutStatus::Paid,
+        "FAILED" | "RETURNED" | "BLOCKED" | "REFUNDED" | "REVERSED" | "CANCELED" | "DENIED" => {
+            PayoutStatus::Failed
+        }
+        // HELD / UNCLAIMED (receiver has 30 days to claim) / anything new.
+        _ => PayoutStatus::Pending,
+    };
+    let payout_ref = resource["payout_item"]["sender_item_id"]
+        .as_str()
+        .or_else(|| resource["sender_item_id"].as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| WebhookError::Ignored(format!("{event_type} without sender_item_id")))?
+        .to_string();
+    Ok(VerifiedEvent::Payout(PayoutEvent {
+        provider: ProviderId::PayPal,
+        payout_ref,
+        provider_ref: resource["payout_batch_id"].as_str().map(str::to_string),
+        status,
+        event_type: event_type.to_string(),
+    }))
 }
 
 /// Parse a verified `PAYMENT.CAPTURE.COMPLETED` event into a deposit.

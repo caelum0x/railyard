@@ -37,11 +37,13 @@ pub use card::CheckoutUrls;
 pub use composite::CompositeRamp;
 pub use config::{Mode, PaymentsConfig, ProviderConfig};
 pub use error::PaymentError;
-pub use event::{DepositEvent, ReversalEvent, ReversalReason, VerifiedEvent, WebhookError};
+pub use event::{
+    DepositEvent, PayoutEvent, ReversalEvent, ReversalReason, VerifiedEvent, WebhookError,
+};
 pub use http::{Headers, HttpResponse, HttpTransport, ReqwestTransport, TransportError};
 pub use kyc::{KycOnboarding, KycSession, PersonaKycVerifier, StripeIdentityKycVerifier};
 pub use provider::ProviderId;
-pub use registry::PaymentRegistry;
+pub use registry::{PaymentRegistry, ProviderCapabilities};
 
 // Re-export the ramp vocabulary so `mint-server` can wire the registry without
 // depending on `mint-reserve` internals directly.

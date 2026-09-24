@@ -822,6 +822,12 @@ impl LedgerStore for InMemoryStore {
             commit.ref_.clone(),
             ts,
         )?;
+        // The auto-release deadline is written in the same critical section.
+        if let Some(expires_at) = commit.expires_at_ms {
+            st.hold_expiries
+                .entry(outcome.hold_id.clone())
+                .or_insert(expires_at);
+        }
 
         // 7. Record the outcome under the idempotency key.
         st.idem_index.insert(
@@ -3211,6 +3217,7 @@ mod tests {
                 "op": "hold.create", "from": from.as_str(), "amount": amount, "key": key,
             })),
             ref_: None,
+            expires_at_ms: None,
         }
     }
 

@@ -19,7 +19,7 @@ use crate::card::{CreemRamp, PayPalRamp, PolarRamp, StripeRamp};
 use crate::composite::CompositeRamp;
 use crate::config::{PaymentsConfig, ProviderConfig};
 use crate::crypto_tr::{IyzicoRamp, UsdcRamp};
-use crate::event::{DepositEvent, ReversalEvent, VerifiedEvent, WebhookError};
+use crate::event::{DepositEvent, PayoutEvent, ReversalEvent, VerifiedEvent, WebhookError};
 use crate::http::{Headers, HttpTransport};
 use crate::iap::{AdaptyRamp, RevenueCatRamp};
 use crate::provider::ProviderId;
@@ -125,8 +125,21 @@ impl PaymentRegistry {
                     .await?
             }
             ProviderId::Iyzico => {
+                let base = urls
+                    .public_base_url
+                    .as_deref()
+                    .map(|b| b.trim_end_matches('/'))
+                    .filter(|b| !b.is_empty())
+                    .ok_or_else(|| {
+                        PaymentError::Misconfigured(
+                            "MINT_PUBLIC_URL must be set so Iyzico can return the buyer to \
+                             Mint's /v1/deposits/iyzico/webhook callback"
+                                .into(),
+                        )
+                    })?;
+                let callback_url = format!("{base}/v1/deposits/iyzico/webhook");
                 IyzicoRamp::new(self.transport.clone(), cfg)
-                    .initialize_checkout(account_id, amount_micros)
+                    .initialize_checkout(account_id, amount_micros, &callback_url)
                     .await?
             }
             ProviderId::RevenueCat | ProviderId::Adapty => {
@@ -202,8 +215,9 @@ impl PaymentRegistry {
     /// Creem (`refund.created`, `dispute.created`), Polar (`order.refunded`),
     /// RevenueCat (`CANCELLATION` with `CUSTOMER_SUPPORT`) and Adapty
     /// (`subscription_refunded`, `non_subscription_purchase_refunded`). USDC
-    /// transfers are final (no reversal), and Iyzico refunds arrive through
-    /// the settlement report import. Any other verified event is `Ignored`.
+    /// transfers are final (no reversal), and Iyzico refund / cancel /
+    /// chargeback merchant notifications (`X-IYZ-SIGNATURE-V3`). Any other
+    /// verified event is `Ignored`.
     pub async fn verify_event<H: Headers>(
         &self,
         provider: ProviderId,
@@ -221,13 +235,34 @@ impl PaymentRegistry {
                 .verify_event(headers, raw)
                 .await;
         }
+        if provider == ProviderId::Iyzico {
+            // The checkout-form callback carries only a token that must be
+            // resolved through a signed API call; merchant notifications are
+            // HMAC-verified and may be refunds. Use the ACTIVE config (it holds
+            // the API + secret key the signed calls need).
+            let active = self
+                .active_configs
+                .get(&ProviderId::Iyzico)
+                .cloned()
+                .ok_or(WebhookError::NotConfigured)?;
+            return IyzicoRamp::new(self.transport.clone(), active)
+                .verify_event(headers, raw)
+                .await;
+        }
         match self.verify_webhook(provider, headers, raw).await {
             Ok(ev) => Ok(VerifiedEvent::Deposit(ev)),
             Err(WebhookError::Ignored(kind)) => {
                 match verify_reversal_sync(provider, cfg, headers, raw) {
                     Ok(rev) => Ok(VerifiedEvent::Reversal(rev)),
-                    // Not a reversal either: report the original event kind.
-                    Err(WebhookError::Ignored(_)) => Err(WebhookError::Ignored(kind)),
+                    // Not a reversal: maybe a payout settlement update.
+                    Err(WebhookError::Ignored(_)) => {
+                        match verify_payout_sync(provider, cfg, headers, raw) {
+                            Ok(p) => Ok(VerifiedEvent::Payout(p)),
+                            // None of the three: report the original event kind.
+                            Err(WebhookError::Ignored(_)) => Err(WebhookError::Ignored(kind)),
+                            Err(e) => Err(e),
+                        }
+                    }
                     Err(e) => Err(e),
                 }
             }
@@ -278,11 +313,68 @@ fn verify_reversal_sync<H: Headers>(
         ProviderId::Usdc => Err(WebhookError::Ignored(
             "usdc transfers are final and cannot be reversed".into(),
         )),
-        ProviderId::Iyzico => Err(WebhookError::Ignored(
-            "iyzico refunds are reconciled from the settlement report import".into(),
-        )),
-        // Handled asynchronously in `verify_event` (single transport verify).
+        // Handled asynchronously in `verify_event` (transport-backed verify).
+        ProviderId::Iyzico => Err(WebhookError::Ignored("iyzico".into())),
         ProviderId::PayPal => Err(WebhookError::Ignored("paypal".into())),
+    }
+}
+
+/// Classify a locally-verified delivery as a payout settlement update. Only
+/// Stripe (transfer reversals) is synchronous; PayPal payout items are handled
+/// in its transport-backed `verify_event`, and the IAP / MoR providers have no
+/// payouts.
+fn verify_payout_sync<H: Headers>(
+    provider: ProviderId,
+    cfg: &ProviderConfig,
+    headers: &H,
+    raw: &[u8],
+) -> Result<PayoutEvent, WebhookError> {
+    match provider {
+        ProviderId::Stripe => crate::card::stripe::verify_payout_webhook(cfg, headers, raw),
+        other => Err(WebhookError::Ignored(format!("{} has no payout events", other.tag()))),
+    }
+}
+
+/// What an active provider can do, for the operator console's provider picker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProviderCapabilities {
+    /// The provider.
+    pub provider: ProviderId,
+    /// A hosted checkout can be created (`POST /v1/checkouts`).
+    pub checkout: bool,
+    /// Redeems can pay out through it.
+    pub payout: bool,
+    /// Its webhook route is configured (deposits / reversals are received).
+    pub webhook: bool,
+}
+
+impl PaymentRegistry {
+    /// The capabilities of every ACTIVE provider, sorted by tag.
+    pub fn capabilities(&self) -> Vec<ProviderCapabilities> {
+        self.active_providers()
+            .into_iter()
+            .map(|provider| {
+                let cfg = self.active_configs.get(&provider);
+                let extra = |k: &str| cfg.and_then(|c| c.extra(k)).is_some_and(|v| !v.is_empty());
+                let (checkout, payout) = match provider {
+                    ProviderId::Stripe | ProviderId::PayPal => (true, true),
+                    ProviderId::Creem => (extra("product_id"), false),
+                    ProviderId::Polar => (extra("product_id"), false),
+                    ProviderId::Usdc => (
+                        extra("commerce_api_key"),
+                        extra("rpc_url") && extra("token_contract"),
+                    ),
+                    ProviderId::Iyzico => (extra("secret_key"), extra("secret_key")),
+                    ProviderId::RevenueCat | ProviderId::Adapty => (false, false),
+                };
+                ProviderCapabilities {
+                    provider,
+                    checkout,
+                    payout,
+                    webhook: self.webhook_secrets.contains_key(&provider),
+                }
+            })
+            .collect()
     }
 }
 
@@ -351,6 +443,7 @@ mod tests {
             success_url: "https://app.test/ok".into(),
             cancel_url: "https://app.test/cancel".into(),
             capture_return_url: None,
+            public_base_url: None,
         };
 
         let checkout = registry

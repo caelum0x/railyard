@@ -7,8 +7,14 @@
 //! - **Coinbase Commerce webhook**: `X-CC-Webhook-Signature` = HMAC-SHA256 hex
 //!   of the RAW body; event `charge:confirmed`; `asset = Usdc`. On a verified
 //!   confirmed charge the handler mints the exact `amount_micros` to `account_id`.
-//! - **Pure chain**: a watcher confirms a deposit tx via JSON-RPC
-//!   (`confirm_deposit` → `eth_getTransactionReceipt`).
+//! - **Re-confirmation of a charge**: `confirm_deposit(<charge id|code>)` GETs
+//!   `/charges/{id}` from Commerce and requires a `COMPLETED`/`RESOLVED`
+//!   timeline entry; the confirmed amount is the sum of the charge's
+//!   CONFIRMED USD payments and the deposit is bound to `metadata.account_id`.
+//! - **Pure chain**: a `0x…` tx hash is confirmed via JSON-RPC
+//!   (`eth_getTransactionReceipt`), and the amount is DECODED from the ERC-20
+//!   `Transfer` logs the USDC token contract emitted to the configured treasury
+//!   `deposit_address`.
 //!
 //! Off-ramp (`initiate_payout`) submits an ERC-20 `transfer(to,amount)` to the
 //! USDC token contract via the configured RPC (`eth_sendTransaction`).
@@ -24,7 +30,7 @@ use crate::card::Checkout;
 use crate::config::ProviderConfig;
 use crate::crypto_tr::micros_to_dollars;
 use crate::event::{DepositEvent, WebhookError};
-use crate::http::{map_status, Headers, HttpTransport};
+use crate::http::{encode_component, map_status, Headers, HttpTransport};
 use crate::money::{decimal_to_micros, json_dollars_to_micros};
 use crate::provider::ProviderId;
 use crate::verify::hmac_sha256_hex_verify;
@@ -33,6 +39,11 @@ use crate::verify::hmac_sha256_hex_verify;
 const COMMERCE_API_BASE: &str = "https://api.commerce.coinbase.com";
 /// The Coinbase Commerce API version header value.
 const COMMERCE_API_VERSION: &str = "2018-03-22";
+
+/// `keccak256("Transfer(address,address,uint256)")` — the ERC-20 Transfer
+/// event topic, a fixed well-known constant.
+const ERC20_TRANSFER_TOPIC: &str =
+    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 /// The canonical ERC-20 `transfer(address,uint256)` function selector —
 /// `keccak256("transfer(address,uint256)")[..4]`, a fixed well-known constant.
@@ -69,12 +80,102 @@ impl UsdcRamp {
         UsdcRamp { transport, cfg }
     }
 
-    fn rpc_url(&self) -> String {
+    fn rpc_url(&self) -> Result<String, RampError> {
         self.cfg
             .extra("rpc_url")
-            .or(self.cfg.api_key.as_deref())
-            .unwrap_or_default()
-            .to_string()
+            .filter(|u| !u.is_empty())
+            .map(str::to_string)
+            .ok_or(RampError::ProviderUnavailable)
+    }
+
+    fn commerce_headers(&self) -> Result<Vec<(String, String)>, RampError> {
+        let api_key = self
+            .cfg
+            .extra("commerce_api_key")
+            .filter(|k| !k.is_empty())
+            .ok_or(RampError::ProviderUnavailable)?;
+        Ok(vec![
+            ("x-cc-api-key".to_string(), api_key.to_string()),
+            ("x-cc-version".to_string(), COMMERCE_API_VERSION.to_string()),
+        ])
+    }
+
+    /// Re-confirm a Coinbase Commerce charge by id or code.
+    async fn confirm_charge(&self, charge_ref: &str) -> Result<Deposit, RampError> {
+        let url = format!("{COMMERCE_API_BASE}/charges/{}", encode_component(charge_ref));
+        let resp = map_status(self.transport.get(&url, &self.commerce_headers()?).await)?;
+        let v: Value =
+            serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)?;
+        let data = &v["data"];
+        if !data.is_object() {
+            return Err(RampError::DepositNotFound);
+        }
+        let completed = data["timeline"].as_array().is_some_and(|timeline| {
+            timeline.iter().any(|entry| {
+                matches!(
+                    entry["status"].as_str(),
+                    Some("COMPLETED") | Some("CONFIRMED") | Some("RESOLVED")
+                )
+            })
+        }) || data["confirmed_at"].as_str().is_some_and(|s| !s.is_empty());
+        if !completed {
+            return Err(RampError::NotConfirmed);
+        }
+        let amount = confirmed_payments_usd(data)
+            .or_else(|| json_dollars_to_micros(&data["pricing"]["local"]["amount"]))
+            .filter(|&m| m > 0)
+            .ok_or(RampError::NotConfirmed)?;
+        let bound_account = data["metadata"]["account_id"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            // A Mint charge ALWAYS carries its account; a charge without one
+            // was not created by Mint and must not be credited.
+            .ok_or(RampError::NotConfirmed)?;
+        Ok(Deposit {
+            deposit_ref: charge_ref.to_string(),
+            amount_micros: Micros::new(amount),
+            asset: Asset::Usdc,
+            confirmed: true,
+            bound_account: Some(bound_account),
+        })
+    }
+
+    /// Confirm a raw on-chain deposit tx and decode how much USDC it moved to
+    /// the treasury `deposit_address`.
+    async fn confirm_tx(&self, tx_hash: &str) -> Result<Deposit, RampError> {
+        let token = self
+            .cfg
+            .extra("token_contract")
+            .filter(|c| !c.is_empty())
+            .ok_or(RampError::ProviderUnavailable)?
+            .to_ascii_lowercase();
+        let treasury = self
+            .cfg
+            .extra("deposit_address")
+            .filter(|a| !a.is_empty())
+            .ok_or(RampError::ProviderUnavailable)?
+            .to_ascii_lowercase();
+        let v = self
+            .rpc_call("eth_getTransactionReceipt", serde_json::json!([tx_hash]))
+            .await?;
+        let result = &v["result"];
+        if result.is_null() {
+            return Err(RampError::DepositNotFound);
+        }
+        if result["status"].as_str() != Some("0x1") {
+            return Err(RampError::NotConfirmed);
+        }
+        let amount = decode_transfers_to(result, &token, &treasury)
+            .filter(|&m| m > 0)
+            .ok_or(RampError::NotConfirmed)?;
+        Ok(Deposit {
+            deposit_ref: tx_hash.to_string(),
+            amount_micros: Micros::new(amount),
+            asset: Asset::Usdc,
+            confirmed: true,
+            bound_account: None,
+        })
     }
 
     /// Create a hosted Coinbase Commerce charge crediting `account_id` for
@@ -143,7 +244,7 @@ impl UsdcRamp {
         let raw = serde_json::to_vec(&body).expect("json");
         let resp = map_status(
             self.transport
-                .post_json(&self.rpc_url(), &headers, &raw)
+                .post_json(&self.rpc_url()?, &headers, &raw)
                 .await,
         )?;
         serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)
@@ -153,30 +254,14 @@ impl UsdcRamp {
 #[async_trait]
 impl Ramp for UsdcRamp {
     async fn confirm_deposit(&self, deposit_ref: &str) -> Result<Deposit, RampError> {
-        // `deposit_ref` is the on-chain tx hash. Confirm via the receipt status.
-        let v = self
-            .rpc_call(
-                "eth_getTransactionReceipt",
-                serde_json::json!([deposit_ref]),
-            )
-            .await?;
-        let result = &v["result"];
-        if result.is_null() {
-            return Err(RampError::DepositNotFound);
+        // Two deposit reference kinds: a 32-byte `0x…` tx hash (pure chain) or
+        // a Coinbase Commerce charge id/code (hosted on-ramp, what the
+        // `charge:confirmed` webhook keys on).
+        if is_tx_hash(deposit_ref) {
+            self.confirm_tx(deposit_ref).await
+        } else {
+            self.confirm_charge(deposit_ref).await
         }
-        let confirmed = result["status"].as_str() == Some("0x1");
-        if !confirmed {
-            return Err(RampError::NotConfirmed);
-        }
-        // Amount is carried by the confirming webhook; a full log-decode of the
-        // ERC-20 Transfer event is the deploy-time enrichment.
-        Ok(Deposit {
-            deposit_ref: deposit_ref.to_string(),
-            amount_micros: Micros::new(0),
-            asset: Asset::Usdc,
-            confirmed,
-            bound_account: None,
-        })
     }
 
     async fn initiate_payout(
@@ -249,7 +334,9 @@ impl Ramp for UsdcRamp {
             .extra("token_contract")
             .filter(|c| !c.is_empty())
             .is_none()
+            || self.rpc_url().is_err()
         {
+            // Payouts need both the token contract and a signing JSON-RPC node.
             return Err(RampError::Unsupported);
         }
         let amount_base_units = u128::try_from(amount.get()).map_err(|_| RampError::Unsupported)?;
@@ -279,6 +366,75 @@ impl Ramp for UsdcRamp {
             _ => PayoutStatus::Pending,
         })
     }
+}
+
+/// `true` for a `0x`-prefixed 32-byte hex transaction hash.
+fn is_tx_hash(s: &str) -> bool {
+    s.strip_prefix("0x")
+        .is_some_and(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// Sum the charge's CONFIRMED payments in USD micros. `None` when the charge
+/// reports no confirmed USD payment (the caller then falls back to the fixed
+/// price, which a `COMPLETED` timeline guarantees was paid in full).
+fn confirmed_payments_usd(data: &Value) -> Option<i64> {
+    let payments = data["payments"].as_array()?;
+    let mut total: i64 = 0;
+    let mut any = false;
+    for p in payments {
+        let status = p["status"].as_str().unwrap_or("");
+        if !status.eq_ignore_ascii_case("CONFIRMED") {
+            continue;
+        }
+        let local = &p["value"]["local"];
+        if !local["currency"]
+            .as_str()
+            .is_some_and(|c| c.eq_ignore_ascii_case("USD"))
+        {
+            continue;
+        }
+        total = total.checked_add(json_dollars_to_micros(&local["amount"])?)?;
+        any = true;
+    }
+    any.then_some(total)
+}
+
+/// Sum the ERC-20 `Transfer(from, to, value)` logs emitted by `token` whose
+/// recipient is `treasury`. USDC has 6 decimals, so base units == µ$.
+fn decode_transfers_to(receipt: &Value, token: &str, treasury: &str) -> Option<i64> {
+    let treasury_hex = treasury.strip_prefix("0x").unwrap_or(treasury);
+    let mut total: i64 = 0;
+    for log in receipt["logs"].as_array()? {
+        let address = log["address"].as_str().unwrap_or("").to_ascii_lowercase();
+        if address != token {
+            continue;
+        }
+        let topics = match log["topics"].as_array() {
+            Some(t) if t.len() == 3 => t,
+            _ => continue,
+        };
+        if !topics[0]
+            .as_str()
+            .is_some_and(|t| t.eq_ignore_ascii_case(ERC20_TRANSFER_TOPIC))
+        {
+            continue;
+        }
+        let to_word = topics[2].as_str().unwrap_or("").to_ascii_lowercase();
+        if !to_word.ends_with(treasury_hex) {
+            continue;
+        }
+        let data = log["data"].as_str().unwrap_or("");
+        let hex = data.strip_prefix("0x").unwrap_or(data).trim_start_matches('0');
+        let value = if hex.is_empty() {
+            0
+        } else if hex.len() > 16 {
+            return None; // larger than any i64 amount: refuse rather than wrap
+        } else {
+            i64::try_from(u64::from_str_radix(hex, 16).ok()?).ok()?
+        };
+        total = total.checked_add(value)?;
+    }
+    Some(total)
 }
 
 /// Verify a Coinbase Commerce webhook over RAW bytes.
@@ -461,27 +617,72 @@ mod tests {
 
     // ---- on-chain confirm + off-ramp payout ---------------------------------
 
+    const TREASURY: &str = "0x2222222222222222222222222222222222222222";
+    const TX: &str = "0x00000000000000000000000000000000000000000000000000000000000000ab";
+
+    fn chain_cfg() -> ProviderConfig {
+        let mut c = cfg(Some("s"), None);
+        c.extra.insert("deposit_address".into(), TREASURY.into());
+        c
+    }
+
     #[tokio::test]
-    async fn confirm_deposit_reads_receipt_status() {
-        let ok = FakeTransport::new()
-            .route(
-                "rpc.local",
-                200,
-                serde_json::json!({"result":{"status":"0x1"}}),
-            )
-            .arc();
-        let ramp = UsdcRamp::new(ok, cfg(Some("s"), None));
-        let dep = ramp.confirm_deposit("0xabc").await.expect("confirmed");
+    async fn confirm_tx_decodes_transfer_log_to_treasury() {
+        let receipt = serde_json::json!({"result":{"status":"0x1","logs":[{
+            "address": USDC_TOKEN.to_ascii_lowercase(),
+            "topics": [
+                ERC20_TRANSFER_TOPIC,
+                "0x0000000000000000000000001111111111111111111111111111111111111111",
+                "0x0000000000000000000000002222222222222222222222222222222222222222"
+            ],
+            "data": format!("0x{:064x}", 25_000_000u64)
+        }]}});
+        let ok = FakeTransport::new().route("rpc.local", 200, receipt).arc();
+        let dep = UsdcRamp::new(ok, chain_cfg()).confirm_deposit(TX).await.expect("confirmed");
         assert!(dep.confirmed);
+        assert_eq!(dep.amount_micros, Micros::new(25_000_000));
         assert_eq!(dep.asset, Asset::Usdc);
 
         let nf = FakeTransport::new()
             .route("rpc.local", 200, serde_json::json!({"result": null}))
             .arc();
-        let ramp = UsdcRamp::new(nf, cfg(Some("s"), None));
         assert_eq!(
-            ramp.confirm_deposit("0xdead").await,
+            UsdcRamp::new(nf, chain_cfg()).confirm_deposit(TX).await,
             Err(RampError::DepositNotFound)
+        );
+
+        // A successful tx that moved nothing to the treasury never mints.
+        let other = FakeTransport::new()
+            .route("rpc.local", 200, serde_json::json!({"result":{"status":"0x1","logs":[]}}))
+            .arc();
+        assert_eq!(
+            UsdcRamp::new(other, chain_cfg()).confirm_deposit(TX).await,
+            Err(RampError::NotConfirmed)
+        );
+    }
+
+    #[tokio::test]
+    async fn confirm_charge_reads_commerce_payments_and_binds_account() {
+        let charge = serde_json::json!({"data":{
+            "code":"CHRG42",
+            "timeline":[{"status":"NEW"},{"status":"PENDING"},{"status":"COMPLETED"}],
+            "pricing":{"local":{"amount":"25.00","currency":"USD"}},
+            "payments":[{"status":"CONFIRMED","value":{"local":{"amount":"25.00","currency":"USD"}}}],
+            "metadata":{"account_id":"acct_x"}
+        }});
+        let t = FakeTransport::new().route("/charges/CHRG42", 200, charge).arc();
+        let dep = UsdcRamp::new(t, cfg(Some("s"), Some("cc_key")))
+            .confirm_deposit("CHRG42")
+            .await
+            .expect("confirmed");
+        assert_eq!(dep.amount_micros, Micros::new(25_000_000));
+        assert_eq!(dep.bound_account.as_deref(), Some("acct_x"));
+
+        let pending = serde_json::json!({"data":{"code":"C2","timeline":[{"status":"NEW"}],"metadata":{"account_id":"a"}}});
+        let t = FakeTransport::new().route("/charges/C2", 200, pending).arc();
+        assert_eq!(
+            UsdcRamp::new(t, cfg(Some("s"), Some("cc_key"))).confirm_deposit("C2").await,
+            Err(RampError::NotConfirmed)
         );
     }
 

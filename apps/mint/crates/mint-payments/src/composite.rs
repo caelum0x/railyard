@@ -47,6 +47,16 @@ impl Ramp for CompositeRamp {
         ramp.confirm_deposit(raw).await
     }
 
+    async fn confirm_deposit_for(
+        &self,
+        deposit_ref: &str,
+        account: &str,
+        amount: Micros,
+    ) -> Result<Deposit, RampError> {
+        let (ramp, raw) = self.route(deposit_ref)?;
+        ramp.confirm_deposit_for(raw, account, amount).await
+    }
+
     async fn initiate_payout(
         &self,
         payout_ref: &str,

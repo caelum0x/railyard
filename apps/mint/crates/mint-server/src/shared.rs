@@ -359,6 +359,14 @@ impl Ramp for DynRamp {
     async fn confirm_deposit(&self, deposit_ref: &str) -> Result<Deposit, RampError> {
         self.0.confirm_deposit(deposit_ref).await
     }
+    async fn confirm_deposit_for(
+        &self,
+        deposit_ref: &str,
+        account: &str,
+        amount: Micros,
+    ) -> Result<Deposit, RampError> {
+        self.0.confirm_deposit_for(deposit_ref, account, amount).await
+    }
     async fn initiate_payout(
         &self,
         payout_ref: &str,

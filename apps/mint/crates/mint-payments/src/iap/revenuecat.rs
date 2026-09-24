@@ -1,8 +1,19 @@
 //! RevenueCat adapter (mobile IAP, webhook-only). Webhook authenticity: the
 //! `Authorization` header must EXACTLY equal the configured shared secret,
 //! compared in constant time (NOT an HMAC). Events `INITIAL_PURCHASE` /
-//! `RENEWAL` / `NON_RENEWING_PURCHASE`; `app_user_id` → `account_id`,
-//! `price_in_purchased_currency` → µ$. No server checkout, no payout.
+//! `RENEWAL` / `NON_RENEWING_PURCHASE`; `app_user_id` → `account_id`, the
+//! USD-normalized `price` → µ$ (never `price_in_purchased_currency`, which is
+//! in the store's LOCAL currency). No server checkout, no payout.
+//!
+//! Re-confirmation: RevenueCat's REST API is keyed on the PAYER
+//! (`GET /v1/subscribers/{app_user_id}`), not on a transaction, so the reserve
+//! calls [`Ramp::confirm_deposit_for`] with the account being credited. The
+//! adapter finds the store transaction under that subscriber's
+//! `non_subscriptions` / `subscriptions`, fails closed on a refund, and binds
+//! the deposit to that account. RevenueCat's customer record does not carry a
+//! per-transaction USD amount, so the USD amount is the one from the
+//! constant-time-authenticated webhook; when the subscription record DOES
+//! report a USD price it caps the mint.
 
 use std::sync::Arc;
 
@@ -13,12 +24,16 @@ use serde_json::Value;
 
 use crate::config::ProviderConfig;
 use crate::event::{DepositEvent, ReversalEvent, ReversalReason, WebhookError};
-use crate::http::{map_status, Headers, HttpTransport};
+use crate::http::{encode_component, map_status, Headers, HttpTransport};
+use crate::iap::find_transaction;
 use crate::money::json_dollars_to_micros;
 use crate::provider::ProviderId;
 use crate::verify::const_eq_secret;
 
 const API_BASE: &str = "https://api.revenuecat.com";
+
+/// The record keys RevenueCat uses for a purchase's store transaction id.
+const TXN_KEYS: [&str; 3] = ["store_transaction_id", "id", "transaction_id"];
 
 /// A live RevenueCat [`Ramp`] over an injected [`HttpTransport`].
 pub struct RevenueCatRamp {
@@ -36,35 +51,68 @@ impl RevenueCatRamp {
         let key = self.cfg.api_key.clone().unwrap_or_default();
         vec![("authorization".into(), format!("Bearer {key}"))]
     }
+
+    /// Fetch `app_user_id`'s subscriber record and locate `transaction_id` in it.
+    async fn lookup(&self, app_user_id: &str, transaction_id: &str) -> Result<Value, RampError> {
+        if app_user_id.trim().is_empty() || transaction_id.trim().is_empty() {
+            return Err(RampError::DepositNotFound);
+        }
+        let url = format!(
+            "{API_BASE}/v1/subscribers/{}",
+            encode_component(app_user_id)
+        );
+        let resp = map_status(self.transport.get(&url, &self.auth_headers()).await)?;
+        let v: Value =
+            serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)?;
+        let subscriber = &v["subscriber"];
+        find_transaction(
+            &[&subscriber["non_subscriptions"], &subscriber["subscriptions"]],
+            &TXN_KEYS,
+            transaction_id,
+        )
+        .cloned()
+        // GET /v1/subscribers creates an EMPTY subscriber for an unknown id,
+        // so "no such transaction for this payer" is the not-found signal.
+        .ok_or(RampError::DepositNotFound)
+    }
 }
 
 #[async_trait]
 impl Ramp for RevenueCatRamp {
-    async fn confirm_deposit(&self, deposit_ref: &str) -> Result<Deposit, RampError> {
-        // Re-confirm the subscriber/transaction against RevenueCat's REST API.
-        // The webhook `Authorization` equality is the primary authenticity gate;
-        // this GET guards against a spoofed/duplicated delivery.
-        let url = format!("{API_BASE}/v1/subscribers/{deposit_ref}");
-        let resp = map_status(self.transport.get(&url, &self.auth_headers()).await)?;
-        let v: Value =
-            serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)?;
+    async fn confirm_deposit(&self, _deposit_ref: &str) -> Result<Deposit, RampError> {
+        // A transaction id alone cannot be looked up in RevenueCat (the API is
+        // keyed on app_user_id); the reserve always uses `confirm_deposit_for`.
+        Err(RampError::DepositNotFound)
+    }
+
+    async fn confirm_deposit_for(
+        &self,
+        deposit_ref: &str,
+        account: &str,
+        amount: Micros,
+    ) -> Result<Deposit, RampError> {
+        let record = self.lookup(account, deposit_ref).await?;
         // Fail closed on a refunded/revoked purchase: a later refund or chargeback
-        // must NOT mint. RevenueCat marks these with a non-null `refunded_at` (or
-        // an explicit `is_refunded`/revoked entitlement).
-        if is_refunded(&v) {
+        // must NOT mint.
+        if is_refunded(&record) {
             return Err(RampError::NotConfirmed);
         }
-        // Fail closed on a missing/zero settled amount rather than minting 0
-        // against an unresolved transaction (never `.unwrap_or(0)`).
-        let micros = json_dollars_to_micros(&v["price_in_purchased_currency"])
-            .filter(|&m| m > 0)
-            .ok_or(RampError::NotConfirmed)?;
+        if amount.get() <= 0 {
+            return Err(RampError::NotConfirmed);
+        }
+        // A USD price on the record (subscriptions carry `price.amount` +
+        // `price.currency`) is authoritative and caps the mint; otherwise the
+        // authenticated webhook's USD amount stands.
+        let confirmed = match usd_price(&record) {
+            Some(p) if p > 0 => p,
+            _ => amount.get(),
+        };
         Ok(Deposit {
             deposit_ref: deposit_ref.to_string(),
-            amount_micros: Micros::new(micros),
+            amount_micros: Micros::new(confirmed),
             asset: Asset::Usd,
             confirmed: true,
-            bound_account: None,
+            bound_account: Some(account.to_string()),
         })
     }
 
@@ -86,6 +134,16 @@ impl Ramp for RevenueCatRamp {
         // Billing-only provider: refuse BEFORE the redeem burns anything.
         Err(RampError::Unsupported)
     }
+}
+
+/// The record's price in µ$ when (and only when) RevenueCat reports it in USD.
+fn usd_price(record: &Value) -> Option<i64> {
+    let price = &record["price"];
+    let currency = price["currency"].as_str()?;
+    if !currency.eq_ignore_ascii_case("USD") {
+        return None;
+    }
+    json_dollars_to_micros(&price["amount"])
 }
 
 /// Whether a RevenueCat purchase/subscriber payload indicates the transaction
@@ -126,8 +184,12 @@ pub fn verify_webhook<H: Headers>(
         .or_else(|| event["id"].as_str())
         .ok_or_else(|| WebhookError::Malformed("missing event id".into()))?
         .to_string();
-    let amount_micros = json_dollars_to_micros(&event["price_in_purchased_currency"])
-        .ok_or_else(|| WebhookError::Malformed("missing price".into()))?;
+    // `price` is RevenueCat's USD-normalized price; `price_in_purchased_currency`
+    // is in the storefront's local currency (TRY, EUR, …) and must never be
+    // minted 1:1 as USD.
+    let amount_micros = json_dollars_to_micros(&event["price"])
+        .filter(|&m| m > 0)
+        .ok_or_else(|| WebhookError::Malformed("missing or non-positive USD price".into()))?;
     let account_id = event["app_user_id"]
         .as_str()
         .ok_or_else(|| WebhookError::Malformed("missing app_user_id".into()))?
@@ -185,8 +247,8 @@ pub fn verify_reversal_webhook<H: Headers>(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| WebhookError::Ignored("refund without a transaction_id".into()))?
         .to_string();
-    let amount_micros = json_dollars_to_micros(&event["price_in_purchased_currency"])
-        .or_else(|| json_dollars_to_micros(&event["price"]))
+    // USD `price` (negative on a refund) — the same unit the deposit minted in.
+    let amount_micros = json_dollars_to_micros(&event["price"])
         .map(i64::abs)
         .filter(|&m| m > 0);
     Ok(ReversalEvent {
@@ -252,7 +314,7 @@ mod tests {
     #[test]
     fn valid_signed_webhook_yields_exact_micros() {
         let secret = "rc-secret";
-        let body = br#"{"event":{"type":"RENEWAL","id":"evt_42","app_user_id":"acct_1","price_in_purchased_currency":"12.34"}}"#;
+        let body = br#"{"event":{"type":"RENEWAL","id":"evt_42","app_user_id":"acct_1","price":"12.34","price_in_purchased_currency":"409.50","currency":"TRY"}}"#;
         let ev = verify_webhook(&cfg(Some(secret), None), &hdrs(secret), body).expect("verifies");
         assert_eq!(ev.amount_micros, 12_340_000);
         assert_eq!(ev.deposit_ref, "evt_42");
@@ -265,7 +327,7 @@ mod tests {
 
     #[test]
     fn tampered_signature_is_rejected() {
-        let body = br#"{"event":{"type":"INITIAL_PURCHASE","id":"e","app_user_id":"a","price_in_purchased_currency":1.0}}"#;
+        let body = br#"{"event":{"type":"INITIAL_PURCHASE","id":"e","app_user_id":"a","price":1.0}}"#;
         assert_eq!(
             verify_webhook(&cfg(Some("real-secret"), None), &hdrs("tampered"), body),
             Err(WebhookError::BadSignature)
@@ -297,66 +359,63 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn confirm_deposit_reads_exact_price_over_http() {
-        let body = br#"{"price_in_purchased_currency":"7.50"}"#.to_vec();
-        let ramp = RevenueCatRamp::new(Arc::new(FakeGet(200, body)), cfg(Some("s"), Some("k")));
-        let dep = ramp.confirm_deposit("sub_1").await.expect("confirmed");
-        assert_eq!(dep.amount_micros, Micros::new(7_500_000));
-        assert!(dep.confirmed);
-        assert_eq!(dep.asset, Asset::Usd);
+    fn subscriber(record: &str) -> Vec<u8> {
+        format!(
+            r#"{{"subscriber":{{"non_subscriptions":{{"credits_10":[{record}]}},"subscriptions":{{}}}}}}"#
+        )
+        .into_bytes()
     }
 
     #[tokio::test]
-    async fn confirm_deposit_maps_404_to_not_found() {
+    async fn confirm_finds_transaction_under_subscriber_and_binds_account() {
+        let body = subscriber(r#"{"id":"rc_1","store_transaction_id":"txn_9","refunded_at":null}"#);
+        let ramp = RevenueCatRamp::new(Arc::new(FakeGet(200, body)), cfg(Some("s"), Some("k")));
+        let dep = ramp
+            .confirm_deposit_for("txn_9", "acct_1", Micros::new(7_500_000))
+            .await
+            .expect("confirmed");
+        assert_eq!(dep.amount_micros, Micros::new(7_500_000));
+        assert_eq!(dep.bound_account.as_deref(), Some("acct_1"));
+        assert!(dep.confirmed);
+    }
+
+    #[tokio::test]
+    async fn confirm_uses_usd_subscription_price_as_cap() {
+        let body = br#"{"subscriber":{"non_subscriptions":{},"subscriptions":{"pro":{"store_transaction_id":"txn_s","price":{"amount":4.99,"currency":"USD"}}}}}"#.to_vec();
+        let ramp = RevenueCatRamp::new(Arc::new(FakeGet(200, body)), cfg(Some("s"), Some("k")));
+        let dep = ramp
+            .confirm_deposit_for("txn_s", "acct_1", Micros::new(9_000_000))
+            .await
+            .unwrap();
+        assert_eq!(dep.amount_micros, Micros::new(4_990_000));
+    }
+
+    #[tokio::test]
+    async fn unknown_transaction_or_404_is_not_found() {
+        let ramp = RevenueCatRamp::new(
+            Arc::new(FakeGet(200, subscriber(r#"{"store_transaction_id":"other"}"#))),
+            cfg(Some("s"), Some("k")),
+        );
+        assert_eq!(
+            ramp.confirm_deposit_for("txn_9", "acct_1", Micros::new(1)).await,
+            Err(RampError::DepositNotFound)
+        );
         let ramp = RevenueCatRamp::new(
             Arc::new(FakeGet(404, b"{}".to_vec())),
             cfg(Some("s"), Some("k")),
         );
         assert_eq!(
-            ramp.confirm_deposit("missing").await,
+            ramp.confirm_deposit_for("txn_9", "acct_1", Micros::new(1)).await,
             Err(RampError::DepositNotFound)
         );
     }
 
     #[tokio::test]
-    async fn confirm_deposit_refunded_purchase_is_not_confirmed() {
-        // A settled price is present but the transaction was refunded: must not mint.
-        let body =
-            br#"{"price_in_purchased_currency":"7.50","refunded_at":"2026-01-01T00:00:00Z"}"#
-                .to_vec();
+    async fn refunded_transaction_is_not_confirmed() {
+        let body = subscriber(r#"{"store_transaction_id":"txn_9","refunded_at":"2026-01-01T00:00:00Z"}"#);
         let ramp = RevenueCatRamp::new(Arc::new(FakeGet(200, body)), cfg(Some("s"), Some("k")));
         assert_eq!(
-            ramp.confirm_deposit("sub_1").await,
-            Err(RampError::NotConfirmed)
-        );
-
-        // Explicit is_refunded flag is honored too.
-        let body = br#"{"price_in_purchased_currency":"7.50","is_refunded":true}"#.to_vec();
-        let ramp = RevenueCatRamp::new(Arc::new(FakeGet(200, body)), cfg(Some("s"), Some("k")));
-        assert_eq!(
-            ramp.confirm_deposit("sub_1").await,
-            Err(RampError::NotConfirmed)
-        );
-    }
-
-    #[tokio::test]
-    async fn confirm_deposit_missing_or_zero_price_fails_closed() {
-        // Missing price ⇒ NotConfirmed (never mints 0 against an unresolved amount).
-        let ramp = RevenueCatRamp::new(
-            Arc::new(FakeGet(200, b"{}".to_vec())),
-            cfg(Some("s"), Some("k")),
-        );
-        assert_eq!(
-            ramp.confirm_deposit("sub_1").await,
-            Err(RampError::NotConfirmed)
-        );
-
-        // Zero price ⇒ NotConfirmed.
-        let body = br#"{"price_in_purchased_currency":"0.00"}"#.to_vec();
-        let ramp = RevenueCatRamp::new(Arc::new(FakeGet(200, body)), cfg(Some("s"), Some("k")));
-        assert_eq!(
-            ramp.confirm_deposit("sub_1").await,
+            ramp.confirm_deposit_for("txn_9", "acct_1", Micros::new(1)).await,
             Err(RampError::NotConfirmed)
         );
     }

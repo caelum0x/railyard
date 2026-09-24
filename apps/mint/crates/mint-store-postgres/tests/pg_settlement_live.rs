@@ -97,6 +97,7 @@ async fn hold_full_capture_conserves_and_capture_is_exactly_once() {
             idem_key: "hfc:open".into(),
             op_hash: oph("hold.create", "hfc"),
             ref_: None,
+            expires_at_ms: None,
         })
         .await
         .unwrap();
@@ -187,6 +188,7 @@ async fn hold_partial_capture_returns_remainder_and_closes() {
             idem_key: "hpc:open".into(),
             op_hash: oph("hold.create", "hpc"),
             ref_: None,
+            expires_at_ms: None,
         })
         .await
         .unwrap();
@@ -251,6 +253,7 @@ async fn hold_release_returns_full_and_is_idempotent() {
             idem_key: "hr:open".into(),
             op_hash: oph("hold.create", "hr"),
             ref_: None,
+            expires_at_ms: None,
         })
         .await
         .unwrap();
@@ -319,6 +322,7 @@ async fn concurrent_double_capture_exactly_one_wins_and_conserves() {
             idem_key: "cc:open".into(),
             op_hash: oph("hold.create", "cc"),
             ref_: None,
+            expires_at_ms: None,
         })
         .await
         .unwrap();

@@ -40,6 +40,11 @@ pub struct CheckoutUrls {
     /// `/checkout/paypal/return` endpoint, which captures and then redirects to
     /// `success_url`. `None` when Mint's public URL is not configured.
     pub capture_return_url: Option<String>,
+    /// Mint's own public base URL (`MINT_PUBLIC_URL`, no trailing slash), for
+    /// providers whose hosted checkout returns the buyer's browser to Mint with
+    /// a form POST (Iyzico → `{base}/v1/deposits/iyzico/webhook`). `None` when
+    /// Mint's public URL is not configured.
+    pub public_base_url: Option<String>,
 }
 
 /// `true` iff an amount in microdollars is a whole number of cents (every fiat

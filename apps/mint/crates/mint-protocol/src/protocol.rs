@@ -51,6 +51,10 @@ pub struct Aitp402<S: LedgerStore, C: Clock, K: PayerKeys> {
     ledger: Ledger<S>,
     clock: C,
     keys: K,
+    /// Settle window added past the authorization expiry for a `hold`
+    /// settlement's auto-release deadline (committed atomically with the
+    /// hold). `None` ⇒ hold settlements get no deadline.
+    hold_ttl_ms: Option<i64>,
 }
 
 impl<S, C, K> Aitp402<S, C, K>
@@ -65,7 +69,17 @@ where
             ledger,
             clock,
             keys,
+            hold_ttl_ms: None,
         }
+    }
+
+    /// Give every `hold` settlement an auto-release deadline of
+    /// `max(authorization expiry, now) + ttl_ms`, written in the same
+    /// transaction as the hold so an abandoned hold can never lock the
+    /// payer's funds forever.
+    pub fn with_hold_ttl_ms(mut self, ttl_ms: i64) -> Self {
+        self.hold_ttl_ms = Some(ttl_ms.max(1));
+        self
     }
 
     /// Borrow the underlying ledger (seeding / balance reads / capture in tests).
@@ -191,7 +205,7 @@ where
                     .await?;
                 let aitp_receipt = self
                     .receipt_for(receipt.first_seq, &receipt.from_balance.account_id)
-                    .await;
+                    .await?;
                 Ok(Settlement::Transfer {
                     receipt,
                     aitp_receipt,
@@ -205,6 +219,9 @@ where
                         amount_micros: amount,
                         idem_key: idem_key.clone(),
                         ref_: Some(auth.resource.clone()),
+                        expires_at_ms: self
+                            .hold_ttl_ms
+                            .map(|ttl| auth.expiry.max(self.clock.now()).saturating_add(ttl)),
                     })
                     .await?;
                 let hold_id = receipt.hold_id.clone();
@@ -213,7 +230,7 @@ where
                         receipt.holder_balance.updated_seq,
                         &receipt.holder_balance.account_id,
                     )
-                    .await;
+                    .await?;
                 Ok(Settlement::Hold {
                     hold_id,
                     receipt,
@@ -263,14 +280,17 @@ where
     /// Resolve the exact §6 receipt emitted by an operation. Looking up the
     /// operation's journal sequence and principal is safe under concurrent
     /// settlements; reading the global "last receipt" is not.
-    async fn receipt_for(&self, journal_seq: u64, account_id: &AccountId) -> Receipt {
+    async fn receipt_for(
+        &self,
+        journal_seq: u64,
+        account_id: &AccountId,
+    ) -> Result<Receipt, MintError> {
+        // Point lookup of this settlement's principal receipt (never a scan of
+        // the whole receipt log). A committed settlement always appended it; a
+        // miss is a storage fault, surfaced as an error instead of a panic.
         self.ledger
-            .receipts()
+            .receipt(account_id, journal_seq)
             .await
-            .into_iter()
-            .find(|receipt| {
-                receipt.body.journal_seq == journal_seq && &receipt.body.account_id == account_id
-            })
-            .expect("a committed settlement always appends its principal receipt")
+            .ok_or(MintError::Storage)
     }
 }

@@ -67,6 +67,7 @@ fn resolve_urls(public: &PublicConfig, body: &CheckoutReq) -> Result<CheckoutUrl
             "cancel_url",
         )?,
         capture_return_url: hosted("/checkout/paypal/return"),
+        public_base_url: public.public_url.clone(),
     })
 }
 
@@ -124,9 +125,11 @@ pub async fn create<S: LedgerStore + 'static>(
     // The mint key is `<provider>:<ref>` where `ref` is what the provider's
     // crediting webhook carries. For PayPal / Creem that IS the checkout id; for
     // Stripe (PaymentIntent) and Polar (order) the ref only exists once paid,
-    // so no deposit_ref is promised up front.
+    // so no deposit_ref is promised up front. Iyzico credits under the
+    // `paymentId`, which is only assigned once the buyer pays (the checkout id
+    // is the form token).
     let deposit_ref = match provider {
-        ProviderId::Stripe | ProviderId::Polar => None,
+        ProviderId::Stripe | ProviderId::Polar | ProviderId::Iyzico => None,
         _ => Some(provider.namespaced(&checkout_id)),
     };
     Ok(ok_status(
@@ -253,6 +256,12 @@ pub async fn cancel_page() -> Response {
         "Checkout cancelled",
         "No payment was taken. You can close this page and start a new deposit at any time.",
     )
+}
+
+/// A Mint-hosted buyer status page (shared with the hosted-checkout callbacks
+/// on the deposit webhook route).
+pub(crate) fn status_page(status: StatusCode, title: &str, message: &str) -> Response {
+    page(status, title, message)
 }
 
 /// A small self-contained status page (no external assets, no script).

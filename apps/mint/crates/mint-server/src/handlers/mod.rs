@@ -19,6 +19,7 @@ pub mod payer_keys;
 pub mod payouts;
 pub mod positions;
 pub mod provider_reports;
+pub mod providers;
 pub mod receipts;
 pub mod reserve;
 pub mod reversals;

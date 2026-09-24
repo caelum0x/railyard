@@ -155,11 +155,16 @@ impl PaymentsConfig {
         providers.insert(
             ProviderId::Usdc,
             base(ProviderId::Usdc, mode)
-                // The RPC URL doubles as the "api_key" gate for the on-chain watcher.
-                .with_api_key(g("USDC_RPC_URL"))
+                // The adapter is active when EITHER settlement path is configured:
+                // the JSON-RPC node (on-chain confirm + payouts) or the Coinbase
+                // Commerce key (hosted charges re-confirmed via GET /charges).
+                .with_api_key(g("USDC_RPC_URL").or_else(|| g("COINBASE_COMMERCE_API_KEY")))
                 .with_extra("rpc_url", g("USDC_RPC_URL"))
                 .with_extra("token_contract", g("USDC_TOKEN_CONTRACT"))
                 .with_extra("payout_from", g("USDC_PAYOUT_FROM"))
+                // The treasury address raw on-chain deposits are sent to (the
+                // ERC-20 Transfer log recipient a tx-hash deposit must credit).
+                .with_extra("deposit_address", g("USDC_DEPOSIT_ADDRESS"))
                 .with_extra("commerce_api_key", g("COINBASE_COMMERCE_API_KEY"))
                 .with_webhook_secret(g("COINBASE_COMMERCE_WEBHOOK_SECRET")),
         );
@@ -168,7 +173,10 @@ impl PaymentsConfig {
             base(ProviderId::Iyzico, mode)
                 .with_api_key(g("IYZICO_API_KEY"))
                 .with_extra("secret_key", g("IYZICO_SECRET_KEY"))
-                .with_webhook_secret(g("IYZICO_WEBHOOK_SECRET")),
+                // Iyzico signs merchant notifications (X-IYZ-SIGNATURE-V3) with
+                // the merchant SECRET KEY; a dedicated webhook secret is optional
+                // and only gates whether the route is enabled.
+                .with_webhook_secret(g("IYZICO_WEBHOOK_SECRET").or_else(|| g("IYZICO_SECRET_KEY"))),
         );
 
         PaymentsConfig { providers }

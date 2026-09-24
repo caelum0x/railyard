@@ -2,7 +2,7 @@
 //! `reserve.mint`, and [`WebhookError`] — the outcome taxonomy the handler maps
 //! onto HTTP status codes.
 
-use mint_reserve::Asset;
+use mint_reserve::{Asset, PayoutStatus};
 
 use crate::provider::ProviderId;
 
@@ -98,14 +98,44 @@ impl ReversalEvent {
     }
 }
 
-/// A verified provider webhook, classified: a deposit to mint, or a reversal
-/// (refund / chargeback) of a deposit Mint already minted.
+/// A verified provider notification about the settlement state of a payout
+/// Mint initiated (PayPal `PAYMENT.PAYOUTS-ITEM.*`, Stripe `transfer.reversed`).
+/// The handler applies it to the durable payout record — the push-based twin
+/// of the polling payout sweep.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PayoutEvent {
+    /// The provider that sent the payout.
+    pub provider: ProviderId,
+    /// The payout reference Mint sent to the provider (the raw redeem
+    /// `payout_ref` WITHOUT the `<provider>:` prefix — what adapters echo in
+    /// `sender_item_id` / `metadata.payout_ref`).
+    pub payout_ref: String,
+    /// The provider's own id for the payout (batch id, transfer id), if given.
+    pub provider_ref: Option<String>,
+    /// The settlement state the provider now reports.
+    pub status: PayoutStatus,
+    /// The provider event type, recorded as the transition reason.
+    pub event_type: String,
+}
+
+impl PayoutEvent {
+    /// The `<provider>:<ref>` key of the payout record.
+    pub fn namespaced_ref(&self) -> String {
+        self.provider.namespaced(&self.payout_ref)
+    }
+}
+
+/// A verified provider webhook, classified: a deposit to mint, a reversal
+/// (refund / chargeback) of a deposit Mint already minted, or a settlement
+/// update for a payout Mint sent.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum VerifiedEvent {
     /// A confirmed on-ramp deposit.
     Deposit(DepositEvent),
     /// A refund or dispute of an earlier deposit.
     Reversal(ReversalEvent),
+    /// A settlement-state change of an earlier payout.
+    Payout(PayoutEvent),
 }
 
 /// The outcome of verifying a provider webhook. The handler maps:

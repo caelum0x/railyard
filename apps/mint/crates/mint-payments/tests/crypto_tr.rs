@@ -53,18 +53,30 @@ fn usdc_bad_signature_is_rejected() {
 async fn usdc_confirm_deposit_reads_receipt_status() {
     let mut c = cfg(ProviderId::Usdc, "s");
     c.extra.insert("rpc_url".into(), "https://rpc.local".into());
-    // Confirmed receipt.
+    c.extra.insert("token_contract".into(), "0xtoken".into());
+    c.extra.insert("deposit_address".into(), "0x2222222222222222222222222222222222222222".into());
+    let tx = "0x00000000000000000000000000000000000000000000000000000000000000ab";
+    // Confirmed receipt with a 5 USDC Transfer to the treasury.
     let ok = FakeTransport::new()
         .route(
             "rpc.local",
             200,
-            serde_json::json!({"result":{"status":"0x1"}}),
+            serde_json::json!({"result":{"status":"0x1","logs":[{
+                "address":"0xtoken",
+                "topics":[
+                    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                    "0x0000000000000000000000001111111111111111111111111111111111111111",
+                    "0x0000000000000000000000002222222222222222222222222222222222222222"
+                ],
+                "data":"0x00000000000000000000000000000000000000000000000000000000004c4b40"
+            }]}}),
         )
         .arc();
     let ramp = UsdcRamp::new(ok, c.clone());
-    let dep = ramp.confirm_deposit("0xabc").await.expect("confirmed");
+    let dep = ramp.confirm_deposit(tx).await.expect("confirmed");
     assert!(dep.confirmed);
     assert_eq!(dep.asset, Asset::Usdc);
+    assert_eq!(dep.amount_micros, Micros::new(5_000_000));
 
     // Missing tx (result null) → DepositNotFound.
     let nf = FakeTransport::new()
@@ -72,7 +84,7 @@ async fn usdc_confirm_deposit_reads_receipt_status() {
         .arc();
     let ramp = UsdcRamp::new(nf, c);
     assert_eq!(
-        ramp.confirm_deposit("0xdead").await,
+        ramp.confirm_deposit(tx).await,
         Err(RampError::DepositNotFound)
     );
 }
@@ -99,7 +111,7 @@ async fn iyzico_confirm_reverifies_via_payment_detail() {
         .route(
             "/payment/detail",
             200,
-            serde_json::json!({"status":"success","paymentStatus":"SUCCESS","paidPrice":"30.00"}),
+            serde_json::json!({"status":"success","paymentStatus":"SUCCESS","paymentId":"pay_42","currency":"USD","paidPrice":"30.00","basketId":"acct_tr"}),
         )
         .arc();
     let ramp = IyzicoRamp::new(transport, c.clone());
@@ -121,6 +133,11 @@ async fn iyzico_refund_payout_pays() {
     c.extra.insert("secret_key".into(), "sk".into());
     let transport = FakeTransport::new()
         .route(
+            "/payment/detail",
+            200,
+            serde_json::json!({"status":"success","currency":"USD","itemTransactions":[{"paymentTransactionId":"7771","paidPrice":"30.00"}]}),
+        )
+        .route(
             "/payment/refund",
             200,
             serde_json::json!({"status":"success"}),
@@ -131,7 +148,7 @@ async fn iyzico_refund_payout_pays() {
         account: "n/a".into(),
     };
     let payout = ramp
-        .initiate_payout("iyzico:pay_42", &dest, Micros::new(10_000_000))
+        .initiate_payout("12345", &dest, Micros::new(10_000_000))
         .await
         .expect("paid");
     assert_eq!(payout.status, mint_payments::PayoutStatus::Paid);

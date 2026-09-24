@@ -149,6 +149,7 @@ fn offline_verify_accepts_valid_and_rejects_tampered() {
                 amount_micros: 3_000_000,
                 idem_key: "h1".into(),
                 ref_: None,
+                expires_at_ms: None,
             })
             .await
             .unwrap();
@@ -168,6 +169,7 @@ fn offline_verify_accepts_valid_and_rejects_tampered() {
                 amount_micros: 500_000,
                 idem_key: "h2".into(),
                 ref_: None,
+                expires_at_ms: None,
             })
             .await
             .unwrap();
@@ -255,6 +257,7 @@ fn idempotent_replays_do_not_double_append_receipts() {
                 amount_micros: 2_000_000,
                 idem_key: "h1".into(),
                 ref_: None,
+                expires_at_ms: None,
             })
             .await
             .unwrap();
@@ -278,6 +281,7 @@ fn idempotent_replays_do_not_double_append_receipts() {
                     amount_micros: 2_000_000,
                     idem_key: "h1".into(),
                     ref_: None,
+                    expires_at_ms: None,
                 })
                 .await
                 .unwrap();

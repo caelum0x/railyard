@@ -176,3 +176,20 @@ impl Headers for Vec<(String, String)> {
             .map(|(_, v)| v.as_str())
     }
 }
+
+/// Percent-encode one URL path segment / query value (RFC 3986 unreserved
+/// characters pass through, every other byte is `%XX`). Used for ids the
+/// provider lets end users choose (RevenueCat `app_user_id`, Coinbase charge
+/// codes) so they can never break out of their path segment.
+pub(crate) fn encode_component(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}

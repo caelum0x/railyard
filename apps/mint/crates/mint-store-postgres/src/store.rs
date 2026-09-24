@@ -903,6 +903,19 @@ impl LedgerStore for PgStore {
                 ts,
             )
             .await?;
+        // The auto-release deadline commits WITH the hold: a crash can never
+        // leave an OPEN hold that the expiry sweep does not know about.
+        if let Some(expires_at) = commit.expires_at_ms {
+            sqlx::query(
+                "INSERT INTO hold_expiries (hold_id, expires_at) VALUES ($1, $2) \
+                 ON CONFLICT (hold_id) DO NOTHING",
+            )
+            .bind(outcome.hold_id.as_str())
+            .bind(expires_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
         record_idem(
             &mut tx,
             &commit.idem_key,

@@ -21,6 +21,10 @@ pub struct HoldCreateRequest {
     pub idem_key: String,
     /// Optional free-form reference.
     pub ref_: Option<String>,
+    /// Optional auto-release deadline (unix ms), committed atomically with
+    /// the hold. Not part of the op hash: an idempotent replay keeps the
+    /// original deadline.
+    pub expires_at_ms: Option<i64>,
 }
 
 /// A `hold.capture` intent: settle up to the held amount to `to`, release the

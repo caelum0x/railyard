@@ -28,6 +28,7 @@ fn create(from: &mint_core::AccountId, amount: i64, key: &str) -> HoldCreateRequ
         amount_micros: amount,
         idem_key: key.to_string(),
         ref_: None,
+        expires_at_ms: None,
     }
 }
 

@@ -118,6 +118,12 @@ pub struct ImportReq {
     /// Force a specific reference column instead of the alias heuristic.
     #[serde(default)]
     pub reference_column: Option<String>,
+    /// Claw back refunds / chargebacks the report lists for deposits Mint
+    /// minted but never reversed (`reversal_unrecorded`). Defaults to `true`
+    /// for Iyzico, whose merchant panel refunds may predate its notification
+    /// webhook, and `false` otherwise (webhooks already apply them).
+    #[serde(default)]
+    pub apply_reversals: Option<bool>,
 }
 
 const KNOWN_PROVIDERS: &[&str] = &[
@@ -548,7 +554,10 @@ pub async fn import<S: LedgerStore + 'static>(
         .insert_provider_report(report, lines.clone())
         .await?;
     tracing::info!(report = %stored.id, provider = %stored.provider, lines = stored.line_count, "provider report imported");
-    let result = match_report(&st, &stored, &lines).await?;
+    let apply_reversals = body
+        .apply_reversals
+        .unwrap_or(stored.provider == "iyzico");
+    let result = match_report(&st, &stored, &lines, apply_reversals).await?;
     Ok(ok_status(StatusCode::CREATED, result))
 }
 
@@ -572,7 +581,7 @@ pub async fn get<S: LedgerStore + 'static>(
         .get_provider_report(&id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("no report {id}")))?;
-    Ok(ok(match_report(&st, &report, &lines).await?))
+    Ok(ok(match_report(&st, &report, &lines, false).await?))
 }
 
 /// `DELETE /v1/reconciliation/reports/:id` → drop a mis-uploaded report.
@@ -601,6 +610,7 @@ async fn match_report<S: LedgerStore + 'static>(
     st: &AppState<S>,
     report: &ProviderReport,
     lines: &[ProviderReportLine],
+    apply_reversals: bool,
 ) -> Result<Value, ApiError> {
     let store = st.ledger.store();
     let provider = report.provider.as_str();
@@ -642,6 +652,17 @@ async fn match_report<S: LedgerStore + 'static>(
         .filter(|r| provider_tag_of(&r.deposit_ref) == provider)
         .map(|r| (raw_ref(&r.deposit_ref), r))
         .collect();
+
+    // Cumulative refunded amount per reference across the whole report (a
+    // payment refunded in several parts appears as several lines).
+    let mut refund_totals: HashMap<&str, i64> = HashMap::new();
+    for line in lines {
+        if matches!(line.kind, ReportLineKind::Refund | ReportLineKind::Dispute) {
+            let slot = refund_totals.entry(line.reference.as_str()).or_insert(0);
+            *slot = slot.saturating_add(line.amount_micros);
+        }
+    }
+    let mut reversals_applied: HashSet<String> = HashSet::new();
 
     let mut seen_mints: HashSet<&str> = HashSet::new();
     let mut seen_payouts: HashSet<&str> = HashSet::new();
@@ -701,6 +722,47 @@ async fn match_report<S: LedgerStore + 'static>(
                     )
                 }
                 None => match mints.get(r) {
+                    Some(m) if apply_reversals => {
+                        seen_mints.insert(raw_ref(&m.reference));
+                        let applied = if reversals_applied.contains(&m.reference) {
+                            Ok(())
+                        } else {
+                            let total = refund_totals
+                                .get(r)
+                                .copied()
+                                .unwrap_or(line.amount_micros)
+                                .min(m.amount_micros);
+                            let reason = if line.kind == ReportLineKind::Dispute {
+                                "dispute"
+                            } else {
+                                "refund"
+                            };
+                            crate::handlers::reversals::apply_reversal(
+                                st,
+                                &m.reference,
+                                Some(total),
+                                reason,
+                                Some(format!("{provider} report import {}", report.id)),
+                            )
+                            .await
+                            .map(|_| {
+                                reversals_applied.insert(m.reference.clone());
+                            })
+                        };
+                        match applied {
+                            Ok(()) => (
+                                "reversal_applied",
+                                json!({ "reference": m.reference, "amount_micros": m.amount_micros, "account_id": m.account_id, "ts_ms": m.ts_ms }),
+                            ),
+                            Err(e) => {
+                                tracing::warn!(reference = %m.reference, error = ?e, "report reversal could not be applied");
+                                (
+                                    "reversal_unrecorded",
+                                    json!({ "reference": m.reference, "amount_micros": m.amount_micros, "account_id": m.account_id, "ts_ms": m.ts_ms }),
+                                )
+                            }
+                        }
+                    }
                     Some(m) => {
                         seen_mints.insert(raw_ref(&m.reference));
                         (
@@ -774,6 +836,7 @@ async fn match_report<S: LedgerStore + 'static>(
         "status_mismatch",
         "missing_in_mint",
         "reversal_unrecorded",
+        "reversal_applied",
         "missing_at_provider",
         "informational",
     ]
@@ -785,7 +848,7 @@ async fn match_report<S: LedgerStore + 'static>(
     .collect();
     let discrepancies: u64 = counts
         .iter()
-        .filter(|(k, _)| !matches!(**k, "matched" | "informational"))
+        .filter(|(k, _)| !matches!(**k, "matched" | "informational" | "reversal_applied"))
         .map(|(_, (n, _))| *n)
         .sum();
     Ok(json!({

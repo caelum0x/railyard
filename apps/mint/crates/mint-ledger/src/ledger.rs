@@ -157,6 +157,7 @@ impl<S: LedgerStore> Ledger<S> {
                 idem_key: req.idem_key,
                 op_hash: hash,
                 ref_: req.ref_,
+                expires_at_ms: req.expires_at_ms,
             })
             .await?;
         Ok(receipt_from(outcome))
@@ -456,6 +457,7 @@ mod tests {
             amount_micros: amount,
             idem_key: key.to_string(),
             ref_: None,
+            expires_at_ms: None,
         }
     }
 

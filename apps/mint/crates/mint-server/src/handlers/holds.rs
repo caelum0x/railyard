@@ -17,6 +17,11 @@ use crate::jobs::{now_ms, MAX_HOLD_TTL_MS};
 use crate::state::AppState;
 use crate::views;
 
+/// Receipt point-lookup attempts after a committed hold operation.
+const RECEIPT_LOOKUP_ATTEMPTS: u32 = 3;
+/// Pause between receipt lookup attempts.
+const RECEIPT_RETRY_MS: u64 = 50;
+
 /// `POST /v1/holds` → `Ledger::create_hold`.
 pub async fn create<S: LedgerStore + 'static>(
     State(st): State<AppState<S>>,
@@ -30,6 +35,9 @@ pub async fn create<S: LedgerStore + 'static>(
             )));
         }
     }
+    // The deadline is committed in the SAME transaction as the hold (an
+    // idempotent replay keeps the deadline set by the first request), so a
+    // crash can never leave an OPEN hold that never expires.
     let receipt = st
         .ledger
         .create_hold(HoldCreateRequest {
@@ -37,17 +45,9 @@ pub async fn create<S: LedgerStore + 'static>(
             amount_micros: body.amount_micros,
             idem_key: body.idem_key,
             ref_: body.ref_,
+            expires_at_ms: body.expires_in_ms.map(|ttl| now_ms().saturating_add(ttl)),
         })
         .await?;
-    if let Some(ttl) = body.expires_in_ms {
-        // An idempotent replay keeps the deadline set by the first request.
-        let store = st.ledger.store();
-        if store.hold_expiry(&receipt.hold_id).await?.is_none() {
-            store
-                .set_hold_expiry(&receipt.hold_id, now_ms().saturating_add(ttl))
-                .await?;
-        }
-    }
     signed_hold_response(&st, StatusCode::CREATED, &receipt).await
 }
 
@@ -183,19 +183,27 @@ async fn operation_receipt<S: LedgerStore + 'static>(
 ) -> Result<Receipt, ApiError> {
     let account = &hold.holder_balance.account_id;
     let journal_seq = hold.holder_balance.updated_seq;
-    st.ledger
-        .receipts()
-        .await
-        .into_iter()
-        .find(|receipt| {
-            receipt.body.journal_seq == journal_seq && &receipt.body.account_id == account
-        })
-        .ok_or_else(|| {
-            ApiError::Internal(format!(
-                "missing signed receipt for hold operation at journal seq {}",
-                journal_seq
-            ))
-        })
+    // Point lookup of exactly this operation's receipt (never a scan of the
+    // whole receipt log). The hold op has already committed, so a transient
+    // read miss is retried briefly before surfacing; a caller that still gets
+    // an error can replay the same idempotency key to recover the receipt.
+    for attempt in 0..RECEIPT_LOOKUP_ATTEMPTS {
+        if let Some(receipt) = st.ledger.receipt(account, journal_seq).await {
+            return Ok(receipt);
+        }
+        if attempt + 1 < RECEIPT_LOOKUP_ATTEMPTS {
+            tokio::time::sleep(std::time::Duration::from_millis(RECEIPT_RETRY_MS)).await;
+        }
+    }
+    tracing::error!(
+        account = account.as_str(),
+        journal_seq,
+        "committed hold operation's signed receipt could not be read"
+    );
+    Err(ApiError::Unavailable(format!(
+        "hold operation committed at journal seq {journal_seq} but its signed receipt could not \
+         be read; retry with the same idem_key to fetch it"
+    )))
 }
 
 fn render_signed_hold_response(

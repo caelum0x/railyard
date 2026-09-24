@@ -11,7 +11,7 @@ use tower_http::trace::TraceLayer;
 use crate::auth;
 use crate::handlers::{
     accounts, addresses, admin, aitp, allowances, checkouts, deposits, health, holds, keys, kyc,
-    mint_redeem, payer_keys, payouts, positions, provider_reports, receipts, reserve, reversals,
+    mint_redeem, payer_keys, payouts, positions, provider_reports, providers, receipts, reserve, reversals,
     statements, streams, transfers, verification_keys,
 };
 use crate::state::AppState;
@@ -68,8 +68,9 @@ pub fn build_router<S: LedgerStore + 'static>(state: AppState<S>) -> Router {
         .route("/v1/aitp/verify", post(aitp::verify::<S>))
         .route("/v1/aitp/capture", post(aitp::capture::<S>))
         .route("/v1/aitp/release", post(aitp::release::<S>))
-        // direct-to-Mint hosted funding checkout
+        // direct-to-Mint hosted funding checkout + the active provider table
         .route("/v1/checkouts", post(checkouts::create::<S>))
+        .route("/v1/providers", get(providers::list::<S>))
         // receipts + reserve + mint/redeem
         .route("/v1/receipts/audit", get(receipts::audit::<S>))
         .route("/v1/reserve", get(reserve::get::<S>))

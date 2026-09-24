@@ -101,7 +101,12 @@ impl CreemRamp {
 #[async_trait]
 impl Ramp for CreemRamp {
     async fn confirm_deposit(&self, deposit_ref: &str) -> Result<Deposit, RampError> {
-        let url = format!("{API_BASE}/v1/checkouts/{deposit_ref}");
+        // Creem retrieves a checkout by query parameter
+        // (`GET /v1/checkouts?checkout_id=<id>`), not by path segment.
+        let url = format!(
+            "{API_BASE}/v1/checkouts?checkout_id={}",
+            crate::http::encode_component(deposit_ref)
+        );
         let resp = map_status(self.transport.get(&url, &self.auth_headers()).await)?;
         let v: Value =
             serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)?;
@@ -117,7 +122,12 @@ impl Ramp for CreemRamp {
             amount_micros: Micros::new(micros),
             asset: Asset::Usd,
             confirmed,
-            bound_account: None,
+            // Mint's checkouts carry `metadata.account_id`; bind the credit to it
+            // so a webhook can never redirect the payment to another account.
+            bound_account: v["metadata"]["account_id"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
         })
     }
 

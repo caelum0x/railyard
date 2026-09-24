@@ -263,6 +263,7 @@ pub async fn apply_hold_create(
             amount_micros: amount,
             idem_key,
             ref_: None,
+            expires_at_ms: None,
         })
         .await;
     match res {

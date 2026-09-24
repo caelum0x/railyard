@@ -177,38 +177,115 @@ impl MintClient {
         .await
     }
 
+    /// `POST /v1/holds` — reserve `amount_micros` of `from`'s balance. Set
+    /// `expires_in_ms` to have Mint auto-release the hold if it is still open
+    /// after that window (the deadline commits atomically with the hold).
     pub async fn create_hold(&self, request: &CreateHoldRequest<'_>) -> Result<HoldReceipt, Error> {
-        self.send(Method::POST, "v1/holds", Some(request)).await
+        if request.amount_micros <= 0 {
+            return Err(Error::Protocol("hold amount must be positive".into()));
+        }
+        let receipt = self.hold_call("v1/holds", request).await?;
+        if receipt.holder_balance.account_id != request.from {
+            return Err(Error::Protocol(
+                "Mint hold receipt is for a different holder than requested".into(),
+            ));
+        }
+        Ok(receipt)
     }
 
     pub async fn hold(&self, hold_id: &str) -> Result<Hold, Error> {
-        self.get(&format!("v1/holds/{hold_id}")).await
+        self.get(&format!("v1/holds/{}", path_segment(hold_id)?)).await
     }
 
+    /// `POST /v1/holds/:id/capture` — settle up to the held amount to
+    /// `request.to` and release the remainder back to the holder. Replaying
+    /// the same `idem_key` returns the original receipt.
     pub async fn capture_hold(
         &self,
         hold_id: &str,
         request: &CaptureHoldRequest<'_>,
     ) -> Result<HoldReceipt, Error> {
-        self.send(
-            Method::POST,
-            &format!("v1/holds/{hold_id}/capture"),
-            Some(request),
+        if request.amount_micros <= 0 {
+            return Err(Error::Protocol("capture amount must be positive".into()));
+        }
+        let path = format!("v1/holds/{}/capture", path_segment(hold_id)?);
+        let receipt = self.hold_call(&path, request).await?;
+        receipt.expect_terminal(hold_id, HoldState::Captured)?;
+        if receipt.captured_micros > request.amount_micros {
+            return Err(Error::Protocol(
+                "Mint captured more than the requested amount".into(),
+            ));
+        }
+        Ok(receipt)
+    }
+
+    /// Capture the ENTIRE held amount to `to`: reads the hold, then captures
+    /// its full `amount_micros`. Fails with [`Error::Protocol`] when the hold
+    /// is no longer open.
+    pub async fn capture_hold_in_full(
+        &self,
+        hold_id: &str,
+        to: &str,
+        idem_key: &str,
+        reference: Option<&str>,
+    ) -> Result<HoldReceipt, Error> {
+        let hold = self.hold(hold_id).await?;
+        if hold.state() != HoldState::Open {
+            return Err(Error::Protocol(format!(
+                "hold {hold_id} is {} and can no longer be captured",
+                hold.status
+            )));
+        }
+        self.capture_hold(
+            hold_id,
+            &CaptureHoldRequest {
+                amount_micros: hold.amount_micros,
+                to,
+                idem_key,
+                reference,
+            },
         )
         .await
     }
 
+    /// `POST /v1/holds/:id/release` — free the whole hold back to the holder
+    /// with no settlement. Replaying the same `idem_key` returns the original
+    /// receipt.
     pub async fn release_hold(
         &self,
         hold_id: &str,
         request: &ReleaseHoldRequest<'_>,
     ) -> Result<HoldReceipt, Error> {
-        self.send(
-            Method::POST,
-            &format!("v1/holds/{hold_id}/release"),
-            Some(request),
-        )
-        .await
+        let path = format!("v1/holds/{}/release", path_segment(hold_id)?);
+        let receipt = self.hold_call(&path, request).await?;
+        receipt.expect_terminal(hold_id, HoldState::Released)?;
+        if receipt.captured_micros != 0 {
+            return Err(Error::Protocol(
+                "Mint release receipt reports a captured amount".into(),
+            ));
+        }
+        Ok(receipt)
+    }
+
+    /// POST a hold operation and attach the signed `aitp-receipt` header.
+    async fn hold_call<B: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<HoldReceipt, Error> {
+        let (mut receipt, headers): (HoldReceipt, HeaderMap) = self
+            .send_with_headers(Method::POST, path, Some(body))
+            .await?;
+        receipt.signed_receipt = headers
+            .get("aitp-receipt")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        if receipt.signed_receipt.is_none() {
+            return Err(Error::Protocol(
+                "Mint hold response is missing its signed aitp-receipt".into(),
+            ));
+        }
+        Ok(receipt)
     }
 
     pub async fn grant_allowance(
@@ -474,6 +551,10 @@ pub struct CreateHoldRequest<'a> {
     pub idem_key: &'a str,
     #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
     pub reference: Option<&'a str>,
+    /// Auto-release window in milliseconds (max 30 days). `None` ⇒ the hold
+    /// stays open until captured or released.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_in_ms: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -492,6 +573,27 @@ pub struct ReleaseHoldRequest<'a> {
     pub reference: Option<&'a str>,
 }
 
+/// The lifecycle state of a hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoldState {
+    Open,
+    Captured,
+    Released,
+    /// A state this SDK version does not know.
+    Unknown,
+}
+
+impl HoldState {
+    fn parse(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "open" => Self::Open,
+            "captured" => Self::Captured,
+            "released" => Self::Released,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Hold {
     pub id: String,
@@ -503,9 +605,69 @@ pub struct Hold {
     pub reference: Option<String>,
 }
 
-/// Mint hold operations return receipt fields that vary by terminal; retain the
-/// exact typed identity and expose the remaining forward-compatible fields.
-pub type HoldReceipt = serde_json::Value;
+impl Hold {
+    pub fn state(&self) -> HoldState {
+        HoldState::parse(&self.status)
+    }
+}
+
+/// The result of a hold operation (create / capture / release).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct HoldReceipt {
+    pub hold_id: String,
+    pub first_seq: u64,
+    /// The holder's balance after the operation.
+    pub holder_balance: Balance,
+    /// The payee's balance after a capture (`None` for create / release).
+    #[serde(default)]
+    pub payee_balance: Option<Balance>,
+    pub status: String,
+    pub captured_micros: i64,
+    pub idempotent_replay: bool,
+    /// Settlement attestation Mint attaches to terminal operations, if any.
+    #[serde(default)]
+    pub attestation: Option<serde_json::Value>,
+    /// The encoded signed receipt from the `aitp-receipt` response header.
+    #[serde(skip)]
+    pub signed_receipt: Option<String>,
+}
+
+impl HoldReceipt {
+    pub fn state(&self) -> HoldState {
+        HoldState::parse(&self.status)
+    }
+
+    fn expect_terminal(&self, hold_id: &str, want: HoldState) -> Result<(), Error> {
+        if self.hold_id != hold_id {
+            return Err(Error::Protocol(
+                "Mint hold receipt is for a different hold than requested".into(),
+            ));
+        }
+        if self.state() != want {
+            return Err(Error::Protocol(format!(
+                "Mint hold receipt status is {} (expected {want:?})",
+                self.status
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Percent-encode an id for use as one URL path segment; empty ids are rejected.
+fn path_segment(id: &str) -> Result<String, Error> {
+    if id.is_empty() {
+        return Err(Error::Protocol("empty id".into()));
+    }
+    Ok(id
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            other => format!("%{other:02X}"),
+        })
+        .collect())
+}
 
 #[derive(Debug, Serialize)]
 pub struct GrantAllowanceRequest<'a> {
@@ -574,10 +736,37 @@ mod tests {
             amount_micros: 1,
             idem_key: "idem",
             reference: None,
+            expires_in_ms: None,
         })
         .unwrap();
         assert_eq!(body["amount_micros"], 1);
+        assert!(body.get("expires_in_ms").is_none());
         assert!(body.get("amount").is_none());
+    }
+
+    #[test]
+    fn hold_receipt_parses_server_shape_and_checks_terminal_state() {
+        let receipt: HoldReceipt = serde_json::from_value(serde_json::json!({
+            "hold_id": "hold_1",
+            "first_seq": 9,
+            "holder_balance": {"account_id": "acct_a", "available_micros": 10, "held_micros": 0, "updated_seq": 9},
+            "payee_balance": {"account_id": "acct_b", "available_micros": 5, "held_micros": 0, "updated_seq": 9},
+            "status": "Captured",
+            "captured_micros": 5,
+            "idempotent_replay": false,
+        }))
+        .unwrap();
+        assert_eq!(receipt.state(), HoldState::Captured);
+        assert!(receipt.expect_terminal("hold_1", HoldState::Captured).is_ok());
+        assert!(receipt.expect_terminal("hold_1", HoldState::Released).is_err());
+        assert!(receipt.expect_terminal("hold_2", HoldState::Captured).is_err());
+    }
+
+    #[test]
+    fn hold_ids_are_encoded_as_one_path_segment() {
+        assert_eq!(path_segment("hold_1").unwrap(), "hold_1");
+        assert_eq!(path_segment("a/../b").unwrap(), "a%2F..%2Fb");
+        assert!(path_segment("").is_err());
     }
 
     #[test]

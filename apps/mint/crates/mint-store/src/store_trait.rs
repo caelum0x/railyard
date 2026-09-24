@@ -102,6 +102,11 @@ pub struct HoldCreateCommit {
     pub op_hash: OpHash,
     /// Optional reference.
     pub ref_: Option<String>,
+    /// Auto-release deadline (unix ms), persisted to `hold_expiries` in the
+    /// SAME transaction as the hold itself, so a crash between the two can
+    /// never leave an OPEN hold without its deadline. `None` ⇒ no deadline.
+    /// Ignored on an idempotent replay (the first deadline stands).
+    pub expires_at_ms: Option<i64>,
 }
 
 /// Validated input to `commit_hold_capture`.

@@ -133,7 +133,10 @@ impl<S: LedgerStore + 'static> AppState<S> {
             Ledger::new(shared.clone()),
             clock,
             DynPayerKeys(payer_registry.clone()),
-        ));
+        )
+        // Hold settlements get their auto-release deadline in the same
+        // transaction as the hold itself.
+        .with_hold_ttl_ms(crate::jobs::aitp_hold_ttl_ms()));
 
         AppState {
             ledger,

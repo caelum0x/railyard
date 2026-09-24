@@ -2,6 +2,16 @@
 //! `Authorization` shared-secret equality (constant time), with optional HMAC
 //! support. Events `subscription_started` / `non_subscription_purchase`;
 //! `customer_user_id` → `account_id`. No server checkout, no payout.
+//!
+//! Re-confirmation: Adapty's server-side API is PROFILE-based
+//! (`GET /api/v2/server-side-api/profile/` with an `adapty-customer-user-id`
+//! header); there is no purchase-by-transaction lookup. The reserve therefore
+//! calls [`Ramp::confirm_deposit_for`] with the credited account, and the
+//! adapter finds the store transaction inside that profile's
+//! `non_subscriptions` / `subscriptions`, fails closed on a refund, and binds
+//! the deposit to that account. The profile carries no per-transaction USD
+//! amount, so the USD amount is the one from the constant-time-authenticated
+//! webhook (`price_usd`).
 
 use std::sync::Arc;
 
@@ -13,11 +23,23 @@ use serde_json::Value;
 use crate::config::ProviderConfig;
 use crate::event::{DepositEvent, ReversalEvent, ReversalReason, WebhookError};
 use crate::http::{map_status, Headers, HttpTransport};
+use crate::iap::find_transaction;
 use crate::money::json_dollars_to_micros;
 use crate::provider::ProviderId;
 use crate::verify::const_eq_secret;
 
 const API_BASE: &str = "https://api.adapty.io";
+
+/// The record keys Adapty uses for a purchase's store transaction id (v2
+/// `store_*`, legacy `vendor_*`, and the original id a `subscription_started`
+/// event reports for the first period).
+const TXN_KEYS: [&str; 5] = [
+    "store_transaction_id",
+    "vendor_transaction_id",
+    "store_original_transaction_id",
+    "vendor_original_transaction_id",
+    "transaction_id",
+];
 
 /// A live Adapty [`Ramp`] over an injected [`HttpTransport`].
 pub struct AdaptyRamp {
@@ -35,32 +57,64 @@ impl AdaptyRamp {
         let key = self.cfg.api_key.clone().unwrap_or_default();
         vec![("authorization".into(), format!("Api-Key {key}"))]
     }
+
+    /// Fetch the profile for `customer_user_id` and locate `transaction_id`.
+    async fn lookup(&self, customer_user_id: &str, transaction_id: &str) -> Result<Value, RampError> {
+        if customer_user_id.trim().is_empty() || transaction_id.trim().is_empty() {
+            return Err(RampError::DepositNotFound);
+        }
+        let url = format!("{API_BASE}/api/v2/server-side-api/profile/");
+        let mut headers = self.auth_headers();
+        headers.push((
+            "adapty-customer-user-id".into(),
+            customer_user_id.to_string(),
+        ));
+        let resp = map_status(self.transport.get(&url, &headers).await)?;
+        let v: Value =
+            serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)?;
+        let profile = if v["data"].is_object() { &v["data"] } else { &v };
+        find_transaction(
+            &[&profile["non_subscriptions"], &profile["subscriptions"]],
+            &TXN_KEYS,
+            transaction_id,
+        )
+        .cloned()
+        .ok_or(RampError::DepositNotFound)
+    }
 }
 
 #[async_trait]
 impl Ramp for AdaptyRamp {
-    async fn confirm_deposit(&self, deposit_ref: &str) -> Result<Deposit, RampError> {
-        let url = format!("{API_BASE}/api/v2/server-side-api/purchase/{deposit_ref}/");
-        let resp = map_status(self.transport.get(&url, &self.auth_headers()).await)?;
-        let v: Value =
-            serde_json::from_slice(&resp.body).map_err(|_| RampError::ProviderUnavailable)?;
+    async fn confirm_deposit(&self, _deposit_ref: &str) -> Result<Deposit, RampError> {
+        // Adapty cannot be queried by transaction id alone (profile-keyed API);
+        // the reserve always uses `confirm_deposit_for`.
+        Err(RampError::DepositNotFound)
+    }
+
+    async fn confirm_deposit_for(
+        &self,
+        deposit_ref: &str,
+        account: &str,
+        amount: Micros,
+    ) -> Result<Deposit, RampError> {
+        let record = self.lookup(account, deposit_ref).await?;
         // Fail closed on a refunded/voided purchase: a later refund or chargeback
-        // must NOT mint. Adapty marks these with `is_refund`/`refunded_at` or a
-        // non-active status.
-        if is_refunded(&v) {
+        // must NOT mint.
+        if is_refunded(&record) {
             return Err(RampError::NotConfirmed);
         }
-        // Fail closed on a missing/zero settled amount rather than minting 0
-        // against an unresolved purchase (never `.unwrap_or(0)`).
-        let micros = json_dollars_to_micros(&v["price_usd"])
+        if amount.get() <= 0 {
+            return Err(RampError::NotConfirmed);
+        }
+        let confirmed = json_dollars_to_micros(&record["price_usd"])
             .filter(|&m| m > 0)
-            .ok_or(RampError::NotConfirmed)?;
+            .unwrap_or(amount.get());
         Ok(Deposit {
             deposit_ref: deposit_ref.to_string(),
-            amount_micros: Micros::new(micros),
+            amount_micros: Micros::new(confirmed),
             asset: Asset::Usd,
             confirmed: true,
-            bound_account: None,
+            bound_account: Some(account.to_string()),
         })
     }
 
@@ -293,64 +347,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn confirm_deposit_reads_exact_price_over_http() {
-        let body = br#"{"price_usd":"7.50"}"#.to_vec();
+    async fn confirm_finds_transaction_in_profile_and_binds_account() {
+        let body = br#"{"data":{"customer_user_id":"acct_1","non_subscriptions":[{"purchase_id":"p1","store_transaction_id":"txn_1","is_refund":false}],"subscriptions":[]}}"#.to_vec();
         let ramp = AdaptyRamp::new(Arc::new(FakeGet(200, body)), cfg(Some("s"), Some("k")));
-        let dep = ramp.confirm_deposit("txn_1").await.expect("confirmed");
+        let dep = ramp
+            .confirm_deposit_for("txn_1", "acct_1", Micros::new(7_500_000))
+            .await
+            .expect("confirmed");
         assert_eq!(dep.amount_micros, Micros::new(7_500_000));
-        assert!(dep.confirmed);
-        assert_eq!(dep.asset, Asset::Usd);
+        assert_eq!(dep.bound_account.as_deref(), Some("acct_1"));
     }
 
     #[tokio::test]
-    async fn confirm_deposit_maps_404_to_not_found() {
+    async fn missing_or_refunded_transaction_does_not_mint() {
+        let body = br#"{"data":{"non_subscriptions":[{"store_transaction_id":"other"}]}}"#.to_vec();
+        let ramp = AdaptyRamp::new(Arc::new(FakeGet(200, body)), cfg(Some("s"), Some("k")));
+        assert_eq!(
+            ramp.confirm_deposit_for("txn_1", "acct_1", Micros::new(1)).await,
+            Err(RampError::DepositNotFound)
+        );
+        let body = br#"{"data":{"subscriptions":[{"store_transaction_id":"txn_1","is_refund":true}]}}"#.to_vec();
+        let ramp = AdaptyRamp::new(Arc::new(FakeGet(200, body)), cfg(Some("s"), Some("k")));
+        assert_eq!(
+            ramp.confirm_deposit_for("txn_1", "acct_1", Micros::new(1)).await,
+            Err(RampError::NotConfirmed)
+        );
         let ramp = AdaptyRamp::new(
             Arc::new(FakeGet(404, b"{}".to_vec())),
             cfg(Some("s"), Some("k")),
         );
         assert_eq!(
-            ramp.confirm_deposit("missing").await,
+            ramp.confirm_deposit_for("txn_1", "acct_1", Micros::new(1)).await,
             Err(RampError::DepositNotFound)
-        );
-    }
-
-    #[tokio::test]
-    async fn confirm_deposit_refunded_purchase_is_not_confirmed() {
-        // Settled price present but the purchase was refunded: must not mint.
-        let body = br#"{"price_usd":"7.50","is_refund":true}"#.to_vec();
-        let ramp = AdaptyRamp::new(Arc::new(FakeGet(200, body)), cfg(Some("s"), Some("k")));
-        assert_eq!(
-            ramp.confirm_deposit("txn_1").await,
-            Err(RampError::NotConfirmed)
-        );
-
-        // A refunded status is honored too.
-        let body = br#"{"price_usd":"7.50","status":"refunded"}"#.to_vec();
-        let ramp = AdaptyRamp::new(Arc::new(FakeGet(200, body)), cfg(Some("s"), Some("k")));
-        assert_eq!(
-            ramp.confirm_deposit("txn_1").await,
-            Err(RampError::NotConfirmed)
-        );
-    }
-
-    #[tokio::test]
-    async fn confirm_deposit_missing_or_zero_price_fails_closed() {
-        // Missing price ⇒ NotConfirmed (never mints 0 against an unresolved amount).
-        let ramp = AdaptyRamp::new(
-            Arc::new(FakeGet(200, b"{}".to_vec())),
-            cfg(Some("s"), Some("k")),
-        );
-        assert_eq!(
-            ramp.confirm_deposit("txn_1").await,
-            Err(RampError::NotConfirmed)
-        );
-
-        // Zero price ⇒ NotConfirmed.
-        let body = br#"{"price_usd":"0"}"#.to_vec();
-        let ramp = AdaptyRamp::new(Arc::new(FakeGet(200, body)), cfg(Some("s"), Some("k")));
-        assert_eq!(
-            ramp.confirm_deposit("txn_1").await,
-            Err(RampError::NotConfirmed)
         );
     }
 
