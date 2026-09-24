@@ -27,29 +27,31 @@ Railyard services deployed and the env set).
 
 ## Rally (vcpeer.com, repo `vcglass`)
 
-Railyard client layer: `vcglass/lib/railyard/{config,errors,http,rago,relay,abacus,gtm-llm,mint,store}.ts`
-(env: `RAGO_URL`+`RAGO_API_KEY`, `RELAY_URL`, `ABACUS_URL`+`ABACUS_API_KEY`, `MINT_BASE_URL`+`MINT_API_KEY`).
-Verified by reading; not edited in this package.
+Railyard client layer: `vcglass/lib/railyard/{config,errors,http,rago,relay,abacus,gtm-llm,chat-fetch,mint,store}.ts`
+(env: `RAGO_URL`+`RAGO_API_KEY`, `RELAY_URL` or `RAILYARD_RELAY_URL`, `ABACUS_URL`+`ABACUS_API_KEY`, `MINT_BASE_URL`+`MINT_API_KEY`).
 
 | Concern | Through Railyard (opt-in) | Still direct |
 |---|---|---|
-| Billing | AutoGTM usage metering + batch allowance via Rago: `lib/autogtm/rago-billing.ts` (used by `lib/autogtm/sending-worker.ts`, `app/api/autogtm/billing/route.ts`). Top-up audit trail on Mint: `lib/autogtm/mint-settlement.ts` | Charging customers is Creem: `lib/payments/creem.ts`, `lib/payments/products.ts`, `lib/vc-subscription.ts`; AutoGTM balance core `lib/autogtm/usage-billing.ts` |
-| LLM | AutoGTM drafts `lib/autogtm/llm.ts` via `lib/railyard/gtm-llm.ts`; research/ask via `lib/railyard-llm.ts`: `lib/ask-answering.ts`, `lib/ask/vc-analyst-synthesis.ts`, `lib/ask/streaming-summary.ts`, `lib/crawl4ai/llm-extract.ts`, `lib/crawl4ai/perplexity-synthesizer.ts`, `lib/research-judge/venture-answer-judge.ts`, `lib/content-ops/draft-provider.ts` | OpenRouter/Groq/OpenAI clients that bypass `railyard-llm`: `lib/ask/engines/groq-compound-engine.ts`, `lib/daily-digest-groq.ts`, `lib/research/query-plan.ts`, `lib/research/venture-judge.ts`, `lib/entity-kind-classifier.ts`, `lib/data-quality/classify-sector-llm.ts`, `lib/data-miner/llm-extractor.ts`, `lib/scoring/signals-osint.ts`, `lib/llm/model-router.ts`, `lib/llm/litellm-gateway.ts`, `lib/search/rerank/rerank-chain.ts`, `lib/embeddings/adapter.ts`, `lib/data-sources/funding-contact-enrichment.ts` |
+| Billing | AutoGTM usage metering + batch allowance via Rago: `lib/autogtm/rago-billing.ts` (`gtm_draft`, `gtm_email_sent`; used by `lib/autogtm/sending-worker.ts`, `app/api/autogtm/billing/route.ts`). Card top-ups emit `gtm_topup` when `RAGO_GTM_TOPUP_METERING=1` (off by default; `creditGtmBalance` in `lib/autogtm/usage-billing.ts`). Top-up audit trail on Mint: `lib/autogtm/mint-settlement.ts` | Charging customers is Creem: `lib/payments/creem.ts`, `lib/payments/products.ts`, `lib/vc-subscription.ts`; AutoGTM balance core `lib/autogtm/usage-billing.ts` |
+| LLM | AutoGTM drafts `lib/autogtm/llm.ts` via `lib/railyard/gtm-llm.ts`; research/ask via `lib/railyard-llm.ts`. Every other chat call site uses `lib/railyard/chat-fetch.ts` (`llmChatFetch`, a drop-in `fetch` also passed as the OpenAI SDK `fetch`): with Relay off it is a pass-through (free Groq/OpenRouter chain unchanged); with Relay on the call goes to Relay with the model mapped to `tensorzero::model_name::<groq/openrouter/openai>::<model>` (or `RELAY_CHAT_MODEL`), body otherwise untouched, and Relay's cost feed meters it to Rago. Covers the OpenRouter factory `lib/openrouter.ts`, daily digest QA, query-plan, venture judge, entity-kind and sector classifiers, data-miner and crawl4ai extractors, funding contact extraction, trace rerank, vc-analyst synthesis, content-ops drafts, the OpenAI extraction service, and the private-market-search followups/prose/decompose/rerank/deep-search engines | Groq `compound-mini` (its web tools only exist on Groq; passes through by design); Anthropic SDK calls (`llm-prose-enrichment.ts`, Ask answering Anthropic path); embeddings (`lib/embeddings/adapter.ts`) and Voyage rerank; `lib/llm/litellm-gateway.ts` (no callers); eval/probe scripts |
 | Payouts | none needed today | none |
 
-Gaps (document only; Rally is being edited by other agents):
+Gaps:
 
-1. About 13 LLM call sites above skip `lib/railyard-llm.ts`, so turning on
-   `RELAY_URL` only covers part of Rally's AI spend. Target: route them through
-   `railyard-llm` (chat) and add an embeddings path through Relay.
-2. Rally's own subscription plans (VC viewer, Rally seats) are Creem-only with
+1. Groq-gated call sites still return early when no Groq key is present, so a
+   Relay-only deployment (no `GROQ_API_KEY*`) skips them instead of using Relay.
+2. No embeddings path through Relay yet; Anthropic SDK calls bypass Relay.
+3. Relay needs the Groq/OpenRouter provider keys and the Rago cost feed
+   (`RELAY_COST_FEED_FORMAT=rago`) configured for the rerouted calls to be
+   served and metered; unknown models fall back to the direct provider.
+4. Rally's own subscription plans (VC viewer, Rally seats) are Creem-only with
    no Rago metering. Target: Creem stays the payment processor (merchant of
-   record); plan usage events go to Rago so our portfolio and outside customers
-   are billed the same way.
-3. `mint-settlement.ts` needs Mint accounts provisioned per project out of band
+   record); plan usage events go to Rago.
+5. `mint-settlement.ts` needs Mint accounts provisioned per project out of band
    (`railyardStore.getMintAccounts`); there is no UI to create them yet.
-4. Abacus caps are wired but no per-project `ABACUS_AGENT_ID` mapping exists,
-   so caps apply per deployment, not per customer.
+6. Abacus caps are wired for `railyard-llm`/`gtm-llm` only (not `chat-fetch`),
+   and no per-project `ABACUS_AGENT_ID` mapping exists, so caps apply per
+   deployment, not per customer.
 
 ## Menivor (repo `videogen`, Python API `apps/api`)
 
