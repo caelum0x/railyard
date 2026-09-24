@@ -7,6 +7,11 @@
 //! next request is priced at the new rate without a redeploy. Every replica
 //! re-reads the table periodically, so edits made through one replica reach
 //! the others within [`PRICE_REFRESH_INTERVAL`].
+//!
+//! When `RELAY_CATALOG_REFRESH_URL` is set, the deployed base itself is
+//! refreshed on an interval from OpenRouter's public model list (list-priced
+//! rows only). Operator edits are re-applied on top after every feed refresh,
+//! so an operator price always wins over the feed.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,8 +44,9 @@ pub const PRICE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 pub struct CatalogAdmin {
     catalog: Arc<CatalogService>,
     /// The deployed catalog before any operator edit; edits always overlay
-    /// this so removing an edit restores the deployed price exactly.
-    base: Arc<CatalogSnapshot>,
+    /// this so removing an edit restores the deployed price exactly. The feed
+    /// refresher swaps in a repriced base.
+    base: Arc<std::sync::RwLock<Arc<CatalogSnapshot>>>,
     store: Option<PostgresCatalogPriceStore>,
     prices: LivePrices,
     default_price: relay_billing::ModelPrice,
@@ -58,7 +64,7 @@ impl CatalogAdmin {
     ) -> Self {
         Self {
             catalog,
-            base: Arc::new(base),
+            base: Arc::new(std::sync::RwLock::new(Arc::new(base))),
             store,
             prices,
             default_price,
@@ -66,9 +72,29 @@ impl CatalogAdmin {
         }
     }
 
+    /// The deployed base currently in effect (before operator edits).
+    pub fn base(&self) -> Arc<CatalogSnapshot> {
+        match self.base.read() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    fn set_base(&self, base: CatalogSnapshot) {
+        let base = Arc::new(base);
+        match self.base.write() {
+            Ok(mut guard) => *guard = base,
+            Err(poisoned) => *poisoned.into_inner() = base,
+        }
+    }
+
     /// Re-read persisted edits and publish them to the catalog and billing.
     pub async fn reload(&self) -> Result<CatalogSnapshot, String> {
         let _guard = self.apply_lock.lock().await;
+        self.reload_locked().await
+    }
+
+    async fn reload_locked(&self) -> Result<CatalogSnapshot, String> {
         let overrides = match &self.store {
             Some(store) => store.list().await.map_err(|error| error.to_string())?,
             None => Vec::new(),
@@ -76,9 +102,85 @@ impl CatalogAdmin {
         self.apply(&overrides).await
     }
 
+    /// Merge the feed onto the current base, publish it, and re-apply operator
+    /// edits on top. A failed fetch or an invalid merge leaves the last-good
+    /// base and prices serving.
+    pub async fn refresh_from_feed(
+        &self,
+        source: &relay_catalog::HttpOpenRouterCatalogSource,
+    ) -> Result<relay_catalog::MergeReport, String> {
+        let _guard = self.apply_lock.lock().await;
+        let current = self.base();
+        let (merged, report) = source
+            .merge_onto(&current, relay_billing::now_ms())
+            .await
+            .map_err(|error| error.to_string())?;
+        self.replace_base_locked(merged).await?;
+        Ok(report)
+    }
+
+    /// Swap in a new deployed base and re-apply operator edits on top.
+    #[cfg(test)]
+    pub async fn replace_base(&self, base: CatalogSnapshot) -> Result<CatalogSnapshot, String> {
+        let _guard = self.apply_lock.lock().await;
+        self.replace_base_locked(base).await
+    }
+
+    async fn replace_base_locked(&self, base: CatalogSnapshot) -> Result<CatalogSnapshot, String> {
+        base.validate().map_err(|error| error.to_string())?;
+        let previous = (*self.base()).clone();
+        self.set_base(base);
+        match self.reload_locked().await {
+            Ok(applied) => Ok(applied),
+            Err(error) => {
+                // Never leave a half-applied refresh: restore the last-good base.
+                self.set_base(previous);
+                Err(error)
+            }
+        }
+    }
+
+    /// Refresh the base from the configured feed every `interval` (first run
+    /// immediately, in the background, so startup never waits on the network).
+    pub fn spawn_feed_refresh(
+        &self,
+        tasks: &TaskTracker,
+        shutdown: CancellationToken,
+        source: relay_catalog::HttpOpenRouterCatalogSource,
+        interval: Duration,
+    ) {
+        let admin = self.clone();
+        tasks.spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    () = shutdown.cancelled() => break,
+                    _ = ticker.tick() => {
+                        match admin.refresh_from_feed(&source).await {
+                            Ok(report) => tracing::info!(
+                                url = %source.url(),
+                                repriced = report.repriced.len(),
+                                added = report.added.len(),
+                                skipped = report.skipped,
+                                suspicious_zero = ?report.suspicious_zero,
+                                "Relay catalog refreshed from the model price feed"
+                            ),
+                            Err(error) => tracing::warn!(
+                                url = %source.url(),
+                                error = %error,
+                                "Relay catalog feed refresh failed; keeping the last-good prices"
+                            ),
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     async fn apply(&self, overrides: &[CatalogPriceOverride]) -> Result<CatalogSnapshot, String> {
-        let known: std::collections::HashSet<&str> = self
-            .base
+        let base = self.base();
+        let known: std::collections::HashSet<&str> = base
             .models
             .iter()
             .map(|model| model.id.as_str())
@@ -115,7 +217,7 @@ impl CatalogAdmin {
         };
         let snapshot = self
             .catalog
-            .apply_operator_prices(&self.base, edits, &suffix)
+            .apply_operator_prices(&base, edits, &suffix)
             .await
             .map_err(|error| error.to_string())?;
         self.prices
@@ -146,13 +248,13 @@ impl CatalogAdmin {
         });
     }
 
-    fn base_prices(&self) -> HashMap<&str, (i64, i64)> {
-        self.base
+    fn base_prices(&self) -> HashMap<String, (i64, i64)> {
+        self.base()
             .models
             .iter()
             .map(|model| {
                 (
-                    model.id.as_str(),
+                    model.id.clone(),
                     (
                         model.pricing.input_micro_usd_per_million,
                         model.pricing.output_micro_usd_per_million,
@@ -240,7 +342,7 @@ pub async fn list_price_edits_handler(
             storage_available: admin.store.is_some(),
             operator,
             unavailable_reason,
-            deployed_revision: admin.base.revision.clone(),
+            deployed_revision: admin.base().revision.clone(),
             edits,
         },
     })
@@ -343,7 +445,7 @@ pub async fn reset_price_handler(
 async fn deployed_model_id(admin: &CatalogAdmin, raw: &str) -> Option<String> {
     let canonical = admin.catalog.canonical_id(raw).await.ok()?;
     admin
-        .base
+        .base()
         .models
         .iter()
         .any(|model| model.id == canonical)
@@ -456,5 +558,31 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(quote.amount_micros.get(), 7_500);
+    }
+
+    #[tokio::test]
+    async fn feed_refreshed_base_reprices_billing_and_rejects_invalid_bases() {
+        let admin = admin().await;
+        let feed = r#"{"data":[{"id":"openai/gpt-4o","architecture":{"output_modalities":["text"]},"pricing":{"prompt":"0.000002","completion":"0.000008"}}]}"#;
+        let options = relay_catalog::FeedOptions {
+            min_priced_models: 1,
+            ..relay_catalog::FeedOptions::default()
+        };
+        let (merged, _) =
+            relay_catalog::merge_openrouter_feed(&admin.base(), feed, 99, options).unwrap();
+        admin.replace_base(merged).await.unwrap();
+        assert_eq!(
+            admin
+                .prices
+                .current()
+                .price_for(&relay_billing::ModelId::namespace("openai/gpt-4o")),
+            relay_billing::ModelPrice::new(2_000_000, 8_000_000)
+        );
+        assert!(admin.base().revision.ends_with("+openrouter-99"));
+
+        let mut invalid = (*admin.base()).clone();
+        invalid.revision.clear();
+        assert!(admin.replace_base(invalid).await.is_err());
+        assert!(admin.base().revision.ends_with("+openrouter-99"));
     }
 }

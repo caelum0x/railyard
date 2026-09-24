@@ -144,6 +144,25 @@ default) to run the gateway with billing disabled.
 | `RELAY_AITP_PAYEE` | Yes | AITP payee identity advertised to clients; must map to `MINT_PAYEE_ACCOUNT`. Startup aborts if unset or mismatched. |
 | `RELAY_CATALOG_PATH` | Recommended | Absolute path to the operator price catalog JSON (defaults to `/app/config/catalog.json` in the image). Mutually exclusive with the legacy `RELAY_PRICE_CATALOG_PATH`. |
 
+### Keeping list prices current
+
+Every row priced from a provider list (`"source": "provider_list"`) can be
+refreshed from OpenRouter's public model list. The list is public and needs no
+key. This is opt-in:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `RELAY_CATALOG_REFRESH_URL` | unset (off) | `openrouter` (or any `https://` mirror of `GET /api/v1/models`) turns the refresh on. |
+| `RELAY_CATALOG_REFRESH_INTERVAL_SECS` | `3600` | Seconds between refreshes. The minimum is `300`. The first refresh runs in the background right after startup. |
+| `RELAY_CATALOG_REFRESH_ADD_MODELS` | off | When truthy, feed models that are not in the deployed catalog are listed too. When off, only existing rows are repriced. |
+
+The refresh fails closed. If the feed is unreachable, does not parse, is
+truncated, or has too many unusable rows, Relay keeps the last good prices. A
+paid model that suddenly reads as free keeps its old price. Operator overrides,
+contract prices and TensorZero function or named-model routes are never
+changed. Operator edits made through the price editor are applied again after
+every refresh, so they still take precedence.
+
 Additional related variables: `MINT_VERIFICATION_KEYS_JSON` (operator-pinned
 Ed25519 verification keys, also required when billing is enabled),
 `MINT_PAYER_ACCOUNT` (optional single-payer override), and

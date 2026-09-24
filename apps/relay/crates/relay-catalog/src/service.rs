@@ -25,10 +25,24 @@ impl CatalogService {
         })
     }
 
+    /// The embedded list-price catalog. Prices come from
+    /// [`relay_billing::BUILTIN_PRICES`] (the billing table), and each row is
+    /// enriched with the capabilities, display name and limits recorded in the
+    /// bundled `data/catalog.json` when it lists the model.
     pub async fn builtin(generated_at_ms: i64) -> Result<Self> {
+        let bundled = bundled_snapshot()?;
         let models = relay_billing::BUILTIN_PRICES
             .iter()
-            .map(|(id, input, output)| builtin_model(id, *input, *output))
+            .map(|(id, input, output)| {
+                let mut model = builtin_model(id, *input, *output);
+                if let Some(rich) = bundled.models.iter().find(|m| m.id == model.id) {
+                    model.display_name = rich.display_name.clone();
+                    model.capabilities = rich.capabilities;
+                    model.context_window_tokens = rich.context_window_tokens;
+                    model.max_output_tokens = rich.max_output_tokens;
+                }
+                model
+            })
             .collect();
         let snapshot = CatalogSnapshot::new("relay-builtin-v1", generated_at_ms, models);
         Self::initialize(Arc::new(crate::StaticCatalogSource::new(snapshot))).await
@@ -79,6 +93,15 @@ impl CatalogService {
             snapshot.validate()?;
         }
         Ok(service)
+    }
+
+    /// Publish an already-built candidate (for example a feed merge computed
+    /// by the caller). Invalid candidates are rejected and the last-good
+    /// snapshot keeps serving.
+    pub async fn publish(&self, candidate: CatalogSnapshot) -> Result<CatalogSnapshot> {
+        candidate.validate()?;
+        *self.snapshot.write().await = candidate.clone();
+        Ok(candidate)
     }
 
     /// Atomically refresh. An invalid source result leaves the last-good
@@ -257,6 +280,14 @@ impl CatalogService {
     }
 }
 
+/// Parse the checked-in `data/catalog.json`.
+pub fn bundled_snapshot() -> Result<CatalogSnapshot> {
+    let snapshot: CatalogSnapshot = serde_json::from_str(crate::BUNDLED_CATALOG_JSON)
+        .map_err(|error| CatalogError::InvalidJson(error.to_string()))?;
+    snapshot.validate()?;
+    Ok(snapshot)
+}
+
 fn builtin_model(id: &str, input: i64, output: i64) -> CatalogModel {
     let function_name = id.strip_prefix("tensorzero::function_name::");
     let configured_model_name = id.strip_prefix("tensorzero::model_name::");
@@ -300,6 +331,55 @@ mod tests {
         assert_eq!(model.id, "openai/gpt-4o");
         let quote = service.quote(&model.id, 1_000, 500).await.unwrap();
         assert_eq!(quote.amount_micros.get(), 7_500);
+    }
+
+    #[test]
+    fn bundled_catalog_matches_the_billing_price_table_exactly() {
+        let bundled = bundled_snapshot().unwrap();
+        let bundled_prices: HashMap<&str, (i64, i64)> = bundled
+            .models
+            .iter()
+            .map(|model| {
+                assert_eq!(model.pricing.source, PricingSource::ProviderList);
+                (
+                    model.id.as_str(),
+                    (
+                        model.pricing.input_micro_usd_per_million,
+                        model.pricing.output_micro_usd_per_million,
+                    ),
+                )
+            })
+            .collect();
+        assert_eq!(bundled_prices.len(), relay_billing::BUILTIN_PRICES.len());
+        for (id, input, output) in relay_billing::BUILTIN_PRICES {
+            assert_eq!(
+                bundled_prices.get(id),
+                Some(&(*input, *output)),
+                "data/catalog.json and BUILTIN_PRICES disagree on {id}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn builtin_rows_carry_bundled_capabilities() {
+        let service = CatalogService::builtin(1).await.unwrap();
+        let opus = service.resolve("anthropic/claude-opus-5.5").await.unwrap();
+        assert!(opus.capabilities.vision);
+        assert!(opus.context_window_tokens.is_some());
+        let groq = service
+            .resolve("tensorzero::model_name::groq::openai/gpt-oss-120b")
+            .await
+            .unwrap();
+        assert_eq!(groq.provider, "groq");
+    }
+
+    #[tokio::test]
+    async fn publish_rejects_invalid_candidates() {
+        let service = CatalogService::builtin(1).await.unwrap();
+        let mut bad = service.snapshot().await;
+        bad.revision.clear();
+        assert_eq!(service.publish(bad).await, Err(CatalogError::InvalidRevision));
+        assert!(!service.snapshot().await.revision.is_empty());
     }
 
     #[tokio::test]

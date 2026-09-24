@@ -179,6 +179,19 @@ pub async fn build_axum_router(
         tracing::error!(error = %error, "Relay operator price edits could not be applied at startup; serving deployed catalog prices");
     }
     catalog_admin.spawn_refresh(&app_state.deferred_tasks, shutdown_token.clone());
+    if let Some((source, interval)) = catalog_feed_refresh(&catalog_admin.base())? {
+        tracing::info!(
+            url = %source.url(),
+            interval_secs = interval.as_secs(),
+            "Relay catalog list prices refresh from a model price feed"
+        );
+        catalog_admin.spawn_feed_refresh(
+            &app_state.deferred_tasks,
+            shutdown_token.clone(),
+            source,
+            interval,
+        );
+    }
     router = router.layer(Extension(catalog_admin));
 
     let provider_keys = crate::provider_keys::ProviderKeys::new(
@@ -681,6 +694,55 @@ async fn build_catalog_runtime() -> Result<CatalogRuntime, Error> {
         service: Arc::new(service),
         default_price: None,
     })
+}
+
+/// Default and minimum interval between catalog feed refreshes.
+const CATALOG_REFRESH_DEFAULT_SECS: u64 = 3_600;
+const CATALOG_REFRESH_MIN_SECS: u64 = 300;
+
+/// Opt-in list-price refresh from OpenRouter's public model feed:
+/// `RELAY_CATALOG_REFRESH_URL` (`openrouter` or `default` selects
+/// `https://openrouter.ai/api/v1/models`), `RELAY_CATALOG_REFRESH_INTERVAL_SECS`
+/// (default 3600, minimum 300) and `RELAY_CATALOG_REFRESH_ADD_MODELS` (truthy
+/// also lists feed models the deployed catalog does not have).
+fn catalog_feed_refresh(
+    base: &relay_catalog::CatalogSnapshot,
+) -> Result<Option<(relay_catalog::HttpOpenRouterCatalogSource, std::time::Duration)>, Error> {
+    let Some(raw_url) = nonempty_env("RELAY_CATALOG_REFRESH_URL") else {
+        return Ok(None);
+    };
+    let url = if raw_url.eq_ignore_ascii_case("openrouter") || raw_url.eq_ignore_ascii_case("default")
+    {
+        relay_catalog::OPENROUTER_MODELS_URL.to_string()
+    } else {
+        raw_url
+    };
+    let interval_secs = match nonempty_env("RELAY_CATALOG_REFRESH_INTERVAL_SECS") {
+        None => CATALOG_REFRESH_DEFAULT_SECS,
+        Some(raw) => raw.parse::<u64>().map_err(|_| {
+            billing_config_error(format!(
+                "RELAY_CATALOG_REFRESH_INTERVAL_SECS must be a whole number of seconds, got '{raw}'"
+            ))
+        })?,
+    };
+    if interval_secs < CATALOG_REFRESH_MIN_SECS {
+        return Err(billing_config_error(format!(
+            "RELAY_CATALOG_REFRESH_INTERVAL_SECS must be at least {CATALOG_REFRESH_MIN_SECS}"
+        )));
+    }
+    let add_new_models = nonempty_env("RELAY_CATALOG_REFRESH_ADD_MODELS").is_some_and(|value| {
+        matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+    });
+    let source = relay_catalog::HttpOpenRouterCatalogSource::new(
+        url,
+        base.clone(),
+        relay_catalog::FeedOptions {
+            add_new_models,
+            ..relay_catalog::FeedOptions::default()
+        },
+    )
+    .map_err(|error| billing_config_error(format!("invalid RELAY_CATALOG_REFRESH_URL: {error}")))?;
+    Ok(Some((source, std::time::Duration::from_secs(interval_secs))))
 }
 
 fn nonempty_env(name: &str) -> Option<String> {

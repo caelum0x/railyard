@@ -6535,6 +6535,7 @@ dependencies = [
  "async-trait",
  "relay-billing",
  "relay-contract",
+ "reqwest 0.13.3",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

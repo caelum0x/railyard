@@ -10,6 +10,7 @@ description = "Refreshable model catalog, capabilities, and exact quotes for Rel
 async-trait.workspace = true
 relay-billing = { path = "../relay-billing" }
 relay-contract = { path = "../relay-contract" }
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
