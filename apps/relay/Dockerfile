@@ -61,6 +61,10 @@ COPY --from=builder /relay/crates/target/release/gateway /usr/local/bin/gateway
 # (`catalog.json`). Secrets are never baked in — they arrive as env vars.
 COPY config/ /app/config/
 
+# Apache-2.0 section 4(d): ship the license and the NOTICE (TensorZero
+# attribution) with every distributed image.
+COPY LICENSE NOTICE /usr/share/doc/relay/
+
 WORKDIR /app
 USER gateway
 
