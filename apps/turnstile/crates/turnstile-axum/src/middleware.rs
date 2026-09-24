@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
-use turnstile_core::x402::{X402Admission, X402Gate, HEADER_PAYMENT};
+use turnstile_core::x402::{X402Admission, X402Gate, HEADER_PAYMENT, HEADER_PAYMENT_SIGNATURE};
 use turnstile_core::{Admit, Turnstile};
 
 use crate::extractor::PaidContext;
@@ -48,10 +48,12 @@ where
         .x402_requirements(&path)
         .map(|requirements| X402Gate::required_body(vec![requirements], "payment required"));
 
-    // x402 rail: an `X-PAYMENT` header on a gate that speaks x402.
-    let x402_payment = req
-        .headers()
-        .get(HEADER_PAYMENT)
+    // x402 rail: a `PAYMENT-SIGNATURE` (v2) or `X-PAYMENT` (v1) header on a
+    // gate that speaks x402. The payload's own `x402Version` decides how it
+    // is verified and which settlement header answers it.
+    let x402_payment = [HEADER_PAYMENT_SIGNATURE, HEADER_PAYMENT]
+        .iter()
+        .find_map(|name| req.headers().get(*name))
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
     if let (Some(payment), Some(x402), Some(body)) = (x402_payment, gate.x402(), x402_body.as_ref()) {
@@ -112,9 +114,9 @@ where
     }
 }
 
-/// The x402 path: verify `X-PAYMENT` through the facilitator, run the handler,
+/// The x402 path: verify `PAYMENT-SIGNATURE` / `X-PAYMENT` through the facilitator, run the handler,
 /// settle on-chain only when it succeeded (success-only), and attach
-/// `X-PAYMENT-RESPONSE`. The handler still receives a [`PaidContext`]; x402
+/// `PAYMENT-RESPONSE` (v2) or `X-PAYMENT-RESPONSE` (v1). The handler still receives a [`PaidContext`]; x402
 /// `exact` moves the quoted amount, so a lower reported usage is not applied.
 async fn gate_x402<F, Fut>(
     gate: &Turnstile,
@@ -154,7 +156,7 @@ where
         return response;
     }
     match x402.settle(&admission).await {
-        Ok(settled) => response::attach_x402_settlement(response, &settled),
+        Ok(settled) => response::attach_x402_settlement(response, &settled, admission.version()),
         // The paid body is withheld: without a settled payment the caller
         // does not receive the resource.
         Err(rejection) if rejection.retryable => {

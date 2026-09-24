@@ -421,12 +421,27 @@ class TurnstileClient:
         return envelope.get("result", {}).get("tools", [])
 
     def mcp_call(self, name: str, arguments: Optional[Dict[str, Any]] = None) -> McpResult:
-        """MCP ``tools/call``, paying the ``-32402`` challenge when required."""
+        """MCP ``tools/call``, paying the AITP challenge when required.
+
+        The challenge arrives as a ``-32402`` JSON-RPC error, or (on an
+        x402-enabled server) as an x402 ``PaymentRequired`` tool result that
+        carries it in ``_meta["aitp/challenge"]``.
+        """
         args = dict(arguments or {})
         envelope = self.mcp("tools/call", {"name": name, "arguments": args})
-        if "result" in envelope:
-            return McpResult(envelope["result"], paid=False)
-        error = envelope.get("error") or {}
+        first = envelope.get("result")
+        x402_challenge = (
+            (first.get("_meta") or {}).get("aitp/challenge")
+            if isinstance(first, dict) and first.get("isError")
+            else None
+        )
+        if first is not None and not x402_challenge:
+            return McpResult(first, paid=False)
+        error = (
+            {"code": MCP_PAYMENT_REQUIRED, "data": x402_challenge}
+            if x402_challenge
+            else envelope.get("error") or {}
+        )
         if error.get("code") != MCP_PAYMENT_REQUIRED:
             raise TurnstileError(f"tools/call {name} failed: {error.get('message', error)}")
         encoded = (error.get("data") or {}).get("aitp_challenge")

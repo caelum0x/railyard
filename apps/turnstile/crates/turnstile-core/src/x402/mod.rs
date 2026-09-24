@@ -17,10 +17,17 @@
 //!    On a non-`2xx` nothing is settled: the payer's signed authorization is
 //!    never submitted, so the payer is not charged (success-only billing).
 //!
+//! Protocol versions: the `402` carries the v1 JSON body AND the v2
+//! `PAYMENT-REQUIRED` header; a retry may pay with v1 `X-PAYMENT` or v2
+//! `PAYMENT-SIGNATURE`, and is answered with the matching `X-PAYMENT-RESPONSE`
+//! or `PAYMENT-RESPONSE`. Over MCP, payment rides in `_meta["x402/payment"]`
+//! (see [`crate::mcp`]). Facilitator auth for Coinbase CDP is in [`cdp`].
+//!
 //! Metering note: x402 `exact` moves a fixed amount, so an x402 call is
 //! charged the quoted price in full on success. Metered capture below the
 //! quote remains available on the AITP-402 / Mint-hold rail.
 
+pub mod cdp;
 pub mod config;
 pub mod facilitator;
 pub mod journal;
@@ -37,16 +44,21 @@ use serde_json::json;
 use crate::clock::now_ms;
 use crate::error::TurnstileError;
 
+pub use cdp::{CdpApiKey, CdpFacilitatorAuth, CDP_FACILITATOR_URL};
 pub use config::X402Config;
-pub use facilitator::{Facilitator, HttpFacilitator, MintCredit, MintDepositPoster};
+pub use facilitator::{
+    Facilitator, FacilitatorAuth, HttpFacilitator, MintCredit, MintDepositPoster,
+};
 pub use journal::{
     InMemoryX402Journal, MintCreditStatus, X402Journal, X402Phase, X402Record, X402Summary,
 };
 #[cfg(feature = "postgres")]
 pub use pg::PostgresX402Journal;
 pub use wire::{
-    PaymentPayload, PaymentRequiredBody, PaymentRequirements, SettleResponse, VerifyResponse,
-    HEADER_PAYMENT, HEADER_PAYMENT_RESPONSE, SCHEME_EXACT, X402_VERSION,
+    PaymentPayload, PaymentRequiredBody, PaymentRequiredV2, PaymentRequirements,
+    PaymentRequirementsV2, ResourceInfo, SettleResponse, VerifyResponse, HEADER_PAYMENT,
+    HEADER_PAYMENT_REQUIRED, HEADER_PAYMENT_RESPONSE, HEADER_PAYMENT_RESPONSE_V2,
+    HEADER_PAYMENT_SIGNATURE, SCHEME_EXACT, X402_VERSION, X402_VERSION_V2,
 };
 
 /// MIME type advertised for JSON tool responses.
@@ -87,6 +99,15 @@ pub struct X402Admission {
     pub nonce: String,
     pub payer: String,
     pub amount_micros: i64,
+}
+
+impl X402Admission {
+    /// The x402 protocol version the payer used (1 or 2): the settlement is
+    /// answered in the same version.
+    #[must_use]
+    pub fn version(&self) -> u32 {
+        self.payload.x402_version
+    }
 }
 
 /// The x402 rail: builds requirements, verifies and settles payments.
@@ -147,14 +168,28 @@ impl X402Gate {
         price: AmountMicros,
         mime_type: &str,
     ) -> Option<PaymentRequirements> {
+        self.requirements_for_url(&self.resource_url(path), description, price, mime_type)
+    }
+
+    /// [`requirements`](Self::requirements) for an already-absolute resource
+    /// URL (MCP tools use `mcp://tool/<name>`). The v1 form carries the v1
+    /// network name; [`PaymentRequirements::to_v2`] yields the CAIP-2 form.
+    #[must_use]
+    pub fn requirements_for_url(
+        &self,
+        resource: &str,
+        description: &str,
+        price: AmountMicros,
+        mime_type: &str,
+    ) -> Option<PaymentRequirements> {
         if price.get() <= 0 {
             return None;
         }
         Some(PaymentRequirements {
             scheme: SCHEME_EXACT.to_string(),
-            network: self.config.network.clone(),
+            network: wire::v1_network(&self.config.network),
             max_amount_required: price.get().to_string(),
-            resource: self.resource_url(path),
+            resource: resource.to_string(),
             description: description.to_string(),
             mime_type: mime_type.to_string(),
             pay_to: self.config.pay_to.clone(),
@@ -181,7 +216,8 @@ impl X402Gate {
         }
     }
 
-    /// Verify an `X-PAYMENT` header against `requirements` and claim its nonce.
+    /// Verify an `X-PAYMENT` (v1) or `PAYMENT-SIGNATURE` (v2) header against
+    /// `requirements` and claim its nonce.
     pub async fn verify(
         &self,
         header: &str,
@@ -189,29 +225,36 @@ impl X402Gate {
     ) -> Result<X402Admission, X402Rejection> {
         let payload = wire::decode_payment_header(header)
             .map_err(|e| X402Rejection::payer("invalid_payload", e))?;
-        if payload.x402_version != X402_VERSION {
-            return Err(X402Rejection::payer(
-                "invalid_x402_version",
-                format!(
-                    "x402Version {} is not supported (expected 1)",
-                    payload.x402_version
-                ),
-            ));
-        }
-        if payload.scheme != requirements.scheme {
+        self.verify_payload(payload, requirements).await
+    }
+
+    /// Verify an already-decoded payment (MCP `_meta["x402/payment"]`).
+    pub async fn verify_payload(
+        &self,
+        payload: PaymentPayload,
+        requirements: &PaymentRequirements,
+    ) -> Result<X402Admission, X402Rejection> {
+        payload
+            .check_shape()
+            .map_err(|e| X402Rejection::payer("invalid_x402_version", e))?;
+        if payload.scheme() != requirements.scheme {
             return Err(X402Rejection::payer(
                 "invalid_scheme",
-                format!("scheme {:?} is not accepted", payload.scheme),
+                format!("scheme {:?} is not accepted", payload.scheme()),
             ));
         }
-        if payload.network != requirements.network {
+        if !wire::same_network(payload.network(), &requirements.network) {
             return Err(X402Rejection::payer(
                 "invalid_network",
                 format!(
                     "network {:?} is not accepted (expected {:?})",
-                    payload.network, requirements.network
+                    payload.network(),
+                    wire::caip2_network(&requirements.network)
                 ),
             ));
+        }
+        if let Some(accepted) = &payload.accepted {
+            check_accepted(accepted, requirements)?;
         }
         let auth = payload
             .exact_authorization()
@@ -395,6 +438,35 @@ impl X402Gate {
             eprintln!("x402: abandoning {nonce} failed: {e}");
         }
     }
+}
+
+/// A v2 payment echoes the requirement it chose; it must be the one offered.
+fn check_accepted(
+    accepted: &PaymentRequirementsV2,
+    requirements: &PaymentRequirements,
+) -> Result<(), X402Rejection> {
+    if !wire::same_address(&accepted.pay_to, &requirements.pay_to) {
+        return Err(X402Rejection::payer(
+            "invalid_exact_evm_payload_recipient_mismatch",
+            "accepted.payTo is not this server's payee",
+        ));
+    }
+    if !wire::same_address(&accepted.asset, &requirements.asset) {
+        return Err(X402Rejection::payer(
+            "invalid_payment_requirements",
+            "accepted.asset is not the advertised asset",
+        ));
+    }
+    if accepted.amount.trim() != requirements.max_amount_required {
+        return Err(X402Rejection::payer(
+            "invalid_payment_requirements",
+            format!(
+                "accepted.amount {} is not the advertised amount {}",
+                accepted.amount, requirements.max_amount_required
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Journal one Mint credit attempt. `Retry` stays pending until the attempt

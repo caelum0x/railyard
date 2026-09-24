@@ -156,18 +156,23 @@ Either way the money settles on Mint, and only successful calls are charged.
 ## x402: the open HTTP 402 standard, next to AITP-402
 
 Turnstile speaks **[x402](https://www.x402.org/)** (x402 Foundation; Coinbase
-CDP and Stripe machine payments implement it) on every paid HTTP tool, in
-addition to AITP-402. One `402` answers both protocols:
+CDP and Stripe machine payments implement it) on every paid HTTP tool and MCP
+tool, in addition to AITP-402. Protocol versions 1 and 2 are both accepted. One
+`402` answers every client:
 
-- **Body**: the x402 `PaymentRequiredBody` JSON: `{"x402Version":1,"error":...,
+- **Body** (x402 v1): the `PaymentRequiredBody` JSON: `{"x402Version":1,"error":...,
   "accepts":[{scheme:"exact", network, maxAmountRequired, resource, payTo, asset, ...}]}`.
   USDC has 6 decimals, the same scale as Railyard microdollars, so
   `maxAmountRequired` equals the tool's `price_micros`.
+- **`PAYMENT-REQUIRED` header** (x402 v2): base64 of the v2 `PaymentRequired`
+  (`resource` object, `accepts[]` with `amount` and a CAIP-2 `network` such as
+  `eip155:84532`).
 - **Headers**: `AITP-Challenge` + `AITP-Version`, unchanged, so AITP clients
   keep working.
 
-An x402 client retries with `X-PAYMENT` (base64 JSON EIP-3009 authorization).
-Turnstile then:
+An x402 client retries with `PAYMENT-SIGNATURE` (v2) or `X-PAYMENT` (v1), each
+a base64 JSON EIP-3009 authorization. A v2 payment's `accepted` must be exactly
+the advertised requirement (payee, asset, amount, network). Turnstile then:
 
 1. checks scheme, network, recipient (`payTo`), amount and expiry locally;
 2. claims the authorization nonce in `turnstile_x402_payments` (primary key =
@@ -175,7 +180,8 @@ Turnstile then:
 3. calls the facilitator `POST /verify`;
 4. runs the tool. Only on a `2xx` does it call the facilitator `POST /settle`,
    so a failed tool never charges the payer (success-only billing, ADR-0002);
-5. returns `X-PAYMENT-RESPONSE` (base64 `{success, transaction, network, payer}`);
+5. returns `PAYMENT-RESPONSE` (v2) or `X-PAYMENT-RESPONSE` (v1), base64
+   `{success, transaction, network, payer}`;
 6. credits the settled USDC into Mint with `POST /v1/mint`
    (`deposit_ref = usdc:<tx hash>`). Mint's USDC ramp re-reads the transaction
    receipt on-chain before minting, and idempotency is keyed on the tx, so a
@@ -191,25 +197,49 @@ price; metered capture below the quote stays on the AITP/Mint-hold rail.
 | Variable | Default | Notes |
 |---|---|---|
 | `TURNSTILE_X402_PAY_TO` | (unset = x402 off) | USDC receive address. To credit revenue into Mint, set this to the Mint `usdc` provider's `deposit_address` (treasury). |
-| `TURNSTILE_X402_NETWORK` | `base-sepolia` | `base` for mainnet |
-| `TURNSTILE_X402_FACILITATOR_URL` | `https://x402.org/facilitator` on Base Sepolia; **required** on mainnet | any x402 facilitator |
-| `TURNSTILE_X402_FACILITATOR_AUTH` | (none) | sent verbatim as `Authorization` |
+| `TURNSTILE_X402_NETWORK` | `base-sepolia` | `base` for mainnet; CAIP-2 ids (`eip155:8453`) also accepted |
+| `TURNSTILE_X402_FACILITATOR_URL` | CDP facilitator when a CDP key is set, else `https://x402.org/facilitator` on Base Sepolia; **required** on mainnet without a CDP key | any x402 facilitator |
+| `TURNSTILE_X402_CDP_API_KEY_ID` | (none) | Coinbase CDP Secret API key id |
+| `TURNSTILE_X402_CDP_API_KEY_SECRET` | (none) | its secret: PEM EC key (ES256) or base64 Ed25519 key (EdDSA); literal `\n` in the PEM is accepted |
+| `TURNSTILE_X402_FACILITATOR_AUTH` | (none) | static `Authorization` value for PayAI / self-hosted facilitators; not combinable with a CDP key |
 | `TURNSTILE_X402_ASSET` | USDC on Base / Base Sepolia | required on other networks |
 | `TURNSTILE_X402_MINT_ACCOUNT` | (none) | Mint account credited with settled USDC |
 | `TURNSTILE_PUBLIC_URL` | (none) | origin used for absolute `resource` URLs |
 | `TURNSTILE_X402_MAX_TIMEOUT_SECS` | `60` | advertised `maxTimeoutSeconds` |
 
-A half-configured rail stops the server at startup with the variable to fix.
-Coinbase CDP's hosted facilitator signs each request with a short-lived JWT.
-A static `TURNSTILE_X402_FACILITATOR_AUTH` cannot hold that, so on mainnet use
-a facilitator that takes a static key, or run the open-source facilitator
-yourself. Signing CDP JWTs per request is not built yet.
+A half-configured rail stops the server at startup with the variable to fix
+(a CDP key id without its secret, a secret that is neither a P-256 PEM nor a
+64-byte Ed25519 key, a `api.cdp.coinbase.com` facilitator URL with no CDP key,
+or a CDP key together with a static auth header).
 
-Endpoints: `GET /.well-known/x402` (free discovery of every tool's
-requirements), `GET /v1/admin/x402/summary`, `GET /v1/admin/x402/payments`,
-`POST /v1/admin/x402/credit` (operator token), and the **x402 Payments** tab
-in `/admin`. MCP `tools/call` stays on AITP-402. MCP has no ratified x402
-transport yet.
+**Coinbase CDP facilitator.** Set the two `TURNSTILE_X402_CDP_API_KEY_*`
+variables and the facilitator defaults to
+`https://api.cdp.coinbase.com/platform/v2/x402`. Every `/verify` and `/settle`
+call carries a fresh `Authorization: Bearer <jwt>` signed with the key, in the
+same shape the CDP SDKs produce: header `{alg: ES256|EdDSA, kid, typ: JWT,
+nonce}`, claims `{sub: key id, iss: "cdp", nbf, iat, exp: +120 s, uris:
+["POST api.cdp.coinbase.com/platform/v2/x402/verify"]}`. The JWT is bound to one
+operation and minted per request, so no long-lived token is stored.
+
+**x402 over MCP** follows the x402 MCP transport (`transports-v2/mcp.md`):
+
+- `tools/list` shows each tool's x402 offer in `_meta.x402`.
+- An unpaid `tools/call` returns a tool result with `isError: true`. Its
+  `structuredContent` is the v2 `PaymentRequired`, and `content[0].text` holds
+  the same JSON. The AITP challenge is in `_meta["aitp/challenge"]`, so AITP
+  agents can pay the same response. The bundled Python and TypeScript clients
+  read it there.
+- The agent retries with its `PaymentPayload` in `params._meta["x402/payment"]`.
+- A successful call carries `_meta["x402/payment-response"]`. A refused payment
+  or failed settlement is again an `isError` `PaymentRequired` whose `error`
+  names the reason. A failed tool is never settled.
+- With x402 off, MCP keeps the AITP `-32402` JSON-RPC error.
+
+Endpoints: `GET /.well-known/x402` (free discovery of every HTTP tool's v1
+requirements and every MCP tool's v2 `PaymentRequired`),
+`GET /v1/admin/x402/summary`, `GET /v1/admin/x402/payments`,
+`POST /v1/admin/x402/credit` (operator token), and the **x402 Payments** tab in
+`/admin`.
 
 ## Full plan
 

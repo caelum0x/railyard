@@ -100,6 +100,7 @@ fn config() -> X402Config {
         network: "base-sepolia".into(),
         facilitator_url: "https://x402.org/facilitator".into(),
         facilitator_auth: None,
+        cdp_key: None,
         asset: config::USDC_BASE_SEPOLIA.into(),
         asset_name: "USD Coin".into(),
         asset_version: "2".into(),
@@ -128,19 +129,28 @@ fn gate(
 }
 
 fn header(value: &str, nonce: &str, to: &str) -> String {
-    let payload = PaymentPayload {
-        x402_version: 1,
-        scheme: "exact".into(),
-        network: "base-sepolia".into(),
-        payload: json!({
-            "signature": "0xsig",
-            "authorization": {
-                "from": PAYER, "to": to, "value": value,
-                "validAfter": "0", "validBefore": "99999999999", "nonce": nonce
-            }
-        }),
-    };
+    let payload = PaymentPayload::v1("exact", "base-sepolia", authorization(value, nonce, to));
     wire::encode_header(&payload).unwrap()
+}
+
+fn authorization(value: &str, nonce: &str, to: &str) -> Value {
+    json!({
+        "signature": "0xsig",
+        "authorization": {
+            "from": PAYER, "to": to, "value": value,
+            "validAfter": "0", "validBefore": "99999999999", "nonce": nonce
+        }
+    })
+}
+
+/// A v2 `PAYMENT-SIGNATURE` payload choosing `accepted` from the offer.
+fn v2_payload(accepted: PaymentRequirementsV2, nonce: &str) -> PaymentPayload {
+    PaymentPayload {
+        x402_version: 2,
+        accepted: Some(accepted.clone()),
+        payload: authorization(&accepted.amount, nonce, &accepted.pay_to),
+        ..PaymentPayload::default()
+    }
 }
 
 fn requirements(g: &X402Gate) -> PaymentRequirements {
@@ -317,4 +327,69 @@ async fn abandoned_handler_failure_is_not_settled() {
         journal.recent(1).await.unwrap()[0].phase,
         X402Phase::Abandoned
     );
+}
+
+#[tokio::test]
+async fn v2_payment_signature_verifies_and_settles() {
+    let facilitator = Arc::new(FakeFacilitator::default());
+    let (g, journal) = gate(facilitator.clone(), None);
+    let req = requirements(&g);
+    let v2 = req.to_v2();
+    assert_eq!(v2.network, "eip155:84532");
+    let header = wire::encode_header(&v2_payload(v2, "0x20")).unwrap();
+    let admission = g.verify(&header, &req).await.unwrap();
+    assert_eq!(admission.version(), 2);
+    assert_eq!(admission.amount_micros, 10_000);
+    g.settle(&admission).await.unwrap();
+    assert_eq!(journal.recent(1).await.unwrap()[0].phase, X402Phase::Settled);
+}
+
+#[tokio::test]
+async fn v2_accepted_must_match_the_offer() {
+    let facilitator = Arc::new(FakeFacilitator::default());
+    let (g, _) = gate(facilitator.clone(), None);
+    let req = requirements(&g);
+
+    let mut cheaper = req.to_v2();
+    cheaper.amount = "1".into();
+    let err = g
+        .verify_payload(v2_payload(cheaper, "0x21"), &req)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "invalid_payment_requirements");
+
+    let mut other_asset = req.to_v2();
+    other_asset.asset = "0x3333333333333333333333333333333333333333".into();
+    let err = g
+        .verify_payload(v2_payload(other_asset, "0x22"), &req)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "invalid_payment_requirements");
+
+    let mut mainnet = req.to_v2();
+    mainnet.network = "eip155:8453".into();
+    let err = g
+        .verify_payload(v2_payload(mainnet, "0x23"), &req)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "invalid_network");
+    assert_eq!(*facilitator.verified.lock().unwrap(), 0);
+}
+
+#[test]
+fn caip2_configured_network_advertises_v1_name_in_v1_requirements() {
+    let mut cfg = config();
+    cfg.network = "eip155:84532".into();
+    let g = X402Gate::new(
+        cfg,
+        Arc::new(FakeFacilitator::default()),
+        Arc::new(InMemoryX402Journal::new()),
+        None,
+    );
+    let req = g
+        .requirements_for_url("mcp://tool/search", "Search", AmountMicros(5), DEFAULT_MIME)
+        .unwrap();
+    assert_eq!(req.network, "base-sepolia");
+    assert_eq!(req.resource, "mcp://tool/search");
+    assert_eq!(req.to_v2().network, "eip155:84532");
 }

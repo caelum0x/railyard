@@ -17,6 +17,10 @@ rand.workspace = true
 hex = "0.4"
 # x402 `X-PAYMENT` / `X-PAYMENT-RESPONSE` headers are base64-encoded JSON.
 base64 = "0.22"
+# Coinbase CDP facilitator auth: per-request JWTs signed with the CDP API key,
+# ES256 (PEM EC P-256 key) or EdDSA (base64 Ed25519 key), as the CDP SDKs do.
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pem", "std"] }
+ed25519-dalek = "2"
 
 # Durable Postgres NonceStore, off by default. Enabling `postgres` pulls in sqlx
 # (runtime query API, no DATABASE_URL needed) and compiles the `pg` module.

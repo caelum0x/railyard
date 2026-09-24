@@ -8,14 +8,23 @@
 //! |---|---|---|
 //! | `TURNSTILE_X402_PAY_TO` | yes (enables x402) | EVM address that receives USDC |
 //! | `TURNSTILE_X402_NETWORK` | no, default `base-sepolia` | facilitator network id |
-//! | `TURNSTILE_X402_FACILITATOR_URL` | on mainnet | facilitator base URL (`/verify`, `/settle`) |
-//! | `TURNSTILE_X402_FACILITATOR_AUTH` | no | full `Authorization` header value for the facilitator |
+//! | `TURNSTILE_X402_FACILITATOR_URL` | on mainnet (unless a CDP key is set) | facilitator base URL (`/verify`, `/settle`) |
+//! | `TURNSTILE_X402_FACILITATOR_AUTH` | no | static `Authorization` header value (self-hosted / PayAI facilitators) |
+//! | `TURNSTILE_X402_CDP_API_KEY_ID` | with the CDP facilitator | CDP Secret API key id |
+//! | `TURNSTILE_X402_CDP_API_KEY_SECRET` | with the CDP facilitator | CDP key secret: PEM EC (ES256) or base64 Ed25519 (EdDSA) |
 //! | `TURNSTILE_X402_ASSET` | off Base | ERC-20 contract of the asset (USDC on Base/Base Sepolia by default) |
 //! | `TURNSTILE_X402_ASSET_NAME` / `_ASSET_VERSION` | no | EIP-712 domain (`USD Coin` / `2`) |
 //! | `TURNSTILE_X402_MAX_TIMEOUT_SECS` | no, default 60 | `maxTimeoutSeconds` advertised |
 //! | `TURNSTILE_X402_MINT_ACCOUNT` | no | Mint account credited with every settled payment |
 //! | `TURNSTILE_PUBLIC_URL` | no | absolute origin used for `resource` URLs |
+//!
+//! Coinbase CDP: set the two `TURNSTILE_X402_CDP_API_KEY_*` variables and the
+//! facilitator defaults to the CDP-hosted one; every `/verify` and `/settle`
+//! then carries a freshly signed CDP JWT (see [`super::cdp`]). A facilitator
+//! URL on `api.cdp.coinbase.com` without a CDP key refuses to start, since
+//! every call would be rejected.
 
+use super::cdp::{is_cdp_url, CdpApiKey, CDP_FACILITATOR_URL};
 use crate::error::TurnstileError;
 
 /// Native USDC on Base mainnet.
@@ -36,7 +45,10 @@ pub struct X402Config {
     pub pay_to: String,
     pub network: String,
     pub facilitator_url: String,
+    /// Static `Authorization` header value (mutually exclusive with `cdp_key`).
     pub facilitator_auth: Option<String>,
+    /// Coinbase CDP API key: every facilitator call gets a signed CDP JWT.
+    pub cdp_key: Option<CdpApiKey>,
     pub asset: String,
     pub asset_name: String,
     pub asset_version: String,
@@ -81,18 +93,31 @@ impl X402Config {
                 "TURNSTILE_X402_NETWORK must be a network id such as base or base-sepolia".into(),
             ));
         }
+        let cdp_key = cdp_key_from(&get)?;
+        let facilitator_auth = get("TURNSTILE_X402_FACILITATOR_AUTH");
+        if cdp_key.is_some() && facilitator_auth.is_some() {
+            return Err(TurnstileError::Config(
+                "set either TURNSTILE_X402_CDP_API_KEY_* (signed CDP JWTs) or TURNSTILE_X402_FACILITATOR_AUTH (static header), not both".into(),
+            ));
+        }
         let facilitator_url = match get("TURNSTILE_X402_FACILITATOR_URL") {
             Some(url) => url,
+            None if cdp_key.is_some() => CDP_FACILITATOR_URL.into(),
             None if is_testnet(&network) => TESTNET_FACILITATOR.into(),
             None => {
                 return Err(TurnstileError::Config(format!(
-                    "TURNSTILE_X402_FACILITATOR_URL must be set for network {network} (mainnet settlement needs a facilitator you have an account with, e.g. Coinbase CDP or PayAI)"
+                    "TURNSTILE_X402_FACILITATOR_URL must be set for network {network} (mainnet settlement needs a facilitator you have an account with: set TURNSTILE_X402_CDP_API_KEY_ID and TURNSTILE_X402_CDP_API_KEY_SECRET for Coinbase CDP, or a PayAI / self-hosted URL)"
                 )))
             }
         };
         if !(facilitator_url.starts_with("https://") || facilitator_url.starts_with("http://")) {
             return Err(TurnstileError::Config(
                 "TURNSTILE_X402_FACILITATOR_URL must be an http(s) URL".into(),
+            ));
+        }
+        if cdp_key.is_none() && is_cdp_url(&facilitator_url) {
+            return Err(TurnstileError::Config(
+                "the Coinbase CDP facilitator authenticates every call with a signed JWT: set TURNSTILE_X402_CDP_API_KEY_ID and TURNSTILE_X402_CDP_API_KEY_SECRET (from portal.cdp.coinbase.com, Secret API Keys)".into(),
             ));
         }
         let asset = match get("TURNSTILE_X402_ASSET") {
@@ -136,7 +161,8 @@ impl X402Config {
             pay_to,
             network,
             facilitator_url: facilitator_url.trim_end_matches('/').to_string(),
-            facilitator_auth: get("TURNSTILE_X402_FACILITATOR_AUTH"),
+            facilitator_auth,
+            cdp_key,
             asset,
             asset_name: get("TURNSTILE_X402_ASSET_NAME")
                 .unwrap_or_else(|| DEFAULT_ASSET_NAME.into()),
@@ -146,6 +172,28 @@ impl X402Config {
             mint_account: get("TURNSTILE_X402_MINT_ACCOUNT"),
             public_url,
         }))
+    }
+}
+
+/// Both CDP variables or neither; a malformed secret names what is wrong.
+fn cdp_key_from<F>(get: &F) -> Result<Option<CdpApiKey>, TurnstileError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    match (
+        get("TURNSTILE_X402_CDP_API_KEY_ID"),
+        get("TURNSTILE_X402_CDP_API_KEY_SECRET"),
+    ) {
+        (None, None) => Ok(None),
+        (Some(_), None) => Err(TurnstileError::Config(
+            "TURNSTILE_X402_CDP_API_KEY_ID is set but TURNSTILE_X402_CDP_API_KEY_SECRET is missing".into(),
+        )),
+        (None, Some(_)) => Err(TurnstileError::Config(
+            "TURNSTILE_X402_CDP_API_KEY_SECRET is set but TURNSTILE_X402_CDP_API_KEY_ID is missing".into(),
+        )),
+        (Some(id), Some(secret)) => CdpApiKey::parse(&id, &secret)
+            .map(Some)
+            .map_err(|e| TurnstileError::Config(format!("TURNSTILE_X402_CDP_API_KEY_SECRET: {e}"))),
     }
 }
 
@@ -210,6 +258,57 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.asset, USDC_BASE);
         assert_eq!(cfg.facilitator_url, "https://facilitator.example");
+    }
+
+    #[test]
+    fn cdp_key_defaults_to_the_cdp_facilitator_even_on_mainnet() {
+        let pem = crate::x402::cdp::tests::ec_pem();
+        let cfg = load(&[
+            ("TURNSTILE_X402_PAY_TO", PAY_TO),
+            ("TURNSTILE_X402_NETWORK", "base"),
+            ("TURNSTILE_X402_CDP_API_KEY_ID", "organizations/o/apiKeys/k"),
+            ("TURNSTILE_X402_CDP_API_KEY_SECRET", &pem),
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(cfg.facilitator_url, CDP_FACILITATOR_URL);
+        assert_eq!(cfg.cdp_key.as_ref().unwrap().algorithm(), "ES256");
+        assert!(cfg.facilitator_auth.is_none());
+    }
+
+    #[test]
+    fn cdp_misconfiguration_names_the_variable() {
+        let half = load(&[
+            ("TURNSTILE_X402_PAY_TO", PAY_TO),
+            ("TURNSTILE_X402_CDP_API_KEY_ID", "k"),
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(half.contains("TURNSTILE_X402_CDP_API_KEY_SECRET is missing"), "{half}");
+        let bad = load(&[
+            ("TURNSTILE_X402_PAY_TO", PAY_TO),
+            ("TURNSTILE_X402_CDP_API_KEY_ID", "k"),
+            ("TURNSTILE_X402_CDP_API_KEY_SECRET", "AAAA"),
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(bad.contains("TURNSTILE_X402_CDP_API_KEY_SECRET:"), "{bad}");
+        let keyless_cdp = load(&[
+            ("TURNSTILE_X402_PAY_TO", PAY_TO),
+            ("TURNSTILE_X402_FACILITATOR_URL", CDP_FACILITATOR_URL),
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(keyless_cdp.contains("TURNSTILE_X402_CDP_API_KEY_ID"), "{keyless_cdp}");
+        let both = load(&[
+            ("TURNSTILE_X402_PAY_TO", PAY_TO),
+            ("TURNSTILE_X402_FACILITATOR_AUTH", "Bearer x"),
+            ("TURNSTILE_X402_CDP_API_KEY_ID", "k"),
+            ("TURNSTILE_X402_CDP_API_KEY_SECRET", &crate::x402::cdp::tests::ed25519_secret()),
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(both.contains("not both"), "{both}");
     }
 
     #[test]

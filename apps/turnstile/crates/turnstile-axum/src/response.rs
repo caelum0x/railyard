@@ -8,7 +8,10 @@ use aitp_client::codec::{encode_challenge, encode_receipt, AITP_VERSION};
 use aitp_client::{PaymentChallenge, Receipt};
 use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use turnstile_core::x402::{PaymentRequiredBody, SettleResponse, HEADER_PAYMENT_RESPONSE};
+use turnstile_core::x402::{
+    PaymentRequiredBody, PaymentRequiredV2, SettleResponse, HEADER_PAYMENT_REQUIRED,
+    HEADER_PAYMENT_RESPONSE, HEADER_PAYMENT_RESPONSE_V2, X402_VERSION_V2,
+};
 use turnstile_core::TurnstileError;
 
 const H_CHALLENGE: &str = "aitp-challenge";
@@ -27,11 +30,30 @@ pub fn challenge(challenge: &PaymentChallenge) -> Response {
     challenge_with(challenge, None)
 }
 
-/// The `402` body: the x402 `PaymentRequiredBody` JSON when x402 is enabled
-/// (x402 clients read the body; AITP clients read the headers), else text.
+/// Headers x402 clients must be able to read cross-origin.
+const X402_EXPOSED: &str = "payment-required, payment-response, x-payment-response";
+
+/// The `402` body: the x402 v1 `PaymentRequiredBody` JSON when x402 is enabled
+/// (v1 clients read the body), plus the base64 v2 `PaymentRequired` in the
+/// `PAYMENT-REQUIRED` header (v2 clients read the header); AITP clients read
+/// the `AITP-*` headers. Without x402 the body is text.
 fn payment_required(x402: Option<&PaymentRequiredBody>) -> Response {
     match x402 {
-        Some(body) => (StatusCode::PAYMENT_REQUIRED, axum::Json(body)).into_response(),
+        Some(body) => {
+            let mut resp = (StatusCode::PAYMENT_REQUIRED, axum::Json(body)).into_response();
+            if let Some(value) = PaymentRequiredV2::from_v1(body)
+                .and_then(|v2| turnstile_core::x402::wire::encode_header(&v2).ok())
+                .and_then(|encoded| HeaderValue::from_str(&encoded).ok())
+            {
+                let headers = resp.headers_mut();
+                headers.insert(HeaderName::from_static(HEADER_PAYMENT_REQUIRED), value);
+                headers.insert(
+                    HeaderName::from_static("access-control-expose-headers"),
+                    HeaderValue::from_static(X402_EXPOSED),
+                );
+            }
+            resp
+        }
         None => (StatusCode::PAYMENT_REQUIRED, "payment required\n").into_response(),
     }
 }
@@ -195,17 +217,22 @@ pub fn x402_unavailable(code: &str, message: &str) -> Response {
         .into_response()
 }
 
-/// Attach the base64 `X-PAYMENT-RESPONSE` settlement header.
-pub fn attach_x402_settlement(mut resp: Response, settled: &SettleResponse) -> Response {
+/// Attach the base64 settlement header in the payer's protocol version:
+/// `X-PAYMENT-RESPONSE` (v1) or `PAYMENT-RESPONSE` (v2).
+pub fn attach_x402_settlement(mut resp: Response, settled: &SettleResponse, version: u32) -> Response {
+    let name = if version >= X402_VERSION_V2 {
+        HEADER_PAYMENT_RESPONSE_V2
+    } else {
+        HEADER_PAYMENT_RESPONSE
+    };
     if let Ok(encoded) = turnstile_core::x402::wire::encode_header(settled) {
         if let Ok(value) = HeaderValue::from_str(&encoded) {
-            resp.headers_mut()
-                .insert(HeaderName::from_static(HEADER_PAYMENT_RESPONSE), value);
+            resp.headers_mut().insert(HeaderName::from_static(name), value);
         }
     }
     resp.headers_mut().insert(
         HeaderName::from_static("access-control-expose-headers"),
-        HeaderValue::from_static("x-payment-response"),
+        HeaderValue::from_static(X402_EXPOSED),
     );
     resp
 }

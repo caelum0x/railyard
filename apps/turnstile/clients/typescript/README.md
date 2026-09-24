@@ -33,7 +33,8 @@ const mcp = await client.mcpCall("summarize", { text: "..." }); // POST /mcp too
 How a call is paid:
 
 1. The unpaid request gets `402` + `AITP-Challenge` (HTTP), or JSON-RPC error
-   `-32402` with `data.aitp_challenge` (MCP).
+   `-32402` with `data.aitp_challenge` (MCP), or an x402 `PaymentRequired` tool
+   result carrying it in `_meta["aitp/challenge"]` (x402-enabled servers).
 2. `SpendPolicy` checks the price cap, the allowed payees and currencies, the
    expiry and the total budget. If any check fails it throws
    `PaymentRefused` and signs nothing.

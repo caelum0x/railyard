@@ -111,6 +111,15 @@ impl Turnstile {
             .requirements(path, &self.description, self.price(), DEFAULT_MIME)
     }
 
+    /// The x402 requirements for an absolute resource URL (MCP tools use
+    /// `mcp://tool/<name>`), at this gate's price.
+    #[must_use]
+    pub fn x402_requirements_for_url(&self, resource: &str) -> Option<PaymentRequirements> {
+        self.x402
+            .as_ref()?
+            .requirements_for_url(resource, &self.description, self.price(), DEFAULT_MIME)
+    }
+
     fn lease_until(&self) -> i64 {
         now_ms().saturating_add(self.settlement_lease.as_millis() as i64)
     }

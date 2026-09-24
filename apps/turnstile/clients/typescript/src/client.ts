@@ -435,11 +435,16 @@ export class TurnstileClient {
     return (env.result?.tools ?? []) as Array<Record<string, unknown>>;
   }
 
-  /** MCP `tools/call`, paying the `-32402` challenge when required. */
+  /**
+   * MCP `tools/call`, paying the AITP challenge when required. The challenge
+   * arrives as a `-32402` JSON-RPC error, or (on an x402-enabled server) as an
+   * x402 `PaymentRequired` tool result carrying it in `_meta["aitp/challenge"]`.
+   */
   async mcpCall(name: string, args: Record<string, unknown> = {}): Promise<McpResult> {
     const first = await this.mcp("tools/call", { name, arguments: { ...args } });
-    if (first.result) return { result: first.result, paid: false };
-    const error = first.error ?? {};
+    const x402Challenge = first.result?.isError ? first.result?._meta?.["aitp/challenge"] : undefined;
+    if (first.result && !x402Challenge) return { result: first.result, paid: false };
+    const error = x402Challenge ? { code: MCP_PAYMENT_REQUIRED, data: x402Challenge } : (first.error ?? {});
     if (error.code !== MCP_PAYMENT_REQUIRED) {
       throw new TurnstileError(`tools/call ${name} failed: ${error.message ?? JSON.stringify(error)}`);
     }

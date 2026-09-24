@@ -32,9 +32,11 @@
 //! The server refuses to start only when it could never serve a tool: no seed
 //! file, no stored tools, no demo echo and no admin token to add one.
 //!
-//! x402: set `TURNSTILE_X402_PAY_TO` (and, off testnet,
-//! `TURNSTILE_X402_FACILITATOR_URL`) to also accept x402 `X-PAYMENT` USDC
-//! payments on every paid HTTP tool; `GET /.well-known/x402` lists them and
+//! x402: set `TURNSTILE_X402_PAY_TO` (and, off testnet, either
+//! `TURNSTILE_X402_CDP_API_KEY_ID` + `_SECRET` for the Coinbase CDP facilitator
+//! or `TURNSTILE_X402_FACILITATOR_URL`) to also accept x402 USDC payments
+//! (v1 `X-PAYMENT`, v2 `PAYMENT-SIGNATURE`, MCP `_meta["x402/payment"]`) on
+//! every paid tool; `GET /.well-known/x402` lists them and
 //! `/v1/admin/x402/*` reports settlements (see [`turnstile_core::x402`]).
 //!
 //! Operator access: `TURNSTILE_ADMIN_TOKEN` enables the console at `/admin`,
@@ -130,10 +132,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let x402_gate: Option<Arc<X402Gate>> = match x402_config {
         Some(cfg) => {
-            let facilitator = HttpFacilitator::new(
+            // CDP key → per-request signed JWT; else static header; else keyless.
+            let facilitator = HttpFacilitator::from_config(
                 Arc::new(ReqwestTransport::new(cfg.facilitator_url.clone())?),
-                cfg.facilitator_auth.clone(),
-            );
+                &cfg,
+            )?;
             let mint = cfg.mint_account.clone().map(|account| {
                 ReqwestTransport::new(config.mint_server_url.clone()).map(|transport| {
                     Arc::new(MintDepositPoster::new(
@@ -150,8 +153,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             println!(
-                "x402 enabled: network {} payTo {} facilitator {}",
-                cfg.network, cfg.pay_to, cfg.facilitator_url
+                "x402 enabled (v1 X-PAYMENT + v2 PAYMENT-SIGNATURE, MCP _meta): network {} payTo {} facilitator {} auth {}",
+                cfg.network,
+                cfg.pay_to,
+                cfg.facilitator_url,
+                facilitator.auth().describe()
             );
             Some(Arc::new(X402Gate::new(
                 cfg,

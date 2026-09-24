@@ -37,7 +37,9 @@ use turnstile_core::{
     StoredTool, ToolCatalog, ToolDescriptor, ToolRegistry, ToolStore, ToolStoreError, Turnstile,
     TurnstileConfig, X402Gate,
 };
-use turnstile_core::x402::{PaymentRequirements, X402_VERSION};
+use turnstile_core::x402::{
+    PaymentRequiredV2, PaymentRequirements, X402_VERSION, X402_VERSION_V2,
+};
 
 use crate::mcp::{echo_schema, McpTool, McpToolKind, MCP_ECHO_RESOURCE};
 use crate::tools::{proxy_request, ToolSpec, UpstreamTool};
@@ -389,9 +391,10 @@ pub async fn call_tool(
     gate_request(&tool.gate, req, move |req| proxy_request(upstream, req)).await
 }
 
-/// `GET /.well-known/x402` — x402 discovery: every live HTTP tool as x402
-/// `PaymentRequirements` (the same objects its `402` advertises), so x402
-/// clients and directories can list the tools before paying.
+/// `GET /.well-known/x402` — x402 discovery: every live HTTP tool as x402 v1
+/// `PaymentRequirements` (the same objects its `402` advertises) and every MCP
+/// tool as a v2 `PaymentRequired` (`mcp://tool/<name>`), so x402 clients and
+/// directories can list the tools before paying.
 pub async fn discover_x402(State(registry): State<Arc<LiveRegistry>>) -> Response {
     let snapshot = registry.snapshot();
     let mut accepts: Vec<PaymentRequirements> = snapshot
@@ -400,14 +403,22 @@ pub async fn discover_x402(State(registry): State<Arc<LiveRegistry>>) -> Respons
         .filter_map(|tool| tool.gate.x402_requirements(&tool.spec.http_path()))
         .collect();
     accepts.sort_by(|a, b| a.resource.cmp(&b.resource));
+    let mcp: Vec<PaymentRequiredV2> = snapshot
+        .mcp
+        .iter()
+        .filter_map(|tool| tool.paywall.x402_requirements(&tool.name))
+        .filter_map(|r| PaymentRequiredV2::from_v1(&X402Gate::required_body(vec![r], "")))
+        .collect();
     match registry.factory.x402() {
         Some(x402) => Json(json!({
             "x402Version": X402_VERSION,
+            "x402Versions": [X402_VERSION, X402_VERSION_V2],
             "network": x402.config().network,
             "payTo": x402.config().pay_to,
             "asset": x402.config().asset,
             "facilitator": x402.config().facilitator_url,
             "accepts": accepts,
+            "mcp": mcp,
         }))
         .into_response(),
         None => (

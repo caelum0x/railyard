@@ -6,7 +6,9 @@
 //! - `X-PAYMENT` → handler runs, `/settle` called, `X-PAYMENT-RESPONSE` set;
 //! - handler failure → never settled (payer not charged);
 //! - replayed `X-PAYMENT` → `402`, handler not run again;
-//! - facilitator rejection → `402` whose `error` carries the reason.
+//! - facilitator rejection → `402` whose `error` carries the reason;
+//! - x402 v2: the `402` also carries `PAYMENT-REQUIRED`, and a
+//!   `PAYMENT-SIGNATURE` retry is answered with `PAYMENT-RESPONSE`.
 
 use std::sync::{Arc, Mutex};
 
@@ -44,7 +46,8 @@ impl HttpTransport for FakeFacilitator {
     async fn send(&self, req: HttpRequest) -> Result<HttpResponse, PayError> {
         self.calls.lock().unwrap().push(req.path.clone());
         let sent: Value = serde_json::from_slice(&req.body).unwrap();
-        assert_eq!(sent["x402Version"], 1);
+        // The facilitator is addressed in the payment's own version.
+        assert_eq!(sent["x402Version"], sent["paymentPayload"]["x402Version"]);
         assert_eq!(sent["paymentRequirements"]["payTo"], PAY_TO);
         let body = match req.path.as_str() {
             "/verify" if self.valid => json!({ "isValid": true, "payer": PAYER }),
@@ -68,6 +71,7 @@ fn x402_config() -> X402Config {
         network: "base-sepolia".into(),
         facilitator_url: "https://facilitator.test".into(),
         facilitator_auth: None,
+        cdp_key: None,
         asset: turnstile_core::x402::config::USDC_BASE_SEPOLIA.into(),
         asset_name: "USD Coin".into(),
         asset_version: "2".into(),
@@ -140,10 +144,36 @@ fn payment(nonce: &str) -> String {
     STANDARD.encode(payload.to_string())
 }
 
+/// A v2 `PAYMENT-SIGNATURE` value choosing the advertised requirement.
+fn payment_v2(nonce: &str, accepted: &Value) -> String {
+    let payload = json!({
+        "x402Version": 2,
+        "resource": { "url": "/v1/echo" },
+        "accepted": accepted,
+        "payload": {
+            "signature": "0xsig",
+            "authorization": {
+                "from": PAYER, "to": PAY_TO, "value": "5000",
+                "validAfter": "0", "validBefore": "99999999999", "nonce": nonce
+            }
+        }
+    });
+    STANDARD.encode(payload.to_string())
+}
+
+fn decode_header(resp: &axum::response::Response, name: &str) -> Value {
+    let raw = resp.headers().get(name).unwrap().to_str().unwrap();
+    serde_json::from_slice(&STANDARD.decode(raw).unwrap()).unwrap()
+}
+
 async fn call(app: &Router, x_payment: Option<&str>) -> axum::response::Response {
+    call_with(app, "x-payment", x_payment).await
+}
+
+async fn call_with(app: &Router, header: &str, value: Option<&str>) -> axum::response::Response {
     let mut builder = Request::post("/v1/echo");
-    if let Some(p) = x_payment {
-        builder = builder.header("x-payment", p);
+    if let Some(p) = value {
+        builder = builder.header(header, p);
     }
     app.clone()
         .oneshot(builder.body(Body::empty()).unwrap())
@@ -230,4 +260,54 @@ async fn facilitator_rejection_is_a_402_with_the_reason() {
     let body = json_body(resp).await;
     assert_eq!(body["error"], "insufficient_funds");
     assert_eq!(body["accepts"][0]["payTo"], PAY_TO);
+}
+
+#[tokio::test]
+async fn unpaid_request_carries_the_v2_payment_required_header() {
+    let h = harness(true, StatusCode::OK);
+    let resp = call(&h.app, None).await;
+    assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+    let required = decode_header(&resp, "payment-required");
+    assert_eq!(required["x402Version"], 2);
+    assert_eq!(required["resource"]["url"], "/v1/echo");
+    assert_eq!(required["resource"]["description"], "Echo tool");
+    let accept = &required["accepts"][0];
+    assert_eq!(accept["network"], "eip155:84532");
+    assert_eq!(accept["amount"], "5000");
+    assert_eq!(accept["payTo"], PAY_TO);
+    let exposed = resp.headers()["access-control-expose-headers"].to_str().unwrap();
+    assert!(exposed.contains("payment-required"));
+}
+
+#[tokio::test]
+async fn payment_signature_v2_is_settled_and_answered_with_payment_response() {
+    let h = harness(true, StatusCode::OK);
+    let unpaid = call(&h.app, None).await;
+    let accepted = decode_header(&unpaid, "payment-required")["accepts"][0].clone();
+
+    let resp = call_with(&h.app, "payment-signature", Some(&payment_v2("0xdd", &accepted))).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp.headers().get("x-payment-response").is_none());
+    let settled = decode_header(&resp, "payment-response");
+    assert_eq!(settled["success"], true);
+    assert_eq!(settled["transaction"], "0xfeed");
+    assert_eq!(*h.facilitator.calls.lock().unwrap(), vec!["/verify", "/settle"]);
+
+    // The same signed authorization cannot buy a second call.
+    let replay = call_with(&h.app, "payment-signature", Some(&payment_v2("0xdd", &accepted))).await;
+    assert_eq!(replay.status(), StatusCode::PAYMENT_REQUIRED);
+    let required = decode_header(&replay, "payment-required");
+    assert_eq!(required["error"], "invalid_exact_evm_payload_authorization_nonce_used");
+}
+
+#[tokio::test]
+async fn v2_payment_for_a_different_amount_is_refused_before_the_facilitator() {
+    let h = harness(true, StatusCode::OK);
+    let unpaid = call(&h.app, None).await;
+    let mut accepted = decode_header(&unpaid, "payment-required")["accepts"][0].clone();
+    accepted["amount"] = json!("1");
+    let resp = call_with(&h.app, "payment-signature", Some(&payment_v2("0xee", &accepted))).await;
+    assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+    assert_eq!(json_body(resp).await["error"], "invalid_payment_requirements");
+    assert!(h.facilitator.calls.lock().unwrap().is_empty());
 }

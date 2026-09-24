@@ -23,9 +23,11 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
 use turnstile_core::mcp::{
-    extract_authorization, receipt_meta, tool_arguments, MCP_PAYMENT_REQUIRED,
+    extract_authorization, extract_x402_payment, payment_required_result, receipt_meta,
+    tool_arguments, MCP_PAYMENT_REQUIRED,
 };
-use turnstile_core::{AmountMicros, McpAdmit, McpPaywall};
+use turnstile_core::x402::{PaymentRequiredV2, X402Gate};
+use turnstile_core::{AmountMicros, McpAdmit, McpPaywall, McpX402Refusal};
 
 use crate::live::LiveRegistry;
 use crate::tools::UpstreamTool;
@@ -96,9 +98,13 @@ fn initialize_result() -> Value {
         "capabilities": { "tools": { "listChanged": true } },
         "serverInfo": { "name": "turnstile-server", "version": env!("CARGO_PKG_VERSION") },
         "instructions": "Paid MCP tools. Pay per call with an AITP-402 \
-                         authorization in the `_aitp_authorization` argument; an \
-                         unpaid call returns a JSON-RPC error whose data carries \
-                         the challenge.",
+                         authorization in the `_aitp_authorization` argument, or \
+                         (when x402 is enabled) with an x402 PaymentPayload in \
+                         `_meta[\"x402/payment\"]`. An unpaid call returns the \
+                         x402 PaymentRequired as an isError tool result (AITP \
+                         challenge in `_meta[\"aitp/challenge\"]`), or, without \
+                         x402, a JSON-RPC -32402 error whose data carries the \
+                         AITP challenge.",
     })
 }
 
@@ -113,12 +119,15 @@ fn tools_list_result(state: &McpState) -> Value {
         .iter()
         .filter(|tool| tool.resource.starts_with("tools/call#"))
         .map(|tool| {
-            let mut schema = snapshot
-                .mcp
-                .iter()
-                .find(|t| t.resource == tool.resource)
+            let live = snapshot.mcp.iter().find(|t| t.resource == tool.resource);
+            let mut schema = live
                 .map(|t| t.input_schema.clone())
                 .unwrap_or_else(|| json!({ "type": "object" }));
+            // The x402 offer (v2 `PaymentRequired` without an error) so x402
+            // agents can price the call before making it.
+            let x402 = live
+                .and_then(|t| t.paywall.x402_requirements(&t.name))
+                .and_then(|r| PaymentRequiredV2::from_v1(&X402Gate::required_body(vec![r], "")));
             // Every paid tool accepts the payment in a reserved argument.
             if let Some(props) = schema
                 .as_object_mut()
@@ -133,7 +142,7 @@ fn tools_list_result(state: &McpState) -> Value {
                     }),
                 );
             }
-            json!({
+            let mut entry = json!({
                 "name": tool.name,
                 "description": tool.description,
                 "inputSchema": schema,
@@ -146,13 +155,109 @@ fn tools_list_result(state: &McpState) -> Value {
                         "scheme": tool.scheme,
                     },
                 },
-            })
+            });
+            if let Some(offer) = x402.and_then(|o| serde_json::to_value(o).ok()) {
+                entry["_meta"]["x402"] = offer;
+            }
+            entry
         })
         .collect();
     json!({ "tools": tools })
 }
 
+/// What a paid tool produced once it ran.
+enum ToolRun {
+    /// Success: the tool output and the amount to bill on the metered rail.
+    Done {
+        result: Value,
+        billable: AmountMicros,
+    },
+    /// The tool answered with an error result: nothing is charged.
+    ToolError(Value),
+    /// The tool could not be reached: nothing is charged.
+    Failed(String),
+}
+
+/// Run a paid tool. `quoted` is the price the payer authorized (the metering
+/// ceiling on the AITP rail; x402 `exact` always settles the quoted price).
+async fn run_tool(tool: &McpTool, params: &Value, quoted: i64) -> ToolRun {
+    let args = tool_arguments(params);
+    match &tool.kind {
+        McpToolKind::Echo => {
+            let text = args
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            // Bill one microdollar per echoed byte, capped at the authorized
+            // price; a zero-length echo charges nothing on the metered rail.
+            let used = (text.len() as i64).clamp(0, quoted);
+            ToolRun::Done {
+                result: json!({
+                    "content": [{ "type": "text", "text": text }],
+                    "isError": false,
+                }),
+                billable: AmountMicros::new(used),
+            }
+        }
+        McpToolKind::Upstream(upstream) => run_upstream(upstream, &args, quoted).await,
+    }
+}
+
+/// Proxy a config-declared tool: the call `arguments` (minus any payment) are
+/// POSTed (or sent as a query for bodyless upstreams).
+async fn run_upstream(upstream: &UpstreamTool, args: &Value, quoted: i64) -> ToolRun {
+    let reply = if upstream.spec.upstream_is_bodyless() {
+        match crate::tools::arguments_to_query(args) {
+            Ok(query) => {
+                upstream
+                    .call(None, axum::body::Bytes::new(), Some(&query))
+                    .await
+            }
+            Err(error) => Err(error),
+        }
+    } else {
+        let body = serde_json::to_vec(args).unwrap_or_else(|_| b"{}".to_vec());
+        upstream
+            .call(Some("application/json"), axum::body::Bytes::from(body), None)
+            .await
+    };
+    match reply {
+        Ok(reply) if reply.status.is_success() => {
+            let text = String::from_utf8_lossy(&reply.body).into_owned();
+            let mut result = json!({
+                "content": [{ "type": "text", "text": text }],
+                "isError": false,
+            });
+            if let Ok(structured) = serde_json::from_str::<Value>(&text) {
+                if structured.is_object() {
+                    result["structuredContent"] = structured;
+                }
+            }
+            ToolRun::Done {
+                result,
+                billable: upstream.billable(quoted, reply.usage_micros),
+            }
+        }
+        Ok(reply) => ToolRun::ToolError(json!({
+            "content": [{ "type": "text", "text": String::from_utf8_lossy(&reply.body) }],
+            "isError": true,
+            "_meta": { "upstream_status": reply.status.as_u16(), "charged": false },
+        })),
+        Err(error) => ToolRun::Failed(error),
+    }
+}
+
 /// Gate + run a `tools/call`. Unknown tools are an invalid-params error.
+///
+/// Two payment rails share the call:
+/// - x402 (`params._meta["x402/payment"]`, x402 MCP transport): verify, run,
+///   settle on-chain on success, answer with `_meta["x402/payment-response"]`;
+/// - AITP-402 (`arguments._aitp_authorization`): hold, run, capture usage.
+///
+/// An unpaid call on an x402-enabled tool is answered with the x402
+/// `PaymentRequired` tool result (AITP challenge in `_meta["aitp/challenge"]`);
+/// otherwise with the AITP `-32402` JSON-RPC error.
 async fn handle_tool_call(state: &McpState, id: Option<Value>, params: Option<&Value>) -> Response {
     let params = params.cloned().unwrap_or_else(|| json!({}));
     let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
@@ -168,9 +273,25 @@ async fn handle_tool_call(state: &McpState, id: Option<Value>, params: Option<&V
     else {
         return rpc_error(id, -32602, "unknown tool", Some(json!({ "tool": name })));
     };
-    let tool = &tool;
-    if let McpToolKind::Upstream(upstream) = &tool.kind {
-        return handle_upstream_call(tool, upstream, id, &params).await;
+
+    if let Some(payment) = extract_x402_payment(&params) {
+        return match payment {
+            Ok(payment) => handle_x402_call(&tool, id, &params, payment).await,
+            Err(error) => match tool.paywall.x402_requirements(&tool.name) {
+                Some(requirements) => {
+                    let refused = X402Gate::required_body(vec![requirements], "invalid_payload");
+                    match PaymentRequiredV2::from_v1(&refused) {
+                        Some(required) => {
+                            let mut result = payment_required_result(&required, None);
+                            result["_meta"] = json!({ "x402/error": { "code": "invalid_payload", "message": error } });
+                            rpc_result(id, result)
+                        }
+                        None => rpc_error(id, -32602, "invalid x402 payment", Some(json!({ "error": error }))),
+                    }
+                }
+                None => rpc_error(id, -32602, "this tool does not accept x402 payments", Some(json!({ "tool": tool.name }))),
+            },
+        };
     }
 
     let authorization = extract_authorization(&params);
@@ -179,126 +300,95 @@ async fn handle_tool_call(state: &McpState, id: Option<Value>, params: Option<&V
         .gate_call(&tool.resource, authorization.as_deref())
         .await
     {
-        // Unpaid or invalid: the paywall already built the JSON-RPC error object
-        // (challenge in `data`); return it verbatim.
-        McpAdmit::Challenge(error) | McpAdmit::Rejected(error) => rpc_error_value(id, error),
+        McpAdmit::Challenge(error) => match tool.paywall.x402_payment_required(&tool.name, &error) {
+            Some(result) => rpc_result(id, result),
+            None => rpc_error_value(id, error),
+        },
+        // An AITP authorization was presented and refused: the AITP error
+        // (reason + fresh challenge in `data`) is the answer on that rail.
+        McpAdmit::Rejected(error) => rpc_error_value(id, error),
         McpAdmit::Admitted(settled) => {
-            let args = tool_arguments(&params);
-            let text = args
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-
-            // Success-only: bill one microdollar per echoed byte, capped at the
-            // authorized price (the hold caps it too). Zero-length echo releases
-            // the hold and charges nothing.
+            // The ceiling is what the payer authorized (the price quoted when
+            // the challenge was issued), not the tool's current price.
             let quoted = settled.quoted().get();
-            let used = (text.len() as i64).clamp(0, quoted);
-
-            match settled.capture(AmountMicros::new(used)).await {
-                Ok(receipt) => {
-                    let mut result = json!({
-                        "content": [{ "type": "text", "text": text }],
-                        "isError": false,
-                    });
-                    if let Some(receipt) = receipt {
-                        result["_meta"] = receipt_meta(&receipt);
+            match run_tool(&tool, &params, quoted).await {
+                ToolRun::Done { mut result, billable } => match settled.capture(billable).await {
+                    Ok(receipt) => {
+                        if let Some(receipt) = receipt {
+                            result["_meta"] = receipt_meta(&receipt);
+                        }
+                        rpc_result(id, result)
                     }
+                    // Capture could not be confirmed; recovery will continue
+                    // it. Do not claim success: surface settlement-pending.
+                    Err(error) => rpc_error(
+                        id,
+                        MCP_PAYMENT_REQUIRED,
+                        "payment settlement pending",
+                        Some(json!({ "aitp_settlement": "capture_pending", "aitp_error": error.to_string() })),
+                    ),
+                },
+                ToolRun::ToolError(result) => {
+                    release_logged(settled, &tool.name).await;
                     rpc_result(id, result)
                 }
-                // Capture could not be confirmed; recovery will continue it. Do
-                // not claim success — surface a settlement-pending error.
-                Err(error) => rpc_error(
-                    id,
-                    MCP_PAYMENT_REQUIRED,
-                    "payment settlement pending",
-                    Some(json!({ "aitp_settlement": "capture_pending", "aitp_error": error.to_string() })),
-                ),
+                ToolRun::Failed(error) => {
+                    release_logged(settled, &tool.name).await;
+                    rpc_error(id, -32603, "upstream call failed", Some(json!({ "error": error, "charged": false })))
+                }
             }
         }
     }
 }
 
-/// Gate + proxy a config-declared tool: the call `arguments` (minus the payment)
-/// are POSTed to the upstream; a 2xx captures, anything else releases.
-async fn handle_upstream_call(
+/// The x402 MCP rail: verify the `_meta` payment, run the tool, settle only on
+/// success. A failed settlement withholds the tool output (x402 MCP spec).
+async fn handle_x402_call(
     tool: &McpTool,
-    upstream: &UpstreamTool,
     id: Option<Value>,
     params: &Value,
+    payment: turnstile_core::x402::PaymentPayload,
 ) -> Response {
-    let authorization = extract_authorization(params);
-    match tool
-        .paywall
-        .gate_call(&tool.resource, authorization.as_deref())
-        .await
-    {
-        McpAdmit::Challenge(error) | McpAdmit::Rejected(error) => rpc_error_value(id, error),
-        McpAdmit::Admitted(settled) => {
-            let args = tool_arguments(params);
-            let reply = if upstream.spec.upstream_is_bodyless() {
-                match crate::tools::arguments_to_query(&args) {
-                    Ok(query) => {
-                        upstream
-                            .call(None, axum::body::Bytes::new(), Some(&query))
-                            .await
-                    }
-                    Err(error) => Err(error),
-                }
-            } else {
-                let body = serde_json::to_vec(&args).unwrap_or_else(|_| b"{}".to_vec());
-                upstream
-                    .call(Some("application/json"), axum::body::Bytes::from(body), None)
-                    .await
-            };
-            let reply = match reply {
-                Ok(reply) if reply.status.is_success() => reply,
-                Ok(reply) => {
-                    let _ = settled.release().await;
-                    return rpc_result(
-                        id,
-                        json!({
-                            "content": [{ "type": "text", "text": String::from_utf8_lossy(&reply.body) }],
-                            "isError": true,
-                            "_meta": { "upstream_status": reply.status.as_u16(), "charged": false },
-                        }),
-                    );
-                }
-                Err(error) => {
-                    let _ = settled.release().await;
-                    return rpc_error(id, -32603, "upstream call failed", Some(json!({ "error": error, "charged": false })));
-                }
-            };
-            // The ceiling is what the payer authorized (the price quoted when the
-            // challenge was issued), not the tool's current price.
-            let quoted = settled.quoted().get();
-            let amount = upstream.billable(quoted, reply.usage_micros);
-            let text = String::from_utf8_lossy(&reply.body).into_owned();
-            match settled.capture(amount).await {
-                Ok(receipt) => {
-                    let mut result = json!({
-                        "content": [{ "type": "text", "text": text }],
-                        "isError": false,
-                    });
-                    if let Ok(structured) = serde_json::from_str::<Value>(&text) {
-                        if structured.is_object() {
-                            result["structuredContent"] = structured;
-                        }
-                    }
-                    if let Some(receipt) = receipt {
-                        result["_meta"] = receipt_meta(&receipt);
-                    }
-                    rpc_result(id, result)
-                }
-                Err(error) => rpc_error(
-                    id,
-                    MCP_PAYMENT_REQUIRED,
-                    "payment settlement pending",
-                    Some(json!({ "aitp_settlement": "capture_pending", "aitp_error": error.to_string() })),
-                ),
+    let admission = match tool.paywall.admit_x402(&tool.name, payment).await {
+        Ok(admission) => admission,
+        Err(refusal) => return x402_refusal(id, refusal),
+    };
+    let quoted = tool.paywall.gate().price().get();
+    match run_tool(tool, params, quoted).await {
+        ToolRun::Done { mut result, .. } => match tool.paywall.settle_x402(&tool.name, &admission).await {
+            Ok(meta) => {
+                result["_meta"] = meta;
+                rpc_result(id, result)
             }
+            Err(refusal) => x402_refusal(id, refusal),
+        },
+        ToolRun::ToolError(result) => {
+            tool.paywall
+                .abandon_x402(&admission, "tool returned an error result")
+                .await;
+            rpc_result(id, result)
         }
+        ToolRun::Failed(error) => {
+            tool.paywall
+                .abandon_x402(&admission, &format!("upstream call failed: {error}"))
+                .await;
+            rpc_error(id, -32603, "upstream call failed", Some(json!({ "error": error, "charged": false })))
+        }
+    }
+}
+
+fn x402_refusal(id: Option<Value>, refusal: McpX402Refusal) -> Response {
+    match refusal {
+        McpX402Refusal::ToolResult(result) => rpc_result(id, result),
+        McpX402Refusal::RpcError(error) => rpc_error_value(id, error),
+    }
+}
+
+/// Release an AITP hold after a failed tool run, logging a release fault (the
+/// settlement reaper retries it).
+async fn release_logged(settled: turnstile_core::Settled, tool: &str) {
+    if let Err(error) = settled.release().await {
+        eprintln!("mcp: releasing the hold for {tool} failed (the reaper will retry): {error}");
     }
 }
 
@@ -354,4 +444,197 @@ fn rpc_error(id: Option<Value>, code: i64, message: &str, data: Option<Value>) -
 fn rpc_error_value(id: Option<Value>, error: Value) -> Response {
     Json(json!({ "jsonrpc": "2.0", "id": id.unwrap_or(Value::Null), "error": error }))
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use async_trait::async_trait;
+    use turnstile_core::x402::{
+        config::USDC_BASE_SEPOLIA, Facilitator, InMemoryX402Journal, PaymentPayload,
+        PaymentRequirements, SettleResponse, VerifyResponse, X402Config,
+    };
+    use turnstile_core::{
+        FakeVerifier, InMemoryNonceStore, InMemorySettlementJournal, InMemoryToolStore,
+        TurnstileConfig,
+    };
+
+    use super::*;
+    use crate::live::{BuiltinEcho, GateFactory};
+
+    const PAY_TO: &str = "0x2222222222222222222222222222222222222222";
+    const PAYER: &str = "0x1111111111111111111111111111111111111111";
+
+    #[derive(Default)]
+    struct Facil {
+        calls: Mutex<Vec<&'static str>>,
+    }
+
+    #[async_trait]
+    impl Facilitator for Facil {
+        async fn verify(
+            &self,
+            _: &PaymentPayload,
+            _: &PaymentRequirements,
+        ) -> Result<VerifyResponse, String> {
+            self.calls.lock().unwrap().push("verify");
+            Ok(VerifyResponse { is_valid: true, invalid_reason: None, payer: Some(PAYER.into()) })
+        }
+
+        async fn settle(
+            &self,
+            _: &PaymentPayload,
+            _: &PaymentRequirements,
+        ) -> Result<SettleResponse, String> {
+            self.calls.lock().unwrap().push("settle");
+            Ok(SettleResponse {
+                success: true,
+                error_reason: None,
+                transaction: "0xfeed".into(),
+                network: "eip155:84532".into(),
+                payer: Some(PAYER.into()),
+            })
+        }
+    }
+
+    async fn state(facil: Option<Arc<Facil>>) -> Arc<McpState> {
+        let config = TurnstileConfig {
+            mint_server_url: "http://mint.internal".into(),
+            api_key: "k".into(),
+            payee: "ait1qpayee".into(),
+            price_micros: AmountMicros(5_000),
+            currency: "AIT".into(),
+            challenge_ttl_ms: 60_000,
+        };
+        let x402 = facil.map(|facil| {
+            Arc::new(X402Gate::new(
+                X402Config {
+                    pay_to: PAY_TO.into(),
+                    network: "base-sepolia".into(),
+                    facilitator_url: "https://x402.org/facilitator".into(),
+                    facilitator_auth: None,
+                    cdp_key: None,
+                    asset: USDC_BASE_SEPOLIA.into(),
+                    asset_name: "USD Coin".into(),
+                    asset_version: "2".into(),
+                    max_timeout_seconds: 60,
+                    mint_account: None,
+                    public_url: None,
+                },
+                facil,
+                Arc::new(InMemoryX402Journal::new()),
+                None,
+            ))
+        });
+        let factory = GateFactory::new(
+            config.clone(),
+            Arc::new(InMemoryNonceStore::new()),
+            Arc::new(FakeVerifier::with_hold("hold_1")),
+            Arc::new(InMemorySettlementJournal::new()),
+            Duration::from_secs(30),
+        )
+        .with_x402(x402);
+        let echo = BuiltinEcho {
+            gate: factory.gate_described(config.price_micros, "Echo"),
+        };
+        let registry = Arc::new(LiveRegistry::new(
+            Arc::new(InMemoryToolStore::new()),
+            factory,
+            Some(echo),
+        ));
+        registry.reload().await.unwrap();
+        Arc::new(McpState { registry })
+    }
+
+    async fn rpc(state: &Arc<McpState>, method: &str, params: Value) -> Value {
+        let req = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
+        let resp = mcp_endpoint(State(state.clone()), Json(req)).await;
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn x402_over_mcp_payment_required_then_paid_with_meta() {
+        let facil = Arc::new(Facil::default());
+        let state = state(Some(facil.clone())).await;
+
+        let list = rpc(&state, "tools/list", json!({})).await;
+        let echo = &list["result"]["tools"][0];
+        assert_eq!(echo["_meta"]["x402"]["accepts"][0]["amount"], "5000");
+        assert_eq!(echo["_meta"]["x402"]["resource"]["url"], "mcp://tool/echo");
+
+        let unpaid = rpc(&state, "tools/call", json!({ "name": "echo", "arguments": { "text": "hi" } })).await;
+        let result = &unpaid["result"];
+        assert_eq!(result["isError"], true);
+        let required = &result["structuredContent"];
+        assert_eq!(required["x402Version"], 2);
+        assert!(result["_meta"]["aitp/challenge"]["aitp_challenge"].is_string());
+
+        let accepted = required["accepts"][0].clone();
+        let payment = json!({
+            "x402Version": 2,
+            "resource": required["resource"],
+            "accepted": accepted,
+            "payload": {
+                "signature": "0xsig",
+                "authorization": {
+                    "from": PAYER, "to": PAY_TO, "value": "5000",
+                    "validAfter": "0", "validBefore": "99999999999", "nonce": "0x01"
+                }
+            }
+        });
+        let paid = rpc(
+            &state,
+            "tools/call",
+            json!({ "name": "echo", "arguments": { "text": "hi" }, "_meta": { "x402/payment": payment } }),
+        )
+        .await;
+        let result = &paid["result"];
+        assert_eq!(result["isError"], false);
+        assert_eq!(result["content"][0]["text"], "hi");
+        assert_eq!(result["_meta"]["x402/payment-response"]["transaction"], "0xfeed");
+        assert_eq!(*facil.calls.lock().unwrap(), vec!["verify", "settle"]);
+
+        // Replaying the same payment is refused as a PaymentRequired result.
+        let replay = rpc(
+            &state,
+            "tools/call",
+            json!({ "name": "echo", "arguments": { "text": "hi" }, "_meta": { "x402/payment": payment } }),
+        )
+        .await;
+        assert_eq!(replay["result"]["isError"], true);
+        assert_eq!(
+            replay["result"]["structuredContent"]["error"],
+            "invalid_exact_evm_payload_authorization_nonce_used"
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_meta_payment_is_a_payment_required_result() {
+        let state = state(Some(Arc::new(Facil::default()))).await;
+        let resp = rpc(
+            &state,
+            "tools/call",
+            json!({ "name": "echo", "arguments": {}, "_meta": { "x402/payment": { "x402Version": 2 } } }),
+        )
+        .await;
+        assert_eq!(resp["result"]["isError"], true);
+        assert_eq!(resp["result"]["structuredContent"]["error"], "invalid_payload");
+    }
+
+    #[tokio::test]
+    async fn without_x402_unpaid_call_keeps_the_aitp_json_rpc_error() {
+        let state = state(None).await;
+        let unpaid = rpc(&state, "tools/call", json!({ "name": "echo", "arguments": { "text": "hi" } })).await;
+        assert_eq!(unpaid["error"]["code"], MCP_PAYMENT_REQUIRED);
+        assert!(unpaid["error"]["data"]["aitp_challenge"].is_string());
+        let paid_x402 = rpc(
+            &state,
+            "tools/call",
+            json!({ "name": "echo", "_meta": { "x402/payment": { "x402Version": 1, "scheme": "exact", "network": "base-sepolia", "payload": {} } } }),
+        )
+        .await;
+        assert_eq!(paid_x402["error"]["code"], -32602);
+    }
 }

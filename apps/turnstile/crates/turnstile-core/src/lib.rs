@@ -59,7 +59,7 @@ pub use journal::{
     InMemorySettlementJournal, ResourceRevenue, RevenueSummary, SettlementJournal,
     SettlementPhase, SettlementRecord,
 };
-pub use mcp::{McpAdmit, McpPaywall};
+pub use mcp::{McpAdmit, McpPaywall, McpX402Refusal};
 pub use nonce::{InMemoryNonceStore, NonceStore};
 #[cfg(feature = "postgres")]
 pub use pg::{spawn_reaper, PostgresNonceStore};
