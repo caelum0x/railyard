@@ -17,6 +17,7 @@ pub mod auth;
 pub mod breadth;
 pub mod catalog_v2;
 pub mod charge_filters;
+pub mod checkout_webhooks;
 pub mod crud;
 pub mod customer_lists;
 pub mod emit;
@@ -34,6 +35,7 @@ pub mod reads;
 pub mod refunds;
 pub mod phase14;
 pub mod phase15;
+pub mod portal;
 pub mod resources;
 pub mod sdk_parity;
 pub mod serializers;
@@ -76,6 +78,7 @@ pub fn router(state: AppState) -> Router {
         .route("/customers/:external_id/invoices", get(crud::customer_invoices))
         .route("/customers/:external_id/wallets", get(crud::customer_wallets))
         .route("/customers/:external_id/portal_url", get(crud::customer_portal_url))
+        .route("/customers/:external_id/portal_sessions", post(portal::create_session).delete(portal::revoke_sessions))
         .route("/customers/:external_id/checkout_url", post(crud::customer_checkout_url))
         .route("/customers/:external_id/applied_coupons", get(customer_lists::customer_applied_coupons))
         .route("/customers/:external_id/credit_notes", get(customer_lists::customer_credit_notes))
@@ -151,6 +154,7 @@ pub fn router(state: AppState) -> Router {
         .route("/credit_notes", post(handlers::create_credit_note).get(subs::list_credit_notes))
         .route("/wallets", post(handlers::create_wallet).get(sdk_parity::list_wallets))
         .route("/wallets/:id", get(handlers::show_wallet).put(crud::update_wallet).delete(crud::terminate_wallet))
+        .route("/wallets/:id/realtime", get(crud::show_wallet_realtime).put(crud::update_wallet_realtime))
         .route("/wallets/:id/transactions", get(reads::wallet_transactions))
         .route("/wallet_transactions", post(handlers::create_wallet_transaction))
         .route("/coupons", post(handlers::create_coupon).get(crud::list_coupons))
@@ -257,6 +261,15 @@ pub fn router(state: AppState) -> Router {
         .route("/webhooks/stripe/:organization_id", post(webhooks::stripe_webhook))
         .route("/webhooks/gocardless/:organization_id", post(webhooks::gocardless_webhook))
         .route("/webhooks/adyen/:organization_id", post(webhooks::adyen_webhook))
+        .route("/portal/:token", get(portal::home))
+        .route("/portal/:token/invoices/:invoice_id/download", get(portal::download_invoice))
+        .route("/portal/:token/invoices/:invoice_id/pay", post(portal::pay_invoice))
+        .route("/portal/:token/wallets/:wallet_id/top_up", post(portal::top_up))
+        .route("/portal/:token/subscriptions/:subscription_id/cancel", post(portal::cancel_subscription))
+        .route("/portal/:token/payment_method", post(portal::payment_method))
+        .route("/webhooks/creem/:organization_id", post(checkout_webhooks::creem_webhook))
+        .route("/webhooks/dodo/:organization_id", post(checkout_webhooks::dodo_webhook))
+        .route("/webhooks/iyzico/:organization_id", post(checkout_webhooks::iyzico_webhook))
         .nest("/api/v1", v1)
         .nest("/api/v2", v2)
         // Observability + protection middleware (applied to every route).

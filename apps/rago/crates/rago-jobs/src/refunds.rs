@@ -3,7 +3,8 @@
 //!
 //! A refund is issued at the payment provider that captured the invoice's
 //! payment (Stripe `POST /v1/refunds`, GoCardless `POST /refunds`, Adyen
-//! `POST /payments/{psp}/refunds`), recorded in the `refunds` ledger, and only
+//! `POST /payments/{psp}/refunds`, Creem `POST /v1/refunds`, Dodo
+//! `POST /refunds`, Iyzico `/payment/refund`), recorded in the `refunds` ledger, and only
 //! then reflected on the payment / invoice / credit note. Nothing is marked
 //! refunded unless the provider accepted the refund (or the payment was a
 //! manual, off-provider payment, which is recorded as refunded manually).
@@ -15,7 +16,8 @@ use rago_db::{Db, NewRefund};
 use rago_integrations::payments::PaymentProvider;
 use rago_integrations::webhooks::WebhookKind;
 use rago_integrations::{
-    AdyenProvider, GocardlessProvider, HttpTransport, RefundRequest, RefundState, StripeProvider,
+    AdyenProvider, CreemProvider, DodoProvider, GocardlessProvider, HttpTransport, RefundRequest,
+    RefundState, StripeProvider,
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -28,7 +30,7 @@ use crate::JobError;
 #[derive(Debug, Clone)]
 pub struct RefundResult {
     pub refund_id: Uuid,
-    /// `stripe` | `gocardless` | `adyen` | `manual`.
+    /// `stripe` | `gocardless` | `adyen` | `creem` | `dodo` | `iyzico` | `manual`.
     pub provider: String,
     pub provider_refund_id: Option<String>,
     pub state: RefundState,
@@ -134,6 +136,45 @@ pub async fn refund_invoice<T: HttpTransport>(
                 return Ok(Err(RefundRejection::ProviderNotConfigured("adyen merchant_account".into())));
             };
             AdyenProvider::new(provider.secret.clone(), merchant, transport).refund_payment(&req).await
+        }
+        "creem" | "dodo" => {
+            let Some(product_id) = provider
+                .settings
+                .get("product_id")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+            else {
+                return Ok(Err(RefundRejection::ProviderNotConfigured(format!("{} product_id", payment.provider))));
+            };
+            let test = provider
+                .settings
+                .get("mode")
+                .and_then(Value::as_str)
+                .map(|m| matches!(m, "test" | "sandbox"));
+            if payment.provider == "creem" {
+                let currency = provider
+                    .settings
+                    .get("currency")
+                    .and_then(Value::as_str)
+                    .unwrap_or("USD")
+                    .to_string();
+                let mut creem = CreemProvider::new(provider.secret.clone(), product_id, currency, transport);
+                if let Some(test) = test {
+                    creem = creem.with_test_mode(test);
+                }
+                creem.refund_payment(&req).await
+            } else {
+                DodoProvider::new(provider.secret.clone(), product_id, test.unwrap_or(false), transport)
+                    .refund_payment(&req)
+                    .await
+            }
+        }
+        "iyzico" => {
+            let Some(iyzico) = crate::collection::iyzico_provider(&provider, invoice.organization_id, transport) else {
+                return Ok(Err(RefundRejection::ProviderNotConfigured("iyzico api_key".into())));
+            };
+            iyzico.refund_payment(&req).await
         }
         other => return Ok(Err(RefundRejection::ProviderNotConfigured(other.to_string()))),
     };

@@ -42,6 +42,58 @@ pub struct GocardlessPaymentProviderInput {
     pub webhook_secret: Option<String>,
 }
 
+/// Creem (merchant of record): invoices are collected through a hosted
+/// checkout of a one-time product priced per invoice (`custom_price`).
+#[derive(InputObject)]
+pub struct CreemPaymentProviderInput {
+    pub code: String,
+    pub name: String,
+    pub api_key: Option<String>,
+    /// The one-time Creem product invoices are sold as.
+    pub product_id: String,
+    /// The product's currency (invoices in other currencies are refused).
+    pub currency: Option<String>,
+    /// `live` (default) or `test`.
+    pub mode: Option<String>,
+    /// Creem webhook signing secret for `/webhooks/creem/:organization_id`.
+    pub webhook_secret: Option<String>,
+    pub success_redirect_url: Option<String>,
+}
+
+/// Dodo Payments (merchant of record): hosted checkout of a pay-what-you-want
+/// product priced per invoice.
+#[derive(InputObject)]
+pub struct DodoPaymentProviderInput {
+    pub code: String,
+    pub name: String,
+    pub api_key: Option<String>,
+    /// The pay-what-you-want Dodo product invoices are sold as.
+    pub product_id: String,
+    /// `live` (default) or `test`.
+    pub mode: Option<String>,
+    /// Dodo webhook signing secret (`whsec_...`).
+    pub webhook_secret: Option<String>,
+    pub success_redirect_url: Option<String>,
+}
+
+/// Iyzico (Turkish card acquirer): hosted checkout form.
+#[derive(InputObject)]
+pub struct IyzicoPaymentProviderInput {
+    pub code: String,
+    pub name: String,
+    pub api_key: String,
+    /// Merchant secret key; signs API calls and merchant notifications.
+    pub secret_key: Option<String>,
+    /// `live` (default) or `sandbox`.
+    pub mode: Option<String>,
+    /// Billing city / street Iyzico requires on every form when the customer
+    /// has no address of their own.
+    pub default_city: String,
+    pub default_address: String,
+    pub default_country: Option<String>,
+    pub success_redirect_url: Option<String>,
+}
+
 #[derive(InputObject)]
 pub struct CashfreePaymentProviderInput {
     pub code: String,

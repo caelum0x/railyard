@@ -31,7 +31,9 @@ pub mod order_flow_console;
 pub mod orders;
 pub mod pay_in_advance;
 pub mod payment_actions;
+pub mod portal;
 pub mod progressive;
+pub mod provider_checkouts;
 pub mod repo;
 pub mod receipts;
 pub mod refunds;
@@ -40,6 +42,7 @@ pub mod secrets;
 pub mod sso_state;
 pub mod tenancy;
 pub mod wallet_credits;
+pub mod wallet_realtime;
 pub mod webhook_deliveries;
 
 pub use dunning::{
@@ -47,6 +50,9 @@ pub use dunning::{
     OverdueInvoiceRow,
 };
 pub use collection::{PaymentAttemptState, ProviderCredentials, StoreSecretError};
+pub use portal::PortalSession;
+pub use provider_checkouts::CheckoutPayment;
+pub use wallet_realtime::{RealtimeHold, RealtimeWallet};
 pub use error::{DbError, Result};
 pub use graphql_admin::{AddOnRow, DunningCampaignRow, WebhookRow};
 pub use graphql_admin2::{

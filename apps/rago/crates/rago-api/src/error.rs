@@ -20,6 +20,9 @@ pub enum ApiError {
     Validation(Value),
     /// 500 — internal error (details logged, generic message returned).
     Internal(String),
+    /// 503 `{ status, error: "Service Unavailable", code }`: a dependency the
+    /// request must not proceed without is down; the client should retry.
+    Unavailable(String),
 }
 
 impl ApiError {
@@ -72,6 +75,10 @@ impl IntoResponse for ApiError {
             ApiError::Internal(msg) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({ "status": 500, "error": msg }),
+            ),
+            ApiError::Unavailable(code) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                json!({ "status": 503, "error": "Service Unavailable", "code": code }),
             ),
         };
         (status, Json(body)).into_response()

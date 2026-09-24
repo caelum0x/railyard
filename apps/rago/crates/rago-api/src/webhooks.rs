@@ -32,7 +32,7 @@ use uuid::Uuid;
 use crate::state::AppState;
 
 /// The org's stored webhook secrets for `provider`, else the env fallback.
-async fn webhook_secrets(
+pub(crate) async fn webhook_secrets(
     state: &AppState,
     organization_id: Uuid,
     provider: &str,
@@ -61,7 +61,7 @@ async fn webhook_secrets(
 }
 
 /// Settle a refund Rago issued from a provider notification.
-async fn apply_refund(
+pub(crate) async fn apply_refund(
     state: &AppState,
     organization_id: Uuid,
     ev: &rago_integrations::ProviderRefundEvent,
@@ -365,7 +365,7 @@ pub async fn adyen_webhook(
 /// Shared status-sync: match the payment by provider id, update it + the invoice
 /// `payment_status`, and emit the outbound `invoice.payment_status_updated`
 /// webhook. Used by all three provider webhook handlers (Stripe/GoCardless/Adyen).
-async fn sync_payment_status(
+pub(crate) async fn sync_payment_status(
     state: &AppState,
     organization_id: Uuid,
     provider_payment_id: &str,

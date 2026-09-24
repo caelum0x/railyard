@@ -542,6 +542,11 @@ impl Mutation {
         let _org = require_org(ctx)?;
         let uuid = Uuid::parse_str(id.as_str()).map_err(|_| async_graphql::Error::new("invalid_id"))?;
         db(ctx).void_invoice(uuid).await?;
+        // Free Mint holds still reserved for this invoice (real-time wallets).
+        let transport = rago_integrations::default_transport();
+        if let Err(e) = rago_jobs::wallet_realtime::release_invoice_holds(db(ctx), &transport, uuid).await {
+            tracing::warn!(error = %e, invoice_id = %uuid, "real-time holds could not be released on void");
+        }
         let invoice = db(ctx)
             .find_invoice(uuid)
             .await?

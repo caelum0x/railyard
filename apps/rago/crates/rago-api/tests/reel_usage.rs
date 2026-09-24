@@ -182,6 +182,7 @@ fn wallet(org_id: Uuid, customer_id: Uuid, ongoing_balance_cents: i64, status: W
         consumed_credits: Decimal::ZERO,
         balance_cents: ongoing_balance_cents,
         balance_currency: "USD".into(),
+        allowed_fee_types: Vec::new(),
         consumed_amount_cents: 0,
         ongoing_balance_cents,
         ongoing_usage_balance_cents: 0,

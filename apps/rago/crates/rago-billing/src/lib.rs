@@ -40,6 +40,7 @@ pub mod subscription_fee;
 pub mod subscriptions;
 pub mod trials;
 pub mod usage_thresholds;
+pub mod wallet_realtime;
 pub mod wallets;
 
 use rago_core::models::{BillableMetric, Charge, Event, Fee, Subscription};

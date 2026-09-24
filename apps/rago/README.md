@@ -47,7 +47,8 @@ cargo run --release --bin rago-scheduler   # billing scheduler
 
 ## Live transports
 
-Every external call — payments (Stripe / GoCardless / Adyen), outbound
+Every external call — payments (Stripe / GoCardless / Adyen / Creem / Dodo
+Payments / Iyzico), Mint holds, outbound
 webhooks, tax/accounting/CRM aggregators, integration OAuth, SSO, the finance
 assistant, and email — goes through an **injectable transport**. Production
 builds use the real `reqwest` HTTP and SMTP transports:
@@ -61,10 +62,43 @@ recorded as failures (nothing is ever marked paid or delivered without a real
 call). Tests inject scripted in-memory transports.
 
 Payment providers are configured per organization from the console (Settings →
-Connect Stripe); secrets are sealed with `RAGO_ENCRYPTION_KEY`. Single-tenant
-deployments can instead set `RAGO_STRIPE_SECRET_KEY` (see `.env.example`).
-Each customer gets their own Stripe customer on first charge, and charges use
-their saved payment method (collected via the customer's checkout link).
+Connect Stripe, GoCardless, Adyen, Creem, Dodo Payments or Iyzico). Secrets are
+sealed with `RAGO_ENCRYPTION_KEY`. Single-tenant deployments can instead set
+`RAGO_PAYMENT_PROVIDER` and that provider's `RAGO_*` keys (see `.env.example`).
+Stripe, GoCardless and Adyen charge a stored payment method: each customer gets
+a Stripe customer on first charge, and charges use their saved payment method.
+Creem and Dodo Payments (merchants of record) and Iyzico collect through a
+hosted checkout. The invoice's payment waits for the customer, its pay link is
+sent in `payment.requires_action` and shown in the customer portal, and the
+signed provider webhook settles it. Creem's API can only refund whole payments;
+Dodo and Iyzico refund any amount.
+
+### Customer portal
+
+`POST /api/v1/customers/:external_id/portal_sessions` issues a signed, expiring
+link to `/portal/:token` (24 hours by default, 30 days at most;
+`DELETE` on the same path revokes every open link). The portal is free and works
+with any provider or none. It shows invoices with PDF download and a Pay
+button, usage this period per billable metric, and wallet balances with top-up.
+Customers can cancel subscriptions there, and can update their payment method
+when Stripe is the provider. `GET /customers/:external_id/portal_url` returns
+a portal link whenever the organization does not collect with Stripe.
+
+### Real-time wallets (Mint holds)
+
+`PUT /api/v1/wallets/:id/realtime` with `{ "wallet": { "realtime_enabled": true,
+"realtime_policy": "reject" | "flag", "mint_account_id": "<customer's Mint
+account>" } }` turns a USD wallet into a real-time wallet. Every event posted
+to `/events` is priced at its marginal cost by the plan's charge models and
+held on the customer's Mint account. The hold's idempotency key comes from the
+event's `transaction_id`, so a retried event is only held once. If the balance
+does not cover the event, `reject` answers 422 `wallet_balance_insufficient`
+and does not store it, while `flag` stores it and reports `event.error`. If Mint
+is unreachable, `reject` answers 503 and fails closed. When the invoice is
+finalized, the holds are captured to `RAGO_MINT_PAYEE_ACCOUNT` up to the amount
+due and applied as prepaid credit, and any surplus is released. Voiding an
+invoice releases holds that are still reserved for it. Set `RAGO_MINT_URL`,
+`RAGO_MINT_API_KEY` and `RAGO_MINT_PAYEE_ACCOUNT` to enable real-time wallets.
 
 ## Configuration
 
@@ -80,7 +114,8 @@ Key ones: `DATABASE_URL`, `RAGO_API_ADDR`, `RAGO_TICK_SECS`, `RAGO_BILLING_HOUR`
 | GraphQL dashboard | `GET|POST /graphql` (queries, mutations, Relay connections) |
 | REST v1 | `/api/v1/*` — customers, metrics, plans, subscriptions, events, invoices, wallets, coupons, credit notes, add-ons, quotes, data exports, entitlements, usage alerts, dunning campaigns, lifetime usage, integrations |
 | REST v2 | `/api/v2/*` — batch events ingestion, fee estimate, data-API analytics |
-| Provider webhooks | `POST /webhooks/{stripe,gocardless,adyen}/:organization_id` |
+| Provider webhooks | `POST /webhooks/{stripe,gocardless,adyen,creem,dodo,iyzico}/:organization_id` |
+| Customer portal | `GET /portal/:token` (+ invoice PDF, pay, wallet top-up, cancel, payment method) |
 | Documents | `GET /api/v1/invoices/:id/download(.xml)`, `.../receipt`, `/credit_notes/:id/download` |
 
 Authentication is API-key bearer (`Authorization: Bearer <key>`) on REST; the

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>{{title}}</title>
+<style>
+  :root { --fg:#16181d; --muted:#5d6470; --line:#e3e6eb; --bg:#f7f8fa; --card:#fff; --accent:#1f5eff; --ok:#137a3f; --warn:#9a5b00; --bad:#b42318; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; color:var(--fg); background:var(--bg); }
+  header { background:var(--card); border-bottom:1px solid var(--line); }
+  .wrap { max-width:960px; margin:0 auto; padding:0 20px; }
+  header .wrap { display:flex; justify-content:space-between; align-items:baseline; padding-top:18px; padding-bottom:18px; gap:12px; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; }
+  header p { margin:0; color:var(--muted); }
+  main { padding:24px 0 48px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; margin:0 0 20px; }
+  section > h2 { font-size:15px; margin:0; padding:14px 18px; border-bottom:1px solid var(--line); }
+  .body { padding:14px 18px; }
+  .empty { color:var(--muted); padding:14px 18px; margin:0; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:10px 18px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); font-weight:600; }
+  tr:last-child td { border-bottom:0; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; border:1px solid var(--line); }
+  .pill.ok { color:var(--ok); border-color:#b7e1c6; background:#effaf3; }
+  .pill.warn { color:var(--warn); border-color:#f2d8a7; background:#fff8ea; }
+  .pill.bad { color:var(--bad); border-color:#f4c1bc; background:#fef1f0; }
+  form.inline { display:inline; margin:0; }
+  button, .btn { font:inherit; font-size:14px; padding:6px 12px; border-radius:7px; border:1px solid var(--line); background:#fff; color:var(--fg); cursor:pointer; text-decoration:none; display:inline-block; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { color:var(--bad); }
+  input[type=text] { font:inherit; padding:6px 10px; border:1px solid var(--line); border-radius:7px; width:9em; }
+  .notice { border-radius:8px; padding:10px 14px; margin:0 0 20px; background:#eef3ff; border:1px solid #cbd8ff; }
+  .notice.bad { background:#fef1f0; border-color:#f4c1bc; }
+  .muted { color:var(--muted); }
+  footer { color:var(--muted); font-size:13px; padding:0 0 32px; }
+</style>
+</head>
+<body>
+<header><div class="wrap"><h1>{{org_name}}</h1><p>Billing for {{customer_name}}</p></div></header>
+<main><div class="wrap">
+{{notice}}
+{{content}}
+</div></main>
+<footer><div class="wrap">This page is private to you. Anyone with the link can see it until it expires on {{expires_at}}.</div></footer>
+</body>
+</html>

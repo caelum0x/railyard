@@ -82,14 +82,10 @@ fn stripe_status_mapping() {
 async fn stripe_error_response() {
     let transport = MockTransport::always(402, r#"{"error":{"code":"card_declined","message":"Your card was declined."}}"#);
     let provider = StripeProvider::new("sk_test_x", transport);
-    let err = provider.create_payment(&payment_request()).await.unwrap_err();
-    match err {
-        PaymentError::Provider { code, message } => {
-            assert_eq!(code.as_deref(), Some("card_declined"));
-            assert!(message.contains("declined"));
-        }
-        other => panic!("expected provider error, got {other:?}"),
-    }
+    // A card decline is a recorded business outcome, not a transport error.
+    let outcome = provider.create_payment(&payment_request()).await.unwrap();
+    assert_eq!(outcome.payable_status, PayableStatus::Failed);
+    assert_eq!(outcome.provider_status, "card_declined");
 }
 
 // --- webhooks ---------------------------------------------------------------

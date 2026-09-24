@@ -78,6 +78,48 @@ async fn compute_charges_usage(
     Ok(out)
 }
 
+/// One billable metric's usage in the current period (customer portal).
+pub(crate) struct MetricUsage {
+    pub metric_name: String,
+    pub units: Decimal,
+    pub amount_cents: i64,
+}
+
+/// Current-period usage of `sub` per billable metric, priced by the same
+/// engine as the billing run: `(currency, period start, period end, rows)`.
+pub(crate) async fn current_period_usage(
+    st: &AppState,
+    org: uuid::Uuid,
+    sub: &Subscription,
+) -> ApiResult<(rago_core::money::Currency, NaiveDate, NaiveDate, Vec<MetricUsage>)> {
+    let plan = st.db.find_plan(sub.plan_id).await?;
+    let currency = plan.currency();
+    let today = now_date();
+    let dates = MonthlyDates {
+        subscription_at: sub.subscription_at.map(|t| t.date_naive()).unwrap_or(today),
+        billing_at: first_of_next_month(today),
+        anniversary: matches!(sub.billing_time, BillingTime::Anniversary),
+        pay_in_advance: plan.pay_in_advance,
+        current_usage: false,
+    };
+    let b = dates.boundaries();
+    let from = b.from_date.and_hms_opt(0, 0, 0).unwrap_or_default();
+    let usages = compute_charges_usage(st, org, sub, currency, from, Utc::now().naive_utc()).await?;
+    let rows = usages
+        .into_iter()
+        .map(|u| MetricUsage {
+            metric_name: u.metric_json["name"]
+                .as_str()
+                .filter(|n| !n.is_empty())
+                .unwrap_or(&u.metric_code)
+                .to_string(),
+            units: u.units,
+            amount_cents: u.amount_cents,
+        })
+        .collect();
+    Ok((currency, b.from_date, b.to_date, rows))
+}
+
 /// Load the customer + subscription (scoped to the org) and the plan currency.
 async fn load_scope(
     st: &AppState,

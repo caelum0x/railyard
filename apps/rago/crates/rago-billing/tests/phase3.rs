@@ -39,6 +39,7 @@ fn wallet(rate: Decimal) -> Wallet {
         consumed_credits: Decimal::ZERO,
         balance_cents: 0,
         balance_currency: "USD".into(),
+        allowed_fee_types: Vec::new(),
         consumed_amount_cents: 0,
         ongoing_balance_cents: 0,
         ongoing_usage_balance_cents: 0,

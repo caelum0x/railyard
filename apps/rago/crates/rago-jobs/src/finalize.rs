@@ -5,7 +5,9 @@
 //!
 //! Mirrors Lago's `Invoices::FinalizeService` tail: provider taxes (Anrok /
 //! Avalara, when the organization connected one), the `invoice.created` +
-//! `invoice.generated` webhooks, then payment collection through the durable
+//! `invoice.generated` webhooks, then real-time wallet settlement (captures the
+//! Mint holds reserved for the invoice's events and applies them as prepaid
+//! credit), then payment collection of whatever is left through the durable
 //! `invoices.collect` job.
 
 use chrono::Utc;
@@ -82,8 +84,27 @@ pub async fn on_invoice_finalized(db: &Db, invoice: Invoice, emit_webhooks: bool
         record_webhook(db, invoice.organization_id, WebhookKind::InvoiceCreated, object.clone()).await?;
         record_invoice_generated(db, invoice.organization_id, invoice.id, object).await?;
     }
+    let invoice = settle_realtime_wallets(db, invoice).await?;
     enqueue_collection(db, &invoice).await?;
     Ok(invoice)
+}
+
+/// Capture the Mint holds reserved for this invoice (real-time wallets) and
+/// return the invoice with the captured amount applied. A Mint outage leaves
+/// the holds reserved and the invoice collectable as usual.
+async fn settle_realtime_wallets(db: &Db, invoice: Invoice) -> Result<Invoice, JobError> {
+    let transport = rago_integrations::default_transport();
+    match crate::wallet_realtime::settle_invoice(db, &transport, &invoice).await {
+        Ok(0) => Ok(invoice),
+        Ok(applied) => {
+            tracing::info!(invoice_id = %invoice.id, applied_cents = applied, "real-time wallet holds captured");
+            Ok(db.find_invoice(invoice.id).await?.unwrap_or(invoice))
+        }
+        Err(e) => {
+            tracing::error!(invoice_id = %invoice.id, error = %e, "real-time wallet settlement failed");
+            Ok(invoice)
+        }
+    }
 }
 
 /// Finalize one draft (numbering it in the same transaction) and run the

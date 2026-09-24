@@ -1,12 +1,13 @@
 //! # rago-integrations
 //!
-//! Money-movement adapters for Rago: **payment providers** ([`payments`],
-//! Stripe fully implemented) and **outbound webhooks** ([`webhooks`]). Both go
+//! Money-movement adapters for Rago: **payment providers** ([`payments`]:
+//! Stripe, GoCardless, Adyen, Creem, Dodo Payments, Iyzico) and **outbound webhooks** ([`webhooks`]). Both go
 //! through one injectable [`transport::HttpTransport`], so their real request
 //! shape is verified against an in-memory transport in tests; the live
 //! reqwest-backed transport is behind the `live` feature (owner-gated).
 
 pub mod integrations;
+pub mod mint_holds;
 pub mod oauth;
 pub mod payments;
 pub mod transport;
@@ -23,12 +24,18 @@ pub use integrations::{
     CatalogEntry, CrmCustomer, CrmInvoice, CrmProvider, CrmRecordSync, CrmSubscription, FeeTaxResult,
     IntegrationError, SyncResult, TaxBreakdownItem, TaxFeeItem, TaxProvider, TaxRequest,
 };
+pub use mint_holds::{MintError, MintHold, MintHoldsClient};
 pub use oauth::{with_retry, OAuthClient, OAuthConfig, OAuthTokens};
 pub use payments::adyen::AdyenProvider;
+pub use payments::creem::CreemProvider;
+pub use payments::dodo::DodoProvider;
+pub use payments::iyzico::{IyzicoBuyer, IyzicoPayment, IyzicoProvider};
 pub use payments::gocardless::GocardlessProvider;
 pub use payments::provider_webhook::{
-    adyen_event, adyen_original_reference, adyen_refund_event, adyen_verify, gocardless_parse,
-    gocardless_refund_events, gocardless_verify, ProviderRefundEvent, ProviderWebhookEvent,
+    adyen_event, adyen_original_reference, adyen_refund_event, adyen_verify, creem_parse,
+    creem_verify, dodo_parse, dodo_verify, gocardless_parse, gocardless_refund_events,
+    gocardless_verify, iyzico_verify_notification, CreemWebhook, DodoWebhook, IyzicoNotification,
+    ProviderRefundEvent, ProviderWebhookEvent,
 };
 pub use payments::stripe::StripeProvider;
 pub use payments::stripe_webhook::{

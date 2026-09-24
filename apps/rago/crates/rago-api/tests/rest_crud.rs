@@ -474,9 +474,10 @@ async fn customer_destroy_and_nested(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["subscriptions"].as_array().unwrap().len(), 1);
 
+    // No Stripe provider: the link is Rago's own hosted portal.
     let (status, body) = call(&app, "GET", "/api/v1/customers/cust-1/portal_url", None).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body["customer"]["portal_url"].is_null());
+    assert!(body["customer"]["portal_url"].as_str().unwrap().contains("/portal/v1."));
 
     let (status, _) = call(&app, "DELETE", "/api/v1/customers/cust-1", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -630,10 +631,10 @@ async fn invoice_actions(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["invoice"]["status"], "voided");
 
-    // honest-partial provider actions still resolve
+    // No payment provider is configured: the pay link is refused with the reason.
     let (status, body) = call(&app, "POST", &format!("{uri_base}/payment_url"), None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body["invoice_payment_details"]["payment_url"].is_null());
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body["error_details"]["payment_url"].is_array());
 }
 
 // ---- payments + payment requests -------------------------------------------

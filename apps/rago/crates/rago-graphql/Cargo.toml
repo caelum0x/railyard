@@ -19,6 +19,7 @@ uuid.workspace = true
 chrono.workspace = true
 rust_decimal.workspace = true
 base64.workspace = true
+tracing.workspace = true
 # Auth (slice 4): argon2 password hashing + HS256 JWT (hmac/sha2).
 argon2 = "0.5"
 hmac.workspace = true

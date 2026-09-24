@@ -200,6 +200,78 @@ int_enum! {
     }
 }
 
+/// The payment providers Rago collects with (`payment_providers.provider_type`,
+/// `payments.provider`). Persisted as the lowercase string, not an integer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PaymentProviderKind {
+    Stripe,
+    Gocardless,
+    Adyen,
+    Creem,
+    Dodo,
+    Iyzico,
+}
+
+impl PaymentProviderKind {
+    pub const ALL: [PaymentProviderKind; 6] = [
+        PaymentProviderKind::Stripe,
+        PaymentProviderKind::Gocardless,
+        PaymentProviderKind::Adyen,
+        PaymentProviderKind::Creem,
+        PaymentProviderKind::Dodo,
+        PaymentProviderKind::Iyzico,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            PaymentProviderKind::Stripe => "stripe",
+            PaymentProviderKind::Gocardless => "gocardless",
+            PaymentProviderKind::Adyen => "adyen",
+            PaymentProviderKind::Creem => "creem",
+            PaymentProviderKind::Dodo => "dodo",
+            PaymentProviderKind::Iyzico => "iyzico",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == value)
+    }
+
+    /// Collected through a provider-hosted checkout the customer completes
+    /// (a pay link), rather than by charging a stored payment method.
+    pub const fn is_hosted_checkout(self) -> bool {
+        matches!(
+            self,
+            PaymentProviderKind::Creem | PaymentProviderKind::Dodo | PaymentProviderKind::Iyzico
+        )
+    }
+
+    /// A merchant of record (the provider is the seller of record and handles
+    /// sales tax / VAT).
+    pub const fn is_merchant_of_record(self) -> bool {
+        matches!(self, PaymentProviderKind::Creem | PaymentProviderKind::Dodo)
+    }
+
+    /// Human label for UI and error messages.
+    pub const fn label(self) -> &'static str {
+        match self {
+            PaymentProviderKind::Stripe => "Stripe",
+            PaymentProviderKind::Gocardless => "GoCardless",
+            PaymentProviderKind::Adyen => "Adyen",
+            PaymentProviderKind::Creem => "Creem",
+            PaymentProviderKind::Dodo => "Dodo Payments",
+            PaymentProviderKind::Iyzico => "Iyzico",
+        }
+    }
+}
+
+impl std::fmt::Display for PaymentProviderKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,6 +284,18 @@ mod tests {
         }
         assert_eq!(ChargeModel::Graduated.as_str(), "graduated");
         assert!(ChargeModel::try_from(99).is_err());
+    }
+
+    #[test]
+    fn payment_provider_kinds_round_trip() {
+        for kind in PaymentProviderKind::ALL {
+            assert_eq!(PaymentProviderKind::parse(kind.as_str()), Some(kind));
+        }
+        assert_eq!(PaymentProviderKind::parse("cashfree"), None);
+        assert!(PaymentProviderKind::Dodo.is_hosted_checkout());
+        assert!(!PaymentProviderKind::Stripe.is_hosted_checkout());
+        assert!(PaymentProviderKind::Creem.is_merchant_of_record());
+        assert!(!PaymentProviderKind::Iyzico.is_merchant_of_record());
     }
 
     #[test]

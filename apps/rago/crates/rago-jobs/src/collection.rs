@@ -22,7 +22,8 @@ use rago_db::{Db, ProviderCredentials};
 use rago_integrations::payments::PaymentProvider;
 use rago_integrations::webhooks::WebhookKind;
 use rago_integrations::{
-    AdyenProvider, GocardlessProvider, HttpTransport, PayableStatus, StripeProvider,
+    AdyenProvider, CreemProvider, DodoProvider, GocardlessProvider, HttpTransport, IyzicoBuyer,
+    IyzicoProvider, PayableStatus, StripeProvider,
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -34,7 +35,7 @@ use crate::JobError;
 /// A resolved payment provider for an organization.
 #[derive(Debug, Clone)]
 pub struct ResolvedProvider {
-    /// `stripe` | `gocardless` | `adyen`.
+    /// `stripe` | `gocardless` | `adyen` | `creem` | `dodo` | `iyzico`.
     pub kind: String,
     pub secret: String,
     pub settings: Value,
@@ -86,7 +87,85 @@ fn env_secret(kind: &str) -> Option<String> {
         "stripe" => env_nonempty("RAGO_STRIPE_SECRET_KEY").or_else(|| env_nonempty("RAGO_STRIPE_SECRET")),
         "gocardless" => env_nonempty("RAGO_GOCARDLESS_ACCESS_TOKEN"),
         "adyen" => env_nonempty("RAGO_ADYEN_API_KEY"),
+        "creem" => env_nonempty("RAGO_CREEM_API_KEY"),
+        "dodo" => env_nonempty("RAGO_DODO_API_KEY"),
+        "iyzico" => env_nonempty("RAGO_IYZICO_SECRET_KEY"),
         _ => None,
+    }
+}
+
+/// Env fallback settings (single-tenant deployments) for a provider kind.
+fn env_settings(kind: &str) -> Value {
+    let product_id = match kind {
+        "creem" => env_nonempty("RAGO_CREEM_PRODUCT_ID"),
+        "dodo" => env_nonempty("RAGO_DODO_PRODUCT_ID"),
+        _ => None,
+    };
+    json!({
+        "merchant_account": env_nonempty("RAGO_ADYEN_MERCHANT_ACCOUNT"),
+        "product_id": product_id,
+        "currency": env_nonempty("RAGO_CREEM_PRODUCT_CURRENCY"),
+        "mode": env_nonempty("RAGO_PAYMENT_PROVIDER_MODE"),
+        "api_key": env_nonempty("RAGO_IYZICO_API_KEY"),
+        "default_city": env_nonempty("RAGO_IYZICO_DEFAULT_CITY"),
+        "default_address": env_nonempty("RAGO_IYZICO_DEFAULT_ADDRESS"),
+        "default_country": env_nonempty("RAGO_IYZICO_DEFAULT_COUNTRY"),
+    })
+}
+
+fn setting(settings: &Value, key: &str) -> Option<String> {
+    settings
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
+/// `true` when the provider settings select test/sandbox mode.
+fn test_mode(settings: &Value) -> Option<bool> {
+    setting(settings, "mode").map(|m| matches!(m.as_str(), "test" | "sandbox"))
+}
+
+/// Rago's public Iyzico callback for an organization
+/// (`RAGO_PUBLIC_URL/webhooks/iyzico/:organization_id`).
+pub fn iyzico_callback_url(organization_id: Uuid) -> Option<String> {
+    env_nonempty(crate::webhook_emit::PUBLIC_URL_ENV)
+        .map(|base| format!("{}/webhooks/iyzico/{organization_id}", base.trim_end_matches('/')))
+}
+
+/// Build the Iyzico provider for an organization's resolved credentials.
+pub fn iyzico_provider<T: HttpTransport>(
+    provider: &ResolvedProvider,
+    organization_id: Uuid,
+    transport: T,
+) -> Option<IyzicoProvider<T>> {
+    let api_key = setting(&provider.settings, "api_key")?;
+    let mut iyzico = IyzicoProvider::new(api_key, provider.secret.clone(), transport);
+    if let Some(sandbox) = test_mode(&provider.settings) {
+        iyzico = iyzico.with_sandbox(sandbox);
+    }
+    if let Some(url) = iyzico_callback_url(organization_id) {
+        iyzico = iyzico.with_callback_url(url);
+    }
+    Some(iyzico)
+}
+
+fn iyzico_buyer(settings: &Value, customer: &Customer) -> IyzicoBuyer {
+    IyzicoBuyer {
+        id: customer.external_id.clone(),
+        name: customer.name.clone().unwrap_or_default(),
+        email: customer.email.clone(),
+        country: customer
+            .country
+            .clone()
+            .filter(|c| !c.trim().is_empty())
+            .or_else(|| setting(settings, "default_country"))
+            .unwrap_or_default(),
+        city: setting(settings, "default_city").unwrap_or_default(),
+        address: setting(settings, "default_address").unwrap_or_default(),
+        identity_number: customer.tax_identification_number.clone(),
+        ip: None,
     }
 }
 
@@ -108,11 +187,9 @@ pub async fn resolve_provider(db: &Db, org: Uuid) -> Result<Option<ResolvedProvi
     }
     let kind = env_nonempty("RAGO_PAYMENT_PROVIDER").unwrap_or_else(|| "stripe".into());
     Ok(env_secret(&kind).map(|secret| ResolvedProvider {
+        settings: env_settings(&kind),
         kind,
         secret,
-        settings: json!({
-            "merchant_account": env_nonempty("RAGO_ADYEN_MERCHANT_ACCOUNT"),
-        }),
         success_redirect_url: env_nonempty("RAGO_CHECKOUT_SUCCESS_URL"),
     }))
 }
@@ -124,11 +201,7 @@ pub async fn resolve_provider_of_kind(db: &Db, org: Uuid, kind: &str) -> Result<
     let configured = db.provider_credentials(org, Some(kind)).await?;
     let (settings, redirect, secret) = match configured {
         Some(c) => (c.settings, c.success_redirect_url, c.secret.or_else(|| env_secret(kind))),
-        None => (
-            json!({ "merchant_account": env_nonempty("RAGO_ADYEN_MERCHANT_ACCOUNT") }),
-            env_nonempty("RAGO_CHECKOUT_SUCCESS_URL"),
-            env_secret(kind),
-        ),
+        None => (env_settings(kind), env_nonempty("RAGO_CHECKOUT_SUCCESS_URL"), env_secret(kind)),
     };
     Ok(secret.map(|secret| ResolvedProvider {
         kind: kind.to_string(),
@@ -247,6 +320,61 @@ pub async fn collect_invoice<T: HttpTransport>(
             charge_invoice_with(db, invoice, &shopper, None, |attempt| {
                 Box::new(AdyenProvider::new(secret.clone(), merchant.clone(), transport).with_attempt(attempt))
                     as Box<dyn PaymentProvider + '_>
+            })
+            .await?
+        }
+        "creem" => {
+            // Hosted checkout for the org's one-time credit product at the
+            // invoice amount; the customer pays through the link.
+            let Some(product_id) = setting(&provider.settings, "product_id") else {
+                return Ok(CollectOutcome::Skipped(SkipReason::ProviderNotConfigured));
+            };
+            let currency = setting(&provider.settings, "currency").unwrap_or_else(|| "USD".into());
+            let secret = provider.secret.clone();
+            let success_url = provider.success_redirect_url.clone();
+            let mode = test_mode(&provider.settings);
+            charge_invoice_with(db, invoice, &customer.external_id, None, |attempt| {
+                let mut creem = CreemProvider::new(secret.clone(), product_id.clone(), currency.clone(), transport)
+                    .with_success_url(success_url.clone())
+                    .with_attempt(attempt);
+                if let Some(test) = mode {
+                    creem = creem.with_test_mode(test);
+                }
+                Box::new(creem) as Box<dyn PaymentProvider + '_>
+            })
+            .await?
+        }
+        "dodo" => {
+            let Some(product_id) = setting(&provider.settings, "product_id") else {
+                return Ok(CollectOutcome::Skipped(SkipReason::ProviderNotConfigured));
+            };
+            let provider_customer = db
+                .provider_customer(customer.id, "dodo")
+                .await?
+                .and_then(|(pcid, _)| pcid)
+                .unwrap_or_else(|| customer.external_id.clone());
+            let secret = provider.secret.clone();
+            let return_url = provider.success_redirect_url.clone();
+            let test = test_mode(&provider.settings).unwrap_or(false);
+            charge_invoice_with(db, invoice, &provider_customer, None, |_attempt| {
+                Box::new(
+                    DodoProvider::new(secret.clone(), product_id.clone(), test, transport)
+                        .with_return_url(return_url.clone()),
+                ) as Box<dyn PaymentProvider + '_>
+            })
+            .await?
+        }
+        "iyzico" => {
+            if iyzico_provider(&provider, invoice.organization_id, transport).is_none() {
+                return Ok(CollectOutcome::Skipped(SkipReason::ProviderNotConfigured));
+            }
+            let buyer = iyzico_buyer(&provider.settings, &customer);
+            let org = invoice.organization_id;
+            charge_invoice_with(db, invoice, &customer.external_id, None, |_attempt| {
+                let iyzico = iyzico_provider(&provider, org, transport)
+                    .expect("checked above")
+                    .with_buyer(buyer.clone());
+                Box::new(iyzico) as Box<dyn PaymentProvider + '_>
             })
             .await?
         }

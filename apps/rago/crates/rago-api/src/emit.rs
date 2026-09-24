@@ -204,10 +204,26 @@ pub(crate) async fn ingest_event(
     let mut event = build_event(org, &params, crate::handlers::now());
     event.customer_id = sub.as_ref().map(|s| s.customer_id);
     event.subscription_id = sub.as_ref().map(|s| s.id);
+
+    // Real-time prepaid wallet: price the event now and reserve it on the
+    // customer's Mint account before accepting it.
+    let reserved = match sub.as_ref() {
+        Some(sub) => realtime_reserve(st, org, sub, &event).await?,
+        None => false,
+    };
+
     // The DB unique index is the authoritative dedup guard: if a concurrent
     // request won the race between the check above and this insert, treat it as
     // the same idempotent no-op.
     if !st.db.insert_event(&event).await? {
+        if reserved {
+            if let Some(sub) = sub.as_ref() {
+                let transport = rago_integrations::default_transport();
+                if let Err(e) = rago_jobs::wallet_realtime::release_event_hold(&st.db, &transport, sub.customer_id, &event.transaction_id).await {
+                    tracing::warn!(error = %e, "could not release the hold of a duplicate event");
+                }
+            }
+        }
         return Ok(Ingest::Duplicate);
     }
     // Pay-in-advance charges on this metric bill the event right away.
@@ -221,6 +237,59 @@ pub(crate) async fn ingest_event(
         }
     }
     Ok(Ingest::Created(Box::new(event)))
+}
+
+/// Reserve `event` on the customer's real-time wallet. `Ok(true)` when a Mint
+/// hold was placed; an error rejects the event (insufficient balance under the
+/// `reject` policy, or Mint unavailable).
+async fn realtime_reserve(
+    st: &AppState,
+    org: Uuid,
+    sub: &rago_core::models::Subscription,
+    event: &rago_core::models::Event,
+) -> ApiResult<bool> {
+    use rago_jobs::wallet_realtime::{reserve_for_event, Reservation};
+    let transport = rago_integrations::default_transport();
+    let outcome = match reserve_for_event(&st.db, &transport, org, sub, event).await {
+        Ok(o) => o,
+        Err(rago_jobs::JobError::Db(e)) => return Err(ApiError::from(e)),
+        Err(e) => {
+            tracing::error!(error = %e, "real-time wallet reservation failed");
+            return Err(ApiError::Unavailable("wallet_realtime_unavailable".into()));
+        }
+    };
+    let rejection = |error: &str, amount_cents: i64, status: u16| {
+        json!({
+            "transaction_id": event.transaction_id,
+            "lago_customer_id": sub.customer_id,
+            "external_subscription_id": sub.external_id,
+            "code": event.code,
+            "error": error,
+            "amount_cents": amount_cents,
+            "status": status,
+        })
+    };
+    match outcome {
+        Reservation::Reserved { .. } => Ok(true),
+        Reservation::NotApplicable | Reservation::Free => Ok(false),
+        Reservation::Flagged { cents, reason } => {
+            let error = if reason == "insufficient_funds" {
+                "wallet_balance_insufficient".to_string()
+            } else {
+                format!("wallet_realtime_unavailable: {reason}")
+            };
+            webhook(&st.db, org, WebhookKind::EventError, rejection(&error, cents, 200)).await;
+            Ok(false)
+        }
+        Reservation::Rejected { cents } => {
+            webhook(&st.db, org, WebhookKind::EventError, rejection("wallet_balance_insufficient", cents, 422)).await;
+            Err(ApiError::validation("wallet", "wallet_balance_insufficient"))
+        }
+        Reservation::Unavailable { reason } => {
+            tracing::warn!(reason = %reason, "event refused: real-time wallet cannot reserve");
+            Err(ApiError::Unavailable("wallet_realtime_unavailable".into()))
+        }
+    }
 }
 
 /// Map a billing-layer event validation error to the REST-facing [`ApiError`],

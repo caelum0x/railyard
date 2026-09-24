@@ -348,16 +348,24 @@ pub async fn terminate_subscription(
     auth: Authed,
     Path(external_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let mut sub = st
+    let sub = st
         .db
         .find_subscription_by_external_id(auth.organization.id, &external_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("subscription".into()))?;
-    let plan = st.db.find_plan(sub.plan_id).await?;
+    let body = terminate_subscription_now(&st, auth.organization.id, sub).await?;
+    Ok(Json(json!({ "subscription": body })))
+}
 
-    // `Subscriptions::TerminateService`: a subscription that never started is
-    // canceled (`subscription.canceled`); an active one is terminated
-    // (`subscription.terminated`).
+/// `Subscriptions::TerminateService`: a subscription that never started is
+/// canceled (`subscription.canceled`); an active one is terminated
+/// (`subscription.terminated`). Shared by the API and the customer portal.
+pub(crate) async fn terminate_subscription_now(
+    st: &AppState,
+    organization_id: Uuid,
+    mut sub: Subscription,
+) -> ApiResult<Value> {
+    let plan = st.db.find_plan(sub.plan_id).await?;
     let was_pending = matches!(sub.status, SubscriptionStatus::Pending);
     if was_pending {
         sub.status = SubscriptionStatus::Canceled;
@@ -369,16 +377,15 @@ pub async fn terminate_subscription(
     sub.updated_at = now();
     st.db.update_subscription(&sub).await?;
 
-    // external_customer_id is looked up for the response.
-    let ext_customer = external_customer_id_for(&st, sub.customer_id).await?;
+    let ext_customer = external_customer_id_for(st, sub.customer_id).await?;
     let body = ser::subscription(&sub, &plan, &ext_customer);
     let kind = if was_pending {
         rago_integrations::webhooks::WebhookKind::SubscriptionCanceled
     } else {
         rago_integrations::webhooks::WebhookKind::SubscriptionTerminated
     };
-    crate::emit::webhook(&st.db, auth.organization.id, kind, body.clone()).await;
-    Ok(Json(json!({ "subscription": body })))
+    crate::emit::webhook(&st.db, organization_id, kind, body.clone()).await;
+    Ok(body)
 }
 
 async fn external_customer_id_for(st: &AppState, customer_id: Uuid) -> ApiResult<String> {

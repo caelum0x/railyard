@@ -2310,7 +2310,9 @@ dependencies = [
  "async-graphql",
  "async-graphql-axum",
  "axum",
+ "base64 0.22.1",
  "chrono",
+ "hmac",
  "rago-billing",
  "rago-core",
  "rago-db",
@@ -2322,6 +2324,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "tokio",
  "tower",
@@ -2428,6 +2431,7 @@ dependencies = [
  "sha2",
  "sqlx",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

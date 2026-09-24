@@ -63,7 +63,15 @@ pub async fn settle_prepaid(
     }
 
     let currency = invoice.currency().code();
-    let wallets = db.wallets_for_customer(customer_id).await?;
+    // Real-time wallets are settled from Mint holds at finalization, never from
+    // their Rago-side balance, so they are not drawn down here.
+    let realtime = db.realtime_wallet_ids(customer_id).await?;
+    let wallets: Vec<Wallet> = db
+        .wallets_for_customer(customer_id)
+        .await?
+        .into_iter()
+        .filter(|w| !realtime.contains(&w.id))
+        .collect();
     let funding = wallets_matching_currency(&wallets, &currency);
     if funding.is_empty() {
         return Ok(Settlement::empty());

@@ -466,7 +466,7 @@
   });
 
   // ---- settings -------------------------------------------------------------------------------------------
-  const PROVIDER_LABEL = { stripe: "Stripe", gocardless: "GoCardless", adyen: "Adyen" };
+  const PROVIDER_LABEL = { stripe: "Stripe", gocardless: "GoCardless", adyen: "Adyen", creem: "Creem", dodo: "Dodo Payments", iyzico: "Iyzico" };
   R.route("/settings", async () => {
     const [org, gql, integ] = await Promise.all([
       api.get("/api/v1/organizations"),
@@ -486,6 +486,9 @@
         ["Stripe webhook URL", '<span class="mono">' + esc(webhookUrl("stripe")) + "</span>"],
         ["GoCardless webhook URL", '<span class="mono">' + esc(webhookUrl("gocardless")) + "</span>"],
         ["Adyen webhook URL", '<span class="mono">' + esc(webhookUrl("adyen")) + "</span>"],
+        ["Creem webhook URL", '<span class="mono">' + esc(webhookUrl("creem")) + "</span>"],
+        ["Dodo Payments webhook URL", '<span class="mono">' + esc(webhookUrl("dodo")) + "</span>"],
+        ["Iyzico callback and notification URL", '<span class="mono">' + esc(webhookUrl("iyzico")) + "</span>"],
       ]) + "</div>", btn("edit_org", "Edit", "edit")) +
       card("Payment providers", (gql.error ? '<div class="error-box">' + esc(gql.error) + "</div>" : "") + table([
         { h: "Provider", f: (r) => badge(r.providerType) },
@@ -496,8 +499,9 @@
         { h: "Return URL", f: (r) => esc(r.successRedirectUrl), cls: "mono" },
         { h: "", f: (r) => '<button type="button" data-edit-provider="' + esc(r.id) + '">' + icon("edit") + "Edit</button> " +
           '<button type="button" data-del-provider="' + esc(r.id) + '">' + icon("trash") + "Remove</button>" },
-      ], providers, { empty: "No provider configured. Invoices are not charged automatically until you connect Stripe, GoCardless or Adyen." }),
-      btn("stripe", "Connect Stripe", "pay", "primary") + btn("gocardless", "Connect GoCardless", "pay") + btn("adyen", "Connect Adyen", "pay")) +
+      ], providers, { empty: "No provider configured. Invoices are not collected automatically until you connect Stripe, GoCardless, Adyen, Creem, Dodo Payments or Iyzico." }),
+      btn("stripe", "Connect Stripe", "pay", "primary") + btn("gocardless", "Connect GoCardless", "pay") + btn("adyen", "Connect Adyen", "pay") +
+      btn("creem", "Connect Creem", "pay") + btn("dodo", "Connect Dodo Payments", "pay") + btn("iyzico", "Connect Iyzico", "pay")) +
       card("Integrations", table([
         { h: "Type", f: (r) => badge(r.integration_type) },
         { h: "Provider", f: (r) => esc(r.provider_name || r.provider_code) },
@@ -535,6 +539,9 @@
       stripe: () => providerForm("stripe"),
       gocardless: () => providerForm("gocardless"),
       adyen: () => providerForm("adyen"),
+      creem: () => providerForm("creem"),
+      dodo: () => providerForm("dodo"),
+      iyzico: () => providerForm("iyzico"),
     });
 
     // Connect or edit a payment provider. Secrets are write-only: leaving a
@@ -574,11 +581,47 @@
           ],
           mutation: "mutation($input: AdyenPaymentProviderInput!) { addAdyenPaymentProvider(input: $input) { id } }",
         },
+        creem: {
+          fields: [
+            { name: "apiKey", label: "API key", type: "password", required: !editing, placeholder: editing ? secretHint : "creem_..." },
+            { name: "productId", label: "One-time product ID (invoices are sold as this product at the invoice amount)", required: true, value: settings.product_id || "", placeholder: "prod_..." },
+            { name: "currency", label: "Product currency", value: settings.currency || "USD" },
+            { name: "mode", label: "Mode (live or test)", value: settings.mode || "live" },
+            { name: "webhookSecret", label: "Webhook signing secret", type: "password", placeholder: secretHint },
+            { name: "successRedirectUrl", label: "Return URL after payment", type: "url", value: existing ? existing.successRedirectUrl : "" },
+          ],
+          mutation: "mutation($input: CreemPaymentProviderInput!) { addCreemPaymentProvider(input: $input) { id } }",
+        },
+        dodo: {
+          fields: [
+            { name: "apiKey", label: "API key", type: "password", required: !editing, placeholder: secretHint },
+            { name: "productId", label: "Pay-what-you-want product ID (invoices are sold as this product at the invoice amount)", required: true, value: settings.product_id || "", placeholder: "pdt_..." },
+            { name: "mode", label: "Mode (live or test)", value: settings.mode || "live" },
+            { name: "webhookSecret", label: "Webhook signing secret", type: "password", placeholder: editing ? secretHint : "whsec_..." },
+            { name: "successRedirectUrl", label: "Return URL after payment", type: "url", value: existing ? existing.successRedirectUrl : "" },
+          ],
+          mutation: "mutation($input: DodoPaymentProviderInput!) { addDodoPaymentProvider(input: $input) { id } }",
+        },
+        iyzico: {
+          fields: [
+            { name: "apiKey", label: "API key", required: true, value: settings.api_key || "" },
+            { name: "secretKey", label: "Secret key (also verifies notifications)", type: "password", required: !editing, placeholder: secretHint },
+            { name: "mode", label: "Mode (live or sandbox)", value: settings.mode || "live" },
+            { name: "defaultCity", label: "Billing city sent to Iyzico", required: true, value: settings.default_city || "" },
+            { name: "defaultAddress", label: "Billing address sent to Iyzico", required: true, value: settings.default_address || "" },
+            { name: "defaultCountry", label: "Billing country for customers without one", value: settings.default_country || "Turkey" },
+            { name: "successRedirectUrl", label: "Return URL after payment", type: "url", value: existing ? existing.successRedirectUrl : "" },
+          ],
+          mutation: "mutation($input: IyzicoPaymentProviderInput!) { addIyzicoPaymentProvider(input: $input) { id } }",
+        },
       }[kind];
       R.openForm({
         title: (editing ? "Edit " : "Connect ") + PROVIDER_LABEL[kind],
         intro: "Credentials are encrypted at rest (requires RAGO_ENCRYPTION_KEY on the server); only their last 4 characters are shown afterwards. " +
-          "Create a webhook in " + PROVIDER_LABEL[kind] + " pointing at " + webhookUrl(kind) + " and paste its signing secret here so payment and refund events are verified for this organization.",
+          (kind === "iyzico"
+            ? "Rago sends buyers to Iyzico's hosted form and receives them back at " + webhookUrl(kind) + " (set RAGO_PUBLIC_URL on the server). Add the same URL as the merchant notification URL in the Iyzico panel."
+            : "Create a webhook in " + PROVIDER_LABEL[kind] + " pointing at " + webhookUrl(kind) + " and paste its signing secret here so payment and refund events are verified for this organization.") +
+          (kind === "creem" || kind === "dodo" ? " Invoices are collected through a hosted checkout link sent with the payment.requires_action webhook." : ""),
         fields: common.concat(spec.fields),
         submitLabel: editing ? "Save" : "Connect",
         onSubmit: async (v) => {

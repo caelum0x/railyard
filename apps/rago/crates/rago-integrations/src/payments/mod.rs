@@ -1,18 +1,23 @@
-//! Payment providers — the abstraction plus Stripe, GoCardless and Adyen (all
-//! fully implemented).
+//! Payment providers — the abstraction plus Stripe, GoCardless, Adyen, Creem,
+//! Dodo Payments and Iyzico (all fully implemented).
 //!
 //! Faithful port of `PaymentProviders::BaseService` + the provider `payments/
 //! create_service.rb` flow: a payment intent is created at the provider, its
 //! status is mapped to the invoice's `payable_payment_status`, and the invoice
 //! `payment_status` is updated accordingly.
 //!
-//! Stripe, GoCardless and Adyen each implement the same [`PaymentProvider`]
-//! trait against the real provider HTTP API (see [`stripe`], [`gocardless`],
-//! [`adyen`]). [`PaymentError::NotImplemented`] is retained as a variant for any
+//! Each implements the same [`PaymentProvider`] trait against the real provider
+//! HTTP API (see [`stripe`], [`gocardless`], [`adyen`], [`creem`], [`dodo`],
+//! [`iyzico`]). Stripe, GoCardless and Adyen charge a stored payment method;
+//! Creem, Dodo and Iyzico collect through a hosted checkout and report the pay
+//! link as a `redirect_to_url` next action (see [`redirect_next_action`]). [`PaymentError::NotImplemented`] is retained as a variant for any
 //! provider added in the future but is not returned by the providers above.
 
 pub mod adyen;
+pub mod creem;
+pub mod dodo;
 pub mod gocardless;
+pub mod iyzico;
 pub mod provider_webhook;
 pub mod stripe;
 pub mod stripe_webhook;
@@ -22,6 +27,13 @@ use rago_core::enums::PaymentStatus;
 use uuid::Uuid;
 
 use crate::transport::TransportError;
+
+/// The next action for a hosted-checkout provider: send the customer to `url`
+/// (same shape as Stripe's `redirect_to_url`, so the confirm-link plumbing
+/// treats every provider alike).
+pub fn redirect_next_action(url: &str) -> serde_json::Value {
+    serde_json::json!({ "type": "redirect_to_url", "redirect_to_url": { "url": url } })
+}
 
 /// Provider idempotency key for attempt `attempt` (0-based) of a payment:
 /// `payment-<id>` for the first attempt, `payment-<id>-<n>` for retries. A

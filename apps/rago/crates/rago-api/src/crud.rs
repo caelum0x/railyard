@@ -104,21 +104,37 @@ fn provider_url_result(
     }
 }
 
-/// `GET /customers/:external_id/portal_url` — a Stripe Billing Portal session
-/// where the customer manages payment methods (the Stripe customer is created
-/// on first use).
+/// `GET /customers/:external_id/portal_url`: when the organization collects
+/// with Stripe, a Stripe Billing Portal session where the customer manages
+/// payment methods (the Stripe customer is created on first use). For every
+/// other provider, or with no provider at all, a link to Rago's own hosted
+/// portal (`/portal/:token`: invoices, usage, wallet top-up, cancellation),
+/// valid for [`crate::portal::DEFAULT_TTL_MINUTES`].
 pub async fn customer_portal_url(
     State(st): State<AppState>,
     auth: Authed,
     Path(external_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let c = customer_or_404(&st, auth.organization.id, &external_id).await?;
-    let transport = rago_integrations::default_transport();
-    let url = provider_url_result(
-        "portal_url",
-        rago_jobs::collection::portal_url(&st.db, &transport, &c).await,
-    )?;
-    Ok(Json(json!({ "customer": { "portal_url": url } })))
+    let stripe = matches!(
+        rago_jobs::collection::resolve_provider(&st.db, auth.organization.id).await,
+        Ok(Some(ref p)) if p.kind == "stripe"
+    );
+    if stripe {
+        let transport = rago_integrations::default_transport();
+        let url = provider_url_result(
+            "portal_url",
+            rago_jobs::collection::portal_url(&st.db, &transport, &c).await,
+        )?;
+        return Ok(Json(json!({ "customer": { "portal_url": url } })));
+    }
+    let issued = crate::portal::issue(&st, &c, crate::portal::DEFAULT_TTL_MINUTES).await?;
+    Ok(Json(json!({
+        "customer": {
+            "portal_url": issued.url,
+            "portal_expires_at": issued.expires_at.to_rfc3339(),
+        }
+    })))
 }
 
 /// `POST /customers/:external_id/checkout_url` — a Stripe Checkout (setup
@@ -668,6 +684,77 @@ pub async fn update_wallet(
     )
     .await;
     Ok(Json(json!({ "wallet": ser::wallet(&w, &ext) })))
+}
+
+/// `GET /wallets/:id/realtime` — the wallet's real-time (Mint hold) settings.
+pub async fn show_wallet_realtime(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let w = st
+        .db
+        .find_wallet(id)
+        .await?
+        .filter(|w| w.organization_id == auth.organization.id)
+        .ok_or_else(|| ApiError::NotFound("wallet".into()))?;
+    let (enabled, policy, mint_account_id) = st
+        .db
+        .wallet_realtime_settings(w.id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("wallet".into()))?;
+    Ok(Json(json!({ "wallet_realtime": {
+        "lago_wallet_id": w.id,
+        "realtime_enabled": enabled,
+        "realtime_policy": policy,
+        "mint_account_id": mint_account_id,
+        "mint_configured": rago_jobs::wallet_realtime::mint_config().is_some(),
+    }})))
+}
+
+/// `PUT /wallets/:id/realtime` — turn real-time debit on or off:
+/// `{ "wallet": { "realtime_enabled": true, "realtime_policy": "reject" | "flag",
+/// "mint_account_id": "<customer's Mint account>" } }`. Real-time wallets must
+/// be in USD (Mint settles in USD microdollars).
+pub async fn update_wallet_realtime(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(id): Path<Uuid>,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let w = st
+        .db
+        .find_wallet(id)
+        .await?
+        .filter(|w| w.organization_id == auth.organization.id)
+        .ok_or_else(|| ApiError::NotFound("wallet".into()))?;
+    let p = body.get("wallet").unwrap_or(&body);
+    let enabled = p.get("realtime_enabled").and_then(Value::as_bool).unwrap_or(false);
+    let policy = p.get("realtime_policy").and_then(Value::as_str).unwrap_or("reject");
+    if rago_billing::wallet_realtime::RealtimePolicy::parse(policy).is_none() {
+        return Err(ApiError::validation("realtime_policy", "value_is_invalid"));
+    }
+    let mint_account = p
+        .get("mint_account_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|a| !a.is_empty());
+    let current = st.db.wallet_realtime_settings(w.id).await?.and_then(|(_, _, a)| a);
+    if enabled {
+        if !w.balance_currency.eq_ignore_ascii_case("USD") {
+            return Err(ApiError::validation("balance_currency", "realtime_requires_usd"));
+        }
+        if mint_account.is_none() && current.as_deref().map_or(true, str::is_empty) {
+            return Err(ApiError::validation("mint_account_id", "value_is_mandatory"));
+        }
+        if !matches!(w.status, rago_core::enums::WalletStatus::Active) {
+            return Err(ApiError::validation("wallet", "wallet_is_terminated"));
+        }
+    }
+    st.db
+        .set_wallet_realtime(auth.organization.id, w.id, enabled, policy, mint_account)
+        .await?;
+    show_wallet_realtime(State(st), auth, Path(id)).await
 }
 
 /// `DELETE /wallets/:id` — terminate a wallet.

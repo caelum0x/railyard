@@ -381,6 +381,11 @@ pub async fn void_invoice(
 ) -> ApiResult<Json<Value>> {
     let _ = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
     st.db.void_invoice(id).await?;
+    // Free Mint holds still reserved for this invoice (real-time wallets).
+    let transport = rago_integrations::default_transport();
+    if let Err(e) = rago_jobs::wallet_realtime::release_invoice_holds(&st.db, &transport, id).await {
+        tracing::warn!(error = %e, invoice_id = %id, "real-time holds could not be released on void");
+    }
     let inv = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
     let body = invoice_response(&st, inv.clone()).await?;
     crate::emit::webhook(

@@ -136,6 +136,7 @@
     const view = $("#view");
     view.innerHTML = head(cu.name || cu.external_id, '<span class="mono">' + esc(cu.external_id) + "</span>",
       btn("checkout", "Payment method link", "link") + btn("portal", "Billing portal", "link") +
+      btn("portal_share", "Share billing link", "link") + btn("portal_revoke", "Revoke billing links", "trash") +
       btn("edit", "Edit", "edit") + btn("delete", "Delete", "trash", "danger"), '<a href="#/customers">Customers</a>') +
       '<div class="grid2">' +
       card("Details", '<div class="body">' + kv([
@@ -192,6 +193,18 @@
         const r = await api.get(base + "/portal_url");
         window.open(r.customer.portal_url, "_blank", "noopener");
       },
+      portal_share: async () => {
+        const r = await api.post(base + "/portal_sessions", { portal_session: { expires_in_minutes: 30 * 24 * 60 } });
+        R.showJson("Customer billing link", {
+          portal_url: r.portal_session.portal_url,
+          expires_at: r.portal_session.expires_at,
+          note: "Anyone with this link can see this customer's invoices, usage and wallets, top up credits and cancel subscriptions until it expires or is revoked.",
+        });
+      },
+      portal_revoke: () => R.confirmAction("Revoke billing links", "Every open billing link for " + cu.external_id + " stops working.", "Revoke", async () => {
+        const r = await api.del(base + "/portal_sessions");
+        return (r && r.portal_sessions ? r.portal_sessions.revoked : 0) + " link(s) revoked";
+      }),
       new_sub: () => R.subscriptionForm({ external_customer_id: ext }),
       one_off: () => R.oneOffInvoiceForm(ext),
       new_wallet: () => R.walletForm({ external_customer_id: ext, currency: cu.currency }),

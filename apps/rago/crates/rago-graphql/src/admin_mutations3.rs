@@ -91,8 +91,27 @@ async fn reload(ctx: &Context<'_>, provider: PaymentProvider) -> Result<PaymentP
 }
 
 /// Providers Rago can actually collect with (charge, refund, inbound webhooks).
-const UNSUPPORTED_PROVIDER: &str =
-    "payment_provider_not_supported: Rago collects payments with Stripe, GoCardless or Adyen";
+const UNSUPPORTED_PROVIDER: &str = "payment_provider_not_supported: Rago collects payments with \
+     Stripe, GoCardless, Adyen, Creem, Dodo Payments or Iyzico";
+
+/// `live` unless the operator chose a test/sandbox mode.
+fn provider_mode(mode: &Option<String>, test_word: &str) -> Result<&'static str> {
+    match mode.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+        None | Some("live") => Ok("live"),
+        Some(m) if m == test_word => Ok(if test_word == "sandbox" { "sandbox" } else { "test" }),
+        Some(other) => Err(async_graphql::Error::new(format!(
+            "invalid_mode: expected live or {test_word}, got {other}"
+        ))),
+    }
+}
+
+fn required(value: &str, field: &str) -> Result<String> {
+    let v = value.trim();
+    if v.is_empty() {
+        return Err(async_graphql::Error::new(format!("value_is_mandatory: {field}")));
+    }
+    Ok(v.to_string())
+}
 
 /// Admin CRUD mutation root — slice 3 (merged into the schema's `Mutation`).
 #[derive(Default)]
@@ -154,6 +173,68 @@ impl AdminMutation3 {
     }
     async fn update_gocardless_payment_provider(&self, ctx: &Context<'_>, input: GocardlessPaymentProviderInput) -> Result<PaymentProvider> {
         self.add_gocardless_payment_provider(ctx, input).await
+    }
+
+    /// `AddCreemPaymentProvider` / `UpdateCreemPaymentProvider`.
+    async fn add_creem_payment_provider(&self, ctx: &Context<'_>, input: CreemPaymentProviderInput) -> Result<PaymentProvider> {
+        let org = require_org(ctx)?;
+        let settings = json!({
+            "product_id": required(&input.product_id, "product_id")?,
+            "currency": input.currency.as_deref().map(str::trim).filter(|c| c.len() == 3).unwrap_or("USD").to_uppercase(),
+            "mode": provider_mode(&input.mode, "test")?,
+        });
+        let row = db(ctx)
+            .upsert_payment_provider(org.id, "creem", &input.code, Some(&input.name), mask(&input.api_key).as_deref(), input.success_redirect_url.as_deref(), &settings)
+            .await?;
+        let provider: PaymentProvider = row.into();
+        persist_secret(ctx, &provider.id, &input.api_key).await?;
+        persist_webhook_secret(ctx, &provider.id, &input.webhook_secret).await?;
+        reload(ctx, provider).await
+    }
+    async fn update_creem_payment_provider(&self, ctx: &Context<'_>, input: CreemPaymentProviderInput) -> Result<PaymentProvider> {
+        self.add_creem_payment_provider(ctx, input).await
+    }
+
+    /// `AddDodoPaymentProvider` / `UpdateDodoPaymentProvider`.
+    async fn add_dodo_payment_provider(&self, ctx: &Context<'_>, input: DodoPaymentProviderInput) -> Result<PaymentProvider> {
+        let org = require_org(ctx)?;
+        let settings = json!({
+            "product_id": required(&input.product_id, "product_id")?,
+            "mode": provider_mode(&input.mode, "test")?,
+        });
+        let row = db(ctx)
+            .upsert_payment_provider(org.id, "dodo", &input.code, Some(&input.name), mask(&input.api_key).as_deref(), input.success_redirect_url.as_deref(), &settings)
+            .await?;
+        let provider: PaymentProvider = row.into();
+        persist_secret(ctx, &provider.id, &input.api_key).await?;
+        persist_webhook_secret(ctx, &provider.id, &input.webhook_secret).await?;
+        reload(ctx, provider).await
+    }
+    async fn update_dodo_payment_provider(&self, ctx: &Context<'_>, input: DodoPaymentProviderInput) -> Result<PaymentProvider> {
+        self.add_dodo_payment_provider(ctx, input).await
+    }
+
+    /// `AddIyzicoPaymentProvider` / `UpdateIyzicoPaymentProvider`.
+    async fn add_iyzico_payment_provider(&self, ctx: &Context<'_>, input: IyzicoPaymentProviderInput) -> Result<PaymentProvider> {
+        let org = require_org(ctx)?;
+        let settings = json!({
+            "api_key": required(&input.api_key, "api_key")?,
+            "mode": provider_mode(&input.mode, "sandbox")?,
+            "default_city": required(&input.default_city, "default_city")?,
+            "default_address": required(&input.default_address, "default_address")?,
+            "default_country": input.default_country.as_deref().map(str::trim).filter(|c| !c.is_empty()).unwrap_or("Turkey"),
+        });
+        let row = db(ctx)
+            .upsert_payment_provider(org.id, "iyzico", &input.code, Some(&input.name), mask(&input.secret_key).as_deref(), input.success_redirect_url.as_deref(), &settings)
+            .await?;
+        let provider: PaymentProvider = row.into();
+        persist_secret(ctx, &provider.id, &input.secret_key).await?;
+        // Iyzico signs merchant notifications with the same secret key.
+        persist_webhook_secret(ctx, &provider.id, &input.secret_key).await?;
+        reload(ctx, provider).await
+    }
+    async fn update_iyzico_payment_provider(&self, ctx: &Context<'_>, input: IyzicoPaymentProviderInput) -> Result<PaymentProvider> {
+        self.add_iyzico_payment_provider(ctx, input).await
     }
 
     /// `AddCashfreePaymentProvider`.

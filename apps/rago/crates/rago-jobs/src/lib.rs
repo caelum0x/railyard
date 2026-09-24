@@ -44,6 +44,7 @@ pub mod sso;
 pub mod vies;
 pub mod webhook_delivery;
 pub mod wallet_credits;
+pub mod wallet_realtime;
 pub mod webhook_emit;
 
 pub use bill_subscription::perform as bill_subscription;
