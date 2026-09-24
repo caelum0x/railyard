@@ -126,6 +126,15 @@ pub struct RefundReceipt {
     pub idempotent_replay: bool,
 }
 
+/// A player's Mint balance, as read for display. `available_micros` is what the
+/// player can spend right now; `held_micros` is reserved by in-flight purchases.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountBalance {
+    pub account_id: String,
+    pub available_micros: i64,
+    pub held_micros: i64,
+}
+
 /// The Mint holds seam. Object-safe (async_trait boxes the futures) so a store
 /// can hold an `Arc<dyn MintTransport>`.
 #[async_trait]
@@ -142,4 +151,12 @@ pub trait MintTransport: Send + Sync {
     /// `POST /v1/transfers` — return a captured purchase's money from the
     /// revenue account to the player (refund path).
     async fn refund(&self, req: Refund) -> Result<RefundReceipt, GameError>;
+
+    /// `GET /v1/accounts/:id/balance` — read-only balance lookup. An account Mint
+    /// has never seen reads as zero (a new player simply has nothing yet).
+    async fn read_balance(&self, account_id: &str) -> Result<AccountBalance, GameError>;
+
+    /// `POST /v1/accounts` `{kind:"User", owner_ref}` — open a new player account
+    /// and return its Mint id (`acct_…`). Each call opens a fresh account.
+    async fn create_player_account(&self, owner_ref: &str) -> Result<String, GameError>;
 }

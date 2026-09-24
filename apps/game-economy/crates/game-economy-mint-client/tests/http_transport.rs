@@ -531,3 +531,73 @@ async fn game_store_settles_a_purchase_over_http_end_to_end() {
     assert_eq!(reqs[1].json()["idem_key"], "buy-42:capture");
     assert_eq!(reqs[1].json()["to"], "acct_revenue");
 }
+
+// ---- read_balance ------------------------------------------------------------
+
+#[tokio::test]
+async fn read_balance_gets_account_balance_with_api_key() {
+    let (base, log) = start_mock(|_req| {
+        (
+            200,
+            ok_envelope(serde_json::json!({
+                "account_id": "acct_player",
+                "available_micros": 4_990_000,
+                "held_micros": 990_000,
+                "updated_seq": 7
+            })),
+        )
+    })
+    .await;
+
+    let bal = client(&base).read_balance("acct_player").await.expect("balance");
+    assert_eq!(bal.account_id, "acct_player");
+    assert_eq!(bal.available_micros, 4_990_000);
+    assert_eq!(bal.held_micros, 990_000);
+
+    let reqs = log.lock().unwrap().clone();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].method, "GET");
+    assert_eq!(reqs[0].path, "/v1/accounts/acct_player/balance");
+    assert_eq!(reqs[0].header("x-api-key"), Some(API_KEY));
+}
+
+#[tokio::test]
+async fn read_balance_unknown_account_is_zero() {
+    let (base, _log) =
+        start_mock(|_req| (404, err_envelope("account_not_found", "no such account"))).await;
+    let bal = client(&base).read_balance("acct_new").await.expect("balance");
+    assert_eq!(bal.available_micros, 0);
+    assert_eq!(bal.held_micros, 0);
+}
+
+#[tokio::test]
+async fn read_balance_rejects_path_unsafe_ids_without_a_request() {
+    let (base, log) = start_mock(|_req| (200, ok_envelope(serde_json::json!({})))).await;
+    let err = client(&base)
+        .read_balance("acct/../admin")
+        .await
+        .expect_err("must reject");
+    assert!(matches!(err, GameError::Mint(_)));
+    assert!(log.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn create_player_account_posts_user_kind() {
+    let (base, log) = start_mock(|_req| {
+        (
+            201,
+            ok_envelope(serde_json::json!({ "account_id": "acct_001ARZ3NDEKTSV4RRFFQ69G5FAV" })),
+        )
+    })
+    .await;
+    let id = client(&base)
+        .create_player_account("flowblast:p1")
+        .await
+        .expect("create");
+    assert_eq!(id, "acct_001ARZ3NDEKTSV4RRFFQ69G5FAV");
+    let reqs = log.lock().unwrap().clone();
+    assert_eq!(reqs[0].method, "POST");
+    assert_eq!(reqs[0].path, "/v1/accounts");
+    assert_eq!(reqs[0].json()["kind"], serde_json::json!("User"));
+    assert_eq!(reqs[0].json()["owner_ref"], serde_json::json!("flowblast:p1"));
+}

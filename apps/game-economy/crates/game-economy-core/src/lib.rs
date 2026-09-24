@@ -39,6 +39,6 @@ pub use store::{
     RefundOutcome,
 };
 pub use transport::{
-    Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Refund, RefundReceipt, Release,
+    AccountBalance, Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Refund, RefundReceipt, Release,
     ReleaseReceipt, SettlementProof,
 };

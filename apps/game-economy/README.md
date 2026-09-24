@@ -43,9 +43,11 @@ refunded). Purchase history shows `status` (`completed` / `refunded` /
 | `GET /store` | page | Player storefront: shop, inventory, pack opening, receipt history |
 | `POST /v1/purchase` | player token | Mint hold -> fulfillment -> capture -> signed receipt |
 | `POST /v1/packs/open` | player token | Open an owned pack; the roll seed is server-committed (keyed by the server secret) and revealed in the response for audit — players cannot choose it |
+| `GET /v1/wallet/:player` | player token | Mint balance + inventory in one read |
 | `GET /v1/inventory/:player` | player token | Granted entitlements |
 | `GET /v1/purchases/:player[/:receipt_id]` | player token | Receipt history / one receipt |
 | `POST /v1/tokens` | game-server key | Issue an expiring player token |
+| `POST /v1/players` | game-server key | Open a Mint account for a new player (store the returned id) |
 | `POST /v1/pass/advance` | game-server key | Report the battle-pass tier a player earned |
 | `POST /v1/entitlements/revoke` | game-server key | Chargeback: remove a purchase's grant, no money moved |
 | `POST /v1/refunds` | game-server key | Refund through Mint, then remove the grant |

@@ -50,7 +50,7 @@ use serde::Deserialize;
 
 use game_economy_core::error::GameError;
 use game_economy_core::transport::{
-    Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Refund, RefundReceipt, Release,
+    AccountBalance, Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Refund, RefundReceipt, Release,
     ReleaseReceipt, SettlementProof,
 };
 
@@ -482,6 +482,66 @@ impl MintTransport for HttpMintTransport {
             proof,
         })
     }
+
+    async fn read_balance(&self, account_id: &str) -> Result<AccountBalance, GameError> {
+        // Account ids are interpolated into the path, so only allow the ledger's
+        // own id alphabet; anything else can never be a real Mint account.
+        let valid = !account_id.is_empty()
+            && account_id.len() <= 128
+            && account_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.');
+        if !valid {
+            return Err(GameError::Mint("invalid account id".to_string()));
+        }
+        let path = format!("/v1/accounts/{account_id}/balance");
+        let resp = self
+            .http
+            .get(self.url(&path))
+            .header(API_KEY_HEADER, &self.api_key)
+            .send()
+            .await
+            .map_err(|e| GameError::Mint(format!("mint request to {path} failed: {e}")))?;
+        // A player Mint has never credited has no account yet: that is a zero
+        // balance, not an error.
+        if resp.status().as_u16() == 404 {
+            return Ok(AccountBalance {
+                account_id: account_id.to_string(),
+                available_micros: 0,
+                held_micros: 0,
+            });
+        }
+        let data: BalanceData = decode(resp).await?;
+        Ok(AccountBalance {
+            account_id: account_id.to_string(),
+            available_micros: data.available_micros,
+            held_micros: data.held_micros,
+        })
+    }
+
+    async fn create_player_account(&self, owner_ref: &str) -> Result<String, GameError> {
+        let data: CreatedAccount = self
+            .post_json(
+                "/v1/accounts",
+                &serde_json::json!({ "kind": "User", "owner_ref": owner_ref }),
+            )
+            .await?;
+        Ok(data.account_id)
+    }
+}
+
+/// `POST /v1/accounts` payload.
+#[derive(Deserialize)]
+struct CreatedAccount {
+    account_id: String,
+}
+
+/// `GET /v1/accounts/:id/balance` payload (mint-server handlers/accounts.rs).
+#[derive(Deserialize)]
+struct BalanceData {
+    available_micros: i64,
+    #[serde(default)]
+    held_micros: i64,
 }
 
 #[cfg(test)]

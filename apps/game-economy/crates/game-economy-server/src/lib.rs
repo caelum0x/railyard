@@ -32,6 +32,7 @@ pub mod auth;
 pub mod fulfill;
 pub mod iap;
 mod storefront;
+mod wallet;
 
 pub use iap::IapConfig;
 
@@ -171,6 +172,7 @@ where
         .route("/v1/packs/open", post(open_pack_handler::<M, F>))
         .route("/v1/inventory/:player", get(inventory_handler::<M, F>))
         .route("/v1/purchases/:player", get(history_handler::<M, F>))
+        .route("/v1/wallet/:player", get(wallet::wallet_handler::<M, F>))
         .route(
             "/v1/purchases/:player/:receipt_id",
             get(receipt_handler::<M, F>),
@@ -187,6 +189,7 @@ where
     let server = Router::new()
         .route("/v1/pass/advance", post(advance_pass_handler::<M, F>))
         .route("/v1/tokens", post(issue_token_handler::<M, F>))
+        .route("/v1/players", post(wallet::create_player_handler::<M, F>))
         .route(
             "/v1/entitlements/revoke",
             post(revoke_handler::<M, F>),

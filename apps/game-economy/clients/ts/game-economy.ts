@@ -66,6 +66,15 @@ export interface Inventory {
   battle_pass: { pass_sku: string; tier: number } | null;
 }
 
+export interface Wallet {
+  player: string;
+  /** Spendable now. */
+  available_micros: Micros;
+  /** Reserved by purchases still in flight. */
+  held_micros: Micros;
+  inventory: Inventory;
+}
+
 export interface PurchaseRecord extends PurchaseOutcome {
   player: string;
   status: "completed" | "refunded" | "revoked";
@@ -178,6 +187,13 @@ export class GameEconomyPlayer {
     });
   }
 
+  /** Balance + inventory in one read (the shop screen's call). */
+  async wallet(): Promise<Wallet> {
+    return call(this.baseUrl, `/v1/wallet/${encodeURIComponent(this.player)}`, {
+      headers: await this.auth(),
+    });
+  }
+
   async inventory(): Promise<Inventory> {
     return call(this.baseUrl, `/v1/inventory/${encodeURIComponent(this.player)}`, {
       headers: await this.auth(),
@@ -200,6 +216,18 @@ export class GameEconomyServer {
 
   private get headers(): Headers {
     return { "x-game-server-key": this.serverSecret };
+  }
+
+  /**
+   * Open a Mint account for a new player. Call ONCE per player and persist the
+   * returned `account_id`; it is the `player` for every other call.
+   */
+  createPlayer(ownerRef: string) {
+    return call<{ account_id: string; owner_ref: string }>(this.baseUrl, "/v1/players", {
+      method: "POST",
+      headers: this.headers,
+      body: { owner_ref: ownerRef },
+    });
   }
 
   /** Issue a player token after YOUR backend has authenticated the player. */

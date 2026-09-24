@@ -21,7 +21,7 @@ use async_trait::async_trait;
 
 use game_economy_core::error::GameError;
 use game_economy_core::transport::{
-    Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Refund, RefundReceipt, Release,
+    AccountBalance, Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Refund, RefundReceipt, Release,
     ReleaseReceipt, SettlementProof,
 };
 
@@ -452,5 +452,29 @@ impl MintTransport for FakeMint {
             },
         );
         Ok(receipt)
+    }
+
+    async fn read_balance(&self, account_id: &str) -> Result<AccountBalance, GameError> {
+        let l = self.inner.lock().unwrap();
+        let available_micros = *l.balances.get(account_id).unwrap_or(&0);
+        let held_micros = l
+            .holds
+            .values()
+            .filter(|h| h.status == HoldStatus::Open && h.account == account_id)
+            .map(|h| h.amount)
+            .sum();
+        Ok(AccountBalance {
+            account_id: account_id.to_string(),
+            available_micros,
+            held_micros,
+        })
+    }
+
+    async fn create_player_account(&self, _owner_ref: &str) -> Result<String, GameError> {
+        let mut l = self.inner.lock().unwrap();
+        l.seq += 1;
+        let id = format!("acct_0{:026}", l.seq);
+        l.balances.insert(id.clone(), 0);
+        Ok(id)
     }
 }

@@ -65,6 +65,13 @@ twice; generate the key once per purchase attempt and persist it.
 Body `{ player, entitlement_id }` -> `{ items: [{ slot, rarity, name, item_id }], seed }`.
 The seed is derived by the server and revealed for audit.
 
+### `GET /v1/wallet/:player`
+The shop screen's single read: the player's Mint balance plus inventory.
+`{ player, available_micros, held_micros, inventory }`. `available_micros` is
+spendable now; `held_micros` is reserved by purchases still in flight. A player
+Mint has never credited reads as `0`. `player` must equal the token's player
+(`403 forbidden` otherwise).
+
 ### `GET /v1/inventory/:player`
 `{ packs: { <entitlement_id>: {...} }, cosmetics: { <item_id>: name }, battle_pass }`
 
@@ -76,6 +83,7 @@ Receipt history with `status` (`completed` / `refunded` / `revoked`).
 | Route | Body | Result |
 |---|---|---|
 | `POST /v1/tokens` | `{ player, ttl_seconds? }` | `{ player, token, expires_at }` |
+| `POST /v1/players` | `{ owner_ref }` (your own player id) | `{ account_id, owner_ref }`: opens a Mint user account. Call once per player and store `account_id`; every call opens a new account |
 | `POST /v1/iap/credit` | `{ player, platform, transaction_id, product_id }` | `{ direction: "credit", amount_micros, settlement_seq, receipt_hash, idempotent_replay, ... }` |
 | `POST /v1/iap/reverse` | same | store refund: moves the credit back; `402 currency_already_spent` if the player already spent it |
 | `POST /v1/pass/advance` | `{ player, pass_sku, tier }` | `{ pass_sku, tier }` (monotonic, clamped) |
