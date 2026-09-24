@@ -17,6 +17,10 @@
 //! `RAGO_TAX_BASE_URL`. Missing configuration is an explicit error, never a
 //! fabricated provider response.
 //!
+//! Payment sync lives in [`crate::payment_sync`] and CRM sync (customers,
+//! invoices, subscriptions) in [`crate::crm_sync`]; both are driven by the same
+//! sweep ([`enqueue_auto_syncs`]).
+//!
 //! Failures emit the Lago-parity error webhooks (`integration.provider_error`,
 //! `customer.accounting_provider_error`, `customer.crm_provider_error`,
 //! `customer.tax_provider_error`); successes emit `invoice.resynced`,
@@ -32,10 +36,9 @@ use rago_db::integration_hub::{IntegrationConnection, IntegrationItem};
 use rago_db::Db;
 use rago_integrations::webhooks::WebhookKind;
 use rago_integrations::{
-    AccountingContact, AccountingInvoice, AccountingLine, AccountingProvider, AnrokTaxProvider,
-    AvalaraTaxProvider, CatalogEntry, CrmCustomer, CrmProvider, HttpTransport, HubspotProvider,
-    IntegrationError, NetsuiteCredentials, NetsuiteProvider, SalesforceProvider, SyncResult,
-    TaxFeeItem, TaxProvider, TaxRequest, XeroProvider,
+    AccountingContact, AccountingInvoice, AccountingLine, AccountingPayment, AccountingProvider,
+    AnrokTaxProvider, AvalaraTaxProvider, CatalogEntry, HttpTransport, IntegrationError, NetsuiteCredentials,
+    NetsuiteProvider, SyncResult, TaxFeeItem, TaxProvider, TaxRequest, XeroProvider,
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -57,16 +60,16 @@ fn env_required(name: &'static str) -> Result<String, JobError> {
     env_opt(name).ok_or(JobError::NotConfigured(name))
 }
 
-fn env_opt(name: &str) -> Option<String> {
+pub(crate) fn env_opt(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
 
-fn integration_err(e: impl std::fmt::Display) -> JobError {
+pub(crate) fn integration_err(e: impl std::fmt::Display) -> JobError {
     JobError::Integration(e.to_string())
 }
 
 /// `{ message, error_code }` of a provider failure (webhook payload shape).
-fn provider_error_object(e: &IntegrationError) -> Value {
+pub(crate) fn provider_error_object(e: &IntegrationError) -> Value {
     match e {
         IntegrationError::Provider { code, message } => json!({ "message": message, "error_code": code }),
         other => json!({ "message": other.to_string(), "error_code": Value::Null }),
@@ -75,14 +78,14 @@ fn provider_error_object(e: &IntegrationError) -> Value {
 
 /// Record an outbound webhook; a persistence failure is logged, never masks
 /// the sync outcome.
-async fn emit(db: &Db, org: Uuid, kind: WebhookKind, object: Value) {
+pub(crate) async fn emit(db: &Db, org: Uuid, kind: WebhookKind, object: Value) {
     if let Err(e) = record_webhook(db, org, kind, object).await {
         tracing::warn!(organization_id = %org, error = %e, "integration webhook could not be recorded");
     }
 }
 
 /// `integration.provider_error` for a failed sync through `conn`.
-async fn emit_provider_error(db: &Db, conn: &IntegrationConnection, action: &str, lago_id: Uuid, e: &IntegrationError) {
+pub(crate) async fn emit_provider_error(db: &Db, conn: &IntegrationConnection, action: &str, lago_id: Uuid, e: &IntegrationError) {
     emit(
         db,
         conn.organization_id,
@@ -174,6 +177,27 @@ async fn emit_tax_error(db: &Db, org: Uuid, provider: &str, customer_id: Option<
     .await;
 }
 
+/// `fee.tax_provider_error` for one fee whose tax could not be computed.
+async fn emit_fee_tax_error(db: &Db, org: Uuid, provider: &str, invoice: &Invoice, fee: &Fee, error: Value) {
+    emit(
+        db,
+        org,
+        WebhookKind::FeeTaxProviderError,
+        json!({
+            "lago_id": fee.id,
+            "lago_invoice_id": invoice.id,
+            "lago_charge_id": fee.charge_id,
+            "lago_subscription_id": fee.subscription_id,
+            "item_code": fee.charge_id.map(|c| c.to_string()).unwrap_or_else(|| "subscription".into()),
+            "amount_cents": fee.amount_cents,
+            "amount_currency": fee.amount_currency,
+            "tax_provider_code": provider,
+            "provider_error": error,
+        }),
+    )
+    .await;
+}
+
 /// Fetch the invoice's taxes from the tax provider (`anrok` default or
 /// `avalara`), apply them to its fees, roll up and persist the invoice totals.
 pub async fn apply_provider_taxes_to_invoice<T: HttpTransport>(
@@ -207,10 +231,27 @@ pub async fn apply_provider_taxes_to_invoice<T: HttpTransport>(
         Ok(r) => r,
         Err(e) => {
             emit_tax_error(db, org, provider_code, invoice.customer_id, invoice.id, &e).await;
+            let error = provider_error_object(&e);
+            for fee in &fees {
+                emit_fee_tax_error(db, org, provider_code, &invoice, fee, error.clone()).await;
+            }
             return Err(integration_err(e));
         }
     };
     let by_id: HashMap<String, _> = results.into_iter().map(|r| (r.item_id.clone(), r)).collect();
+    // A taxable fee the provider returned no result for keeps no tax; flag it
+    // (`Fees::ApplyProviderTaxesService` reports it as a fee-level error).
+    for fee in fees.iter().filter(|f| f.amount_cents > 0 && !by_id.contains_key(&f.id.to_string())) {
+        emit_fee_tax_error(
+            db,
+            org,
+            provider_code,
+            &invoice,
+            fee,
+            json!({ "message": "tax provider returned no result for this fee", "error_code": "missing_fee_tax_result" }),
+        )
+        .await;
+    }
 
     for fee in fees.iter_mut() {
         if let Some(res) = by_id.get(&fee.id.to_string()) {
@@ -341,6 +382,12 @@ impl<'a, T: HttpTransport> AccountingClient<'a, T> {
             Self::Netsuite(p) => p.sync_credit_note(doc).await,
         }
     }
+    pub(crate) async fn sync_payment(&self, p: &AccountingPayment) -> Result<SyncResult, IntegrationError> {
+        match self {
+            Self::Xero(x) => x.sync_payment(p).await,
+            Self::Netsuite(n) => n.sync_payment(p).await,
+        }
+    }
     async fn create_contact(&self, c: &AccountingContact) -> Result<SyncResult, IntegrationError> {
         match self {
             Self::Xero(p) => p.create_contact(c).await,
@@ -373,7 +420,7 @@ fn opened(conn: &IntegrationConnection, key: &str) -> Result<Option<String>, Job
 
 /// NetSuite TBA credentials from the integration's (sealed) settings, when
 /// complete.
-fn netsuite_credentials(conn: &IntegrationConnection) -> Result<Option<NetsuiteCredentials>, JobError> {
+pub(crate) fn netsuite_credentials(conn: &IntegrationConnection) -> Result<Option<NetsuiteCredentials>, JobError> {
     let (Some(account_id), Some(client_id), Some(token_id), Some(script_endpoint_url)) = (
         conn.setting("account_id"),
         conn.setting("client_id"),
@@ -419,7 +466,15 @@ pub async fn accounting_client<'a, T: HttpTransport>(
     }
 }
 
-async fn active_accounting(db: &Db, org: Uuid) -> Result<IntegrationConnection, JobError> {
+/// Whether an accounting connection holds the credentials a sync needs.
+pub(crate) fn accounting_ready(conn: &IntegrationConnection) -> bool {
+    match conn.provider_code.as_str() {
+        "netsuite" => netsuite_credentials(conn).ok().flatten().is_some() || conn.access_token.is_some(),
+        _ => conn.access_token.is_some(),
+    }
+}
+
+pub(crate) async fn active_accounting(db: &Db, org: Uuid) -> Result<IntegrationConnection, JobError> {
     db.active_integration_of_type(org, "accounting")
         .await?
         .ok_or(JobError::NotConfigured("accounting integration (connect Xero or NetSuite)"))
@@ -825,103 +880,18 @@ pub async fn refresh_integration_catalog<T: HttpTransport>(
 
 // ---- CRM -----------------------------------------------------------------------
 
-/// Sync a customer to the org's CRM (Salesforce or HubSpot), link and store
-/// the mapping. Returns `(provider_code, crm_id)`.
-pub async fn sync_customer_crm_with_provider<T: HttpTransport>(
-    db: &Db,
-    transport: &T,
-    org: Uuid,
-    customer: &Customer,
-) -> Result<(String, String), JobError> {
-    let conn = db
-        .active_integration_of_type(org, "crm")
-        .await?
-        .ok_or(JobError::NotConfigured("CRM integration (connect Salesforce or HubSpot)"))?;
-    let token = fresh_access_token(db, transport, &conn).await?;
-    let aggregator = env_opt("RAGO_CRM_BASE_URL");
-    let crm = CrmCustomer {
-        customer_id: customer.id.to_string(),
-        external_id: customer.external_id.clone(),
-        name: customer.name.clone(),
-        email: customer.email.clone(),
-    };
-    let result = match conn.provider_code.as_str() {
-        "salesforce" => match (aggregator, conn.setting("instance_url")) {
-            (Some(base), _) => SalesforceProvider::new(base, token, transport).sync_customer(&crm).await,
-            (None, Some(instance)) => SalesforceProvider::direct(token, instance, transport).sync_customer(&crm).await,
-            (None, None) => {
-                return Err(JobError::Integration("salesforce_instance_url_missing: reconnect Salesforce from the console".into()))
-            }
-        },
-        "hubspot" => match aggregator {
-            Some(base) => HubspotProvider::new(base, token, transport).sync_customer(&crm).await,
-            None => {
-                let target = conn.setting("default_targeted_object");
-                HubspotProvider::direct(token, target.as_deref(), transport).sync_customer(&crm).await
-            }
-        },
-        other => return Err(JobError::Integration(format!("unsupported_crm_provider: {other}"))),
-    };
-    let result = match result {
-        Ok(r) => r,
-        Err(e) => {
-            emit(
-                db,
-                org,
-                WebhookKind::CustomerCrmProviderError,
-                json!({
-                    "lago_customer_id": customer.id,
-                    "external_customer_id": customer.external_id,
-                    "crm_provider": conn.provider_code,
-                    "crm_provider_code": conn.code,
-                    "provider_error": provider_error_object(&e),
-                }),
-            )
-            .await;
-            return Err(integration_err(e));
-        }
-    };
-    db.record_resource_sync(org, conn.id, "customer", customer.id, &result.external_id).await?;
-    if db.integration_customer_external_id(conn.id, customer.id).await?.as_deref() != Some(result.external_id.as_str()) {
-        db.insert_integration_customer(Uuid::new_v4(), org, conn.id, customer.id, Some(&result.external_id), None)
-            .await?;
-    }
-    emit(
-        db,
-        org,
-        WebhookKind::CustomerCrmProviderCreated,
-        json!({
-            "lago_id": customer.id,
-            "external_id": customer.external_id,
-            "name": customer.name,
-            "email": customer.email,
-            "integration_customers": [{
-                "lago_integration_id": conn.id,
-                "type": conn.provider_code,
-                "external_customer_id": result.external_id,
-            }],
-        }),
-    )
-    .await;
-    Ok((conn.provider_code, result.external_id))
-}
-
-/// Sync a customer to the org's CRM and store the mapping. Returns the CRM id.
-pub async fn sync_customer_crm<T: HttpTransport>(
-    db: &Db,
-    transport: &T,
-    org: Uuid,
-    customer: &Customer,
-) -> Result<String, JobError> {
-    Ok(sync_customer_crm_with_provider(db, transport, org, customer).await?.1)
-}
+// Customer / invoice / subscription CRM sync lives in `crate::crm_sync`; these
+// re-exports keep the historical paths used by the REST layer.
+pub use crate::crm_sync::{sync_customer_crm, sync_customer_crm_with_provider};
 
 // ---- auto-sync sweep -------------------------------------------------------------
 
-/// Enqueue accounting sync jobs for finalized invoices / credit notes of every
-/// org whose active accounting integration has `sync_invoices` /
-/// `sync_credit_notes` enabled, and credit-note tax reporting for orgs with a
-/// tax integration. Each resource is enqueued once per integration (a queued
+/// Enqueue accounting sync jobs for finalized invoices / credit notes /
+/// succeeded payments of every org whose active accounting integration has
+/// `sync_invoices` / `sync_credit_notes` / `sync_payments` enabled, CRM sync
+/// jobs for changed customers / invoices / subscriptions (`sync_customers` /
+/// `sync_invoices` / `sync_subscriptions` on the CRM integration), and
+/// credit-note tax reporting for orgs with a tax integration. Each resource is enqueued once per integration (a queued
 /// or finished job, or a stored mapping, suppresses re-enqueueing). Returns
 /// the number of jobs enqueued.
 pub async fn enqueue_auto_syncs(db: &Db) -> Result<u32, JobError> {
@@ -936,11 +906,7 @@ pub async fn enqueue_auto_syncs(db: &Db) -> Result<u32, JobError> {
                 continue;
             }
             // Only once the connection can authenticate.
-            let ready = match conn.provider_code.as_str() {
-                "netsuite" => netsuite_credentials(&conn).ok().flatten().is_some() || conn.access_token.is_some(),
-                _ => conn.access_token.is_some(),
-            };
-            if !ready {
+            if !accounting_ready(&conn) {
                 continue;
             }
             for id in db.unsynced_resources(&conn, resource, job_type, 50).await? {
@@ -950,6 +916,8 @@ pub async fn enqueue_auto_syncs(db: &Db) -> Result<u32, JobError> {
             }
         }
     }
+    enqueued += crate::payment_sync::enqueue_payment_syncs(db).await?;
+    enqueued += crate::crm_sync::enqueue_crm_syncs(db).await?;
     // Credit notes are reported to the org's tax provider as negative
     // transactions (the tax counterpart of an issued credit note).
     for conn in db.integrations_of_type("tax").await? {

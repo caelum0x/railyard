@@ -42,40 +42,7 @@ fn fee_type_i32(v: &str) -> Option<i32> {
     })
 }
 
-// ---- quotes -----------------------------------------------------------------
-
-fn quote_json(q: &rago_db::QuoteRow) -> Value {
-    json!({
-        "lago_id": q.id,
-        "lago_customer_id": q.customer_id,
-        "number": q.number,
-        "status": q.status,
-        "currency": q.currency,
-        "total_amount_cents": q.total_amount_cents,
-        "line_items": q.line_items,
-    })
-}
-
-/// `GET /quotes`.
-pub async fn list_quotes(State(st): State<AppState>, auth: Authed) -> ApiResult<Json<Value>> {
-    let quotes = st.db.list_quotes(auth.organization.id).await?;
-    Ok(Json(json!({ "quotes": quotes.iter().map(quote_json).collect::<Vec<_>>() })))
-}
-
-/// `GET /quotes/:id`.
-pub async fn show_quote(
-    State(st): State<AppState>,
-    _auth: Authed,
-    Path(id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    // Ownership is enforced by the tenancy middleware (foreign ids → 404).
-    let q = st
-        .db
-        .find_quote_full(id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("quote".into()))?;
-    Ok(Json(json!({ "quote": quote_json(&q) })))
-}
+// Quotes (index / show and the order flow) live in `crate::order_flow`.
 
 // ---- events -------------------------------------------------------------------
 

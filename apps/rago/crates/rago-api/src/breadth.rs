@@ -266,8 +266,52 @@ pub async fn list_captured_emails(State(st): State<AppState>, _auth: Authed) -> 
 
 // ---- quotes -----------------------------------------------------------------
 
+/// A quote's line items priced with the org's taxes: the normalized line items
+/// (`[{ name, unit_amount_cents, units }]`) and the sub-total / taxes / total.
+pub(crate) struct PricedQuoteLines {
+    pub line_items: Value,
+    pub sub_total_cents: i64,
+    pub taxes_cents: i64,
+    pub total_cents: i64,
+}
+
+/// Price raw quote line items (`name` + `unit_amount_cents`, or `add_on_code`,
+/// with optional `units`) through the invoice engine without persisting
+/// anything billable.
+pub(crate) async fn price_quote_lines(
+    st: &AppState,
+    org: Uuid,
+    customer_id: Uuid,
+    currency: &Currency,
+    raw: &[Value],
+) -> ApiResult<PricedQuoteLines> {
+    let lines = resolve_lines(st, org, raw).await?;
+    if let Some(bad) = lines.iter().find(|l| l.units <= Decimal::ZERO) {
+        return Err(ApiError::validation("units", &format!("must_be_positive ({})", bad.name)));
+    }
+    if lines.iter().any(|l| l.unit_amount_cents < 0) {
+        return Err(ApiError::validation("unit_amount_cents", "must_be_zero_or_positive"));
+    }
+    let mut fees = build_adhoc_fees(org, currency, &lines);
+    let mut draft = adhoc_invoice(org, customer_id, currency, InvoiceType::OneOff);
+    let taxes = st.db.organization_taxes(org).await?;
+    assemble_invoice(&mut draft, &mut fees, &taxes, &[]);
+    let line_items = json!(lines
+        .iter()
+        .map(|l| json!({ "name": l.name, "unit_amount_cents": l.unit_amount_cents, "units": l.units.to_string() }))
+        .collect::<Vec<_>>());
+    Ok(PricedQuoteLines {
+        line_items,
+        sub_total_cents: draft.sub_total_excluding_taxes_amount_cents,
+        taxes_cents: draft.taxes_amount_cents,
+        total_cents: draft.total_amount_cents,
+    })
+}
+
 /// `POST /quotes` — generate a quote for a customer from line items, computing
-/// totals with the same fee/tax engine (but persisting nothing billable).
+/// totals with the same fee/tax engine (but persisting nothing billable). The
+/// quote starts with a draft version 1 that can be edited, approved, issued as
+/// an order form, signed and executed (or accepted directly).
 pub async fn create_quote(
     State(st): State<AppState>,
     auth: Authed,
@@ -284,59 +328,83 @@ pub async fn create_quote(
     let currency = Currency::new(&s(p, "currency").or(customer.currency.clone()).unwrap_or_else(|| "USD".into()));
 
     let arr = p.get("line_items").and_then(Value::as_array).cloned().unwrap_or_default();
-    let lines = resolve_lines(&st, org, &arr).await?;
-    let mut fees = build_adhoc_fees(org, &currency, &lines);
-    let mut draft = adhoc_invoice(org, customer.id, &currency, InvoiceType::OneOff);
-    let taxes = st.db.organization_taxes(org).await?;
-    assemble_invoice(&mut draft, &mut fees, &taxes, &[]);
+    let priced = price_quote_lines(&st, org, customer.id, &currency, &arr).await?;
 
     // Persist the quote with the resolved line items (for later acceptance).
     let id = Uuid::new_v4();
     let number = format!("QUO-{}", &id.to_string()[..8]);
-    let line_items = json!(lines
-        .iter()
-        .map(|l| json!({ "name": l.name, "unit_amount_cents": l.unit_amount_cents, "units": l.units.to_string() }))
-        .collect::<Vec<_>>());
     st.db.insert_quote(
         id, org, customer.id, &number, &currency.code(),
-        draft.sub_total_excluding_taxes_amount_cents, draft.taxes_amount_cents, draft.total_amount_cents,
-        &line_items,
+        priced.sub_total_cents, priced.taxes_cents, priced.total_cents,
+        &priced.line_items,
     ).await?;
+    st.db
+        .insert_quote_version(Uuid::new_v4(), org, id, 1, &currency.code(), priced.total_cents, &priced.line_items)
+        .await?;
+    crate::emit::webhook(
+        &st.db,
+        org,
+        rago_integrations::webhooks::WebhookKind::QuoteCreated,
+        json!({
+            "lago_id": id,
+            "number": number,
+            "lago_customer_id": customer.id,
+            "currency": currency.code(),
+            "total_amount_cents": priced.total_cents,
+        }),
+    )
+    .await;
 
     Ok(Json(json!({
         "quote": {
             "lago_id": id, "number": number, "status": "draft",
             "external_customer_id": external_customer_id,
             "currency": currency.code(),
-            "sub_total_excluding_taxes_amount_cents": draft.sub_total_excluding_taxes_amount_cents,
-            "taxes_amount_cents": draft.taxes_amount_cents,
-            "total_amount_cents": draft.total_amount_cents,
-            "line_items": line_items,
+            "sub_total_excluding_taxes_amount_cents": priced.sub_total_cents,
+            "taxes_amount_cents": priced.taxes_cents,
+            "total_amount_cents": priced.total_cents,
+            "line_items": priced.line_items,
         }
     })))
 }
 
 /// `POST /quotes/:id/accept` — accept a quote: materialize its line items into a
 /// one-off invoice (same engine, same totals) and mark the quote accepted.
+///
+/// Only an open (`draft`) quote can be accepted. A versioned quote is accepted
+/// from its approved version, so a quote whose versions are all drafts or
+/// voided cannot be invoiced.
 pub async fn accept_quote(
     State(st): State<AppState>,
     auth: Authed,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     let org = auth.organization.id;
-    let (quote_id, customer_id, status, currency_code, _total, line_items) = st
+    let quote = st
         .db
-        .find_quote(id)
+        .quote_detail(org, id)
         .await?
         .ok_or_else(|| ApiError::NotFound("quote".into()))?;
-    if status == "accepted" {
-        return Err(ApiError::validation("quote", "already_accepted"));
+    match quote.status.as_str() {
+        "accepted" => return Err(ApiError::validation("quote", "already_accepted")),
+        "draft" => {}
+        other => return Err(ApiError::validation("quote", &format!("not_acceptable_when_{other}"))),
     }
+    let (currency_code, line_items) = if quote.versions_count > 0 {
+        let version = st
+            .db
+            .approved_quote_version(quote.id)
+            .await?
+            .ok_or_else(|| ApiError::validation("quote", "has_no_approved_version"))?;
+        (version.currency, version.line_items)
+    } else {
+        (quote.currency.clone(), quote.line_items.clone())
+    };
     let currency = Currency::new(&currency_code);
     let arr = line_items.as_array().cloned().unwrap_or_default();
     let lines = resolve_lines(&st, org, &arr).await?;
     let mut fees = build_adhoc_fees(org, &currency, &lines);
-    let mut invoice = adhoc_invoice(org, customer_id, &currency, InvoiceType::OneOff);
+    let mut invoice = adhoc_invoice(org, quote.customer_id, &currency, InvoiceType::OneOff);
     for fee in &mut fees {
         fee.invoice_id = Some(invoice.id);
     }
@@ -344,14 +412,11 @@ pub async fn accept_quote(
     assemble_invoice(&mut invoice, &mut fees, &taxes, &[]);
 
     st.db.insert_numbered_invoice_with_fees(&mut invoice, &fees).await?;
-    st.db.accept_quote(quote_id, invoice.id).await?;
-
-    let email = st.db.customer_external_id(customer_id).await?;
-    let _ = email;
+    st.db.accept_quote(quote.id, invoice.id).await?;
     send_invoice_finalized(&st, &invoice, &fees, None).await;
 
     Ok(Json(json!({
-        "quote": { "lago_id": quote_id, "status": "accepted", "accepted_invoice_id": invoice.id },
+        "quote": { "lago_id": quote.id, "status": "accepted", "accepted_invoice_id": invoice.id },
         "invoice": ser::invoice(&invoice, &fees),
     })))
 }

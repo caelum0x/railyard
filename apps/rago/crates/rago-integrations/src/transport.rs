@@ -51,6 +51,31 @@ pub trait HttpTransport: Send + Sync {
         let _ = (url, headers);
         Err(TransportError::Io("GET is not supported by this transport".into()))
     }
+
+    /// PATCH `url` with a body (used to update an existing provider record,
+    /// e.g. a CRM contact). Transports without the capability report it as
+    /// unavailable.
+    async fn patch(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: String,
+    ) -> Result<HttpResponse, TransportError> {
+        let _ = (url, headers, body);
+        Err(TransportError::Io("PATCH is not supported by this transport".into()))
+    }
+
+    /// PUT `url` with a body (used for idempotent provider writes such as CRM
+    /// associations).
+    async fn put(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: String,
+    ) -> Result<HttpResponse, TransportError> {
+        let _ = (url, headers, body);
+        Err(TransportError::Io("PUT is not supported by this transport".into()))
+    }
 }
 
 /// The transport used when outbound HTTP is not compiled in (builds without the
@@ -77,6 +102,24 @@ impl HttpTransport for DisabledTransport {
         &self,
         _url: &str,
         _headers: &[(String, String)],
+    ) -> Result<HttpResponse, TransportError> {
+        Err(TransportError::Io(DISABLED_MSG.into()))
+    }
+
+    async fn patch(
+        &self,
+        _url: &str,
+        _headers: &[(String, String)],
+        _body: String,
+    ) -> Result<HttpResponse, TransportError> {
+        Err(TransportError::Io(DISABLED_MSG.into()))
+    }
+
+    async fn put(
+        &self,
+        _url: &str,
+        _headers: &[(String, String)],
+        _body: String,
     ) -> Result<HttpResponse, TransportError> {
         Err(TransportError::Io(DISABLED_MSG.into()))
     }
@@ -116,6 +159,24 @@ impl<T: HttpTransport + ?Sized> HttpTransport for &T {
         headers: &[(String, String)],
     ) -> Result<HttpResponse, TransportError> {
         (**self).get(url, headers).await
+    }
+
+    async fn patch(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: String,
+    ) -> Result<HttpResponse, TransportError> {
+        (**self).patch(url, headers, body).await
+    }
+
+    async fn put(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: String,
+    ) -> Result<HttpResponse, TransportError> {
+        (**self).put(url, headers, body).await
     }
 }
 
@@ -198,6 +259,24 @@ impl HttpTransport for MockTransport {
     ) -> Result<HttpResponse, TransportError> {
         self.post(url, headers, String::new()).await
     }
+
+    async fn patch(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: String,
+    ) -> Result<HttpResponse, TransportError> {
+        self.post(url, headers, body).await
+    }
+
+    async fn put(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: String,
+    ) -> Result<HttpResponse, TransportError> {
+        self.post(url, headers, body).await
+    }
 }
 
 impl Clone for TransportError {
@@ -224,8 +303,52 @@ impl Default for ReqwestTransport {
 }
 
 #[cfg(feature = "live")]
+impl ReqwestTransport {
+    async fn send_with_body(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        headers: &[(String, String)],
+        body: String,
+    ) -> Result<HttpResponse, TransportError> {
+        let mut req = self.client.request(method, url).body(body);
+        for (k, v) in headers {
+            req = req.header(k, v);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| TransportError::Io(e.to_string()))?;
+        let status = resp.status().as_u16();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| TransportError::Io(e.to_string()))?;
+        Ok(HttpResponse { status, body })
+    }
+}
+
+#[cfg(feature = "live")]
 #[async_trait]
 impl HttpTransport for ReqwestTransport {
+    async fn patch(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: String,
+    ) -> Result<HttpResponse, TransportError> {
+        self.send_with_body(reqwest::Method::PATCH, url, headers, body).await
+    }
+
+    async fn put(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: String,
+    ) -> Result<HttpResponse, TransportError> {
+        self.send_with_body(reqwest::Method::PUT, url, headers, body).await
+    }
+
     async fn post(
         &self,
         url: &str,

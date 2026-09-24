@@ -104,6 +104,72 @@ pub async fn sync_customer_crm(
     })))
 }
 
+/// `POST /invoices/:id/sync_crm` — mirror a finalized invoice to the connected
+/// HubSpot as a `LagoInvoices` record associated to the customer.
+pub async fn sync_invoice_crm(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let org = auth.organization.id;
+    let transport = rago_integrations::default_transport();
+    let crm_id = rago_jobs::crm_sync::sync_invoice_crm(&st.db, &transport, org, id)
+        .await
+        .map_err(|e| crate::integrations::integration_error("crm_integration", e))?;
+    let provider = st.db.active_integration_of_type(org, "crm").await?.map(|c| c.provider_code);
+    Ok(Json(json!({
+        "integration_invoice": { "lago_invoice_id": id, "provider": provider, "external_id": crm_id }
+    })))
+}
+
+/// `POST /subscriptions/:external_id/sync_crm` — mirror a subscription to the
+/// connected HubSpot as a `LagoSubscriptions` record.
+pub async fn sync_subscription_crm(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(external_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let org = auth.organization.id;
+    let sub = st
+        .db
+        .find_subscription_by_external_id(org, &external_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("subscription".into()))?;
+    let transport = rago_integrations::default_transport();
+    let crm_id = rago_jobs::crm_sync::sync_subscription_crm(&st.db, &transport, org, sub.id)
+        .await
+        .map_err(|e| crate::integrations::integration_error("crm_integration", e))?;
+    let provider = st.db.active_integration_of_type(org, "crm").await?.map(|c| c.provider_code);
+    Ok(Json(json!({
+        "integration_subscription": {
+            "lago_subscription_id": sub.id,
+            "external_id": sub.external_id,
+            "provider": provider,
+            "crm_external_id": crm_id,
+        }
+    })))
+}
+
+// ---- payment sync (accounting) ---------------------------------------------
+
+/// `POST /payments/:id/sync_accounting` — record a succeeded payment at the
+/// connected accounting system against its already-synced invoice.
+pub async fn sync_payment_accounting(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let org = auth.organization.id;
+    let transport = rago_integrations::default_transport();
+    let external_id = rago_jobs::payment_sync::sync_payment_accounting(&st.db, &transport, org, id)
+        .await
+        .map_err(|e| crate::integrations::integration_error("accounting_integration", e))?;
+    let provider = st.db.active_integration_of_type(org, "accounting").await?.map(|c| c.provider_code);
+    Ok(Json(json!({
+        "integration_payment": { "lago_payment_id": id, "provider": provider, "external_id": external_id }
+    })))
+}
+
 // ---- usage-monitoring alerts -----------------------------------------------
 
 /// `POST /subscriptions/:external_id/alerts` — create a usage-monitoring alert.

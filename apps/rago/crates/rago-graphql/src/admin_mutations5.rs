@@ -67,6 +67,12 @@ fn normalize_idp(provider: &str) -> Result<&'static str> {
     }
 }
 
+/// Whether a quote may move from `from` to `to` (`draft` → `approved` /
+/// `voided`, `approved` → `voided`; accepted and voided quotes are final).
+fn quote_transition_allowed(from: &str, to: &str) -> bool {
+    from == to || matches!((from, to), ("draft", "approved") | ("draft", "voided") | ("approved", "voided"))
+}
+
 /// Admin CRUD mutation root — slice 5 (merged into the schema's `Mutation`).
 #[derive(Default)]
 pub struct AdminMutation5;
@@ -93,9 +99,22 @@ impl AdminMutation5 {
         Ok(db(ctx).find_quote_full(id).await?.expect("just inserted").into())
     }
 
-    /// `UpdateQuote`.
+    /// `UpdateQuote`. Status moves are limited to the quote lifecycle
+    /// (`draft` → `approved` / `voided`); an accepted or voided quote is final.
     async fn update_quote(&self, ctx: &Context<'_>, input: UpdateQuoteInput) -> Result<Quote> {
         require_org(ctx)?;
+        if let Some(next) = input.status.as_deref() {
+            let current = db(ctx)
+                .find_quote_full(uuid(&input.id)?)
+                .await?
+                .ok_or_else(|| async_graphql::Error::new("quote_not_found"))?;
+            if !quote_transition_allowed(&current.status, next) {
+                return Err(async_graphql::Error::new(format!(
+                    "invalid_status_transition: {} -> {next}",
+                    current.status
+                )));
+            }
+        }
         let line_items = input.line_items.map(|j| j.0);
         let row = db(ctx).update_quote(uuid(&input.id)?, input.status.as_deref(), line_items.as_ref(), input.total_amount_cents).await?.ok_or_else(|| async_graphql::Error::new("quote_not_found"))?;
         Ok(row.into())
@@ -111,6 +130,13 @@ impl AdminMutation5 {
             None => None,
         };
         let vid = uuid(&id)?;
+        let current = db(ctx).find_quote_version(vid).await?.ok_or_else(|| async_graphql::Error::new("quote_version_not_found"))?;
+        if current.status != "draft" {
+            return Err(async_graphql::Error::new(format!("quote_version_not_draft: {}", current.status)));
+        }
+        if expires.is_some_and(|e| e <= Utc::now().naive_utc()) {
+            return Err(async_graphql::Error::new("expires_at_must_be_in_the_future"));
+        }
         let row = db(ctx).approve_quote_version(vid, expires).await?.ok_or_else(|| async_graphql::Error::new("quote_version_not_found"))?;
         // `Quotes::Versions::ApproveService` emits `quote.approved`.
         emit(db(ctx), org.id, WebhookKind::QuoteApproved, json!({ "lago_id": vid })).await;
@@ -121,6 +147,13 @@ impl AdminMutation5 {
     async fn void_quote_version(&self, ctx: &Context<'_>, id: ID) -> Result<QuoteVersion> {
         let org = require_org(ctx)?;
         let vid = uuid(&id)?;
+        let current = db(ctx).find_quote_version(vid).await?.ok_or_else(|| async_graphql::Error::new("quote_version_not_found"))?;
+        if current.status == "voided" {
+            return Err(async_graphql::Error::new("quote_version_already_voided"));
+        }
+        if current.status == "approved" && db(ctx).quote_has_signed_order_form(current.quote_id).await? {
+            return Err(async_graphql::Error::new("quote_version_has_signed_order_form"));
+        }
         let row = db(ctx).void_quote_version(vid).await?.ok_or_else(|| async_graphql::Error::new("quote_version_not_found"))?;
         // `Quotes::Versions::VoidService` emits `quote.voided`.
         emit(db(ctx), org.id, WebhookKind::QuoteVoided, json!({ "lago_id": vid })).await;
@@ -155,8 +188,17 @@ impl AdminMutation5 {
         if db(ctx).order_form_origin(ofid).await?.map(|(o, _)| o) != Some(org.id) {
             return Err(async_graphql::Error::new("order_form_not_found"));
         }
-        if current.3 == "voided" {
-            return Err(async_graphql::Error::new("order_form_voided"));
+        match current.3.as_str() {
+            "voided" => return Err(async_graphql::Error::new("order_form_voided")),
+            "expired" => return Err(async_graphql::Error::new("order_form_expired")),
+            "signed" => return Err(async_graphql::Error::new("order_form_already_signed")),
+            _ => {}
+        }
+        // A form past its expiry the clock has not swept yet is expired too.
+        if let Some((_, Some(expires_at))) = db(ctx).order_form_state(ofid).await? {
+            if expires_at <= Utc::now().naive_utc() {
+                return Err(async_graphql::Error::new("order_form_expired"));
+            }
         }
         let row = db(ctx).mark_order_form_signed(ofid, signed_document.as_deref(), execution_mode.as_deref(), at).await?.ok_or_else(|| async_graphql::Error::new("order_form_not_found"))?;
         // `OrderForms::MarkAsSignedService` emits `order_form.signed` and
@@ -172,6 +214,13 @@ impl AdminMutation5 {
     async fn void_order_form(&self, ctx: &Context<'_>, id: ID) -> Result<OrderForm> {
         let org = require_org(ctx)?;
         let ofid = uuid(&id)?;
+        let current = db(ctx).find_order_form(ofid).await?.ok_or_else(|| async_graphql::Error::new("order_form_not_found"))?;
+        if db(ctx).order_form_origin(ofid).await?.map(|(o, _)| o) != Some(org.id) {
+            return Err(async_graphql::Error::new("order_form_not_found"));
+        }
+        if current.3 != "draft" {
+            return Err(async_graphql::Error::new(format!("order_form_not_voidable: {}", current.3)));
+        }
         let row = db(ctx).void_order_form(ofid).await?.ok_or_else(|| async_graphql::Error::new("order_form_not_found"))?;
         // `OrderForms::VoidService` emits `order_form.voided`.
         emit(db(ctx), org.id, WebhookKind::OrderFormVoided, json!({ "lago_id": ofid })).await;
@@ -190,10 +239,22 @@ impl AdminMutation5 {
         Ok(row.into())
     }
 
-    /// `UpdateOrder`.
+    /// `UpdateOrder` — only a pending order can be voided here; execution
+    /// goes through `executeOrder` (which invoices it).
     async fn update_order(&self, ctx: &Context<'_>, id: ID, status: String) -> Result<Order> {
         require_org(ctx)?;
-        let row = db(ctx).update_order_status(uuid(&id)?, &status).await?.ok_or_else(|| async_graphql::Error::new("order_not_found"))?;
+        let oid = uuid(&id)?;
+        let current = db(ctx).find_order(oid).await?.ok_or_else(|| async_graphql::Error::new("order_not_found"))?;
+        let current_status = current.3.clone();
+        match (current_status.as_str(), status.as_str()) {
+            (from, to) if from == to => return Ok(current.into()),
+            ("pending", "voided") => {}
+            (_, "executed") => return Err(async_graphql::Error::new("use_execute_order")),
+            (from, to) => {
+                return Err(async_graphql::Error::new(format!("invalid_status_transition: {from} -> {to}")))
+            }
+        }
+        let row = db(ctx).update_order_status(oid, &status).await?.ok_or_else(|| async_graphql::Error::new("order_not_found"))?;
         Ok(row.into())
     }
 

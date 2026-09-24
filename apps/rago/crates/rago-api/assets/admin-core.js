@@ -291,11 +291,16 @@
   }
   function navItem(group, hash, label, iconName) { nav.push({ group, hash, label, iconName }); }
   function renderNav() {
+    // Items register from several scripts; keep each group together, in the
+    // order the group was first registered.
+    const groups = [];
+    for (const n of nav) if (!groups.includes(n.group)) groups.push(n.group);
     let html = "";
-    let group = null;
-    for (const n of nav) {
-      if (n.group !== group) { group = n.group; html += '<div class="group">' + esc(group) + "</div>"; }
-      html += '<a class="nav" href="#' + esc(n.hash) + '" data-hash="' + esc(n.hash) + '">' + icon(n.iconName) + esc(n.label) + "</a>";
+    for (const group of groups) {
+      html += '<div class="group">' + esc(group) + "</div>";
+      for (const n of nav.filter((x) => x.group === group)) {
+        html += '<a class="nav" href="#' + esc(n.hash) + '" data-hash="' + esc(n.hash) + '">' + icon(n.iconName) + esc(n.label) + "</a>";
+      }
     }
     $("#nav").innerHTML = html;
   }

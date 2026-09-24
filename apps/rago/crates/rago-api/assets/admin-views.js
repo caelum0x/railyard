@@ -278,8 +278,9 @@
         ["Started", datetime(s.started_at)], ["Ending", datetime(s.ending_at)], ["Terminated", datetime(s.terminated_at)],
       ]) + "</div>") +
       card("Lifetime usage", '<div class="body">' + (lifetime ? kv(Object.entries(lifetime).filter(([, v]) => typeof v !== "object").map(([k, v]) => [k.replace(/_/g, " "), /cents$/.test(k) ? money(v, s.plan_amount_currency) : esc(v)])) : '<div class="empty">No usage recorded.</div>') + "</div>") +
-      "</div>" + '<div id="thresholds-box"></div>';
+      "</div>" + '<div id="thresholds-box"></div><div id="integration-box"></div>';
     R.thresholdsPanel($("#thresholds-box", view), base + "/usage_thresholds", s.plan_amount_currency, { subscription: true });
+    if (R.integrationPanel) R.integrationPanel("subscription", s, $("#integration-box", view));
     finish(view, {
       bill: () => R.confirmAction("Bill current period", "Generate and finalize the invoice for the current period now.", "Bill now", async () => {
         const r = await api.post(base + "/invoices");
@@ -353,6 +354,78 @@
     if (model === "dynamic" || model === "custom") return {};
     return v.properties || {};
   }
+  // ---- charge filters <-> text ----------------------------------------------------------
+  // One filter per line: key=value1,value2 [& key2=value] ; price or properties JSON ; display name
+  const FILTERS_HELP = "One filter per line: property=value1,value2 (join several properties with &) ; price for the matching events " +
+    "(or a properties JSON for graduated/volume models) ; optional invoice display name. Example: region=eu-west,eu-central ; 0.03 ; EU calls";
+  function filterPriceProps(model, raw) {
+    if (!raw) return {};
+    if (raw.startsWith("{")) {
+      try { return JSON.parse(raw); } catch (e) { throw new Error("Filter properties JSON is invalid (" + e.message + ")"); }
+    }
+    if (Number.isNaN(Number(raw)) || Number(raw) < 0) throw new Error("Filter price '" + raw + "' is not a valid amount.");
+    return model === "percentage" ? { rate: raw } : { amount: raw };
+  }
+  function parseFilters(model, text) {
+    const rows = String(text || "").split("\n").map((l) => l.trim()).filter(Boolean);
+    return rows.map((row, i) => {
+      const parts = row.split(";").map((p) => p.trim());
+      const values = {};
+      for (const cond of (parts[0] || "").split("&").map((c) => c.trim()).filter(Boolean)) {
+        const eq = cond.indexOf("=");
+        const key = eq > 0 ? cond.slice(0, eq).trim() : "";
+        const vals = eq > 0 ? cond.slice(eq + 1).split(",").map((v) => v.trim()).filter(Boolean) : [];
+        if (!key || !vals.length) throw new Error("Filter line " + (i + 1) + ": write each condition as property=value1,value2.");
+        values[key] = (values[key] || []).concat(vals);
+      }
+      if (!Object.keys(values).length) throw new Error("Filter line " + (i + 1) + ": at least one property=value condition is required.");
+      let properties;
+      try { properties = filterPriceProps(model, parts[1] || ""); } catch (e) { throw new Error("Filter line " + (i + 1) + ": " + e.message); }
+      const f = { values, properties };
+      const name = parts.slice(2).join(";").trim();
+      if (name) f.invoice_display_name = name;
+      return f;
+    });
+  }
+  function filtersToText(filters) {
+    return (Array.isArray(filters) ? filters : []).map((f) => {
+      const conds = Object.entries(f.values || {}).map(([k, v]) => k + "=" + (Array.isArray(v) ? v.join(",") : v)).join(" & ");
+      const p = f.properties || {};
+      const keys = Object.keys(p);
+      const price = !keys.length ? "" : keys.length === 1 && (p.amount !== undefined || p.rate !== undefined) ? String(p.amount !== undefined ? p.amount : p.rate) : JSON.stringify(p);
+      return conds + " ; " + price + (f.invoice_display_name ? " ; " + f.invoice_display_name : "");
+    }).join("\n");
+  }
+  function filtersHtml(filters) {
+    const list = Array.isArray(filters) ? filters : [];
+    if (!list.length) return '<span class="muted">none</span>';
+    return list.map((f) => esc(f.invoice_display_name || Object.entries(f.values || {}).map(([k, v]) => k + " in " + [].concat(v).join(", ")).join("; ")) +
+      ' <span class="muted mono">' + esc(JSON.stringify(f.properties || {})) + "</span>").join("<br>");
+  }
+  // Behaviour fields shared by the add and edit charge forms.
+  function chargeBehaviourFields(c) {
+    c = c || {};
+    return [
+      { name: "invoice_display_name", label: "Invoice display name", value: c.invoice_display_name, placeholder: "defaults to the metric name" },
+      { name: "min_amount", label: "Minimum amount per period", type: "money", value: c.min_amount_cents ? (Number(c.min_amount_cents) / 100).toFixed(2) : "",
+        help: "If usage bills less than this, a true-up fee tops the charge up to the minimum (prorated for partial periods)." },
+      { name: "filters", label: "Filters (price events by property value)", type: "textarea", value: filtersToText(c.filters), help: FILTERS_HELP,
+        placeholder: "region=eu-west,eu-central ; 0.03 ; EU calls\nregion=us-east ; 0.02" },
+      { name: "pay_in_advance", label: "Charge in advance (per event)", type: "checkbox", value: c.pay_in_advance },
+      { name: "invoiceable", label: "Invoiceable (off: in-advance fees are recorded without issuing an invoice)", type: "checkbox", value: c.invoiceable === undefined ? true : c.invoiceable },
+      { name: "prorated", label: "Prorated (bill recurring units by the share of the period they were active)", type: "checkbox", value: c.prorated },
+    ];
+  }
+  function chargeBehaviour(model, v) {
+    return {
+      invoice_display_name: v.invoice_display_name || null,
+      min_amount_cents: v.min_amount === undefined ? 0 : v.min_amount,
+      filters: parseFilters(model, v.filters),
+      pay_in_advance: v.pay_in_advance,
+      invoiceable: v.invoiceable,
+      prorated: v.prorated,
+    };
+  }
   R.route("/plans/:code", async (p) => {
     const base = "/api/v1/plans/" + enc(p.code);
     const [plan, metrics] = await Promise.all([api.get(base), api.get("/api/v1/billable_metrics?per_page=100")]);
@@ -369,11 +442,33 @@
         { h: "Metric", f: (r) => esc((metricById[r.lago_billable_metric_id] || {}).code || r.lago_billable_metric_id), cls: "mono" },
         { h: "Model", f: (r) => badge(r.charge_model) },
         { h: "Properties", f: (r) => '<span class="mono">' + esc(JSON.stringify(r.properties)) + "</span>" },
-        { h: "In advance", f: (r) => (r.pay_in_advance ? "yes" : "no") },
-        { h: "", f: (r) => '<button type="button" data-del-charge="' + esc(r.lago_id) + '">' + icon("trash") + "Remove</button>" },
+        { h: "Filters", f: (r) => filtersHtml(r.filters) },
+        { h: "Minimum", f: (r) => (r.min_amount_cents ? money(r.min_amount_cents, pl.amount_currency) : "-"), cls: "num" },
+        { h: "Billing", f: (r) => [r.pay_in_advance ? "in advance" : "in arrears", r.invoiceable === false ? "not invoiced" : "", r.prorated ? "prorated" : ""].filter(Boolean).map(esc).join(", ") },
+        { h: "", f: (r) => '<button type="button" data-edit-charge="' + esc(r.lago_id) + '">' + icon("edit") + "Edit</button> " +
+          '<button type="button" data-del-charge="' + esc(r.lago_id) + '">' + icon("trash") + "Remove</button>" },
       ], pl.charges, { empty: "No usage charges. Add one to bill metered usage." }), btn("add_charge", "Add charge", "plus")) +
       '<div id="thresholds-box"></div>';
     R.thresholdsPanel($("#thresholds-box", view), base + "/usage_thresholds", pl.amount_currency, { subscription: false });
+    R.$$("[data-edit-charge]", view).forEach((b) => (b.onclick = () => {
+      const c = (pl.charges || []).find((x) => x.lago_id === b.dataset.editCharge);
+      if (!c) return;
+      const metricCode = (metricById[c.lago_billable_metric_id] || {}).code || c.code;
+      R.openForm({
+        title: "Edit charge " + metricCode,
+        intro: "Changes apply from the next invoice; issued invoices keep their fees.",
+        fields: [
+          { name: "charge_model", label: "Charge model", type: "select", options: CHARGE_MODELS, value: c.charge_model },
+          { name: "properties", label: "Properties JSON", type: "json", value: c.properties || {} },
+        ].concat(chargeBehaviourFields(c)),
+        onSubmit: async (v) => {
+          const charge = Object.assign({ charge_model: v.charge_model, properties: v.properties || {} }, chargeBehaviour(v.charge_model, v));
+          await api.put(base + "/charges/" + enc(c.lago_id), { charge });
+          return "Charge updated";
+        },
+        after: R.render,
+      });
+    }));
     R.$$("[data-del-charge]", view).forEach((b) => (b.onclick = () => R.confirmAction("Remove charge", "Existing invoices keep their fees.", "Remove", async () => {
       await api.del(base + "/charges/" + enc(b.dataset.delCharge));
       return "Charge removed";
@@ -406,11 +501,12 @@
           { name: "free_units", label: "Free units per package", type: "number" },
           { name: "rate", label: "Percentage rate", placeholder: "2.5" },
           { name: "properties", label: "Properties JSON (graduated / volume / graduated percentage)", type: "json", placeholder: '{"graduated_ranges":[{"from_value":0,"to_value":100,"per_unit_amount":"0.1","flat_amount":"0"},{"from_value":101,"to_value":null,"per_unit_amount":"0.05","flat_amount":"0"}]}' },
-          { name: "pay_in_advance", label: "Charge in advance (per event)", type: "checkbox" },
-        ],
+        ].concat(chargeBehaviourFields()),
         submitLabel: "Add charge",
         onSubmit: async (v) => {
-          await api.post(base + "/charges", { charge: { billable_metric_code: v.billable_metric_code, charge_model: v.charge_model, pay_in_advance: v.pay_in_advance, properties: chargeProps(v.charge_model, v) } });
+          const charge = Object.assign({ billable_metric_code: v.billable_metric_code, charge_model: v.charge_model, properties: chargeProps(v.charge_model, v) },
+            chargeBehaviour(v.charge_model, v));
+          await api.post(base + "/charges", { charge });
           return "Charge added";
         },
         after: R.render,

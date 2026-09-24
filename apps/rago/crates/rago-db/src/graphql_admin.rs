@@ -568,16 +568,14 @@ impl Db {
 
     // ---- invoices --------------------------------------------------------
 
-    /// `Invoices::RefreshDraftAndFinalizeService` — finalize a draft invoice
-    /// (status → finalized, stamp issuing date if unset).
+    /// `Invoices::RefreshDraftAndFinalizeService` — finalize a draft (or
+    /// failed) invoice: number it and flip it to finalized in one transaction
+    /// (see [`Db::finalize_draft`]). Returns the invoice as it now is (a
+    /// non-finalizable invoice is returned unchanged).
     pub async fn finalize_invoice(&self, id: Uuid) -> Result<Option<Invoice>> {
-        sqlx::query(
-            "UPDATE invoices SET status = 1, issuing_date = COALESCE(issuing_date, now()::date), updated_at = now() \
-             WHERE id = $1 AND status = 0",
-        )
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
+        if let Some(finalized) = self.finalize_draft(id).await? {
+            return Ok(Some(finalized));
+        }
         self.find_invoice(id).await
     }
 

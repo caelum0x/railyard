@@ -1406,15 +1406,10 @@ impl Db {
         Ok(r.rows_affected())
     }
 
-    /// `Clock::FinalizeInvoicesJob` — draft invoices → finalized.
+    /// `Clock::FinalizeInvoicesJob` — every draft of the org → finalized, each
+    /// numbered in its own transaction. Returns the count finalized.
     pub async fn finalize_draft_invoices(&self, organization_id: Uuid) -> Result<u64> {
-        let r = sqlx::query(
-            "UPDATE invoices SET status = 1, updated_at = now() WHERE organization_id = $1 AND status = 0",
-        )
-        .bind(organization_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(r.rows_affected())
+        Ok(self.finalize_all_drafts(organization_id).await?.len() as u64)
     }
 
     /// `Clock::MarkInvoicesAsPaymentOverdueJob` — finalized, not-succeeded

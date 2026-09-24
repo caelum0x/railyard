@@ -12,8 +12,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::{
-    parse_catalog, provider_error, AccountingContact, AccountingInvoice, AccountingProvider, CatalogEntry,
-    IntegrationError, SyncResult,
+    parse_catalog, provider_error, AccountingContact, AccountingInvoice, AccountingPayment, AccountingProvider,
+    CatalogEntry, IntegrationError, SyncResult,
 };
 use crate::transport::HttpTransport;
 
@@ -135,6 +135,47 @@ impl<T: HttpTransport> XeroProvider<T> {
             }
         };
         self.post_for_id(&url, body, "CreditNotes", "CreditNoteID").await
+    }
+
+    /// Record a payment against a synced invoice (`PUT /Payments`). Xero
+    /// requires the bank account the payment is deposited to (the
+    /// integration's `account` mapping).
+    pub async fn sync_payment(&self, payment: &AccountingPayment) -> Result<SyncResult, IntegrationError> {
+        let url = self.url("Payments", "payments");
+        let account = payment.account_code.clone().ok_or_else(|| IntegrationError::Provider {
+            code: Some("account_mapping_missing".into()),
+            message: "map the bank account payments are deposited to (Account mapping) on the Xero integration".into(),
+        })?;
+        let p = json!({
+            "Invoice": { "InvoiceID": payment.invoice_external_id },
+            "Account": { "Code": account },
+            "Date": payment.date,
+            "Amount": amount(payment.amount_cents),
+            "Reference": payment.reference.clone().unwrap_or_else(|| payment.payment_id.clone()),
+        });
+        let body = match self.mode {
+            Mode::Direct { .. } => json!({ "Payments": [p] }),
+            Mode::Aggregator { .. } => {
+                let mut p = p;
+                p["lago_id"] = json!(payment.payment_id);
+                p
+            }
+        };
+        // Xero creates payments with PUT; the aggregator takes a POST.
+        let resp = match self.mode {
+            Mode::Direct { .. } => self.transport.put(&url, &self.headers(), body.to_string()).await?,
+            Mode::Aggregator { .. } => self.transport.post(&url, &self.headers(), body.to_string()).await?,
+        };
+        if !resp.is_success() {
+            return Err(provider_error(&resp.body, "xero payment error"));
+        }
+        let json: Value =
+            serde_json::from_str(&resp.body).map_err(|e| IntegrationError::InvalidResponse(e.to_string()))?;
+        json.get("succeededId")
+            .and_then(Value::as_str)
+            .or_else(|| json.pointer("/Payments/0/PaymentID").and_then(Value::as_str))
+            .map(|id| SyncResult { external_id: id.to_string() })
+            .ok_or_else(|| IntegrationError::InvalidResponse("missing PaymentID".into()))
     }
 
     /// Create the customer as a Xero contact.

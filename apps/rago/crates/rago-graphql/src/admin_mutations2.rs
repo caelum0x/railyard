@@ -132,13 +132,15 @@ impl AdminMutation2 {
         load_invoice(ctx, invoice).await
     }
 
-    /// `FinalizeAllInvoices` (`Mutations::Invoices::FinalizeAll`).
+    /// `FinalizeAllInvoices` (`Mutations::Invoices::FinalizeAll`) — finalize
+    /// every draft of the organization (each numbered, taxed, announced with
+    /// `invoice.created` + `invoice.generated`, and queued for collection) and
+    /// return exactly the invoices this call finalized.
     async fn finalize_all_invoices(&self, ctx: &Context<'_>) -> Result<InvoiceCollection> {
         let org = require_org(ctx)?;
-        db(ctx).finalize_draft_invoices(org.id).await?;
-        let invoices = db(ctx)
-            .list_invoices(org.id, Some(InvoiceStatus::Finalized.as_i32()), None, None, None, 100, 0)
-            .await?;
+        let invoices = rago_jobs::finalize::finalize_all_invoices(db(ctx), org.id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("finalize_failed: {e}")))?;
         invoice_collection(ctx, invoices).await
     }
 

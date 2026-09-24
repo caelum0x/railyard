@@ -19,6 +19,21 @@ pub struct ApprovedQuoteVersion {
     pub currency: String,
     pub total_amount_cents: i64,
     pub line_items: Value,
+    /// When the approved offer lapses (`None` = open-ended).
+    pub expires_at: Option<chrono::NaiveDateTime>,
+}
+
+fn approved_version(r: &sqlx::postgres::PgRow) -> Result<ApprovedQuoteVersion> {
+    Ok(ApprovedQuoteVersion {
+        quote_id: r.try_get("quote_id")?,
+        version_id: r.try_get("version_id")?,
+        organization_id: r.try_get("organization_id")?,
+        customer_id: r.try_get("customer_id")?,
+        currency: r.try_get("currency")?,
+        total_amount_cents: r.try_get("total_amount_cents")?,
+        line_items: r.try_get("line_items")?,
+        expires_at: r.try_get("expires_at")?,
+    })
 }
 
 /// An order with what it was ordered from.
@@ -38,7 +53,7 @@ impl Db {
     pub async fn approved_quote_version(&self, quote_id: Uuid) -> Result<Option<ApprovedQuoteVersion>> {
         let row = sqlx::query(
             "SELECT v.id AS version_id, v.quote_id, v.organization_id, q.customer_id, v.currency, \
-                    v.total_amount_cents, v.line_items \
+                    v.total_amount_cents, v.line_items, v.expires_at \
              FROM quote_versions v JOIN quotes q ON q.id = v.quote_id \
              WHERE v.quote_id = $1 AND v.status = 'approved' \
                AND (v.expires_at IS NULL OR v.expires_at > now()) \
@@ -47,18 +62,23 @@ impl Db {
         .bind(quote_id)
         .fetch_optional(&self.pool)
         .await?;
-        row.map(|r| {
-            Ok(ApprovedQuoteVersion {
-                quote_id: r.try_get("quote_id")?,
-                version_id: r.try_get("version_id")?,
-                organization_id: r.try_get("organization_id")?,
-                customer_id: r.try_get("customer_id")?,
-                currency: r.try_get("currency")?,
-                total_amount_cents: r.try_get("total_amount_cents")?,
-                line_items: r.try_get("line_items")?,
-            })
-        })
-        .transpose()
+        row.as_ref().map(approved_version).transpose()
+    }
+
+    /// The approved version a signed order form committed to — expiry no
+    /// longer applies once the customer signed. Used to execute the order.
+    pub async fn committed_quote_version(&self, quote_id: Uuid) -> Result<Option<ApprovedQuoteVersion>> {
+        let row = sqlx::query(
+            "SELECT v.id AS version_id, v.quote_id, v.organization_id, q.customer_id, v.currency, \
+                    v.total_amount_cents, v.line_items, v.expires_at \
+             FROM quote_versions v JOIN quotes q ON q.id = v.quote_id \
+             WHERE v.quote_id = $1 AND v.status = 'approved' \
+             ORDER BY v.version_number DESC LIMIT 1",
+        )
+        .bind(quote_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref().map(approved_version).transpose()
     }
 
     /// The live (non-voided) order form already issued for a quote, if any.

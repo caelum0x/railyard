@@ -16,6 +16,7 @@ pub mod analytics;
 pub mod auth;
 pub mod breadth;
 pub mod catalog_v2;
+pub mod charge_filters;
 pub mod crud;
 pub mod customer_lists;
 pub mod emit;
@@ -25,6 +26,7 @@ pub mod handlers;
 pub mod integration_hub;
 pub mod integrations;
 pub mod observability;
+pub mod order_flow;
 pub mod pagination;
 pub mod payment_actions;
 pub mod payments;
@@ -82,7 +84,7 @@ pub fn router(state: AppState) -> Router {
         .route("/billable_metrics/evaluate_expression", post(crud::evaluate_expression))
         .route("/billable_metrics/:code", get(crud::show_billable_metric).put(crud::update_billable_metric).delete(crud::destroy_billable_metric))
         .route("/plans", post(handlers::create_plan).get(crud::list_plans))
-        .route("/plans/:code", get(handlers::show_plan).put(crud::update_plan).delete(crud::destroy_plan))
+        .route("/plans/:code", get(crud::show_plan).put(crud::update_plan).delete(crud::destroy_plan))
         .route("/plans/:code/entitlements", get(handlers::list_plan_entitlements))
         .route("/plans/:code/charges", post(crud::create_plan_charge))
         .route("/plans/:code/usage_thresholds", get(thresholds::list_plan_thresholds).put(thresholds::replace_plan_thresholds))
@@ -107,9 +109,23 @@ pub fn router(state: AppState) -> Router {
         .route("/invoices", get(breadth::list_invoices).post(breadth::create_one_off_invoice))
         .route("/add_ons", post(breadth::create_add_on).get(crud::list_add_ons))
         .route("/add_ons/:code", get(crud::show_add_on).put(crud::update_add_on).delete(crud::destroy_add_on))
-        .route("/quotes", post(breadth::create_quote).get(sdk_parity::list_quotes))
-        .route("/quotes/:id", get(sdk_parity::show_quote))
+        .route("/quotes", post(breadth::create_quote).get(order_flow::list_quotes))
+        .route("/quotes/:id", get(order_flow::show_quote))
         .route("/quotes/:id/accept", post(breadth::accept_quote))
+        .route("/quotes/:id/void", post(order_flow::void_quote))
+        .route("/quotes/:id/versions", post(order_flow::create_version))
+        .route("/quotes/:id/versions/:version_id", put(order_flow::update_version))
+        .route("/quotes/:id/versions/:version_id/approve", post(order_flow::approve_version))
+        .route("/quotes/:id/versions/:version_id/void", post(order_flow::void_version))
+        .route("/quotes/:id/order_forms", post(order_flow::create_order_form))
+        .route("/order_forms", get(order_flow::list_order_forms))
+        .route("/order_forms/:id", get(order_flow::show_order_form))
+        .route("/order_forms/:id/sign", post(order_flow::sign_order_form))
+        .route("/order_forms/:id/void", post(order_flow::void_order_form))
+        .route("/orders", get(order_flow::list_orders))
+        .route("/orders/:id", get(order_flow::show_order))
+        .route("/orders/:id/execute", post(order_flow::execute_order))
+        .route("/orders/:id/void", post(order_flow::void_order))
         .route("/data_exports", post(breadth::create_data_export))
         .route("/data_exports/:id", get(breadth::show_data_export))
         .route("/data_exports/:id/download", get(breadth::download_data_export))
@@ -150,6 +166,9 @@ pub fn router(state: AppState) -> Router {
         .route("/invoices/:id/receipt", get(phase14::download_payment_receipt_pdf))
         .route("/invoices/:id/sync_accounting", post(phase14::sync_invoice_accounting))
         .route("/customers/:external_id/sync_crm", post(phase14::sync_customer_crm))
+        .route("/invoices/:id/sync_crm", post(phase14::sync_invoice_crm))
+        .route("/subscriptions/:external_id/sync_crm", post(phase14::sync_subscription_crm))
+        .route("/payments/:id/sync_accounting", post(phase14::sync_payment_accounting))
         .route("/credit_notes/:id/sync_accounting", post(integration_hub::sync_credit_note_accounting))
         .route("/integrations", post(integration_hub::create).get(integration_hub::list))
         .route("/integrations/:id", get(integration_hub::show).put(integration_hub::update).delete(integration_hub::destroy))
@@ -225,6 +244,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/views2.js", get(admin_views2_js))
         .route("/admin/billing.js", get(admin_billing_js))
         .route("/admin/integrations.js", get(admin_integrations_js))
+        .route("/admin/quotes.js", get(admin_quotes_js))
         .route("/admin/sso/callback", get(admin_page))
         .route("/integrations/oauth/callback", get(integration_hub::oauth_callback))
         .route("/auth/sso/authorize", post(integration_hub::sso_authorize))
@@ -284,6 +304,9 @@ async fn admin_billing_js() -> impl axum::response::IntoResponse {
 }
 async fn admin_integrations_js() -> impl axum::response::IntoResponse {
     admin_js(include_str!("../assets/admin-integrations.js"))
+}
+async fn admin_quotes_js() -> impl axum::response::IntoResponse {
+    admin_js(include_str!("../assets/admin-quotes.js"))
 }
 
 // --- fees/estimate: drives the billing engine without persistence -----------

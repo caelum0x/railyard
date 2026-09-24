@@ -16,8 +16,8 @@ use serde_json::{json, Value};
 
 use super::oauth1::{authorization_header, Oauth1Credentials};
 use super::{
-    parse_catalog, provider_error, AccountingContact, AccountingInvoice, AccountingProvider, CatalogEntry,
-    IntegrationError, SyncResult,
+    parse_catalog, provider_error, AccountingContact, AccountingInvoice, AccountingPayment, AccountingProvider,
+    CatalogEntry, IntegrationError, SyncResult,
 };
 use crate::transport::HttpTransport;
 
@@ -94,6 +94,7 @@ impl<T: HttpTransport> NetsuiteProvider<T> {
                     "invoice" => "invoices",
                     "creditmemo" => "creditnotes",
                     "customer" => "contacts",
+                    "customerpayment" => "payments",
                     other => other,
                 };
                 (
@@ -167,6 +168,39 @@ impl<T: HttpTransport> NetsuiteProvider<T> {
     /// Sync a credit note as a NetSuite `creditmemo`.
     pub async fn sync_credit_note(&self, note: &AccountingInvoice) -> Result<SyncResult, IntegrationError> {
         self.post_record("creditmemo", Self::transaction_body("creditmemo", note)).await
+    }
+
+    /// Record a payment as a NetSuite `customerpayment` applied to the synced
+    /// invoice.
+    pub async fn sync_payment(&self, payment: &AccountingPayment) -> Result<SyncResult, IntegrationError> {
+        let customer = payment.contact_external_id.clone().ok_or_else(|| IntegrationError::Provider {
+            code: Some("customer_not_synced".into()),
+            message: "the customer has no NetSuite record yet; sync one of their invoices first".into(),
+        })?;
+        let body = json!({
+            "type": "customerpayment",
+            "isDynamic": true,
+            "columns": {
+                "customer": customer,
+                "payment": cents(payment.amount_cents),
+                "currency": payment.currency,
+                "trandate": payment.date,
+                "memo": payment.reference.clone().unwrap_or_else(|| format!("Rago payment {}", payment.payment_id)),
+                "account": payment.account_code,
+                "custbody_lago_id": payment.payment_id,
+            },
+            "lines": [{
+                "sublistId": "apply",
+                "lineItems": [{
+                    "doc": payment.invoice_external_id,
+                    "apply": true,
+                    "amount": cents(payment.amount_cents),
+                }],
+            }],
+            "options": { "ignoreMandatoryFields": false },
+            "lago_id": payment.payment_id,
+        });
+        self.post_record("customerpayment", body).await
     }
 
     /// Create the customer as a NetSuite `customer` record.

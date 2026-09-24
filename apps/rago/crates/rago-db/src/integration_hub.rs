@@ -527,11 +527,12 @@ impl Db {
         lago_id: Uuid,
     ) -> Result<Vec<ResourceMapping>> {
         let rows = sqlx::query(
-            "SELECT m.integration_connection_id, c.integration_type, c.provider_code, c.name, m.external_id, m.created_at \
+            "SELECT m.integration_connection_id, c.integration_type, c.provider_code, c.name, m.external_id, \
+                    COALESCE(m.updated_at, m.created_at) AS synced_at \
              FROM integration_mappings m JOIN integration_connections c ON c.id = m.integration_connection_id \
              WHERE m.organization_id = $1 AND m.resource_type = $2 AND m.lago_id = $3 \
                AND m.deleted_at IS NULL AND c.deleted_at IS NULL \
-             ORDER BY m.created_at DESC",
+             ORDER BY COALESCE(m.updated_at, m.created_at) DESC",
         )
         .bind(org)
         .bind(resource_type)
@@ -546,7 +547,7 @@ impl Db {
                 provider_code: r.get("provider_code"),
                 integration_name: r.get("name"),
                 external_id: r.get("external_id"),
-                synced_at: r.get("created_at"),
+                synced_at: r.get("synced_at"),
             })
             .collect())
     }

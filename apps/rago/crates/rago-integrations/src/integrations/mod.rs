@@ -7,8 +7,9 @@
 //! * **accounting** ([`AccountingProvider`]) — NetSuite (RESTlet over OAuth 1.0
 //!   TBA, or through the aggregator) and Xero: contacts, invoices, credit notes
 //!   and the item / account / subsidiary catalog for mappings.
-//! * **crm** ([`CrmProvider`]) — Salesforce and HubSpot: sync a customer as a
-//!   contact/company.
+//! * **crm** ([`CrmProvider`]) — Salesforce and HubSpot: create or update a
+//!   customer as a contact/company; HubSpot also mirrors invoices and
+//!   subscriptions as custom objects associated to that contact/company.
 
 pub mod anrok;
 pub mod avalara;
@@ -218,6 +219,29 @@ pub struct SyncResult {
     pub external_id: String,
 }
 
+/// A succeeded payment to record against an already-synced invoice
+/// (`Integrations::Aggregator::Payments::CreateService`).
+#[derive(Debug, Clone, Default)]
+pub struct AccountingPayment {
+    /// The Lago payment id.
+    pub payment_id: String,
+    /// The provider id of the invoice the payment settles (from the invoice's
+    /// sync mapping).
+    pub invoice_external_id: String,
+    pub invoice_number: String,
+    /// The provider contact / customer id.
+    pub contact_external_id: Option<String>,
+    pub amount_cents: i64,
+    pub currency: String,
+    /// `YYYY-MM-DD`.
+    pub date: String,
+    /// Free-text reference (the payment provider's id when known).
+    pub reference: Option<String>,
+    /// The ledger (bank) account the payment is deposited to, from the
+    /// integration's `account` collection mapping.
+    pub account_code: Option<String>,
+}
+
 /// An accounting integration (NetSuite, Xero).
 #[async_trait]
 pub trait AccountingProvider: Send + Sync {
@@ -239,6 +263,51 @@ pub struct CrmCustomer {
     pub email: Option<String>,
 }
 
+/// A finalized invoice to mirror as a CRM record.
+#[derive(Debug, Clone, Default)]
+pub struct CrmInvoice {
+    pub invoice_id: String,
+    pub number: String,
+    pub invoice_type: String,
+    pub status: String,
+    pub payment_status: String,
+    pub currency: String,
+    /// `YYYY-MM-DD`.
+    pub issuing_date: Option<String>,
+    /// `YYYY-MM-DD`.
+    pub payment_due_date: Option<String>,
+    pub sub_total_excluding_taxes_amount_cents: i64,
+    pub taxes_amount_cents: i64,
+    pub total_amount_cents: i64,
+}
+
+/// A subscription to mirror as a CRM record.
+#[derive(Debug, Clone, Default)]
+pub struct CrmSubscription {
+    pub subscription_id: String,
+    pub external_id: String,
+    pub name: Option<String>,
+    pub plan_code: String,
+    pub status: String,
+    pub billing_time: String,
+    /// `YYYY-MM-DD`.
+    pub subscription_at: Option<String>,
+    /// `YYYY-MM-DD`.
+    pub started_at: Option<String>,
+    /// `YYYY-MM-DD`.
+    pub ending_at: Option<String>,
+}
+
+/// The outcome of a CRM record upsert: the record id, plus the error of the
+/// association to the customer's contact/company when that step failed after
+/// the record itself was written (the id must still be stored so a retry
+/// updates instead of duplicating).
+#[derive(Debug)]
+pub struct CrmRecordSync {
+    pub external_id: String,
+    pub association_error: Option<IntegrationError>,
+}
+
 /// A CRM integration (Hubspot, Salesforce).
 #[async_trait]
 pub trait CrmProvider: Send + Sync {
@@ -247,4 +316,14 @@ pub trait CrmProvider: Send + Sync {
     /// `Integrations::Aggregator::Contacts::CreateService` — sync a customer as
     /// a CRM contact, returning the external contact id.
     async fn sync_customer(&self, customer: &CrmCustomer) -> Result<SyncResult, IntegrationError>;
+
+    /// Update the CRM record previously created for `customer`
+    /// (`Integrations::Aggregator::Contacts::UpdateService`). When the record
+    /// no longer exists at the provider it is created again; the returned id
+    /// is the record that now mirrors the customer.
+    async fn update_customer(
+        &self,
+        external_id: &str,
+        customer: &CrmCustomer,
+    ) -> Result<SyncResult, IntegrationError>;
 }

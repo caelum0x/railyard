@@ -154,6 +154,44 @@ async fn dispatch(db: &Db, job_type: &str, payload: &Value, attempts: i32) -> Re
             crate::integrations_sync::sync_credit_note_accounting(db, &transport, org, cn_id).await?;
             Ok(())
         }
+        crate::payment_sync::JOB_SYNC_PAYMENT => {
+            let payment_id = uuid_field(payload, "payment_id")?;
+            let org = db
+                .syncable_payment(payment_id)
+                .await?
+                .map(|p| p.organization_id)
+                .ok_or_else(|| JobError::Integration("payment_not_found".into()))?;
+            let transport = rago_integrations::default_transport();
+            crate::payment_sync::sync_payment_accounting(db, &transport, org, payment_id).await?;
+            Ok(())
+        }
+        crate::crm_sync::JOB_SYNC_CRM_CUSTOMER => {
+            let customer_id = uuid_field(payload, "customer_id")?;
+            let customer = db
+                .find_customer(customer_id)
+                .await?
+                .ok_or_else(|| JobError::Integration("customer_not_found".into()))?;
+            let transport = rago_integrations::default_transport();
+            crate::crm_sync::sync_customer_crm(db, &transport, customer.organization_id, &customer).await?;
+            Ok(())
+        }
+        crate::crm_sync::JOB_SYNC_CRM_INVOICE => {
+            let invoice_id = uuid_field(payload, "invoice_id")?;
+            let org = invoice_org(db, invoice_id).await?;
+            let transport = rago_integrations::default_transport();
+            crate::crm_sync::sync_invoice_crm(db, &transport, org, invoice_id).await?;
+            Ok(())
+        }
+        crate::crm_sync::JOB_SYNC_CRM_SUBSCRIPTION => {
+            let subscription_id = uuid_field(payload, "subscription_id")?;
+            let org = db
+                .subscription_org(subscription_id)
+                .await?
+                .ok_or_else(|| JobError::Integration("subscription_not_found".into()))?;
+            let transport = rago_integrations::default_transport();
+            crate::crm_sync::sync_subscription_crm(db, &transport, org, subscription_id).await?;
+            Ok(())
+        }
         crate::integrations_sync::JOB_TAX_VOIDING => {
             let invoice_id = uuid_field(payload, "invoice_id")?;
             let org = invoice_org(db, invoice_id).await?;
@@ -203,6 +241,12 @@ async fn dispatch(db: &Db, job_type: &str, payload: &Value, attempts: i32) -> Re
                 .and_then(Value::as_str)
                 .ok_or_else(|| JobError::Payment("bad resource_type".into()))?;
             crate::data_export::process(db, export_id, org, resource_type).await?;
+            Ok(())
+        }
+        crate::vies::JOB_VIES_CHECK => {
+            let customer_id = uuid_field(payload, "customer_id")?;
+            let transport = rago_integrations::default_transport();
+            crate::vies::check_customer_vies(db, &transport, customer_id).await?;
             Ok(())
         }
         other => Err(JobError::Payment(format!("unknown job type: {other}"))),

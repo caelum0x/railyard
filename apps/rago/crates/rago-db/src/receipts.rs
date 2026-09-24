@@ -139,6 +139,25 @@ impl Db {
             .bind(invoice_id)
             .execute(&mut *tx)
             .await?;
+        // Billing bookkeeping that points at the draft: a deleted progressive
+        // invoice no longer counts as billed usage, a period-end draft that
+        // credited progressive invoices releases them for the next invoice,
+        // and pay-in-advance events billed on the draft can be billed again.
+        sqlx::query("DELETE FROM progressive_billing_invoices WHERE invoice_id = $1")
+            .bind(invoice_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "UPDATE progressive_billing_invoices SET credited_invoice_id = NULL \
+             WHERE credited_invoice_id = $1",
+        )
+        .bind(invoice_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM pay_in_advance_billings WHERE invoice_id = $1")
+            .bind(invoice_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM invoices WHERE id = $1")
             .bind(invoice_id)
             .execute(&mut *tx)

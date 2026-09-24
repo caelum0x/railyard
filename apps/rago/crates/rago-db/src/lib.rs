@@ -12,6 +12,7 @@
 //! Queries are runtime (`sqlx::query`) so the crate builds without a live
 //! database; the domain math lives in `rago-billing`.
 
+pub mod charge_filters;
 pub mod collection;
 pub mod data_api;
 pub mod dunning;
@@ -22,8 +23,11 @@ pub mod graphql_admin3;
 pub mod graphql_admin4;
 pub mod graphql_admin5;
 pub mod integration_hub;
+pub mod lifecycle;
+pub mod integration_sweeps;
 pub mod mapping;
 pub mod numbering;
+pub mod order_flow_console;
 pub mod orders;
 pub mod pay_in_advance;
 pub mod payment_actions;

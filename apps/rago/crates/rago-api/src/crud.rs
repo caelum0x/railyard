@@ -150,8 +150,33 @@ pub async fn customer_checkout_url(
 async fn plan_with_charges(st: &AppState, plan: &Plan) -> ApiResult<Value> {
     let charges = st.db.charges_for_plan(plan.id).await?;
     let mut plan_json = ser::plan(plan);
-    plan_json["charges"] = json!(charges.iter().map(ser::charge).collect::<Vec<_>>());
+    plan_json["charges"] = json!(crate::charge_filters::charges_json(st, &charges).await?);
     Ok(plan_json)
+}
+
+/// `GET /plans/:code` — a plan with its charges (and their filters).
+pub async fn show_plan(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(code): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let plan = st
+        .db
+        .find_plan_by_code(auth.organization.id, &code)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("plan".into()))?;
+    Ok(Json(json!({ "plan": plan_with_charges(&st, &plan).await? })))
+}
+
+/// `min_amount_cents` of a charge payload: a non-negative integer.
+fn min_amount_of(cp: &Value) -> ApiResult<Option<i64>> {
+    match cp.get("min_amount_cents") {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => match i64_of(cp, "min_amount_cents") {
+            Some(v) if v >= 0 => Ok(Some(v)),
+            _ => Err(ApiError::validation("min_amount_cents", "value_is_invalid")),
+        },
+    }
 }
 
 /// `GET /plans` — the org's plans (with charges).
@@ -236,6 +261,8 @@ pub async fn create_plan_charge(
         .ok_or_else(|| ApiError::validation("charge_model", "value_is_invalid"))?;
     let charge_model = ChargeModel::try_from(charge_model_i)
         .map_err(|_| ApiError::validation("charge_model", "value_is_invalid"))?;
+    let filters = crate::charge_filters::parse_filters(cp)?;
+    let min_amount_cents = min_amount_of(cp)?.unwrap_or(0);
     let charge = Charge {
         id: Uuid::new_v4(),
         organization_id: org,
@@ -247,7 +274,7 @@ pub async fn create_plan_charge(
         pay_in_advance: bool_of(cp, "pay_in_advance").unwrap_or(false),
         prorated: bool_of(cp, "prorated").unwrap_or(false),
         invoiceable: bool_of(cp, "invoiceable").unwrap_or(true),
-        min_amount_cents: i64_of(cp, "min_amount_cents").unwrap_or(0),
+        min_amount_cents,
         amount_currency: Some(plan.amount_currency.clone()),
         accepts_target_wallet: false,
         invoice_display_name: s(cp, "invoice_display_name"),
@@ -257,7 +284,10 @@ pub async fn create_plan_charge(
         deleted_at: None,
     };
     st.db.insert_charge(&charge).await?;
-    Ok(Json(json!({ "charge": ser::charge(&charge) })))
+    if let Some(filters) = filters.filter(|f| !f.is_empty()) {
+        st.db.replace_charge_filters(org, charge.id, &filters).await?;
+    }
+    Ok(Json(json!({ "charge": crate::charge_filters::charge_json(&st, &charge).await? })))
 }
 
 /// `PUT /plans/:code/charges/:id` — update a charge.
@@ -267,13 +297,22 @@ pub async fn update_plan_charge(
     Path((code, id)): Path<(String, Uuid)>,
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
-    let _ = st
+    let plan = st
         .db
         .find_plan_by_code(auth.organization.id, &code)
         .await?
         .ok_or_else(|| ApiError::NotFound("plan".into()))?;
+    let existing = st.db.find_charge_opt(id).await?.filter(|c| c.plan_id == Some(plan.id));
+    if existing.is_none() {
+        return Err(ApiError::NotFound("charge".into()));
+    }
     let cp = wrapped(&body, "charge");
-    let charge_model = s(cp, "charge_model").and_then(|m| charge_model_i32_str(&m));
+    let charge_model = match s(cp, "charge_model") {
+        Some(m) => Some(charge_model_i32_str(&m).ok_or_else(|| ApiError::validation("charge_model", "value_is_invalid"))?),
+        None => None,
+    };
+    let filters = crate::charge_filters::parse_filters(cp)?;
+    let min_amount_cents = min_amount_of(cp)?;
     let props = cp.get("properties").cloned();
     let charge = st
         .db
@@ -284,12 +323,15 @@ pub async fn update_plan_charge(
             bool_of(cp, "pay_in_advance"),
             bool_of(cp, "prorated"),
             bool_of(cp, "invoiceable"),
-            i64_of(cp, "min_amount_cents"),
+            min_amount_cents,
             s(cp, "invoice_display_name").as_deref(),
         )
         .await?
         .ok_or_else(|| ApiError::NotFound("charge".into()))?;
-    Ok(Json(json!({ "charge": ser::charge(&charge) })))
+    if let Some(filters) = filters {
+        st.db.replace_charge_filters(auth.organization.id, charge.id, &filters).await?;
+    }
+    Ok(Json(json!({ "charge": crate::charge_filters::charge_json(&st, &charge).await? })))
 }
 
 /// `DELETE /plans/:code/charges/:id` — soft-delete a charge.

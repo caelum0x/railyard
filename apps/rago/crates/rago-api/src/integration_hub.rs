@@ -67,6 +67,7 @@ const PLAIN_KEYS: &[&str] = &[
     "sync_credit_notes",
     "sync_payments",
     "sync_subscriptions",
+    "sync_customers",
     "default_targeted_object",
     "company_code",
     "connection_id",
@@ -694,12 +695,12 @@ pub struct StatusQuery {
     lago_id: Uuid,
 }
 
-/// `GET /integration_sync_status?resource_type=invoice|credit_note|customer&lago_id=`
+/// `GET /integration_sync_status?resource_type=invoice|credit_note|customer|subscription|payment&lago_id=`
 /// — the org's active accounting / CRM / tax integrations and this resource's
 /// sync records, for the invoice, credit-note and customer pages.
 pub async fn sync_status(State(st): State<AppState>, auth: Authed, Query(q): Query<StatusQuery>) -> ApiResult<Json<Value>> {
     let org = auth.organization.id;
-    if !matches!(q.resource_type.as_str(), "invoice" | "credit_note" | "customer") {
+    if !matches!(q.resource_type.as_str(), "invoice" | "credit_note" | "customer" | "subscription" | "payment") {
         return Err(ApiError::validation("resource_type", "invalid_resource_type"));
     }
     if !st.db.not_foreign(org, q.lago_id).await? {

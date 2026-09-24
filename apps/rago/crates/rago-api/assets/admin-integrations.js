@@ -8,7 +8,7 @@
 // customer pages. Also completes console SSO sign-in (/admin/sso/callback).
 (function () {
   const R = window.Rago;
-  const { $, esc, datetime, badge, api, enc, table, kv, btn, icon } = R;
+  const { $, $$, esc, money, datetime, badge, api, enc, table, kv, btn, icon } = R;
   const { head, card, finish } = R.ui;
 
   // Nav entries render grouped in registration order; this script loads before
@@ -42,6 +42,7 @@
         { name: "client_secret", label: "Xero app client secret", type: "password", secret: true },
         { name: "sync_invoices", label: "Sync invoices automatically when finalized", type: "checkbox" },
         { name: "sync_credit_notes", label: "Sync credit notes automatically", type: "checkbox" },
+        { name: "sync_payments", label: "Record succeeded payments automatically (after their invoice is synced)", type: "checkbox" },
       ],
     },
     netsuite: {
@@ -57,6 +58,7 @@
         { name: "subsidiary_id", label: "Subsidiary for new customers", help: "Pick from the catalog after the first fetch, or enter the internal ID." },
         { name: "sync_invoices", label: "Sync invoices automatically when finalized", type: "checkbox" },
         { name: "sync_credit_notes", label: "Sync credit notes automatically", type: "checkbox" },
+        { name: "sync_payments", label: "Record succeeded payments automatically (after their invoice is synced)", type: "checkbox" },
       ],
     },
     salesforce: {
@@ -67,15 +69,19 @@
         { name: "client_secret", label: "Connected app consumer secret", type: "password", secret: true },
         { name: "sandbox", label: "Sandbox org (test.salesforce.com)", type: "checkbox" },
         { name: "login_url", label: "My Domain login URL", type: "url", placeholder: "https://acme.my.salesforce.com" },
+        { name: "sync_customers", label: "Sync customers automatically when created or changed", type: "checkbox" },
       ],
     },
     hubspot: {
       type: "crm", label: "HubSpot", oauth: true,
-      intro: "Customers sync to HubSpot as contacts or companies. After saving you are sent to HubSpot to authorize access.",
+      intro: "Customers sync to HubSpot as contacts or companies; finalized invoices and subscriptions sync as the LagoInvoices / LagoSubscriptions custom objects (deployed to your portal on first sync) associated to that record. After saving you are sent to HubSpot to authorize access.",
       fields: [
         { name: "client_id", label: "HubSpot app client ID", help: "Optional. Leave empty to use the server's app (RAGO_HUBSPOT_OAUTH_CLIENT_ID)." },
         { name: "client_secret", label: "HubSpot app client secret", type: "password", secret: true },
         { name: "default_targeted_object", label: "Sync customers as", type: "select", options: [["contacts", "Contacts"], ["companies", "Companies"]] },
+        { name: "sync_customers", label: "Sync customers automatically when created or changed", type: "checkbox" },
+        { name: "sync_invoices", label: "Sync invoices automatically when finalized or updated", type: "checkbox" },
+        { name: "sync_subscriptions", label: "Sync subscriptions automatically when created or changed", type: "checkbox" },
       ],
     },
     anrok: {
@@ -430,8 +436,11 @@
     const records = st.sync_records || [];
     let actions = "";
     const finalized = obj.status === "finalized";
+    const hubspot = ready(crm) && crm.provider_code === "hubspot";
+    const syncedTo = (type) => records.some((r) => r.integration_type === type);
     if (kind === "invoice") {
-      if (ready(acc) && finalized) actions += btn("int_sync", (records.some((r) => r.integration_type === "accounting") ? "Re-sync to " : "Sync to ") + acc.provider_name, "refresh");
+      if (ready(acc) && finalized) actions += btn("int_sync", (syncedTo("accounting") ? "Re-sync to " : "Sync to ") + acc.provider_name, "refresh");
+      if (hubspot && finalized) actions += btn("int_crm_record", (syncedTo("crm") ? "Re-sync to " : "Sync to ") + crm.provider_name, "refresh");
       if (ready(tax) && obj.status === "draft") actions += btn("int_tax", "Apply " + tax.provider_name + " taxes", "taxes");
       if (ready(tax) && obj.status === "voided") actions += btn("int_void", "Retry " + tax.provider_name + " voiding", "retry");
     } else if (kind === "credit_note") {
@@ -439,8 +448,11 @@
       if (ready(tax)) actions += btn("int_report", "Report to " + tax.provider_name, "retry");
     } else if (kind === "customer") {
       if (ready(crm)) actions += btn("int_crm", "Sync to " + crm.provider_name, "refresh");
+    } else if (kind === "subscription") {
+      if (hubspot) actions += btn("int_crm_record", (syncedTo("crm") ? "Re-sync to " : "Sync to ") + crm.provider_name, "refresh");
     }
-    const connectedList = [["Accounting", acc], ["CRM", crm], ["Tax", tax]]
+    const shown = kind === "subscription" ? [["CRM", crm]] : [["Accounting", acc], ["CRM", crm], ["Tax", tax]];
+    const connectedList = shown
       .map(([l, i]) => [l, i ? '<a href="#/integrations/' + esc(i.lago_id) + '">' + esc(i.provider_name) + "</a> " + statusBadge(i.status) : '<span class="muted">not connected</span> <a href="#/integrations">Connect</a>']);
     const rows = records.map((r) => ({ label: r.provider_name, id: r.external_id, at: r.synced_at }))
       .concat((st.customer_links || []).filter((l) => !records.some((r) => r.external_id === l.provider_customer_id))
@@ -451,6 +463,11 @@
       { h: "When", f: (r) => datetime(r.at) },
     ], rows, { empty: kind === "customer" ? "Not synced to a CRM or accounting system yet." : "Not synced yet." }), actions);
     const invBase = "/api/v1/invoices/" + enc(lagoId);
+    if (kind === "invoice" && ready(acc) && finalized) {
+      const box = document.createElement("div");
+      el.appendChild(box);
+      paymentSyncPanel(obj, acc, syncedTo("accounting"), box);
+    }
     R.bindActions(el, {
       int_sync: async () => {
         const path = kind === "invoice" ? invBase + "/sync_accounting" : "/api/v1/credit_notes/" + enc(lagoId) + "/sync_accounting";
@@ -472,6 +489,13 @@
         await api.graphql("mutation($id: ID!) { retryTaxReporting(id: $id) { id } }", { id: lagoId });
         R.toast("Credit note reporting queued at " + tax.provider_name, "ok");
       },
+      int_crm_record: async () => {
+        const path = kind === "invoice" ? invBase + "/sync_crm" : "/api/v1/subscriptions/" + enc(obj.external_id) + "/sync_crm";
+        const r = await api.post(path);
+        const rec = r.integration_invoice || r.integration_subscription || {};
+        R.toast("Synced to " + crm.provider_name + " as " + (rec.external_id && kind === "invoice" ? rec.external_id : rec.crm_external_id), "ok");
+        R.render();
+      },
       int_crm: async () => {
         const r = await api.post("/api/v1/customers/" + enc(obj.external_id) + "/sync_crm");
         R.toast("Synced to " + crm.provider_name + " as " + r.integration_customer.external_id, "ok");
@@ -479,6 +503,39 @@
       },
     });
   };
+
+  // Succeeded payments of a synced invoice, recorded at the accounting system.
+  async function paymentSyncPanel(inv, acc, invoiceSynced, el) {
+    let rows;
+    try {
+      const list = ((await api.get("/api/v1/payments?invoice_id=" + enc(inv.lago_id))).payments || []).filter((p) => p.status === "succeeded");
+      rows = await Promise.all(list.map(async (p) => {
+        const st = await api.get("/api/v1/integration_sync_status?resource_type=payment&lago_id=" + enc(p.lago_id));
+        const rec = (st.sync_records || []).find((r) => r.integration_type === "accounting");
+        return Object.assign({}, p, { external_id: rec ? rec.external_id : null, synced_at: rec ? rec.synced_at : null });
+      }));
+    } catch (e) {
+      el.innerHTML = card("Payments at " + acc.provider_name, '<div class="body muted">Payment sync status could not be loaded: ' + esc(e.message) + "</div>");
+      return;
+    }
+    const note = invoiceSynced ? "" : '<div class="body muted">Sync the invoice to ' + esc(acc.provider_name) + " first; its payments are then recorded against it.</div>";
+    el.innerHTML = card("Payments at " + acc.provider_name, note + table([
+      { h: "Payment", f: (r) => esc(r.lago_id), cls: "mono" },
+      { h: "Amount", f: (r) => money(r.amount_cents, r.amount_currency), cls: "num" },
+      { h: acc.provider_name + " ID", f: (r) => (r.external_id ? esc(r.external_id) : '<span class="muted">not recorded</span>'), cls: "mono" },
+      { h: "When", f: (r) => datetime(r.synced_at) },
+      { h: "", f: (r) => (invoiceSynced && !r.external_id
+        ? '<button type="button" data-sync-payment="' + esc(r.lago_id) + '">' + icon("refresh") + "Record at " + esc(acc.provider_name) + "</button>" : "") },
+    ], rows, { empty: "No succeeded payments on this invoice." }));
+    $$("[data-sync-payment]", el).forEach((b) => (b.onclick = async () => {
+      b.disabled = true;
+      try {
+        const r = await api.post("/api/v1/payments/" + enc(b.dataset.syncPayment) + "/sync_accounting");
+        R.toast("Payment recorded at " + acc.provider_name + " as " + r.integration_payment.external_id, "ok");
+        R.render();
+      } catch (err) { R.toast(err.message, "err"); b.disabled = false; }
+    }));
+  }
 
   // ---- console SSO sign-in ----------------------------------------------------------------
   function bindSsoGate() {
