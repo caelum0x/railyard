@@ -1,0 +1,25 @@
+Relay
+=====
+
+Relay is Railyard's LLM gateway. It is a maintained fork of TensorZero.
+
+This product includes software developed by the TensorZero project
+(https://github.com/tensorzero/tensorzero), licensed under the Apache License,
+Version 2.0. The vendored baseline is TensorZero 2026.6.0. Upstream source
+files keep their original copyright and license notices and their history.
+The upstream repository was archived on 2026-06-12. Relay continues it
+independently.
+
+Relay is not affiliated with, sponsored by, or endorsed by TensorZero or its
+authors. "TensorZero" is used only to identify the upstream project this work
+derives from.
+
+Railyard-authored additions are also licensed under Apache-2.0 (see LICENSE):
+  - crates/relay-* (contract, SDK, AITP-402, billing, catalog, cost feed,
+    hedging, Postgres settlement storage)
+  - clients/relay-* (Relay SDKs)
+  - Relay-specific gateway modules, migrations, tools/ and docs/RELAY-*
+  - Relay modifications to upstream files, recorded in the git history
+
+Third-party dependencies carry their own licenses, as recorded in each
+package manifest and lockfile.

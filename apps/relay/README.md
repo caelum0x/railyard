@@ -1,4 +1,26 @@
-# Relay product integration
+# Relay: the maintained TensorZero fork
+
+TensorZero archived its GitHub repository on 2026-06-12. Relay is a
+**maintained fork of TensorZero 2026.6.0**: same `gateway` binary, same
+`tensorzero.toml` config, same `/inference` and `/openai/v1/*` endpoints and
+the same `TENSORZERO_*` storage variables. Railyard maintains it in this
+repository (engine fixes, provider/model updates, security patches) and adds
+opt-in features TensorZero never had:
+success-only billing on Mint, a price catalog and quote API, AITP-402
+pay-per-call challenges, provider hedging, spend caps, and white-label resale
+through [Vend](../vend/README.md).
+
+- Switching over: [`docs/MIGRATING-FROM-TENSORZERO.md`](docs/MIGRATING-FROM-TENSORZERO.md).
+  An existing config runs unchanged.
+- Attribution: [`NOTICE`](NOTICE) and [`LICENSE`](LICENSE) (Apache-2.0).
+  Upstream files keep their notices and history.
+- Code boundary: [`OWNERSHIP.md`](OWNERSHIP.md).
+
+Relay is an independent project. It is not affiliated with or endorsed by
+TensorZero or its authors. The TensorZero README kept further down describes
+the upstream project and its claims, not Relay.
+
+## Relay product integration
 
 This directory vendors TensorZero as Railyard's standalone Relay inference
 gateway. Its executable is `gateway` in the `crates` workspace. A no-model
