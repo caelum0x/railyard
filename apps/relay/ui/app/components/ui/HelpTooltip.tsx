@@ -2,21 +2,7 @@ import { CircleHelp, ExternalLink } from "lucide-react";
 import { HoverCard } from "radix-ui";
 import { cn } from "~/utils/common";
 
-/**
- * Base URL for feature documentation. Relay's observability, evaluation, and
- * optimization screens are vendored from TensorZero (Apache-2.0), so their
- * reference docs default to the upstream docs; operators can point this at
- * their own docs with `VITE_RELAY_DOCS_URL` at build time.
- */
-const DOCS_BASE_URL = (
-  (import.meta.env.VITE_RELAY_DOCS_URL as string | undefined) ??
-  "https://www.tensorzero.com/docs"
-).replace(/\/+$/, "");
-
-/** Build a full docs URL from a path like "gateway/guides/episodes" */
-export function docsUrl(path: string): string {
-  return `${DOCS_BASE_URL}/${path}`;
-}
+export { docsUrl } from "~/utils/docs-url";
 
 export enum HelpTooltipSide {
   Top = "top",

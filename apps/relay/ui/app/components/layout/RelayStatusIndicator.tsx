@@ -2,16 +2,16 @@ import { useTensorZeroStatusFetcher } from "~/routes/api/tensorzero/status";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { useMemo } from "react";
 
-interface TensorZeroStatusIndicatorProps {
+interface RelayStatusIndicatorProps {
   collapsed?: boolean;
 }
 
 /**
- * A component that displays the status of the TensorZero Gateway.
+ * A component that displays the status of the Relay gateway.
  */
-export default function TensorZeroStatusIndicator({
+export default function RelayStatusIndicator({
   collapsed = false,
-}: TensorZeroStatusIndicatorProps) {
+}: RelayStatusIndicatorProps) {
   const { status, isLoading } = useTensorZeroStatusFetcher();
   const uiVersion = __APP_VERSION__;
 

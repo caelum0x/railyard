@@ -1,4 +1,5 @@
 import { Badge } from "~/components/ui/badge";
+import { docsUrl } from "~/utils/docs-url";
 import {
   Tooltip,
   TooltipContent,
@@ -29,7 +30,9 @@ export function LegacyStructuredPromptBadge({
           Please migrate from <code>{legacyName}</code> to{" "}
           <code>{newName}</code>.{" "}
           <a
-            href="https://www.tensorzero.com/docs/gateway/create-a-prompt-template#migrate-from-legacy-prompt-templates"
+            href={docsUrl(
+              "gateway/create-a-prompt-template#migrate-from-legacy-prompt-templates",
+            )}
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:text-gray-300"

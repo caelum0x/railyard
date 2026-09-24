@@ -26,7 +26,11 @@ const getLogLevel = (): LogLevel => {
   }
 
   // Server: use env var
-  const level = process.env.TENSORZERO_UI_LOG_LEVEL?.toLowerCase();
+  // RELAY_UI_LOG_LEVEL is the Relay name; TENSORZERO_UI_LOG_LEVEL is kept as an
+  // alias so existing deployments keep working.
+  const rawLevel =
+    process.env.RELAY_UI_LOG_LEVEL ?? process.env.TENSORZERO_UI_LOG_LEVEL;
+  const level = rawLevel?.toLowerCase();
   if (level && (LOG_LEVELS as readonly string[]).includes(level)) {
     cachedLogLevel = level as LogLevel;
     return cachedLogLevel;
@@ -34,7 +38,7 @@ const getLogLevel = (): LogLevel => {
 
   if (level && !hasLoggedInvalidLogLevel) {
     console.warn(
-      `[TensorZero UI] Invalid TENSORZERO_UI_LOG_LEVEL: "${process.env.TENSORZERO_UI_LOG_LEVEL}". Valid values are: debug, info, warn, error. Defaulting to "info".`,
+      `[Relay UI] Invalid RELAY_UI_LOG_LEVEL (or TENSORZERO_UI_LOG_LEVEL): "${rawLevel}". Valid values are: debug, info, warn, error. Defaulting to "info".`,
     );
     hasLoggedInvalidLogLevel = true;
   }
@@ -75,7 +79,7 @@ export const logger = {
 };
 
 const getErrorMessage = (error: unknown): string => {
-  const prefix = APP_VERSION ? `[TensorZero UI ${APP_VERSION}]` : null;
+  const prefix = APP_VERSION ? `[Relay UI ${APP_VERSION}]` : null;
   let messageString: string | null = null;
   try {
     messageString =

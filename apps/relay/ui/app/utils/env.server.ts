@@ -54,7 +54,7 @@ export function getEnv(): Env {
     !hasLoggedConfigPathDeprecation
   ) {
     logger.warn(
-      "Deprecation Warning: The TensorZero UI now reads the configuration from the gateway. The environment variables `TENSORZERO_UI_CONFIG_PATH` and `TENSORZERO_UI_DEFAULT_CONFIG` are deprecated and ignored. You no longer need to mount the configuration onto the UI container.",
+      "Deprecation Warning: The Relay UI now reads the configuration from the gateway. The environment variables `TENSORZERO_UI_CONFIG_PATH` and `TENSORZERO_UI_DEFAULT_CONFIG` are deprecated and ignored. You no longer need to mount the configuration onto the UI container.",
     );
     hasLoggedConfigPathDeprecation = true;
   }
@@ -65,7 +65,7 @@ export function getEnv(): Env {
     !hasLoggedClickhouseUrlDeprecation
   ) {
     logger.warn(
-      "Deprecation Warning: TensorZero UI now makes all database queries through the gateway. The environment variable `TENSORZERO_CLICKHOUSE_URL` is deprecated and ignored.",
+      "Deprecation Warning: The Relay UI now makes all database queries through the gateway. The environment variable `TENSORZERO_CLICKHOUSE_URL` is deprecated and ignored.",
     );
     hasLoggedClickhouseUrlDeprecation = true;
   }

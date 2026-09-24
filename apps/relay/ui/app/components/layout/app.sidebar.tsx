@@ -45,7 +45,7 @@ import { useConfig } from "~/context/config";
 import { RelayLogo } from "~/components/icons/Icons";
 import { Link } from "react-router";
 import type { IconProps } from "~/components/icons/Icons";
-import TensorZeroStatusIndicator from "./TensorZeroStatusIndicator";
+import RelayStatusIndicator from "./RelayStatusIndicator";
 import { ReadOnlyBadge } from "./ReadOnlyBadge";
 
 interface NavigationItem {
@@ -288,7 +288,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarContent>
       <SidebarFooter className="relative">
         <ReadOnlyBadge />
-        <TensorZeroStatusIndicator collapsed={state === "collapsed"} />
+        <RelayStatusIndicator collapsed={state === "collapsed"} />
         <SidebarMenuItem className="list-none">
           <SidebarMenuButton
             aria-label="Toggle sidebar"

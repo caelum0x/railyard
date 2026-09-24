@@ -496,7 +496,7 @@ export default function VariantDetails({ loaderData }: Route.ComponentProps) {
       };
     } else {
       throw new Response(
-        "Variant not found. This likely means there is data in ClickHouse from an old TensorZero config.",
+        "Variant not found. This likely means there is data in ClickHouse from an older gateway config.",
         {
           status: 404,
           statusText: "Not Found",

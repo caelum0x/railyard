@@ -62,7 +62,7 @@ export function AdvancedParametersAccordion({
                     <FormLabel>Validation Split (%)</FormLabel>
                     <HelpTooltip
                       link={{
-                        href: docsUrl("optimization/supervised-fine-tuning"),
+                        href: docsUrl("optimization/supervised-fine-tuning-sft"),
                       }}
                     >
                       Data reserved for detecting overfitting during
@@ -99,7 +99,7 @@ export function AdvancedParametersAccordion({
                     <FormLabel>Max. Samples</FormLabel>
                     <HelpTooltip
                       link={{
-                        href: docsUrl("optimization/supervised-fine-tuning"),
+                        href: docsUrl("optimization/supervised-fine-tuning-sft"),
                       }}
                     >
                       Limited by the number of curated inferences that meet the

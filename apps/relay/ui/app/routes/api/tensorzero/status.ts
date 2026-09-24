@@ -12,7 +12,7 @@ export async function loader(): Promise<StatusResponse | undefined> {
     const status = await getTensorZeroClient().status();
     return status;
   } catch (error) {
-    logger.error("Failed to fetch TensorZero status:", error);
+    logger.error("Failed to fetch Relay gateway status:", error);
     return undefined;
   }
 }

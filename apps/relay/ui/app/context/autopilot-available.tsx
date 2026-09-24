@@ -4,7 +4,8 @@
  * Autopilot Available Context Provider
  *
  * This module provides a React Context for checking if autopilot is available.
- * Autopilot is available when the gateway has TENSORZERO_AUTOPILOT_API_KEY configured.
+ * Relay does not offer Autopilot (it needs TensorZero's hosted service), so the
+ * root loader always provides `false` and Autopilot entry points stay hidden.
  *
  * @module autopilot-available
  */

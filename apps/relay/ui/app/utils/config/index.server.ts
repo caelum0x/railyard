@@ -1,5 +1,5 @@
 /**
- * Configuration loader for TensorZero UI.
+ * Configuration loader for the Relay UI.
  *
  * The config is loaded from the gateway and cached. The server periodically
  * polls the gateway's status endpoint to check if the config hash has changed.

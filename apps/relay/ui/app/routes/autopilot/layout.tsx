@@ -8,7 +8,6 @@ import type { Route } from "./+types/layout";
 import { AutopilotUnavailableState } from "~/components/ui/error/AutopilotUnavailableState";
 import { LayoutErrorBoundary } from "~/components/ui/error";
 import { isAutopilotUnavailableError } from "~/utils/tensorzero/errors";
-import { getTensorZeroClient } from "~/utils/get-tensorzero-client.server";
 
 export const handle: RouteHandle = {
   crumb: () => [{ label: "Autopilot", noLink: true }],
@@ -16,14 +15,12 @@ export const handle: RouteHandle = {
 
 const AUTOPILOT_UNAVAILABLE_ERROR = "Autopilot Unavailable";
 
+// Autopilot needs TensorZero's hosted Autopilot service, which Relay does not
+// offer. Every Autopilot route answers with the "not available" state, even if
+// a gateway still carries an upstream Autopilot key.
+// eslint-disable-next-line @typescript-eslint/require-await
 export async function loader() {
-  // Check if autopilot is configured on the gateway
-  const client = getTensorZeroClient();
-  const status = await client.getAutopilotStatus();
-  if (!status.enabled) {
-    throw data({ errorType: AUTOPILOT_UNAVAILABLE_ERROR }, { status: 501 });
-  }
-  return null;
+  throw data({ errorType: AUTOPILOT_UNAVAILABLE_ERROR }, { status: 501 });
 }
 
 export default function AutopilotLayout() {

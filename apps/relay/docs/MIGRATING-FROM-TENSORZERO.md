@@ -62,10 +62,15 @@ Then smoke-test the same requests you run in production (`/inference`, and
 
 - **TensorZero Autopilot.** This was a hosted, paid upstream service. Its
   client crates (`autopilot-*`) are vendored, but no hosted Autopilot backend
-  exists for them to call.
-- **Upstream docs, website links and community channels** in the vendored
-  TensorZero README describe TensorZero, not Relay. Report Relay issues in the
-  Railyard repository.
+  exists for them to call. The operator UI hides every Autopilot entry point
+  and `/autopilot` shows a "not available in Relay" page.
+- **Upstream website links and community channels** are not carried over: the
+  Relay README keeps only an attribution section, and UI help links point to
+  the engine docs pinned at the 2026.6.0 tag (override with
+  `VITE_RELAY_DOCS_URL` at UI build time). Report Relay issues in the Railyard
+  repository.
+- **UI log level.** `RELAY_UI_LOG_LEVEL` sets the UI log level;
+  `TENSORZERO_UI_LOG_LEVEL` still works as an alias.
 - **Versioning.** Relay versions its own releases from the 2026.6.0 baseline.
   Upstream fixes after the archive date do not exist. Relay applies provider
   and security updates itself.
