@@ -183,9 +183,21 @@ async fn create_one_off_and_batch_invoices(pool: PgPool) {
     data(&resp);
     assert_eq!(db.find_invoice(failed.id).await.unwrap().unwrap().payment_status, PaymentStatus::Pending);
 
-    // regenerate from a (voided) invoice
-    let resp = run(&schema, &org, r#"mutation($id: ID!) { regenerateInvoice(voidedInvoiceId: $id) { id status } }"#, json!({ "id": inv.id.to_string() })).await;
-    assert_eq!(data(&resp)["regenerateInvoice"]["status"], "finalized");
+    // regenerate: only a VOIDED invoice can be re-issued (finalizeAll above
+    // finalized `inv`, so it is refused until it is voided).
+    let regen = r#"mutation($id: ID!) { regenerateInvoice(voidedInvoiceId: $id) { id status } }"#;
+    let resp = run(&schema, &org, regen, json!({ "id": inv.id.to_string() })).await;
+    assert_eq!(resp.errors[0].message, "invoice_not_voided");
+    // the re-issued invoice copies the voided one's fees
+    insert_fee(&db, org.id, inv.id, 1500, 3, 500).await;
+    let resp = run(&schema, &org, r#"mutation($id: ID!) { voidInvoice(id: $id) { status } }"#, json!({ "id": inv.id.to_string() })).await;
+    assert_eq!(data(&resp)["voidInvoice"]["status"], "voided");
+    let resp = run(&schema, &org, regen, json!({ "id": inv.id.to_string() })).await;
+    let d = data(&resp);
+    assert_eq!(d["regenerateInvoice"]["status"], "finalized");
+    let new_id = Uuid::parse_str(d["regenerateInvoice"]["id"].as_str().unwrap()).unwrap();
+    assert_eq!(db.fees_for_invoice(new_id).await.unwrap().len(), 1);
+    assert_ne!(d["regenerateInvoice"]["id"], inv.id.to_string());
 }
 
 // ---- alerts (subscription + wallet) ---------------------------------------
@@ -403,4 +415,25 @@ async fn credit_note_items_persisted_with_taxes(pool: PgPool) {
     let cn_id = Uuid::parse_str(d["createCreditNote"]["id"].as_str().unwrap()).unwrap();
     assert_eq!(db.credit_note_items(cn_id).await.unwrap().len(), 1);
     assert_eq!(db.credit_note_items(cn_id).await.unwrap()[0], (fee_id, 1000));
+}
+
+// ---- void is org-scoped ----------------------------------------------------
+
+#[sqlx::test(migrator = "rago_db::MIGRATOR")]
+async fn void_invoice_rejects_cross_org_id(pool: PgPool) {
+    let (schema, db, org_a) = setup(pool).await;
+    let c = customer(org_a.id, "cust-void");
+    db.insert_customer(&c).await.unwrap();
+    let inv = draft_invoice(org_a.id, c.id, InvoiceStatus::Finalized);
+    db.insert_invoice(&inv).await.unwrap();
+    let org_b = org();
+    db.insert_organization(&org_b).await.unwrap();
+
+    let void = r#"mutation($id: ID!) { voidInvoice(id: $id) { status } }"#;
+    let resp = run(&schema, &org_b, void, json!({ "id": inv.id.to_string() })).await;
+    assert_eq!(resp.errors[0].message, "invoice_not_found");
+    assert_eq!(db.find_invoice(inv.id).await.unwrap().unwrap().status, InvoiceStatus::Finalized);
+
+    let resp = run(&schema, &org_a, void, json!({ "id": inv.id.to_string() })).await;
+    assert_eq!(data(&resp)["voidInvoice"]["status"], "voided");
 }

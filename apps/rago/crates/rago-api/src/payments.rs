@@ -57,6 +57,7 @@ pub async fn create_payment(
     let amount_cents = i64_of(p, "amount_cents").unwrap_or(invoice.total_amount_cents);
     let currency = s(p, "amount_currency").unwrap_or_else(|| invoice.currency().code());
     let provider = s(p, "payment_provider_type").unwrap_or_else(|| "manual".into());
+    let status = s(p, "status").unwrap_or_else(|| "pending".into());
     let id = Uuid::new_v4();
     st.db
         .insert_payment(
@@ -66,11 +67,18 @@ pub async fn create_payment(
             &provider,
             s(p, "provider_payment_id").as_deref(),
             s(p, "provider_status").as_deref(),
-            &s(p, "status").unwrap_or_else(|| "pending".into()),
+            &status,
             amount_cents,
             &currency,
         )
         .await?;
+    // A payment recorded as already settled gets its numbered receipt
+    // (idempotent; pending payments get theirs when they settle).
+    if status == "succeeded" {
+        rago_jobs::receipts::issue_for_payment(&st.db, id)
+            .await
+            .map_err(|e| ApiError::Internal(format!("payment receipt: {e}")))?;
+    }
     let payments = st.db.list_payments(invoice_id).await?;
     let created = payments
         .iter()

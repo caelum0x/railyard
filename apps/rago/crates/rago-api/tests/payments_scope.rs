@@ -230,17 +230,27 @@ async fn list_and_show_payment_reject_cross_org_invoice(pool: PgPool) {
 #[sqlx::test(migrator = "rago_db::MIGRATOR")]
 async fn payment_receipts_reject_cross_org_invoice(pool: PgPool) {
     let (app, _db, _a, _b, inv) = setup(pool).await;
-    let body = json!({ "payment": { "invoice_id": inv.id, "amount_cents": 1000, "amount_currency": "USD" } });
+    let uri = format!("/api/v1/payment_receipts?invoice_id={}", inv.id);
+    // a pending payment is not settled: no receipt yet.
+    let body = json!({ "payment": { "invoice_id": inv.id, "amount_cents": 400, "amount_currency": "USD" } });
+    let (status, _) = call(&app, TOKEN_A, "POST", "/api/v1/payments", Some(body)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, resp) = call(&app, TOKEN_A, "GET", &uri, None).await;
+    assert_eq!(resp["payment_receipts"].as_array().unwrap().len(), 0);
+
+    // a settled payment gets exactly one numbered receipt.
+    let body = json!({ "payment": { "invoice_id": inv.id, "amount_cents": 1000, "amount_currency": "USD", "status": "succeeded" } });
     let (status, _) = call(&app, TOKEN_A, "POST", "/api/v1/payments", Some(body)).await;
     assert_eq!(status, StatusCode::OK);
 
     // receipts index: org B gets 404 for org A's invoice id.
-    let uri = format!("/api/v1/payment_receipts?invoice_id={}", inv.id);
     let (status, _) = call(&app, TOKEN_B, "GET", &uri, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, resp) = call(&app, TOKEN_A, "GET", &uri, None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(resp["payment_receipts"].as_array().unwrap().len(), 1);
+    assert_eq!(resp["payment_receipts"][0]["amount_cents"], 1000);
+    assert!(resp["payment_receipts"][0]["number"].as_str().unwrap().ends_with("-RCPT-1"));
 
     // resend: org B cannot trigger mail for org A's invoice.
     let uri = format!("/api/v1/payment_receipts/{}/resend_email", inv.id);

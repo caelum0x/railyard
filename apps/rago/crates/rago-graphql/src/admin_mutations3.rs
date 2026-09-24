@@ -366,6 +366,10 @@ impl AdminMutation3 {
         db(ctx)
             .insert_payment(id, org.id, invoice.id, "manual", Some(&input.reference), Some("succeeded"), "succeeded", input.amount_cents, &currency)
             .await?;
+        // A settled manual payment gets its numbered receipt (idempotent).
+        rago_jobs::receipts::issue_for_payment(db(ctx), id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("payment_receipt_failed: {e}")))?;
         Ok(Payment::from((id, "manual".to_string(), "succeeded".to_string(), input.amount_cents, currency)))
     }
 

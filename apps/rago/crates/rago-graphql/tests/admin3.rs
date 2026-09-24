@@ -88,6 +88,10 @@ fn invoice(org: Uuid, customer_id: Uuid) -> m::Invoice {
 }
 
 async fn setup(pool: PgPool) -> (RagoSchema, Db, m::Organization) {
+    // Provider/integration credentials are sealed at rest; storing one without
+    // a key is refused (`encryption_key_missing`). Every test in this binary
+    // uses the same fixed test key, so the process-wide env var is race-free.
+    std::env::set_var(rago_db::secrets::ENCRYPTION_KEY_ENV, "admin3-test-key");
     let db = Db::new(pool.clone());
     let organization = org();
     db.insert_organization(&organization).await.unwrap();
@@ -213,9 +217,11 @@ async fn manual_payment_and_request(pool: PgPool) {
     let resp = run(&schema, &org, r#"{ paymentRequests(externalCustomerId: "cust-p") { email } }"#, json!({})).await;
     assert_eq!(data(&resp)["paymentRequests"][0]["email"], "p@acme.test");
 
-    // generate payment url: honest null (no live provider)
+    // generate payment url: with no payment provider configured for the org
+    // the mutation refuses with an explicit code rather than fabricating a URL.
     let resp = run(&schema, &org, r#"mutation($i: ID!) { generatePaymentUrl(invoiceId: $i) { paymentUrl } }"#, json!({ "i": inv.id.to_string() })).await;
-    assert!(data(&resp)["generatePaymentUrl"]["paymentUrl"].is_null());
+    assert_eq!(resp.errors.len(), 1, "{:?}", resp.errors);
+    assert_eq!(resp.errors[0].message, "payment_provider_not_configured");
 }
 
 // ---- integrations config + mappings + customers ---------------------------
@@ -298,9 +304,12 @@ async fn integration_config_and_mappings(pool: PgPool) {
     let resp = run(&schema, &org, r#"query($c: ID!) { integrationCustomers(customerId: $c) { externalCustomerId } }"#, json!({ "c": c.id.to_string() })).await;
     assert_eq!(data(&resp)["integrationCustomers"][0]["externalCustomerId"], "ext-cust");
 
-    // fetch items (honest empty) + subsidiaries (empty)
+    // fetch items: a real NetSuite catalog call. This test build has outbound
+    // HTTP disabled (no `live` feature), so it must surface that as an error
+    // rather than fabricate an empty catalog.
     let resp = run(&schema, &org, r#"mutation($id: ID!) { fetchIntegrationItems(integrationId: $id) { id } }"#, json!({ "id": int_id })).await;
-    assert_eq!(data(&resp)["fetchIntegrationItems"].as_array().unwrap().len(), 0);
+    assert_eq!(resp.errors.len(), 1, "{:?}", resp.errors);
+    assert!(resp.errors[0].message.starts_with("integration error"), "{}", resp.errors[0].message);
 
     // destroy integration
     run(&schema, &org, r#"mutation($id: ID!) { destroyIntegration(id: $id) }"#, json!({ "id": int_id })).await;

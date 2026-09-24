@@ -556,8 +556,14 @@ impl Mutation {
 
     /// `voidInvoice(id:)` — void a finalized invoice.
     async fn void_invoice(&self, ctx: &Context<'_>, id: async_graphql::ID) -> Result<Invoice> {
-        let _org = require_org(ctx)?;
+        let org = require_org(ctx)?;
         let uuid = Uuid::parse_str(id.as_str()).map_err(|_| async_graphql::Error::new("invalid_id"))?;
+        // Org-scoped: another organization's invoice id answers not-found.
+        db(ctx)
+            .find_invoice(uuid)
+            .await?
+            .filter(|i| i.organization_id == org.id)
+            .ok_or_else(|| async_graphql::Error::new("invoice_not_found"))?;
         db(ctx).void_invoice(uuid).await?;
         // Real-time wallets: release reserved holds and reverse captured money.
         let transport = rago_integrations::default_transport();

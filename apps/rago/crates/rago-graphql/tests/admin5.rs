@@ -137,9 +137,18 @@ async fn quotes_and_versions(pool: PgPool) {
     assert_eq!(data(&resp)["approveQuoteVersion"]["status"], "approved");
     assert_eq!(db.list_quote_versions(Uuid::parse_str(&quote_id).unwrap()).await.unwrap().len(), 2);
 
-    // update quote
-    let resp = run(&schema, &org, r#"mutation($id: ID!) { updateQuote(input: { id: $id, status: "accepted" }) { status } }"#, json!({ "id": quote_id })).await;
-    assert_eq!(data(&resp)["updateQuote"]["status"], "accepted");
+    // update quote: `accepted` is reached only by executing an order, never
+    // by a direct status write; draft -> approved -> voided is allowed and a
+    // voided quote is final.
+    let update = r#"mutation($id: ID!, $s: String!) { updateQuote(input: { id: $id, status: $s }) { status } }"#;
+    let resp = run(&schema, &org, update, json!({ "id": quote_id, "s": "accepted" })).await;
+    assert_eq!(resp.errors[0].message, "invalid_status_transition: draft -> accepted");
+    let resp = run(&schema, &org, update, json!({ "id": quote_id, "s": "approved" })).await;
+    assert_eq!(data(&resp)["updateQuote"]["status"], "approved");
+    let resp = run(&schema, &org, update, json!({ "id": quote_id, "s": "voided" })).await;
+    assert_eq!(data(&resp)["updateQuote"]["status"], "voided");
+    let resp = run(&schema, &org, update, json!({ "id": quote_id, "s": "draft" })).await;
+    assert_eq!(resp.errors[0].message, "invalid_status_transition: voided -> draft");
 }
 
 // ---- order forms + orders --------------------------------------------------
@@ -150,18 +159,54 @@ async fn order_forms_and_orders(pool: PgPool) {
     let c = customer(org.id, "cust-o");
     db.insert_customer(&c).await.unwrap();
 
-    // order forms/orders are generated from quotes; seed directly then drive
-    let of = Uuid::new_v4();
-    db.insert_order_form(of, org.id, Some(c.id), None, "OF-1").await.unwrap();
-    let resp = run(&schema, &org, r#"mutation($id: ID!) { markOrderFormAsSigned(id: $id, executionMode: "auto") { status executionMode } }"#, json!({ "id": of.to_string() })).await;
+    // quote (v1) -> approve v1 -> order form -> sign -> order -> execute.
+    let resp = run(
+        &schema,
+        &org,
+        r#"mutation($c: ID!) { createQuote(input: { customerId: $c, currency: "USD", totalAmountCents: 5000, lineItems: [{ name: "Seat", unit_amount_cents: 2500, units: "2" }] }) { id } }"#,
+        json!({ "c": c.id.to_string() }),
+    )
+    .await;
+    let quote_id = data(&resp)["createQuote"]["id"].as_str().unwrap().to_string();
+
+    // no approved version yet -> no order form
+    let create_form = r#"mutation($q: ID!) { createOrderForm(quoteId: $q) { id number status } }"#;
+    let resp = run(&schema, &org, create_form, json!({ "q": quote_id })).await;
+    assert_eq!(resp.errors[0].message, "quote_has_no_approved_version");
+
+    let resp = run(&schema, &org, r#"query($q: ID!) { quoteVersions(quoteId: $q) { id } }"#, json!({ "q": quote_id })).await;
+    let ver_id = data(&resp)["quoteVersions"][0]["id"].as_str().unwrap().to_string();
+    let resp = run(&schema, &org, r#"mutation($id: ID!) { approveQuoteVersion(id: $id) { status } }"#, json!({ "id": ver_id })).await;
+    assert_eq!(data(&resp)["approveQuoteVersion"]["status"], "approved");
+
+    let resp = run(&schema, &org, create_form, json!({ "q": quote_id })).await;
+    let d = data(&resp);
+    assert_eq!(d["createOrderForm"]["status"], "draft");
+    let of = d["createOrderForm"]["id"].as_str().unwrap().to_string();
+
+    let resp = run(&schema, &org, r#"mutation($id: ID!) { markOrderFormAsSigned(id: $id, executionMode: "auto") { status executionMode } }"#, json!({ "id": of })).await;
     let d = data(&resp);
     assert_eq!(d["markOrderFormAsSigned"]["status"], "signed");
     assert_eq!(d["markOrderFormAsSigned"]["executionMode"], "auto");
 
-    let ord = Uuid::new_v4();
-    db.insert_order(ord, org.id, Some(c.id), Some(of), "ORD-1").await.unwrap();
-    let resp = run(&schema, &org, r#"mutation($id: ID!) { executeOrder(id: $id) { status } }"#, json!({ "id": ord.to_string() })).await;
+    // signing created exactly one pending order for the form
+    let resp = run(&schema, &org, r#"{ orders { id status } }"#, json!({})).await;
+    let d = data(&resp);
+    assert_eq!(d["orders"].as_array().unwrap().len(), 1);
+    assert_eq!(d["orders"][0]["status"], "pending");
+    let ord = d["orders"][0]["id"].as_str().unwrap().to_string();
+
+    let exec = r#"mutation($id: ID!) { executeOrder(id: $id) { status } }"#;
+    let resp = run(&schema, &org, exec, json!({ "id": ord })).await;
     assert_eq!(data(&resp)["executeOrder"]["status"], "executed");
+    // exactly once
+    let resp = run(&schema, &org, exec, json!({ "id": ord })).await;
+    assert_eq!(resp.errors[0].message, "order_not_pending");
+
+    // executing billed the quote's line items (2 x 2500) on a one-off invoice
+    let invoices = db.list_invoices(org.id, None, None, None, None, 100, 0).await.unwrap();
+    assert_eq!(invoices.len(), 1);
+    assert_eq!(invoices[0].fees_amount_cents, 5000);
 
     let resp = run(&schema, &org, r#"{ orderForms { number status } orders { number status } }"#, json!({})).await;
     let d = data(&resp);
