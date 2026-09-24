@@ -30,7 +30,10 @@ mod admin;
 mod admin_catalog;
 pub mod auth;
 pub mod fulfill;
+pub mod iap;
 mod storefront;
+
+pub use iap::IapConfig;
 
 use auth::Principal;
 
@@ -49,6 +52,8 @@ pub struct AppState<M: MintTransport, F: Fulfiller = AlwaysFulfill> {
     token_ttl_secs: u64,
     /// Hashed operator console token (`GAME_ADMIN_TOKEN`).
     admin_key: Option<blake3::Hash>,
+    /// IAP credit configuration (`/v1/iap/*`); routes answer 503 when unset.
+    iap: Option<iap::SharedIap>,
 }
 
 impl<M: MintTransport, F: Fulfiller> Clone for AppState<M, F> {
@@ -61,6 +66,7 @@ impl<M: MintTransport, F: Fulfiller> Clone for AppState<M, F> {
             allow_legacy_tokens: self.allow_legacy_tokens,
             token_ttl_secs: self.token_ttl_secs,
             admin_key: self.admin_key,
+            iap: self.iap.clone(),
         }
     }
 }
@@ -83,7 +89,19 @@ impl<M: MintTransport + 'static, F: Fulfiller + 'static> AppState<M, F> {
             allow_legacy_tokens: true,
             token_ttl_secs: DEFAULT_TOKEN_TTL_SECS,
             admin_key: None,
+            iap: None,
         }
+    }
+
+    /// Enable the IAP credit routes (`/v1/iap/credit`, `/v1/iap/reverse`,
+    /// `/v1/iap/revenuecat`).
+    pub fn with_iap(mut self, config: IapConfig) -> Self {
+        self.iap = Some(Arc::new(config));
+        self
+    }
+
+    pub(crate) fn iap(&self) -> Option<&IapConfig> {
+        self.iap.as_deref()
     }
 
     /// Enable the operator console API (`/v1/admin/*`), authenticated by
@@ -144,7 +162,9 @@ where
         .route("/healthz", get(healthz))
         .route("/store", get(storefront::page))
         .route("/admin", get(admin::page))
-        .route("/v1/catalog", get(catalog_handler::<M, F>));
+        .route("/v1/catalog", get(catalog_handler::<M, F>))
+        // Authenticated by the RevenueCat webhook Authorization value itself.
+        .route("/v1/iap/revenuecat", post(iap::revenuecat_handler::<M, F>));
 
     let guarded = Router::new()
         .route("/v1/purchase", post(purchase_handler::<M, F>))
@@ -172,6 +192,8 @@ where
             post(revoke_handler::<M, F>),
         )
         .route("/v1/refunds", post(refund_handler::<M, F>))
+        .route("/v1/iap/credit", post(iap::credit_handler::<M, F>))
+        .route("/v1/iap/reverse", post(iap::reverse_handler::<M, F>))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_server::<M, F>,

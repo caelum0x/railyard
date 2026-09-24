@@ -56,6 +56,12 @@ refunded). Purchase history shows `status` (`completed` / `refunded` /
 | `PUT /v1/admin/catalog/products/:sku` | admin token | Create or update a product (`{"product":{"CardPack":{...}},"expected_revision":N}`) |
 | `POST /v1/admin/catalog/products/:sku/archive` | admin token | Archive / restore a SKU (`{"archived":true}`); archived SKUs leave the storefront but owned copies keep working |
 | `PUT /v1/admin/catalog/pools/:rarity` | admin token | Replace a rarity's item pool (`{"items":[...]}`) |
+| `POST /v1/iap/credit`, `POST /v1/iap/reverse` | game-server key | Credit (or reverse) premium currency for a store-verified App Store / Play purchase; idempotent per transaction |
+| `POST /v1/iap/revenuecat` | RevenueCat webhook auth | RevenueCat purchase/refund events -> credit/reverse |
+
+Full request/response contract, IAP setup and an Expo example:
+[`docs/HTTP-API.md`](docs/HTTP-API.md). Drop-in TypeScript client (no deps):
+[`clients/ts/game-economy.ts`](clients/ts/game-economy.ts).
 
 The catalog is editable live. `GAME_CATALOG_PATH` only seeds the persisted
 catalog on first boot (Postgres tables `game_catalog_*`, or

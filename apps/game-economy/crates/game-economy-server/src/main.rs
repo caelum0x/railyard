@@ -43,6 +43,9 @@
 //! - `GAME_STATE_PATH`         — JSON durability file (default `./game-economy-state.json`), single instance only.
 //! - `GAME_ADMIN_TOKEN`        — operator console bearer token (>= 24 chars; console API answers 503 until set).
 //! - `GAME_BIND_ADDR`          — listen address (default `0.0.0.0:8102`).
+//! - `GAME_IAP_FUNDING_ACCOUNT`— Mint account IAP currency credits are paid from (enables `/v1/iap/*`).
+//! - `GAME_IAP_PRODUCTS`       — `store_product_id=micros,...` credit table (required with the funding account).
+//! - `GAME_REVENUECAT_WEBHOOK_AUTH` — exact `Authorization` value RevenueCat sends (enables `/v1/iap/revenuecat`).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -121,6 +124,9 @@ async fn main() -> anyhow::Result<()> {
         Err(_) => tracing::warn!(
             "GAME_ADMIN_TOKEN unset: the operator console (/admin, /v1/admin/*) is disabled (503)"
         ),
+    }
+    if let Some(iap) = load_iap()? {
+        state = state.with_iap(iap);
     }
     let app = build_router(state);
 
@@ -285,6 +291,28 @@ fn load_fulfiller() -> anyhow::Result<ServerFulfiller> {
     )
     .map_err(|e| anyhow::anyhow!(e))?;
     Ok(ServerFulfiller::Webhook(webhook))
+}
+
+/// IAP credit routes, enabled when `GAME_IAP_FUNDING_ACCOUNT` is set.
+fn load_iap() -> anyhow::Result<Option<game_economy_server::IapConfig>> {
+    let Some(funding) = std::env::var("GAME_IAP_FUNDING_ACCOUNT")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+    else {
+        tracing::info!("GAME_IAP_FUNDING_ACCOUNT unset: IAP credit routes are disabled (503)");
+        return Ok(None);
+    };
+    let spec = required_env("GAME_IAP_PRODUCTS")?;
+    let products = game_economy_server::IapConfig::parse_products(&spec)
+        .map_err(|e| anyhow::anyhow!("GAME_IAP_PRODUCTS: {e}"))?;
+    let mut cfg = game_economy_server::IapConfig::new(funding, products)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    match std::env::var("GAME_REVENUECAT_WEBHOOK_AUTH") {
+        Ok(v) if v.trim().len() >= 16 => cfg = cfg.with_revenuecat_auth(v.trim().as_bytes()),
+        Ok(_) => anyhow::bail!("GAME_REVENUECAT_WEBHOOK_AUTH must be at least 16 characters"),
+        Err(_) => tracing::info!("GAME_REVENUECAT_WEBHOOK_AUTH unset: /v1/iap/revenuecat is disabled"),
+    }
+    Ok(Some(cfg))
 }
 
 fn env_flag(key: &str) -> bool {
