@@ -442,7 +442,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 source="/api-keys"
                 icon={KeyRound}
                 title="API Keys"
-                description=""
+                description="Create and revoke gateway keys"
               />
             </div>
           </div>

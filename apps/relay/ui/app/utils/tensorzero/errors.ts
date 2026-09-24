@@ -108,7 +108,7 @@ const SerializedAutopilotUnavailableErrorSchema = z.object({
  */
 export class GatewayConnectionError extends Error {
   constructor(cause?: unknown) {
-    super("Cannot connect to TensorZero Gateway", { cause });
+    super("Cannot connect to Relay Gateway", { cause });
     this.name = "GatewayConnectionError";
   }
 }

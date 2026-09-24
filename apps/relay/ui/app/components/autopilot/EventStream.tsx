@@ -463,7 +463,7 @@ function renderEventTitle(event: GatewayEvent) {
             </TooltipTrigger>
             <TooltipContent className="max-w-xs text-xs">
               The Autopilot API returned an unknown event. This likely means
-              your TensorZero deployment version is outdated.
+              your Relay deployment version is outdated.
             </TooltipContent>
           </Tooltip>
         </span>

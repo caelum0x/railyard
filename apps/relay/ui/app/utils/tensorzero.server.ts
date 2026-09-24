@@ -101,7 +101,7 @@ export async function addEvaluationHumanFeedback(
   const datapointId = formData.get("datapointId")?.toString();
   if (!datapointId) {
     throw new Error(
-      "Datapoint ID is required. This is a bug. Please file a bug report at https://github.com/tensorzero/tensorzero/discussions/new?category=bug-reports",
+      "Datapoint ID is required. This is a bug. Please report it to your Relay operator.",
     );
   }
   const [r1, r2] = await Promise.all([

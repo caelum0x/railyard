@@ -66,13 +66,13 @@ function buildMismatchMessage({
             </td>
           </tr>
           <tr>
-            <td className="text-fg-muted pr-2 align-top">TensorZero Gateway</td>
+            <td className="text-fg-muted pr-2 align-top">Relay Gateway</td>
             <td className="font-mono text-xs whitespace-nowrap">
               {gatewayVersion}
             </td>
           </tr>
           <tr>
-            <td className="text-fg-muted pr-2 align-top">TensorZero UI</td>
+            <td className="text-fg-muted pr-2 align-top">Relay UI</td>
             <td className="font-mono text-xs whitespace-nowrap">{uiVersion}</td>
           </tr>
         </tbody>

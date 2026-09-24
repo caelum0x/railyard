@@ -139,7 +139,7 @@ fn login_body(next: &str, error: Option<&str>) -> String {
     };
     format!(
         "<div class=\"card\" style=\"max-width:440px;margin:40px auto\">\
-         <h1>Sign in to rithub</h1>{err}\
+         <h1>Sign in to Rithub</h1>{err}\
          <form method=\"post\" action=\"/login\">\
          <input type=\"hidden\" name=\"next\" value=\"{next}\">\
          <label for=\"username\">Username</label>\

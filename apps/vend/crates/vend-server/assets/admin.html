@@ -61,6 +61,7 @@
     background: var(--row); border: 1px solid var(--border);
   }
   .empty, .loading { padding: 28px; color: var(--muted); text-align: center; }
+  .empty.error { color: var(--danger); }
   .gate { max-width: 480px; margin: 80px auto; text-align: center; }
   .gate p { color: var(--muted); }
   .toolbar { display: flex; align-items: center; gap: 10px; padding: 12px 0; flex-wrap: wrap; }
@@ -612,7 +613,7 @@
       renderRows(data);
       setStatus("Connected", "ok");
     } catch (e) {
-      el("view").innerHTML = '<div class="empty">' + esc(e.message) + "</div>";
+      el("view").innerHTML = '<div class="empty error" role="alert">' + esc(e.message) + "</div>";
       setStatus(e.message, "err");
       if (/Unauthorized/.test(e.message)) showGate();
     }

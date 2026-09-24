@@ -27,7 +27,7 @@ test.describe("@gateway-auth-with-browser-key API Keys page auth guard", () => {
       await expect(page.locator("tbody tr")).toHaveCount(0);
 
       // The auth dialog from the route's ErrorBoundary should be visible.
-      await expect(page.getByText("TensorZero Gateway requires")).toBeVisible();
+      await expect(page.getByText("Relay Gateway requires")).toBeVisible();
     } finally {
       await context.close();
     }
@@ -64,7 +64,7 @@ test.describe("@gateway-auth-with-browser-key API Keys page auth guard", () => {
         page.getByRole("heading", { name: "TensorZero API Keys" }),
       ).toBeVisible();
       await expect(
-        page.getByText("TensorZero Gateway requires"),
+        page.getByText("Relay Gateway requires"),
       ).not.toBeVisible();
     } finally {
       await context.close();

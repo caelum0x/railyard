@@ -160,7 +160,7 @@ describe("GatewayConnectionError", () => {
   it("should create error with correct name and message", () => {
     const error = new GatewayConnectionError();
     expect(error.name).toBe("GatewayConnectionError");
-    expect(error.message).toBe("Cannot connect to TensorZero Gateway");
+    expect(error.message).toBe("Cannot connect to Relay Gateway");
   });
 
   it("should preserve cause when provided", () => {

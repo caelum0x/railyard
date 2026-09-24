@@ -209,7 +209,7 @@ export function FileContentBlock({
     case "object_storage_pointer":
       // TODO: should we handle this better?
       throw new Error(
-        "The UI should never receive an object storage pointer. Please file a bug report at https://github.com/tensorzero/tensorzero/discussions/new?category=bug-reports.",
+        "The UI should never receive an object storage pointer. Please report it to your Relay operator.",
       );
     case "object_storage_error":
       return (

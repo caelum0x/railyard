@@ -12,7 +12,7 @@ test("@base-path should check the health endpoint with the correct base path", a
   page,
 }) => {
   await page.goto("/");
-  await expect(page.getByText("TensorZero Gateway")).toBeVisible();
+  await expect(page.getByText("Relay Gateway")).toBeVisible();
 });
 
 test("should show 22 functions in the functions badge", async ({ page }) => {

@@ -606,7 +606,7 @@ const MetricRow = ({
   }
   if (inferenceId === null) {
     logger.warn(
-      `Inference ID is null for metric ${metricName} in datapoint ${datapointId}, this should not happen. Please file a bug report at https://github.com/tensorzero/tensorzero/discussions/new?category=bug-reports`,
+      `Inference ID is null for metric ${metricName} in datapoint ${datapointId}, this should not happen. Please report it to your Relay operator.`,
     );
   }
   return (

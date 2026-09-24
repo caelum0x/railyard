@@ -37,7 +37,7 @@ export default function TensorZeroStatusIndicator({
     : status === undefined
       ? "Connecting to Gateway..."
       : status
-        ? `TensorZero Gateway ${serverVersion}`
+        ? `Relay Gateway ${serverVersion}`
         : "Gateway Unavailable";
 
   const statusDot = (

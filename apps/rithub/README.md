@@ -1,4 +1,4 @@
-# rithub — the forge (rust github)
+# Rithub: a self-hostable git forge in Rust
 
 The self-hostable collaboration forge built **on top of `rit`** ([`../rit`](../rit)):
 repositories, organizations, permissions, issues, pull requests, review, protected branches,

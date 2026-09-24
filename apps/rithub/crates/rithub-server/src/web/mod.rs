@@ -399,7 +399,7 @@ pub fn notice_html(code: Option<&str>) -> String {
         Some("branch-deleted") => "Branch deleted.",
         Some("rerun") => "A new run was queued.",
         Some("cancelled") => "Run cancelled.",
-        Some("welcome") => "Welcome to rithub. Your account and personal organization are ready.",
+        Some("welcome") => "Welcome to Rithub. Your account and personal organization are ready.",
         _ => return String::new(),
     };
     format!("<div class=\"notice ok-notice\" role=\"status\">{msg}</div>")
@@ -430,7 +430,7 @@ pub fn page(title: &str, session: &Option<User>, body: &str) -> Html<String> {
         "<!doctype html><html lang=\"en\"><head>\
 <meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-<title>{title} \u{00b7} rithub</title>\
+<title>{title} \u{00b7} Rithub</title>\
 <style>{CSS}</style>\
 <style>{HL_CSS}</style>\
 <script src=\"/static/htmx.min.js\" defer></script>\
@@ -438,14 +438,14 @@ pub fn page(title: &str, session: &Option<User>, body: &str) -> Html<String> {
 <body hx-boost=\"true\">\
 <div id=\"htmx-bar\" class=\"htmx-bar\"></div>\
 <header class=\"nav\">\
-<a href=\"/\" class=\"brand\">rithub</a>\
+<a href=\"/\" class=\"brand\">Rithub</a>\
 <form class=\"nav-search\" method=\"get\" action=\"/search\" role=\"search\">\
 <input name=\"q\" placeholder=\"Search\u{2026}\" class=\"nav-search-input\" autocomplete=\"off\" spellcheck=\"false\" aria-label=\"Search\">\
 </form>\
 <nav class=\"nav-actions\">{nav_user}</nav>\
 </header>\
 <main class=\"wrap\">{body}</main>\
-<footer class=\"foot\">rithub \u{2014} a Rust git forge on <code>rit</code></footer>\
+<footer class=\"foot\">Rithub \u{2014} a Rust git forge on <code>rit</code></footer>\
 </body></html>",
         title = esc(title),
         HL_CSS = forge_search::highlight::highlight_css(),

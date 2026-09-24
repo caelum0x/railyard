@@ -8,20 +8,26 @@ The durable asset is the **settlement rail underneath every app**: **Mint** (a f
 ## Apps
 | App | Role | Status |
 |---|---|---|
-| **mint** | Settlement ledger — double-entry, Ed25519 receipts, reserve conservation. The core asset. | ship-ready core |
-| **relay** | Model gateway (TensorZero fork) + success-only Mint billing. The model rail. | needs price catalog |
+| **Mint** (`apps/mint`) | Settlement ledger: double-entry, Ed25519 hash-linked receipts, reserve conservation, payouts and provider reconciliation. The core asset. | implemented; operator console at `/admin` |
+| **Relay** (`apps/relay`) | Model gateway (TensorZero fork) with success-only Mint billing and a per-model price catalog. The model rail. | implemented; operator UI in `apps/relay/ui` |
+| **Rago** (`apps/rago`) | Usage-based billing (Rust rewrite of Lago, API-compatible): metering, subscriptions, invoicing, payments, integrations. | implemented; admin at `/admin`, customer portal at `/portal/:token` |
+| **Vend** (`apps/vend`) | Resellable metered AI SDK on the rail (Stripe-meets-OpenRouter). Interrupted holds and payouts are replayed by `vend-reconcile`. | implemented; tenant console at `/console`, operator admin at `/admin` |
+| **Turnstile** (`apps/turnstile`) | Drop-in paywall for paid agent tools (AITP-402 and x402). | runnable SDK + reference server; admin at `/admin` |
+| **Rithub** (`apps/rithub`) | Self-hostable git forge on `rit`: repos, orgs, issues, pull requests, reviews, releases, CI checks, audit. | implemented; server-rendered web UI at `/` |
+| **rit** (`apps/rit`) | Library-first Rust implementation of Git's object/authoring model, interop-tested against `git`. | library |
 | **agent-runtime** | Shared Rig/AITP-402 runtime: policy signing, paid SSE/multipart, cancellation reconciliation, pinned Mint-proof verification. | payment SDK ready |
-| **vend** | Stripe-meets-OpenRouter: resellable metered AI SDK on the rail. | needs crash reaper |
-| **abacus** | Inline proxy enforcing hard, receipted per-agent spend budgets (kill-switch). | single-process |
-| **turnstile** | Drop-in agent paywall middleware ("Stripe for AI agents"). | durable paywall core + Axum adapter |
-| **identity-lock** | Provider-agnostic locked character/brand/persona identity, resolved through Relay for consistent generation. Legacy source path: `apps/context-passport`. | runnable Sx0 |
-| **ledgerline** | Gross-margin lens: revenue + provider COGS on one Mint-backed ledger. | non-atomic settle |
+| **abacus** | Inline proxy enforcing hard, receipted per-agent spend budgets (kill-switch). | implemented; Postgres-backed |
+| **identity-lock** | Provider-agnostic locked character/brand/persona identity, resolved through Relay for consistent generation. Source path: `apps/context-passport`. | runnable slice |
+| **ledgerline** | Gross-margin lens: revenue + provider COGS on one Mint-backed ledger, settled through a durable outbox. | runnable slice |
+| **game-economy** | Storefront for card packs, cosmetics and battle passes on Mint hold/capture. | runnable slice |
+
+`apps/ranguard` (userspace integrity-monitor demo) and `apps/rithub-forge` (an optional Forgejo-based deployment, separate from Rithub) are not part of the rail.
 
 ## Consumed by
 Menivor (`../videogen`) and other products call Railyard over HTTP + shared contract packages — they do **not** own it.
 
 ## Shared workstreams (from evaluation)
-1. **Shared transactional datastore** — Turnstile and Abacus now ship Postgres ownership + leased recovery; remaining datastore work is concentrated in the apps still using local/file state.
-2. **Ledgerline atomicity** — the hold+capture+COGS trio needs a durable outbox/compensation.
+1. **Shared transactional datastore**: Turnstile and Abacus ship Postgres ownership + leased recovery; remaining datastore work is concentrated in the apps still using local/file state.
+2. **Shared deploy plane**: Rago, Relay, Mint and Abacus co-deploy on one box behind Caddy; see `apps/DEPLOY-SHARED-PLANE.md`.
 
 Relay prices each model at its own list price (111 rows as of 2026-09-24, including the OpenRouter free tier and Groq's published prices). It can also refresh those prices from OpenRouter's public model list on a timer (`RELAY_CATALOG_REFRESH_URL=openrouter`). Operator price edits always take precedence over the feed.

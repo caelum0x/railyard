@@ -7,7 +7,6 @@ import type {
 } from "~/types/tensorzero";
 import { ChatOutputElement } from "~/components/input_output/ChatOutputElement";
 import { JsonOutputElement } from "~/components/input_output/JsonOutputElement";
-import { Link } from "react-router";
 import { Button } from "~/components/ui/button";
 import {
   filterMetricsByLevel,
@@ -153,11 +152,7 @@ export function HumanFeedbackForm({
         ) : (
           <div className="mt-4 text-red-500">
             Initial output missing for demonstration value. This is most likely
-            a bug. Please file a bug report{" "}
-            <Link to="https://github.com/tensorzero/tensorzero/discussions/new?category=bug-reports">
-              here
-            </Link>
-            .
+            a bug. Please report it to your Relay operator.
           </div>
         ))}
 

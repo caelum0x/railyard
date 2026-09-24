@@ -43,6 +43,7 @@
   .badge { display:inline-block; padding:1px 8px; border-radius:20px; font-size:11px; border:1px solid var(--border); }
   .badge.on { color:var(--ok); border-color:var(--ok); } .badge.off { color:var(--danger); border-color:var(--danger); }
   .empty, .loading { padding:24px; color:var(--muted); text-align:center; }
+  .empty.error { color: var(--danger); }
   .secret { background:#241f10; border:1px solid var(--warn); border-radius:6px; padding:12px; margin-top:12px; }
   .secret code { display:block; margin-top:6px; word-break:break-all; font-family:ui-monospace,Menlo,monospace; }
   .bars { display:flex; align-items:flex-end; gap:3px; height:90px; margin-top:8px; }
@@ -186,7 +187,7 @@
       if (st.tab === "team") return renderTeam();
       if (st.tab === "earnings") return renderEarnings();
       return renderAccount();
-    }).catch(function (e) { main.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
+    }).catch(function (e) { main.innerHTML = '<div class="empty error" role="alert">' + esc(e.message) + "</div>"; });
   }
 
   // ---- Apps -------------------------------------------------------------------
@@ -216,7 +217,7 @@
           markup_policy: { markup_bps: Number($("na-bps").value || 0), min_fee_micros: Math.round(Number($("na-min").value || 0) * 1e6), platform_fee_bps: 0, funding_mode: $("na-fund").value }
         }).then(function (a) { setStatus("App created", "ok"); st.appId = a.id; render(); }).catch(function (e) { setStatus(e.message, "err"); });
       };
-    }).catch(function (e) { main.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
+    }).catch(function (e) { main.innerHTML = '<div class="empty error" role="alert">' + esc(e.message) + "</div>"; });
   }
 
   function renderApp(appId) {
@@ -292,7 +293,7 @@
           .then(function () { setStatus("End user provisioned", "ok"); $("eu-ref").value = ""; $("eu-acct").value = ""; })
           .catch(function (e) { setStatus(e.message, "err"); });
       };
-    }).catch(function (e) { main.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
+    }).catch(function (e) { main.innerHTML = '<div class="empty error" role="alert">' + esc(e.message) + "</div>"; });
   }
   // ---- Model pricing (per-model markup over provider cost) ---------------------
   function perM(m) { return "$" + (Number(m) / 1e6).toFixed(4) + " / 1M"; }
@@ -326,7 +327,7 @@
             .catch(function (e) { setStatus(e.message, "err"); });
         };
       });
-    }).catch(function (e) { var box = $("mp"); if (box) box.innerHTML = '<h2>Model pricing</h2><div class="empty">' + esc(e.message) + "</div>"; });
+    }).catch(function (e) { var box = $("mp"); if (box) box.innerHTML = '<h2>Model pricing</h2><div class="empty error" role="alert">' + esc(e.message) + "</div>"; });
   }
 
   // ---- End-user wallets -----------------------------------------------------------
@@ -362,7 +363,7 @@
             .catch(function (e) { setStatus(e.message, "err"); });
         };
       });
-    }).catch(function (e) { var box = $("wl"); if (box) box.innerHTML = '<h2>End-user wallets</h2><div class="empty">' + esc(e.message) + "</div>"; });
+    }).catch(function (e) { var box = $("wl"); if (box) box.innerHTML = '<h2>End-user wallets</h2><div class="empty error" role="alert">' + esc(e.message) + "</div>"; });
   }
 
   // ---- Earnings -------------------------------------------------------------------
@@ -385,7 +386,7 @@
             return '<tr><td class="mono">' + esc(p.charge_id) + "</td><td>" + usd(p.captured_charge_micros) + "</td><td>" + usd(p.tenant_net_micros) + "</td><td>" +
               (p.tenant_transferred ? '<span class="badge on">paid</span>' : '<span class="badge">' + esc(p.state) + "</span>") + (p.last_error ? '<div class="muted">' + esc(p.last_error) + "</div>" : "") + "</td></tr>";
           }).join("") + "</tbody></table>" : '<div class="empty">No payouts yet.</div>') + "</div>";
-    }).catch(function (e) { main.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
+    }).catch(function (e) { main.innerHTML = '<div class="empty error" role="alert">' + esc(e.message) + "</div>"; });
   }
 
   function dayOffset(n) { var d = new Date(); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
@@ -416,7 +417,7 @@
           .then(function (inv) { $("i-out").innerHTML = secretBox("Setup token for " + inv.user.email, inv.setup_token, "Send this to the invitee securely. It expires " + new Date(inv.setup_expires_at).toLocaleString() + "."); setStatus("Invitation created", "ok"); })
           .catch(function (e) { setStatus(e.message, "err"); });
       };
-    }).catch(function (e) { main.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
+    }).catch(function (e) { main.innerHTML = '<div class="empty error" role="alert">' + esc(e.message) + "</div>"; });
   }
 
   // ---- Account ----------------------------------------------------------------

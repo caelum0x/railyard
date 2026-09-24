@@ -87,7 +87,7 @@ export function ModelInferenceItem({ inference }: ModelInferenceItemProps) {
                   <Chip
                     icon={<Cached className="text-fg-tertiary" />}
                     label="Cached"
-                    tooltip="Model Inference was cached by TensorZero"
+                    tooltip="Model Inference was cached by Relay"
                   />
                 )}
               </div>

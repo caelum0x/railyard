@@ -76,7 +76,7 @@ test.describe("Config Editor @config-editing", () => {
 
     await expect(
       page.getByRole("heading", {
-        name: "TensorZero Gateway Configuration",
+        name: "Relay Gateway Configuration",
       }),
     ).toBeVisible();
     await expect(page.getByText("Config TOML")).toBeVisible();

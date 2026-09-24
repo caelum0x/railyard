@@ -63,6 +63,7 @@
   }
   .section-title { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; margin: 22px 0 8px; }
   .empty, .loading { padding: 28px; color: var(--muted); text-align: center; }
+  .empty.error { color: var(--danger); }
   .count { color: var(--muted); font-size: 12px; }
   code { background: var(--row); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
   select, textarea {
@@ -776,7 +777,7 @@
       } else if (e.status === 503 && e.data && e.data.error === "admin_disabled") {
         renderSignIn("The operator API is disabled: set TURNSTILE_ADMIN_TOKEN (24+ characters) on the server.");
       } else {
-        el("view").innerHTML = '<div class="empty">' + esc(e.message) + "</div>";
+        el("view").innerHTML = '<div class="empty error" role="alert">' + esc(e.message) + "</div>";
       }
       setStatus(e.message, "err");
     }

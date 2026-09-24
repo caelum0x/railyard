@@ -192,7 +192,7 @@ async function loadInputFileData(file: File): Promise<File> {
     case "url":
     case "base64": {
       throw new Error(
-        "URL and base64 files should not be passed to `loadInputFile`. Please file a bug report at https://github.com/tensorzero/tensorzero/discussions/new?category=bug-reports.",
+        "URL and base64 files should not be passed to `loadInputFile`. Please report it to your Relay operator.",
       );
     }
     // These types are already resolved on the backend.

@@ -62,7 +62,7 @@ function UnknownVisualizationFallback({ raw }: { raw: unknown }) {
       <div className="text-fg-muted flex items-center gap-2 text-sm">
         <AlertTriangle className="h-4 w-4 text-yellow-600" />
         <span>
-          Unknown visualization type. Your TensorZero deployment may be
+          Unknown visualization type. Your Relay deployment may be
           outdated.
         </span>
       </div>
