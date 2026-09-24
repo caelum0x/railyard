@@ -7,8 +7,14 @@
 //! concurrent billers of one organization, and a rolled-back insert (lost
 //! re-bill race, constraint failure) rolls the counter back with it, so issued
 //! numbers never skip or repeat.
+//!
+//! Drafts are *not* numbered: a draft can still be deleted, and a deleted
+//! numbered invoice would leave a hole in the sequence. The number is
+//! allocated when the draft is finalized ([`Db::finalize_draft`]), in the same
+//! transaction as the status transition, and carries the finalization month.
 
 use chrono::{Datelike, NaiveDate};
+use rago_core::enums::InvoiceStatus;
 use rago_core::models::{Fee, Invoice};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
@@ -92,8 +98,12 @@ pub(crate) async fn allocate_invoice_number(
     Ok((format_invoice_number(&prefix, issuing_date, seq), sequential_id))
 }
 
-/// Number `invoice` in place when it has no number yet.
+/// Number `invoice` in place when it has no number yet. Drafts are left
+/// unnumbered (they are numbered at finalization, see [`Db::finalize_draft`]).
 pub(crate) async fn number_if_needed(conn: &mut PgConnection, invoice: &mut Invoice) -> Result<()> {
+    if matches!(invoice.status, InvoiceStatus::Draft) {
+        return Ok(());
+    }
     if invoice.number.trim().is_empty() {
         let (number, seq) =
             allocate_invoice_number(
@@ -110,7 +120,87 @@ pub(crate) async fn number_if_needed(conn: &mut PgConnection, invoice: &mut Invo
     Ok(())
 }
 
+/// Statuses a finalize transition may start from: a draft, or an invoice
+/// whose earlier finalization failed (retried from the API).
+const FINALIZABLE_STATUSES: [i32; 2] = [0, 4];
+
+/// Finalize one invoice on an open transaction: lock it, allocate its number
+/// (dated with the finalization day) when it has none, and flip it to
+/// `finalized`. Returns the finalized invoice, or `None` when it is not (or no
+/// longer) in a finalizable state — so concurrent finalizers transition it
+/// exactly once.
+pub(crate) async fn finalize_exec(conn: &mut PgConnection, id: Uuid) -> Result<Option<Invoice>> {
+    let row = sqlx::query(
+        "SELECT organization_id, number FROM invoices \
+         WHERE id = $1 AND status = ANY($2) FOR UPDATE",
+    )
+    .bind(id)
+    .bind(&FINALIZABLE_STATUSES[..])
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some(row) = row else { return Ok(None) };
+    let org: Uuid = row.try_get("organization_id")?;
+    let current: Option<String> = row.try_get("number")?;
+    let today = chrono::Utc::now().date_naive();
+
+    let (number, sequential_id) = match current.filter(|n| !n.trim().is_empty()) {
+        Some(existing) => (existing, None),
+        None => {
+            let (n, seq) = allocate_invoice_number(conn, org, today).await?;
+            (n, Some(seq))
+        }
+    };
+    let updated = sqlx::query(
+        "UPDATE invoices SET status = 1, number = $2, \
+                sequential_id = COALESCE($3, sequential_id), \
+                issuing_date = COALESCE(issuing_date, $4), updated_at = now() \
+         WHERE id = $1 RETURNING *",
+    )
+    .bind(id)
+    .bind(&number)
+    .bind(sequential_id)
+    .bind(today)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(Some(crate::mapping::invoice(&updated)?))
+}
+
 impl Db {
+    /// Finalize a draft (or failed) invoice atomically, numbering it in the
+    /// same transaction. `Ok(None)` when the invoice is not finalizable (not
+    /// found, already finalized, voided, ...).
+    pub async fn finalize_draft(&self, id: Uuid) -> Result<Option<Invoice>> {
+        let mut tx = self.pool.begin().await?;
+        let finalized = finalize_exec(&mut *tx, id).await?;
+        tx.commit().await?;
+        Ok(finalized)
+    }
+
+    /// Finalize every draft of `organization_id` (GraphQL
+    /// `finalizeAllInvoices`), one transaction per invoice. Returns the
+    /// invoices this call finalized.
+    pub async fn finalize_all_drafts(&self, organization_id: Uuid) -> Result<Vec<Invoice>> {
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM invoices WHERE organization_id = $1 AND status = 0 ORDER BY created_at",
+        )
+        .bind(organization_id)
+        .fetch_all(&self.pool)
+        .await?;
+        self.finalize_drafts(&ids).await
+    }
+
+    /// Finalize the given drafts, one transaction each (a draft finalized
+    /// concurrently is skipped). Returns those this call finalized.
+    pub async fn finalize_drafts(&self, ids: &[Uuid]) -> Result<Vec<Invoice>> {
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(inv) = self.finalize_draft(*id).await? {
+                out.push(inv);
+            }
+        }
+        Ok(out)
+    }
+
     /// Persist a new invoice, assigning its per-organization number (when
     /// `invoice.number` is empty) in the same transaction. `invoice` is
     /// updated with the assigned `number` / `sequential_id`.

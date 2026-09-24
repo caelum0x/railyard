@@ -304,9 +304,11 @@ async fn add_numbering(
 ) -> ApiResult<()> {
     let custom = st.db.document_number_prefix(o.id).await?;
     let effective = st.db.effective_document_number_prefix(o.id, &o.name).await?;
+    let grace = st.db.organization_invoice_grace_period(o.id).await?;
     if let Value::Object(map) = json {
         map.insert("document_number_prefix".into(), json!(custom));
         map.insert("effective_document_number_prefix".into(), json!(effective));
+        map.insert("invoice_grace_period".into(), json!(grace));
     }
     Ok(())
 }
@@ -326,6 +328,20 @@ pub async fn update_organization(
                 .map_err(|code| ApiError::validation("document_number_prefix", code))?;
         }
         st.db.set_document_number_prefix(auth.organization.id, prefix).await?;
+    }
+    // `invoice_grace_period`: days a new invoice stays an editable draft
+    // before it is finalized (0 = finalize immediately).
+    if let Some(v) = p.get("invoice_grace_period").filter(|v| !v.is_null()) {
+        let days = v
+            .as_i64()
+            .or_else(|| v.as_str().and_then(|x| x.trim().parse().ok()))
+            .ok_or_else(|| ApiError::validation("invoice_grace_period", "value_is_invalid"))?;
+        if !(0..=i64::from(rago_db::lifecycle::MAX_INVOICE_GRACE_PERIOD_DAYS)).contains(&days) {
+            return Err(ApiError::validation("invoice_grace_period", "value_is_out_of_range"));
+        }
+        st.db
+            .set_organization_invoice_grace_period(auth.organization.id, days as i32)
+            .await?;
     }
     let org = st
         .db

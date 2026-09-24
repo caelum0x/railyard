@@ -13,37 +13,52 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::queue::JOB_BILL_SUBSCRIPTION;
+use crate::scheduler::invoice_webhook_object;
 use crate::webhook_emit::record_webhook;
 use crate::JobError;
 
+/// Drafts finalized per clock run (the rest are picked up next run).
+const FINALIZE_BATCH: i64 = 500;
+
 /// `Clock::FinalizeInvoicesJob` → `Invoices::RefreshDraftAndFinalizeService`.
-/// Draft invoices whose issuing date has arrived are finalized and each emits
-/// `invoice.created` (the webhook Lago fires when a draft is finalized). Returns
-/// the count finalized.
 ///
-/// The finalized rows are captured with `RETURNING`, so a re-run selects nothing
-/// (they are no longer draft) and the webhook fires exactly once per invoice.
+/// 1. Drafts whose grace period ends by tomorrow are announced once with
+///    `invoice.ready_to_finalize` (last call to adjust them).
+/// 2. Drafts whose grace window has passed (`issuing_date + grace <= today`;
+///    grace = customer override, else the organization's
+///    `invoice_grace_period`) are finalized one by one: numbered from the
+///    per-organization sequence in the finalize transaction, then provider
+///    taxes, `invoice.created` + `invoice.generated`, and collection
+///    ([`crate::finalize::on_invoice_finalized`]).
+///
+/// Each draft is finalized by a guarded transition, so a re-run or a
+/// concurrent finalizer never double-emits. Returns the count finalized.
 pub async fn finalize_invoices(db: &Db) -> Result<u64, JobError> {
     let today = Utc::now().date_naive();
-    let rows = sqlx::query(
-        "UPDATE invoices SET status = $1, updated_at = now() \
-         WHERE status = $2 AND (issuing_date IS NULL OR issuing_date <= $3) \
-         RETURNING id, organization_id, number, payment_status, currency, total_amount_cents",
-    )
-    .bind(InvoiceStatus::Finalized.as_i32())
-    .bind(InvoiceStatus::Draft.as_i32())
-    .bind(today)
-    .fetch_all(&db.pool)
-    .await
-    .map_err(rago_db::DbError::from)?;
 
-    for row in &rows {
-        let org: Uuid = row.get("organization_id");
-        record_webhook(db, org, WebhookKind::InvoiceCreated, invoice_object(row)).await?;
-        // The finalized invoice's document is now available for download.
-        crate::webhook_emit::record_invoice_generated(db, org, row.get("id"), invoice_object(row)).await?;
+    for invoice in db.claim_drafts_ready_to_finalize(today).await? {
+        record_webhook(
+            db,
+            invoice.organization_id,
+            WebhookKind::InvoiceReadyToFinalize,
+            invoice_webhook_object(&invoice),
+        )
+        .await?;
     }
-    Ok(rows.len() as u64)
+
+    let mut finalized: u64 = 0;
+    for id in db.drafts_past_grace(today, FINALIZE_BATCH).await? {
+        match crate::finalize::finalize_invoice(db, id).await {
+            Ok(Some(_)) => finalized += 1,
+            Ok(None) => {}
+            Err(e) => {
+                // One failing draft must not block the others; it is retried
+                // on the next run.
+                tracing::error!(invoice_id = %id, error = %e, "draft finalization failed");
+            }
+        }
+    }
+    Ok(finalized)
 }
 
 /// `Clock::MarkInvoicesAsPaymentOverdueJob` → per-invoice
@@ -95,40 +110,23 @@ fn invoice_object(row: &sqlx::postgres::PgRow) -> serde_json::Value {
 
 /// `Clock::RefreshDraftInvoicesJob` → `Invoices::RefreshDraftService`. Recomputes
 /// each draft invoice's monetary totals from its persisted fees, so a draft
-/// reflects the latest usage before finalization, and emits `invoice.drafted`
-/// per refreshed draft (the webhook Lago's `RefreshDraftService` fires). Idempotent
-/// on the data (a recompute of unchanged fees is a no-op); like Lago, the webhook
-/// re-fires on each refresh so subscribers always see the latest draft totals.
+/// reflects the latest usage before finalization. Only drafts whose totals
+/// actually changed are written, and only those emit `invoice.drafted` (the
+/// draft itself announced `invoice.drafted` when it was created), so a
+/// multi-day grace window does not re-fire the webhook every five minutes.
 /// Returns the count refreshed.
 pub async fn refresh_draft_invoices(db: &Db) -> Result<u64, JobError> {
-    let rows = sqlx::query(
-        "WITH agg AS ( \
-             SELECT invoice_id, \
-                    COALESCE(SUM(amount_cents), 0)::bigint AS fees, \
-                    COALESCE(SUM(taxes_amount_cents), 0)::bigint AS taxes \
-             FROM fees WHERE invoice_id IS NOT NULL GROUP BY invoice_id \
-         ) \
-         UPDATE invoices i SET \
-             fees_amount_cents = agg.fees, \
-             taxes_amount_cents = agg.taxes, \
-             sub_total_excluding_taxes_amount_cents = agg.fees, \
-             sub_total_including_taxes_amount_cents = agg.fees + agg.taxes, \
-             total_amount_cents = agg.fees + agg.taxes, \
-             updated_at = now() \
-         FROM agg \
-         WHERE i.id = agg.invoice_id AND i.status = $1 \
-         RETURNING i.id, i.organization_id, i.number, i.payment_status, i.currency, i.total_amount_cents",
-    )
-    .bind(InvoiceStatus::Draft.as_i32())
-    .fetch_all(&db.pool)
-    .await
-    .map_err(rago_db::DbError::from)?;
-
-    for row in &rows {
-        let org: Uuid = row.get("organization_id");
-        record_webhook(db, org, WebhookKind::InvoiceDrafted, invoice_object(row)).await?;
+    let refreshed = db.refresh_changed_drafts().await?;
+    for invoice in &refreshed {
+        record_webhook(
+            db,
+            invoice.organization_id,
+            WebhookKind::InvoiceDrafted,
+            invoice_webhook_object(invoice),
+        )
+        .await?;
     }
-    Ok(rows.len() as u64)
+    Ok(refreshed.len() as u64)
 }
 
 /// `Clock::RetryFailedInvoicesJob` → `Invoices::RetryService`. Invoices whose

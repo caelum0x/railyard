@@ -412,12 +412,25 @@ pub async fn finalize_invoice(
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     let before = st.db.find_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
-    let inv = st.db.finalize_invoice(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
+    // Number + finalize in one transaction; `None` = not a draft (a
+    // re-finalize is a no-op and emits nothing).
+    let finalized = match st.db.finalize_draft(id).await? {
+        Some(inv) => Some(
+            // Provider taxes + collection; the webhooks below carry the full
+            // REST invoice body.
+            rago_jobs::finalize::on_invoice_finalized(&st.db, inv, false)
+                .await
+                .map_err(|e| {
+                    tracing::error!(invoice_id = %id, error = %e, "post-finalization pipeline failed");
+                    ApiError::Internal("invoice_finalization_failed".into())
+                })?,
+        ),
+        None => None,
+    };
+    let transitioned = finalized.is_some();
+    let inv = finalized.unwrap_or(before);
     let body = invoice_response(&st, inv.clone()).await?;
-    // Only a draft → finalized transition emits (a re-finalize is a no-op).
-    if matches!(before.status, rago_core::enums::InvoiceStatus::Draft)
-        && matches!(inv.status, rago_core::enums::InvoiceStatus::Finalized)
-    {
+    if transitioned {
         crate::emit::webhook(
             &st.db,
             inv.organization_id,
@@ -520,7 +533,13 @@ pub async fn retry_invoice(
         .filter(|i| i.organization_id == auth.organization.id)
         .ok_or_else(|| ApiError::NotFound("invoice".into()))?;
     let inv = if matches!(inv.status, rago_core::enums::InvoiceStatus::Failed) {
-        st.db.finalize_invoice(id).await?.unwrap_or(inv)
+        rago_jobs::finalize::finalize_invoice(&st.db, id)
+            .await
+            .map_err(|e| {
+                tracing::error!(invoice_id = %id, error = %e, "invoice retry finalization failed");
+                ApiError::Internal("invoice_finalization_failed".into())
+            })?
+            .unwrap_or(inv)
     } else {
         inv
     };

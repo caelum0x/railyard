@@ -167,6 +167,8 @@ impl AdminMutation {
         if let Some(gp) = input.invoice_grace_period {
             db(ctx).update_customer_invoice_grace_period(customer.id, Some(gp)).await?;
         }
+        // Re-validated against VIES only when the VAT number / country changed.
+        rago_jobs::vies::enqueue_vies_check_logged(db(ctx), customer.id).await;
         Ok(Customer(customer))
     }
 
@@ -204,6 +206,9 @@ impl AdminMutation {
             Some(s) => Some(interval_i32(s).ok_or_else(|| async_graphql::Error::new("invalid interval"))?),
             None => None,
         };
+        if let Some(items) = &input.usage_thresholds {
+            crate::thresholds::parse_threshold_inputs(items)?;
+        }
         let plan = db(ctx)
             .update_plan(
                 uuid(&input.id)?,
@@ -217,6 +222,9 @@ impl AdminMutation {
             )
             .await?
             .ok_or_else(|| async_graphql::Error::new("plan_not_found"))?;
+        if let Some(items) = &input.usage_thresholds {
+            crate::thresholds::replace_plan_thresholds(ctx, org_id, plan.id, items).await?;
+        }
         // `Plans::UpdateService` emits `plan.updated`.
         emit(db(ctx), org_id, WebhookKind::PlanUpdated, json!({ "lago_id": plan.id, "code": plan.code, "name": plan.name })).await;
         load_plan(ctx, plan).await
@@ -547,13 +555,21 @@ impl AdminMutation {
 
     // ---- invoices --------------------------------------------------------
 
-    /// `FinalizeInvoice` (`Mutations::Invoices::Finalize`).
+    /// `FinalizeInvoice` (`Mutations::Invoices::Finalize`) — number the draft
+    /// and finalize it, then provider taxes, `invoice.created` +
+    /// `invoice.generated`, and collection. A non-draft is returned unchanged.
     async fn finalize_invoice(&self, ctx: &Context<'_>, id: ID) -> Result<Invoice> {
-        require_org(ctx)?;
-        let invoice = db(ctx)
-            .finalize_invoice(uuid(&id)?)
+        let org = require_org(ctx)?;
+        let invoice_id = uuid(&id)?;
+        let current = db(ctx)
+            .find_invoice(invoice_id)
             .await?
+            .filter(|i| i.organization_id == org.id)
             .ok_or_else(|| async_graphql::Error::new("invoice_not_found"))?;
+        let invoice = rago_jobs::finalize::finalize_invoice(db(ctx), invoice_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("finalize_failed: {e}")))?
+            .unwrap_or(current);
         load_invoice(ctx, invoice).await
     }
 

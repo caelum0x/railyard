@@ -39,6 +39,7 @@ pub mod auth;
 pub mod context;
 pub mod mutation;
 pub mod query;
+pub mod thresholds;
 pub mod types;
 pub mod webhook_emit;
 pub mod types_admin;
@@ -68,6 +69,7 @@ pub struct Mutation(
     admin_mutations4::AdminMutation4,
     admin_mutations5::AdminMutation5,
     admin_mutations6::AdminMutation6,
+    thresholds::ThresholdMutation,
 );
 
 /// The Rago GraphQL query root: core reads ([`query::Query`]) merged with the
@@ -80,6 +82,7 @@ pub struct Query(
     admin_queries3::AdminQuery3,
     admin_queries4::AdminQuery4,
     admin_queries5::AdminQuery5,
+    thresholds::ThresholdQuery,
 );
 
 /// The Rago GraphQL schema type.

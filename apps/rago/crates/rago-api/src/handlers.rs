@@ -76,6 +76,9 @@ pub async fn create_customer(
             c.email = s(p, "email").or(c.email);
             c.country = s(p, "country").or(c.country);
             c.currency = s(p, "currency").or(c.currency);
+            c.timezone = s(p, "timezone").or(c.timezone);
+            c.tax_identification_number =
+                s(p, "tax_identification_number").or(c.tax_identification_number);
             c.updated_at = now();
             st.db.update_customer(&c).await?;
             c
@@ -100,6 +103,9 @@ pub async fn create_customer(
             c
         }
     };
+    // EU customers with a (new) VAT number are validated against VIES
+    // (`customer.vies_check`, emitted by the queued job).
+    rago_jobs::vies::enqueue_vies_check_logged(&st.db, customer.id).await;
     // `Customers::UpsertFromApiService` emits `customer.created` on insert,
     // `customer.updated` on update.
     let kind = if was_update {

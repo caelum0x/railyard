@@ -56,6 +56,11 @@ pub async fn create_order_form(db: &Db, org: Uuid, quote_id: Uuid) -> Result<Ord
     let form = db
         .insert_order_form(Uuid::new_v4(), org, Some(version.customer_id), Some(quote_id), &document_number("OF"))
         .await?;
+    // The form is signable only while the approved offer stands; the
+    // ExpireOrderForms clock expires it afterwards (`order_form.expired`).
+    if version.expires_at.is_some() {
+        db.set_order_form_expires_at(form.0, version.expires_at).await?;
+    }
     record_webhook(
         db,
         org,
@@ -69,6 +74,7 @@ pub async fn create_order_form(db: &Db, org: Uuid, quote_id: Uuid) -> Result<Ord
             "lago_quote_version_id": version.version_id,
             "currency": version.currency,
             "total_amount_cents": version.total_amount_cents,
+            "expires_at": version.expires_at.map(|t| t.and_utc().to_rfc3339()),
         }),
     )
     .await?;
@@ -175,8 +181,10 @@ pub async fn execute_order(db: &Db, org: Uuid, order_id: Uuid) -> Result<(OrderR
         return Err(OrderFlowError::Invalid("order_not_pending"));
     }
     let quote_id = ctx.quote_id.ok_or(OrderFlowError::Invalid("order_has_no_quote"))?;
+    // A signed order commits to the approved version even if the offer has
+    // since passed its expiry date.
     let version = db
-        .approved_quote_version(quote_id)
+        .committed_quote_version(quote_id)
         .await?
         .ok_or(OrderFlowError::Invalid("quote_has_no_approved_version"))?;
     let customer_id = ctx.customer_id.unwrap_or(version.customer_id);

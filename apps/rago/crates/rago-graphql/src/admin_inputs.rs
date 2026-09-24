@@ -27,6 +27,9 @@ pub struct UpdatePlanInput {
     pub pay_in_advance: Option<bool>,
     pub interval: Option<String>,
     pub invoice_display_name: Option<String>,
+    /// Replaces the plan's progressive-billing thresholds when present (an
+    /// empty list clears them).
+    pub usage_thresholds: Option<Vec<crate::thresholds::UsageThresholdInput>>,
 }
 
 #[derive(InputObject)]

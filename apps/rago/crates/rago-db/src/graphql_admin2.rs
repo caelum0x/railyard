@@ -246,12 +246,25 @@ impl Db {
     }
 
     /// `Invoices::RetryBatchService` — re-finalize failed-generation invoices.
+    /// Each goes through the guarded finalize transition, so one left
+    /// unnumbered is numbered from the organization sequence as it finalizes.
     pub async fn refinalize_failed_invoices(&self, org: Uuid) -> Result<u64> {
-        let r = sqlx::query("UPDATE invoices SET status = 1, updated_at = now() WHERE organization_id = $1 AND status = 4")
-            .bind(org)
-            .execute(&self.pool)
-            .await?;
-        Ok(r.rows_affected())
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM invoices WHERE organization_id = $1 AND status = 4 ORDER BY created_at",
+        )
+        .bind(org)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut finalized = 0u64;
+        for id in ids {
+            let mut tx = self.pool.begin().await?;
+            let done = crate::numbering::finalize_exec(&mut tx, id).await?;
+            tx.commit().await?;
+            if done.is_some() {
+                finalized += 1;
+            }
+        }
+        Ok(finalized)
     }
 
     // ---- alerts (usage monitoring) --------------------------------------

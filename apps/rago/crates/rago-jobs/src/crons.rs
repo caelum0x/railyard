@@ -4,7 +4,7 @@
 //! ExpireIncompleteSubscriptions, FreeTrialSubscriptionsBiller,
 //! FinalizeInvoices}Job` as idempotent SQL sweeps run each tick.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use rago_db::Db;
 use rago_integrations::HttpTransport;
 
@@ -21,24 +21,26 @@ pub struct CronReport {
 }
 
 /// Run the subscription-lifecycle crons once.
+///
+/// Activation, termination and incomplete expiry go through the clock jobs
+/// themselves (not bare bulk UPDATEs), so a transition made on this per-tick
+/// path still runs the payment-method check and emits its webhook
+/// (`subscription.started` / `.incomplete` / `.terminated` / `.canceled`).
 pub async fn run_subscription_crons(db: &Db) -> Result<CronReport, JobError> {
     let now = Utc::now().naive_utc();
-    // Incomplete subscriptions older than 3 days are expired (Lago default).
-    let incomplete_cutoff = (Utc::now() - Duration::days(3)).naive_utc();
 
     Ok(CronReport {
-        activated: db.activate_due_subscriptions(now).await?,
-        terminated: db.terminate_ended_subscriptions(now).await?,
-        expired_incomplete: db
-            .expire_incomplete_subscriptions(incomplete_cutoff)
-            .await?,
+        activated: crate::clock::subscriptions::activate_subscriptions(db).await?,
+        terminated: crate::clock::subscriptions::terminate_ended_subscriptions(db).await?,
+        expired_incomplete: crate::clock::subscriptions::expire_incomplete_subscriptions(db).await?,
         free_trials_ended: db.end_free_trials(now).await?,
     })
 }
 
-/// `Clock::FinalizeInvoicesJob` — finalize an organization's draft invoices.
+/// `Clock::FinalizeInvoicesJob` — finalize an organization's draft invoices
+/// (numbering each, then provider taxes, webhooks and collection).
 pub async fn finalize_invoices(db: &Db, organization_id: uuid::Uuid) -> Result<u64, JobError> {
-    Ok(db.finalize_draft_invoices(organization_id).await?)
+    Ok(crate::finalize::finalize_all_invoices(db, organization_id).await?.len() as u64)
 }
 
 /// `Clock::MarkInvoicesAsPaymentOverdueJob` + `Clock::ProcessDunningCampaignsJob`

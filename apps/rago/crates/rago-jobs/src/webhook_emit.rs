@@ -25,12 +25,12 @@
 //! | billable_metric.updated **[LIVE]** | rago-graphql admin_mutations.rs |
 //! | billable_metric.deleted **[LIVE]** | rago-graphql admin_mutations.rs |
 //! | dunning_campaign.finished **[LIVE]** | rago-jobs dunning.rs (`process_dunning_campaigns`) |
-//! | invoice.created **[LIVE]** | rago-jobs clock/invoices.rs (`finalize_invoices`) + scheduler.rs |
+//! | invoice.created **[LIVE]** | rago-jobs finalize.rs (clock `finalize_invoices`, REST/GraphQL finalize) + scheduler.rs |
 //! | invoice.one_off_created **[LIVE]** | rago-api breadth.rs (`create_one_off_invoice`) |
 //! | invoice.paid_credit_added **[LIVE]** | rago-jobs wallet_credits.rs (credit invoice paid) |
 //! | invoice.generated **[LIVE]** | rago-jobs clock/invoices.rs + scheduler.rs, rago-api subs.rs (`finalize_invoice`) + breadth.rs (one-off) — `file_url` → `/invoices/:id/download` |
 //! | invoice.drafted **[LIVE]** | rago-jobs clock/invoices.rs (`refresh_draft_invoices`) |
-//! | invoice.ready_to_finalize | no-op until tax pull / finalize path |
+//! | invoice.ready_to_finalize **[LIVE]** | rago-jobs clock/invoices.rs (`finalize_invoices`, once per draft the day before its grace period ends) |
 //! | invoice.voided **[LIVE]** | rago-api subs.rs (`void_invoice`) |
 //! | invoice.deleted **[LIVE]** | rago-api payment_actions.rs (`DELETE /invoices/:id`, drafts) |
 //! | invoice.payment_dispute_lost **[LIVE]** | rago-api subs.rs (`lose_dispute`) |
@@ -41,7 +41,7 @@
 //! | event.error **[LIVE]** | rago-api emit.rs (rejected event) |
 //! | events.errors **[LIVE]** | rago-api phase15.rs (batch ingest with rejected events) |
 //! | fee.created **[LIVE]** | rago-jobs scheduler.rs (billing cycle per-fee) |
-//! | fee.tax_provider_error | no-op until tax provider fee error path |
+//! | fee.tax_provider_error **[LIVE]** | rago-jobs integrations_sync.rs (`apply_provider_taxes_to_invoice`, per fee on provider failure / missing result) |
 //! | customer.created **[LIVE]** | rago-api handlers.rs (`upsert_customer`) |
 //! | customer.updated **[LIVE]** | rago-api handlers.rs (`upsert_customer`) |
 //! | customer.accounting_provider_created | no-op until accounting sync |
@@ -52,7 +52,7 @@
 //! | customer.payment_provider_error **[LIVE]** | rago-jobs collection.rs (Stripe customer creation failed) |
 //! | customer.checkout_url_generated **[LIVE]** | rago-jobs collection.rs (`checkout_url`) |
 //! | customer.tax_provider_error | no-op until tax provider customer error |
-//! | customer.vies_check | no-op until EU auto-taxes VIES path |
+//! | customer.vies_check **[LIVE]** | rago-jobs vies.rs (`customers.vies_check` job queued on customer create/update) |
 //! | credit_note.created **[LIVE]** | rago-api handlers.rs + rago-graphql admin_mutations.rs |
 //! | credit_note.generated **[LIVE]** | rago-api handlers.rs + rago-graphql admin_mutations.rs (after creation) — `file_url` → `/credit_notes/:id/download` |
 //! | credit_note.refund_failure **[LIVE]** | rago-jobs refunds.rs (provider refund declined) |
@@ -61,7 +61,7 @@
 //! | order.executed **[LIVE]** | rago-jobs orders.rs (`execute_order` invoices the quote) |
 //! | order_form.created **[LIVE]** | rago-jobs orders.rs (`createOrderForm` from an approved quote) |
 //! | order_form.signed **[LIVE]** | rago-graphql admin_mutations5.rs (`sign_order_form`) |
-//! | order_form.expired | no trigger: order forms carry no expiry (quote versions do) |
+//! | order_form.expired **[LIVE]** | rago-jobs clock/orders.rs (`expire_order_forms`, `order_forms.expires_at`) |
 //! | order_form.voided **[LIVE]** | rago-graphql admin_mutations5.rs (`void_order_form`) |
 //! | payment.requires_action **[LIVE]** | rago-jobs collection.rs + rago-api webhooks.rs (Stripe SCA / 3DS) |
 //! | payment.succeeded **[LIVE]** | rago-jobs collection.rs + rago-api webhooks.rs |
@@ -81,7 +81,7 @@
 //! | quote.approved **[LIVE]** | rago-graphql admin_mutations5.rs |
 //! | quote.voided **[LIVE]** | rago-graphql admin_mutations5.rs |
 //! | subscription.canceled **[LIVE]** | rago-api handlers.rs + rago-graphql mutation.rs (terminating a pending subscription) |
-//! | subscription.incomplete | no-op until incomplete-activation path |
+//! | subscription.incomplete **[LIVE]** | rago-jobs clock/subscriptions.rs (`activate_subscriptions`, upfront charge without a payment method) |
 //! | subscription.terminated **[LIVE]** | rago-jobs clock/subscriptions.rs (`terminate_ended_subscriptions`) |
 //! | subscription.started **[LIVE]** | rago-jobs clock/subscriptions.rs (`activate_subscriptions`) |
 //! | subscription.termination_alert **[LIVE]** | rago-jobs clock/subscriptions.rs (`subscriptions_to_be_terminated`) |

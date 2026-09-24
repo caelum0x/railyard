@@ -72,6 +72,8 @@ pub struct CreatePlanInput {
     pub description: Option<String>,
     pub pay_in_advance: Option<bool>,
     pub charges: Option<Vec<ChargeInputGql>>,
+    /// Progressive-billing thresholds (inherited by the plan's subscriptions).
+    pub usage_thresholds: Option<Vec<crate::thresholds::UsageThresholdInput>>,
 }
 
 #[derive(InputObject)]
@@ -204,6 +206,9 @@ impl Mutation {
             deleted_at: None,
         };
         db(ctx).insert_customer(&c).await?;
+        // EU customers with a VAT number are validated against VIES
+        // (`customer.vies_check`).
+        rago_jobs::vies::enqueue_vies_check_logged(db(ctx), c.id).await;
         Ok(Customer(c))
     }
 
@@ -249,6 +254,10 @@ impl Mutation {
 
     async fn create_plan(&self, ctx: &Context<'_>, input: CreatePlanInput) -> Result<Plan> {
         let org = require_org(ctx)?;
+        // Validate thresholds before anything is written.
+        if let Some(items) = &input.usage_thresholds {
+            crate::thresholds::parse_threshold_inputs(items)?;
+        }
         let interval = interval_from_str(&input.interval);
         let plan = m::Plan {
             id: Uuid::new_v4(),
@@ -300,6 +309,9 @@ impl Mutation {
             };
             db(ctx).insert_charge(&charge).await?;
             charges.push(charge);
+        }
+        if let Some(items) = input.usage_thresholds.as_deref().filter(|t| !t.is_empty()) {
+            crate::thresholds::replace_plan_thresholds(ctx, org.id, plan.id, items).await?;
         }
         // `Plans::CreateService` emits `plan.created`.
         emit(db(ctx), org.id, WebhookKind::PlanCreated, json!({ "lago_id": plan.id, "code": plan.code, "name": plan.name })).await;

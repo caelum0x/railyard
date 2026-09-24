@@ -22,6 +22,44 @@ INSERT INTO invoice_number_sequences (organization_id, last_value, updated_at)
 SELECT organization_id, COUNT(*), now() FROM invoices GROUP BY organization_id
 ON CONFLICT (organization_id) DO NOTHING;
 
+-- Legacy invoice numbers (`INV-` + 8 random hex characters, or numbers copied
+-- by older clone/regenerate paths) can repeat inside one organization, which
+-- would make the unique index below fail and stop the migrator. Renumber the
+-- duplicates first: the earliest invoice keeps its number, later ones get
+-- `-2`, `-3`, ... A suffixed number could itself collide with an existing one,
+-- so the pass repeats until no duplicate is left (each pass strictly reduces
+-- the duplicate set, so this converges; the bound only guards against a
+-- pathological loop). The row count per organization is unchanged, so the
+-- sequence seed above stays correct, and the new `<prefix>-<YYYYMM>-<seq>`
+-- format can never collide with the legacy `INV-xxxxxxxx` ones.
+DO $$
+DECLARE
+    passes integer := 0;
+BEGIN
+    LOOP
+        WITH ranked AS (
+            SELECT id,
+                   number,
+                   row_number() OVER (
+                       PARTITION BY organization_id, number
+                       ORDER BY created_at, id
+                   ) AS rn
+            FROM invoices
+            WHERE number <> ''
+        )
+        UPDATE invoices i
+           SET number = ranked.number || '-' || ranked.rn::text,
+               updated_at = now()
+          FROM ranked
+         WHERE i.id = ranked.id AND ranked.rn > 1;
+        EXIT WHEN NOT FOUND;
+        passes := passes + 1;
+        IF passes >= 20 THEN
+            RAISE EXCEPTION 'could not de-duplicate invoice numbers after % passes', passes;
+        END IF;
+    END LOOP;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_org_number
     ON invoices (organization_id, number) WHERE number <> '';
 

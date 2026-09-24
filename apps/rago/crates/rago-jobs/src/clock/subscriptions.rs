@@ -6,6 +6,7 @@
 //! tick; money-affecting selections carry their own idempotency gate.
 
 use chrono::{Duration, Utc};
+use rago_db::lifecycle::SubscriptionRef;
 use rago_db::Db;
 use rago_integrations::webhooks::WebhookKind;
 use serde_json::json;
@@ -20,35 +21,121 @@ use crate::JobError;
 /// has arrived. Mirrors `Subscriptions::ActivateAllPendingService` → per-sub
 /// `ActivateService`, which emits `subscription.started` on activation.
 ///
-/// The ids that will transition are captured *before* the update so the webhook
-/// carries each activated subscription; a re-run selects nothing (they are no
-/// longer pending), so no duplicate `subscription.started` is emitted.
+/// A subscription charged upfront (pay-in-advance plan with a fee, no trial)
+/// whose customer has no usable payment method at the organization's provider
+/// is moved to `incomplete` instead (`subscription.incomplete`); incomplete
+/// subscriptions are re-checked every tick and activated as soon as a payment
+/// method exists, until the ExpireIncompleteSubscriptions clock cancels them.
+///
+/// Each transition is a guarded single-row UPDATE (`WHERE status = ...`), so a
+/// re-run or a concurrent tick never emits a duplicate webhook.
 pub async fn activate_subscriptions(db: &Db) -> Result<u64, JobError> {
     let now = Utc::now().naive_utc();
-    let due = sqlx::query(
-        "SELECT id, organization_id, external_id FROM subscriptions \
-         WHERE status = 0 AND subscription_at IS NOT NULL AND subscription_at <= $1",
-    )
-    .bind(now)
-    .fetch_all(&db.pool)
-    .await
-    .map_err(rago_db::DbError::from)?;
+    let mut activated: u64 = 0;
 
-    let activated = db.activate_due_subscriptions(now).await?;
+    for sub in db.pending_subscriptions_due(now).await? {
+        if activation_blocked_on_payment_method(db, &sub).await? {
+            if db.mark_subscription_incomplete(sub.id).await? {
+                record_webhook(
+                    db,
+                    sub.organization_id,
+                    WebhookKind::SubscriptionIncomplete,
+                    subscription_object(&sub, "incomplete"),
+                )
+                .await?;
+            }
+            continue;
+        }
+        if db.activate_pending_subscription(sub.id).await? {
+            activated += 1;
+            record_webhook(
+                db,
+                sub.organization_id,
+                WebhookKind::SubscriptionStarted,
+                subscription_object(&sub, "active"),
+            )
+            .await?;
+        }
+    }
 
-    for row in &due {
-        let sub_id: Uuid = row.get("id");
-        let org: Uuid = row.get("organization_id");
-        let external_id: String = row.get("external_id");
-        record_webhook(
-            db,
-            org,
-            WebhookKind::SubscriptionStarted,
-            json!({ "lago_id": sub_id, "external_id": external_id }),
-        )
-        .await?;
+    for sub in db.incomplete_subscriptions().await? {
+        if activation_blocked_on_payment_method(db, &sub).await? {
+            continue;
+        }
+        if db.activate_incomplete_subscription(sub.id).await? {
+            activated += 1;
+            record_webhook(
+                db,
+                sub.organization_id,
+                WebhookKind::SubscriptionStarted,
+                subscription_object(&sub, "active"),
+            )
+            .await?;
+        }
     }
     Ok(activated)
+}
+
+fn subscription_object(sub: &SubscriptionRef, status: &str) -> serde_json::Value {
+    json!({
+        "lago_id": sub.id,
+        "external_id": sub.external_id,
+        "lago_customer_id": sub.customer_id,
+        "status": status,
+    })
+}
+
+/// Whether activating `sub` must wait for a payment method: its plan charges
+/// upfront and the customer has none at the organization's payment provider.
+/// Without a configured provider the invoice is collected manually, so nothing
+/// blocks activation; a provider lookup that errors (outage, non-live build)
+/// never blocks either — only a definite "no payment method" does.
+pub async fn activation_blocked_on_payment_method(db: &Db, sub: &SubscriptionRef) -> Result<bool, JobError> {
+    if !db.subscription_requires_payment_method(sub.id).await? {
+        return Ok(false);
+    }
+    payment_method_missing(db, sub.organization_id, sub.customer_id).await
+}
+
+/// Whether the customer definitely has no payment method at the
+/// organization's provider (see [`activation_blocked_on_payment_method`]).
+pub async fn payment_method_missing(db: &Db, org: Uuid, customer_id: Uuid) -> Result<bool, JobError> {
+    let Some(provider) = crate::collection::resolve_provider(db, org).await? else {
+        return Ok(false);
+    };
+    let stored = db.provider_customer(customer_id, &provider.kind).await?;
+    let has_stored_method = stored
+        .as_ref()
+        .and_then(|(_, pm)| pm.as_deref())
+        .is_some_and(|pm| !pm.trim().is_empty());
+    if has_stored_method {
+        return Ok(false);
+    }
+    match provider.kind.as_str() {
+        "stripe" => {
+            // The method may exist at Stripe without being stored yet.
+            let Some(customer) = db.find_customer(customer_id).await? else {
+                return Ok(false);
+            };
+            let transport = rago_integrations::default_transport();
+            match crate::collection::ensure_stripe_customer(db, &transport, &provider.secret, &customer).await {
+                Ok((_, pm)) => Ok(pm.filter(|p| !p.is_empty()).is_none()),
+                Err(e) => {
+                    tracing::warn!(
+                        customer_id = %customer_id,
+                        error = %e,
+                        "payment method lookup failed; not blocking activation"
+                    );
+                    Ok(false)
+                }
+            }
+        }
+        // GoCardless charges a mandate, Adyen a stored shopper reference: with
+        // neither stored there is nothing to charge.
+        "gocardless" => Ok(true),
+        "adyen" => Ok(stored.and_then(|(pcid, _)| pcid).filter(|p| !p.is_empty()).is_none()),
+        _ => Ok(false),
+    }
 }
 
 /// `Clock::TerminateEndedSubscriptionsJob` → per-sub `Subscriptions::TerminateService`,
@@ -85,12 +172,26 @@ pub async fn terminate_ended_subscriptions(db: &Db) -> Result<u64, JobError> {
     Ok(terminated)
 }
 
-/// `Clock::ExpireIncompleteSubscriptionsJob` — incomplete subs older than the
-/// activation window (Lago default 3 days) → canceled.
+/// `Clock::ExpireIncompleteSubscriptionsJob` — incomplete subs whose
+/// activation window (Lago default 3 days from their start date) elapsed
+/// without a payment method → canceled, each emitting `subscription.canceled`.
 pub async fn expire_incomplete_subscriptions(db: &Db) -> Result<u64, JobError> {
-    let cutoff = (Utc::now() - Duration::days(3)).naive_utc();
-    Ok(db.expire_incomplete_subscriptions(cutoff).await?)
+    let cutoff = (Utc::now() - Duration::days(INCOMPLETE_ACTIVATION_WINDOW_DAYS)).naive_utc();
+    let canceled = db.cancel_expired_incomplete_subscriptions(cutoff).await?;
+    for sub in &canceled {
+        record_webhook(
+            db,
+            sub.organization_id,
+            WebhookKind::SubscriptionCanceled,
+            subscription_object(sub, "canceled"),
+        )
+        .await?;
+    }
+    Ok(canceled.len() as u64)
 }
+
+/// How long an incomplete subscription waits for a payment method.
+pub const INCOMPLETE_ACTIVATION_WINDOW_DAYS: i64 = 3;
 
 /// `Clock::FreeTrialSubscriptionsBillerJob` → `Subscriptions::FreeTrialBillingService`.
 ///

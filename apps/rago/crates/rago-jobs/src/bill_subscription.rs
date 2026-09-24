@@ -1,4 +1,11 @@
-//! `BillSubscriptionJob` — bill one subscription for a usage window.
+//! `BillSubscriptionJob` — bill one subscription for an explicit usage window.
+//!
+//! The date-driven pipeline (billing cycle, durable `bill_subscription` job)
+//! goes through [`crate::scheduler::bill_and_collect`]; this entry point bills
+//! an arbitrary `[from, to)` window (backfills, operator re-bills). Both follow
+//! one draft rule: the invoice is a draft only while the customer's (else the
+//! organization's) grace period is open, and is finalized — numbered, taxed,
+//! announced and collected — by [`crate::finalize`] otherwise.
 
 use chrono::{NaiveDateTime, Utc};
 use rago_billing::dates::MonthlyDates;
@@ -36,6 +43,12 @@ pub async fn perform(
 
     let now = Utc::now();
     let mut invoice = blank_invoice(&subscription, &currency, now);
+    let grace = db
+        .invoice_grace_period_for(subscription.organization_id, Some(subscription.customer_id))
+        .await?;
+    if grace <= 0 {
+        invoice.status = InvoiceStatus::Finalized;
+    }
 
     // Load each charge's metric + events so the generation service can price
     // the flat subscription fee and one fee per usage charge together.
@@ -133,7 +146,22 @@ pub async fn perform(
         )
         .await?
     {
-        rago_db::BilledInvoice::Created => Ok(BillingRun { invoice, fees }),
+        rago_db::BilledInvoice::Created => {
+            if matches!(invoice.status, InvoiceStatus::Draft) {
+                crate::webhook_emit::record_webhook(
+                    db,
+                    invoice.organization_id,
+                    rago_integrations::webhooks::WebhookKind::InvoiceDrafted,
+                    crate::scheduler::invoice_webhook_object(&invoice),
+                )
+                .await?;
+                Ok(BillingRun { invoice, fees })
+            } else {
+                let invoice = crate::finalize::on_invoice_finalized(db, invoice, true).await?;
+                let fees = db.fees_for_invoice(invoice.id).await?;
+                Ok(BillingRun { invoice, fees })
+            }
+        }
         rago_db::BilledInvoice::AlreadyBilled(existing) => {
             let existing_fees = db.fees_for_invoice(existing.id).await?;
             Ok(BillingRun {

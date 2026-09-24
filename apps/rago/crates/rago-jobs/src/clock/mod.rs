@@ -12,6 +12,7 @@
 
 pub mod coupons;
 pub mod invoices;
+pub mod orders;
 pub mod subscriptions;
 pub mod usage;
 pub mod wallets;
@@ -111,10 +112,12 @@ pub enum ClockJobId {
     CreateIntervalWalletTransactions,
     WebhooksCleanup,
     InboundWebhooksCleanup,
+    ExpireOrderForms,
+    ExecuteScheduledOrders,
 }
 
 /// All registered clock jobs, in run order.
-pub const ALL_JOBS: [ClockJobId; 20] = [
+pub const ALL_JOBS: [ClockJobId; 22] = [
     ClockJobId::ActivateSubscriptions,
     ClockJobId::RefreshDraftInvoices,
     ClockJobId::RefreshLifetimeUsages,
@@ -135,6 +138,8 @@ pub const ALL_JOBS: [ClockJobId; 20] = [
     ClockJobId::CreateIntervalWalletTransactions,
     ClockJobId::WebhooksCleanup,
     ClockJobId::InboundWebhooksCleanup,
+    ClockJobId::ExpireOrderForms,
+    ClockJobId::ExecuteScheduledOrders,
 ];
 
 impl ClockJobId {
@@ -161,6 +166,8 @@ impl ClockJobId {
             ClockJobId::CreateIntervalWalletTransactions => "top_up_wallet_interval_credits",
             ClockJobId::WebhooksCleanup => "clean_webhooks",
             ClockJobId::InboundWebhooksCleanup => "clean_inbound_webhooks",
+            ClockJobId::ExpireOrderForms => "expire_order_forms",
+            ClockJobId::ExecuteScheduledOrders => "execute_scheduled_orders",
         }
     }
 
@@ -187,6 +194,8 @@ impl ClockJobId {
             ClockJobId::CreateIntervalWalletTransactions => Cadence::HourlyAt(55),
             ClockJobId::WebhooksCleanup => Cadence::DailyAt(1, 0),
             ClockJobId::InboundWebhooksCleanup => Cadence::DailyAt(1, 10),
+            ClockJobId::ExpireOrderForms => Cadence::HourlyAt(10),
+            ClockJobId::ExecuteScheduledOrders => Cadence::Minutes(5),
         }
     }
 
@@ -235,6 +244,8 @@ impl ClockJobId {
             ClockJobId::WebhooksCleanup => webhooks::webhooks_cleanup(db).await,
             ClockJobId::InboundWebhooksCleanup => webhooks::inbound_webhooks_cleanup(db).await,
             ClockJobId::InboundWebhooksRetry => webhooks::inbound_webhooks_retry(db).await,
+            ClockJobId::ExpireOrderForms => orders::expire_order_forms(db).await,
+            ClockJobId::ExecuteScheduledOrders => orders::execute_scheduled_orders(db).await,
         }
     }
 }

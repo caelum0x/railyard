@@ -229,6 +229,13 @@ impl Plan {
     async fn charges(&self) -> Vec<Charge> {
         self.charges.iter().cloned().map(Charge).collect()
     }
+    /// Progressive-billing thresholds of the plan.
+    async fn usage_thresholds(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Vec<crate::thresholds::UsageThreshold>> {
+        crate::thresholds::plan_thresholds(ctx, self.plan.id).await
+    }
     async fn created_at(&self) -> String {
         ts(self.plan.created_at)
     }
@@ -290,6 +297,14 @@ impl Subscription {
     }
     async fn terminated_at(&self) -> Option<String> {
         ts_opt(self.sub.terminated_at)
+    }
+    /// Progressive-billing thresholds in force: the subscription's override,
+    /// else its plan's.
+    async fn usage_thresholds(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<crate::thresholds::UsageThresholdSet> {
+        crate::thresholds::subscription_thresholds(ctx, self.sub.id, self.sub.plan_id).await
     }
     async fn created_at(&self) -> String {
         ts(self.sub.created_at)

@@ -136,22 +136,41 @@ pub async fn bill_and_collect<T: HttpTransport>(
     billing_date: NaiveDate,
     charge: bool,
 ) -> Result<BillOutcome, JobError> {
-    let (invoice, fees, created) =
+    let (mut invoice, mut fees, created) =
         bill_one(db, subscription, plan, interval, anniversary, billing_date).await?;
+    let is_draft = matches!(invoice.status, InvoiceStatus::Draft);
 
     let mut webhooks_written = 0;
     if created {
-        if record_webhook(
-            db,
-            subscription.organization_id,
-            WebhookKind::InvoiceCreated,
-            invoice_webhook_object(&invoice),
-        )
-        .await?
-        {
-            webhooks_written += 1;
-        }
-        if matches!(invoice.status, rago_core::enums::InvoiceStatus::Finalized) {
+        if is_draft {
+            // Inside its grace period the invoice stays an editable draft; the
+            // FinalizeInvoices clock finalizes (numbers, taxes, collects) it
+            // when the grace window ends.
+            if record_webhook(
+                db,
+                subscription.organization_id,
+                WebhookKind::InvoiceDrafted,
+                invoice_webhook_object(&invoice),
+            )
+            .await?
+            {
+                webhooks_written += 1;
+            }
+        } else {
+            // Issued finalized: apply the connected tax provider (if any)
+            // before announcing and collecting the invoice.
+            invoice = crate::finalize::apply_provider_taxes_if_configured(db, invoice).await?;
+            fees = db.fees_for_invoice(invoice.id).await?;
+            if record_webhook(
+                db,
+                subscription.organization_id,
+                WebhookKind::InvoiceCreated,
+                invoice_webhook_object(&invoice),
+            )
+            .await?
+            {
+                webhooks_written += 1;
+            }
             // The finalized invoice's document is downloadable from now on.
             crate::webhook_emit::record_invoice_generated(
                 db,
@@ -185,7 +204,7 @@ pub async fn bill_and_collect<T: HttpTransport>(
             .payment_attempt_state(crate::payments::deterministic_payment_id(invoice.id))
             .await?
             .is_none();
-    let collection = if charge && invoice.total_amount_cents > 0 && never_attempted {
+    let collection = if charge && !is_draft && invoice.total_amount_cents > 0 && never_attempted {
         Some(collect_invoice(db, transport, &invoice).await?)
     } else {
         None
@@ -394,6 +413,15 @@ async fn bill_one(
 
     let taxes = db.organization_taxes(subscription.organization_id).await?;
     let mut invoice = blank_invoice(subscription, &currency, to_date);
+    // A draft grace period (customer override, else organization default)
+    // keeps the invoice as an unnumbered draft until the window ends.
+    if db
+        .invoice_grace_period_for(subscription.organization_id, Some(subscription.customer_id))
+        .await?
+        > 0
+    {
+        invoice.status = InvoiceStatus::Draft;
+    }
     let (fees, progressive_results) = generate_subscription_invoice_with_progressive(
         &mut invoice,
         plan,
