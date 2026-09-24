@@ -283,3 +283,153 @@ async fn actions_on_foreign_records_are_refused(pool: PgPool) {
     let (status, _, _) = send(&w.app, "POST", &format!("/portal/{token}/invoices/{}/pay", theirs.id), None, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+fn monthly_plan(org_id: Uuid) -> m::Plan {
+    let now = Utc::now();
+    m::Plan {
+        id: Uuid::new_v4(),
+        organization_id: org_id,
+        name: "Pro".into(),
+        code: format!("pro-{}", &Uuid::new_v4().to_string()[..8]),
+        interval: Some(PlanInterval::Monthly),
+        description: None,
+        amount_cents: Some(2_900),
+        amount_currency: "USD".into(),
+        trial_period: None,
+        pay_in_advance: false,
+        bill_charges_monthly: None,
+        parent_id: None,
+        invoice_display_name: None,
+        created_at: now,
+        updated_at: now,
+        deleted_at: None,
+    }
+}
+
+fn active_subscription(org_id: Uuid, customer_id: Uuid, plan_id: Uuid) -> m::Subscription {
+    let now = Utc::now();
+    let start = now - Duration::days(40);
+    m::Subscription {
+        id: Uuid::new_v4(),
+        organization_id: org_id,
+        customer_id,
+        plan_id,
+        billing_entity_id: Some(org_id),
+        external_id: format!("sub-{}", &Uuid::new_v4().to_string()[..8]),
+        name: None,
+        status: SubscriptionStatus::Active,
+        billing_time: BillingTime::Calendar,
+        subscription_at: Some(start),
+        started_at: Some(start),
+        ending_at: None,
+        trial_ended_at: None,
+        canceled_at: None,
+        terminated_at: None,
+        previous_subscription_id: None,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+async fn send_from(app: &axum::Router, method: &str, uri: &str, forwarded_for: &str) -> (StatusCode, axum::http::HeaderMap) {
+    let req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("x-forwarded-for", forwarded_for)
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    (resp.status(), resp.headers().clone())
+}
+
+async fn ending(db: &Db, sub: Uuid) -> (Option<chrono::NaiveDateTime>, bool, i32) {
+    sqlx::query_as("SELECT ending_at, cancel_at_period_end, status FROM subscriptions WHERE id = $1")
+        .bind(sub)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrator = "rago_db::MIGRATOR")]
+async fn cancel_at_period_end_can_be_undone_until_the_period_ends(pool: PgPool) {
+    let w = world(pool).await;
+    let plan = monthly_plan(w.org.id);
+    w.db.insert_plan(&plan).await.unwrap();
+    let sub = active_subscription(w.org.id, w.customer.id, plan.id);
+    w.db.insert_subscription(&sub).await.unwrap();
+    let token = issue_via_api(&w).await;
+
+    // Offered on the manage page.
+    let (status, _, body) = send(&w.app, "GET", &format!("/portal/{token}/subscriptions/{}/cancel", sub.id), None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(String::from_utf8(body).unwrap().contains("/cancel_at_period_end"));
+
+    // Schedule: stays active, ends at 00:00 UTC of the next period.
+    let (status, headers) =
+        send_from(&w.app, "POST", &format!("/portal/{token}/subscriptions/{}/cancel_at_period_end", sub.id), "85.105.12.7").await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(headers.get("location").unwrap().to_str().unwrap().contains("notice=cancel_scheduled"));
+    let (ending_at, flag, status) = ending(&w.db, sub.id).await;
+    assert!(flag);
+    assert_eq!(status, 1, "still active until the period ends");
+    let expected = rago_api::plan_change::effective_at(&sub, &plan).naive_utc();
+    assert_eq!(ending_at, Some(expected));
+    assert!(expected > Utc::now().naive_utc());
+
+    // The home page shows when it ends; the manage page offers the undo.
+    let (_, _, body) = send(&w.app, "GET", &format!("/portal/{token}"), None, None).await;
+    assert!(String::from_utf8(body).unwrap().contains("Ends after"));
+    let (_, _, body) = send(&w.app, "GET", &format!("/portal/{token}/subscriptions/{}/cancel", sub.id), None, None).await;
+    let html = String::from_utf8(body).unwrap();
+    assert!(html.contains("/resume"));
+    assert!(!html.contains("/cancel_at_period_end"));
+
+    // Undo.
+    let (status, headers, _) = send(&w.app, "POST", &format!("/portal/{token}/subscriptions/{}/resume", sub.id), None, None).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(headers.get("location").unwrap().to_str().unwrap().contains("notice=cancel_undone"));
+    assert_eq!(ending(&w.db, sub.id).await, (None, false, 1));
+
+    // A second undo has nothing to undo.
+    let (_, headers, _) = send(&w.app, "POST", &format!("/portal/{token}/subscriptions/{}/resume", sub.id), None, None).await;
+    assert!(headers.get("location").unwrap().to_str().unwrap().contains("notice=subscription_unavailable"));
+
+    // An operator-set end date is not the customer's to undo or move.
+    let operator_end = Utc::now().naive_utc() + Duration::days(90);
+    sqlx::query("UPDATE subscriptions SET ending_at = $2 WHERE id = $1")
+        .bind(sub.id)
+        .bind(operator_end)
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+    let (_, headers, _) =
+        send(&w.app, "POST", &format!("/portal/{token}/subscriptions/{}/cancel_at_period_end", sub.id), None, None).await;
+    assert!(headers.get("location").unwrap().to_str().unwrap().contains("notice=subscription_unavailable"));
+    let (_, _, _) = send(&w.app, "POST", &format!("/portal/{token}/subscriptions/{}/resume", sub.id), None, None).await;
+    let (ending_at, flag, _) = ending(&w.db, sub.id).await;
+    assert_eq!(ending_at.map(|t| t.and_utc().timestamp()), Some(operator_end.and_utc().timestamp()));
+    assert!(!flag);
+}
+
+#[sqlx::test(migrator = "rago_db::MIGRATOR")]
+async fn portal_requests_record_the_customers_public_ip(pool: PgPool) {
+    let w = world(pool).await;
+    let token = issue_via_api(&w).await;
+
+    // A private hop is never taken for the customer.
+    let (status, _) = send_from(&w.app, "GET", &format!("/portal/{token}"), "10.0.0.4").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(w.db.customer_last_ip(w.customer.id).await.unwrap().is_none());
+
+    let (status, _) = send_from(&w.app, "GET", &format!("/portal/{token}"), "85.105.12.7, 10.0.0.4").await;
+    assert_eq!(status, StatusCode::OK);
+    let (ip, _) = w.db.customer_last_ip(w.customer.id).await.unwrap().unwrap();
+    assert_eq!(ip, "85.105.12.7");
+
+    // An invalid link records nothing.
+    let other = customer(w.org.id, "cust-ip");
+    w.db.insert_customer(&other).await.unwrap();
+    let (status, _) = send_from(&w.app, "GET", "/portal/not-a-token", "78.186.1.1").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(w.db.customer_last_ip(other.id).await.unwrap().is_none());
+}

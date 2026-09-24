@@ -49,6 +49,9 @@ pub async fn enqueue_billing_cycle(
         if !force && crate::scheduler::started_on_or_after(&sub, &plan, billing_date) {
             continue;
         }
+        if crate::scheduler::leaves_at_boundary(db, &sub, &plan, billing_date).await? {
+            continue;
+        }
         let payload = json!({
             "organization_id": sub.organization_id.to_string(),
             "subscription_external_id": sub.external_id,

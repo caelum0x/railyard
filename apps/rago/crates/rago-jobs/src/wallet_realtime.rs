@@ -21,13 +21,11 @@
 //! `RAGO_MINT_PAYEE_ACCOUNT` (the seller's Mint account that captures are paid
 //! to).
 
-use chrono::{Datelike, NaiveDate, Utc};
-use rago_billing::dates::MonthlyDates;
+use chrono::Utc;
 use rago_billing::wallet_realtime::{
     capture_idem_key, cents_to_micros, hold_idem_key, incremental_event_cost, micros_to_cents,
     plan_settlement, release_idem_key, RealtimePolicy, SettlementStep,
 };
-use rago_core::enums::BillingTime;
 use rago_core::models::{Event, Invoice, Subscription};
 use rago_db::{Db, RealtimeHold, RealtimeWallet};
 use rago_integrations::{HttpTransport, MintError, MintHoldsClient};
@@ -75,26 +73,6 @@ pub enum Reservation {
     Unavailable { reason: String },
 }
 
-/// Current billing period `[from, to]` of a subscription (calendar or
-/// anniversary), the same window `current_usage` prices.
-fn current_period(sub: &Subscription, pay_in_advance: bool) -> (NaiveDate, NaiveDate) {
-    let today = Utc::now().date_naive();
-    let billing_at = if today.month() == 12 {
-        NaiveDate::from_ymd_opt(today.year() + 1, 1, 1)
-    } else {
-        NaiveDate::from_ymd_opt(today.year(), today.month() + 1, 1)
-    }
-    .unwrap_or(today);
-    let dates = MonthlyDates {
-        subscription_at: sub.subscription_at.map(|t| t.date_naive()).unwrap_or(today),
-        billing_at,
-        anniversary: matches!(sub.billing_time, BillingTime::Anniversary),
-        pay_in_advance,
-        current_usage: false,
-    };
-    let b = dates.boundaries();
-    (b.from_date, b.to_date)
-}
 
 /// Price `event` and reserve it on the customer's real-time wallet (see the
 /// module docs). `event` is the not-yet-stored event.
@@ -132,7 +110,8 @@ pub async fn reserve_for_event<T: HttpTransport>(
     if charges.is_empty() {
         return Ok(Reservation::NotApplicable);
     }
-    let (from, to) = current_period(sub, plan.pay_in_advance);
+    // The usage period in progress (any interval, calendar or anniversary).
+    let (from, to) = crate::scheduler::usage_period(sub, &plan, Utc::now().date_naive());
     let period_events = db
         .events_for_external_subscription(
             organization_id,

@@ -86,7 +86,10 @@ pub async fn activate_subscriptions(db: &Db) -> Result<u64, JobError> {
 ///   so a billing run that already billed it is not repeated. A billing error
 ///   leaves both subscriptions untouched and the swap is retried next tick.
 /// * A pay-in-advance outgoing plan already collected its fee for the closing
-///   period at the start of it, so nothing is billed.
+///   period at the start of it, but not that period's usage: its usage
+///   charges are billed on a closing-usage invoice (no subscription fee),
+///   guarded per (subscription, period). The regular billing run skips such a
+///   subscription at the boundary, so it is never billed the next period's fee.
 /// * An outgoing subscription that is no longer active (terminated by the
 ///   operator meanwhile) cancels the scheduled downgrade.
 pub async fn apply_scheduled_downgrades(db: &Db) -> Result<u64, JobError> {
@@ -108,10 +111,21 @@ pub async fn apply_scheduled_downgrades(db: &Db) -> Result<u64, JobError> {
         }
         let boundary = incoming.subscription_at.unwrap_or_else(Utc::now);
         let plan = db.find_plan(outgoing.plan_id).await?;
-        if !plan.pay_in_advance {
+        let closing = if plan.pay_in_advance {
+            crate::scheduler::bill_closing_charges_and_collect(
+                db,
+                &transport,
+                &outgoing,
+                &plan,
+                boundary.date_naive(),
+                true,
+            )
+            .await
+            .map(|_| ())
+        } else {
             let interval = crate::scheduler::interval_of(&plan.interval);
             let anniversary = matches!(outgoing.billing_time, rago_core::enums::BillingTime::Anniversary);
-            if let Err(e) = crate::scheduler::bill_and_collect(
+            crate::scheduler::bill_and_collect(
                 db,
                 &transport,
                 &outgoing,
@@ -122,14 +136,15 @@ pub async fn apply_scheduled_downgrades(db: &Db) -> Result<u64, JobError> {
                 true,
             )
             .await
-            {
-                tracing::error!(
-                    subscription_id = %outgoing.id,
-                    error = %e,
-                    "closing invoice before a scheduled downgrade failed; retrying next tick"
-                );
-                continue;
-            }
+            .map(|_| ())
+        };
+        if let Err(e) = closing {
+            tracing::error!(
+                subscription_id = %outgoing.id,
+                error = %e,
+                "closing invoice before a scheduled downgrade failed; retrying next tick"
+            );
+            continue;
         }
         if !db.swap_downgrade(outgoing.id, incoming.id, boundary.naive_utc()).await? {
             continue;
@@ -232,12 +247,38 @@ pub async fn terminate_ended_subscriptions(db: &Db) -> Result<u64, JobError> {
     .await
     .map_err(rago_db::DbError::from)?;
 
-    let terminated = db.terminate_ended_subscriptions(now).await?;
-
+    let transport = rago_integrations::default_transport();
+    let mut terminated = 0;
     for row in &ending {
         let sub_id: Uuid = row.get("id");
         let org: Uuid = row.get("organization_id");
         let external_id: String = row.get("external_id");
+        // A subscription ending exactly on a period boundary (cancel at period
+        // end) is billed its final period before it stops being active: the
+        // billing run only bills active subscriptions. A billing error leaves
+        // it active so the next tick retries.
+        if let Err(e) = bill_final_period(db, &transport, sub_id).await {
+            tracing::error!(
+                subscription_id = %sub_id,
+                error = %e,
+                "final invoice before termination failed; retrying next tick"
+            );
+            continue;
+        }
+        let done = sqlx::query(
+            "UPDATE subscriptions SET status = 2, terminated_at = now(), updated_at = now() \
+             WHERE id = $1 AND status = 1 AND ending_at IS NOT NULL AND ending_at <= $2",
+        )
+        .bind(sub_id)
+        .bind(now)
+        .execute(&db.pool)
+        .await
+        .map_err(rago_db::DbError::from)?
+        .rows_affected();
+        if done == 0 {
+            continue; // a concurrent tick won
+        }
+        terminated += 1;
         record_webhook(
             db,
             org,
@@ -247,6 +288,38 @@ pub async fn terminate_ended_subscriptions(db: &Db) -> Result<u64, JobError> {
         .await?;
     }
     Ok(terminated)
+}
+
+/// Bill the final period of a subscription whose `ending_at` falls on a
+/// billing boundary (00:00 UTC of a rollover day): the closing period in full
+/// for a pay-in-arrears plan, the closing period's usage for a pay-in-advance
+/// plan (its fee was collected upfront). Both are guarded per (subscription,
+/// period), so a billing run that already billed the period is not repeated.
+/// Mid-period endings are not billed here.
+async fn bill_final_period<T: rago_integrations::HttpTransport>(
+    db: &Db,
+    transport: &T,
+    subscription_id: Uuid,
+) -> Result<(), JobError> {
+    let sub = db.find_subscription(subscription_id).await?;
+    let Some(ending_at) = sub.ending_at else { return Ok(()) };
+    let plan = db.find_plan(sub.plan_id).await?;
+    let end = ending_at.naive_utc();
+    let end_date = end.date();
+    let interval = crate::scheduler::interval_of(&plan.interval);
+    let anniversary = matches!(sub.billing_time, rago_core::enums::BillingTime::Anniversary);
+    let sub_at = sub.subscription_at.map(|t| t.date_naive()).unwrap_or(end_date);
+    let at_boundary = end.time() == chrono::NaiveTime::MIN
+        && rago_billing::dates::due_for_billing(interval, anniversary, sub_at, end_date);
+    if !at_boundary || sub.started_at.is_some_and(|t| t.date_naive() >= end_date) {
+        return Ok(());
+    }
+    if plan.pay_in_advance {
+        crate::scheduler::bill_closing_charges_and_collect(db, transport, &sub, &plan, end_date, true).await?;
+    } else {
+        crate::scheduler::bill_and_collect(db, transport, &sub, &plan, interval, anniversary, end_date, true).await?;
+    }
+    Ok(())
 }
 
 /// `Clock::ExpireIncompleteSubscriptionsJob` — incomplete subs whose

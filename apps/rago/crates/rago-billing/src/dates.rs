@@ -7,8 +7,10 @@
 //! customer-timezone shift is applied by callers when converting a date to a
 //! UTC datetime (noted as a simplification — the day-level period math matches).
 //!
-//! The weekly/yearly/quarterly/semiannual interval services follow the same
-//! shape and are catalogued in the port map.
+//! Every interval (weekly, monthly, quarterly, semiannual, yearly) and both
+//! billing times are covered by [`period_containing`] / [`billing_boundaries`]
+//! (see the interval section below); the generic walk is proven identical to
+//! `MonthlyDates` on every monthly rollover.
 
 use chrono::{Datelike, Duration, NaiveDate};
 
@@ -264,14 +266,21 @@ fn build_date(mut year: i32, mut month: i32, mut day: i32) -> NaiveDate {
 // ============================================================================
 // Weekly / Quarterly / Semiannual / Yearly interval services.
 //
-// Faithful port of `Subscriptions::Dates::{Weekly,Quarterly,Semiannual,Yearly}
-// Service`. The **calendar** billing path is implemented for all four; the
-// **anniversary** path is implemented for weekly (whose period is always
-// `from + 6 days`). Anniversary billing for quarterly/semiannual/yearly (the
-// `previous_anniversary_day` walk over the billing months, with an anniversary
-// end-of-period distinct from the calendar end) is catalogued in the port map
-// as a follow-up — calendar billing, the common case, is complete for every
-// interval, and monthly anniversary is covered by [`MonthlyDates`].
+// Port of `Subscriptions::Dates::{Weekly,Quarterly,Semiannual,Yearly}Service`
+// for both billing times:
+//
+// * **calendar** periods are the calendar week (Mon-Sun) / quarter / half-year
+//   / year;
+// * **anniversary** periods start on the subscription date and repeat every
+//   interval (`subscription_at + k * interval`), the day clamped to the length
+//   of shorter months exactly like Lago's `build_date` (a Jan 31 quarterly
+//   subscription rolls over Apr 30, Jul 31, Oct 31, Jan 31); each period ends
+//   the day before the next one starts.
+//
+// Pay-in-arrears plans bill the period that just closed (subscription fee and
+// usage charges). Pay-in-advance plans bill the subscription fee for the period
+// that starts on the billing date and the usage charges of the period that just
+// closed (`charges_from_date` / `charges_to_date`).
 // ============================================================================
 
 /// A subscription billing interval.
@@ -296,88 +305,58 @@ pub struct PeriodDates {
 }
 
 impl PeriodDates {
-    fn calendar(&self) -> bool {
-        !self.anniversary
+    /// The period that contains the billing date (the upcoming period on a
+    /// rollover day).
+    fn current_period(&self) -> (NaiveDate, NaiveDate) {
+        period_containing(self.interval, self.anniversary, self.subscription_at, self.billing_at)
     }
 
-    /// `#base_date` (billing context): one interval before the billing date.
-    fn base_date(&self) -> NaiveDate {
-        match self.interval {
-            Interval::Weekly => self.billing_at - Duration::weeks(1),
-            Interval::Quarterly => add_months(self.billing_at, -3),
-            Interval::Semiannual => add_months(self.billing_at, -6),
-            Interval::Yearly => add_months(self.billing_at, -12),
-            Interval::Monthly => add_months(self.billing_at, -1),
-        }
+    /// The last period that ended before the billing date (the one that closed
+    /// on a rollover day).
+    fn closing_period(&self) -> (NaiveDate, NaiveDate) {
+        let (current_from, _) = self.current_period();
+        period_containing(
+            self.interval,
+            self.anniversary,
+            self.subscription_at,
+            current_from - Duration::days(1),
+        )
     }
 
-    fn beginning_of_period(&self, date: NaiveDate) -> NaiveDate {
-        match self.interval {
-            Interval::Weekly => beginning_of_week(date),
-            Interval::Quarterly => beginning_of_quarter(date),
-            Interval::Semiannual => beginning_of_half_year(date),
-            Interval::Yearly => beginning_of_year(date),
-            Interval::Monthly => beginning_of_month(date),
-        }
-    }
-
-    fn end_of_period(&self, from: NaiveDate) -> NaiveDate {
-        match self.interval {
-            Interval::Weekly => from + Duration::days(6),
-            Interval::Quarterly => end_of_quarter(from),
-            Interval::Semiannual => end_of_half_year(from),
-            Interval::Yearly => end_of_year(from),
-            Interval::Monthly => end_of_month(from),
-        }
-    }
-
-    /// `#compute_from_date` (pay-in-arrears billing).
+    /// `#compute_from_date`: the start of the period the subscription fee
+    /// covers — the closing period in arrears, the current one in advance.
     pub fn compute_from_date(&self) -> NaiveDate {
-        if self.calendar() {
-            return self.beginning_of_period(self.base_date());
-        }
-        // Anniversary: weekly only (see module note); others use the calendar
-        // beginning as a documented approximation until their anniversary walk
-        // is ported.
-        match self.interval {
-            Interval::Weekly => previous_weekday(self.base_date(), self.subscription_at.weekday()),
-            _ => self.beginning_of_period(self.base_date()),
-        }
-    }
-
-    /// `#compute_to_date`.
-    pub fn compute_to_date(&self, from: NaiveDate) -> NaiveDate {
-        self.end_of_period(from)
-    }
-
-    /// `#compute_duration` — length of the period in days.
-    pub fn compute_duration(&self, from: NaiveDate) -> i64 {
-        if self.interval == Interval::Weekly {
-            return 7;
-        }
-        let period_start = self.beginning_of_period_for_duration(from);
-        let period_end = self.end_of_period(period_start);
-        (period_end + Duration::days(1) - period_start).num_days()
-    }
-
-    fn beginning_of_period_for_duration(&self, from: NaiveDate) -> NaiveDate {
-        if !self.calendar() && self.interval == Interval::Weekly {
-            previous_weekday(from, self.subscription_at.weekday())
+        if self.pay_in_advance {
+            self.current_period().0
         } else {
-            self.beginning_of_period(from)
+            self.closing_period().0
         }
     }
 
-    /// Compute all boundaries for the current period.
+    /// `#compute_to_date`: the end of the period starting at `from`.
+    pub fn compute_to_date(&self, from: NaiveDate) -> NaiveDate {
+        period_containing(self.interval, self.anniversary, self.subscription_at, from).1
+    }
+
+    /// `#compute_duration` — length in days of the period containing `from`.
+    pub fn compute_duration(&self, from: NaiveDate) -> i64 {
+        let (start, end) =
+            period_containing(self.interval, self.anniversary, self.subscription_at, from);
+        (end + Duration::days(1) - start).num_days()
+    }
+
+    /// Compute all boundaries: the subscription-fee period plus the usage
+    /// charges period (always the closing period).
     pub fn boundaries(&self) -> Boundaries {
         let from_date = self.compute_from_date();
         let to_date = self.compute_to_date(from_date);
+        let (charges_from_date, charges_to_date) = self.closing_period();
         Boundaries {
             from_date,
             to_date,
-            charges_from_date: from_date,
-            charges_to_date: to_date,
-            charges_duration_days: self.compute_duration(from_date),
+            charges_from_date,
+            charges_to_date,
+            charges_duration_days: self.compute_duration(charges_from_date),
         }
     }
 
@@ -391,39 +370,97 @@ impl PeriodDates {
     }
 }
 
+/// Number of months in one period of a month-based interval.
+fn months_per_period(interval: Interval) -> Option<i32> {
+    match interval {
+        Interval::Weekly => None,
+        Interval::Monthly => Some(1),
+        Interval::Quarterly => Some(3),
+        Interval::Semiannual => Some(6),
+        Interval::Yearly => Some(12),
+    }
+}
+
+/// The start of the anniversary period `months` months after the subscription
+/// date, the subscription day clamped to the target month's length.
+fn anniversary_start(subscription_at: NaiveDate, months: i32) -> NaiveDate {
+    let index = subscription_at.year() * 12 + subscription_at.month() as i32 - 1 + months;
+    let year = index.div_euclid(12);
+    let month = (index.rem_euclid(12) + 1) as u32;
+    let day = subscription_at.day().min(days_in_month(year, month));
+    NaiveDate::from_ymd_opt(year, month, day).unwrap()
+}
+
+/// The billing period `(from, to)` (both inclusive) that contains `date`, for
+/// any interval and billing time. Dates before the subscription date resolve
+/// to the (virtual) period preceding it, which callers clamp to the start.
+pub fn period_containing(
+    interval: Interval,
+    anniversary: bool,
+    subscription_at: NaiveDate,
+    date: NaiveDate,
+) -> (NaiveDate, NaiveDate) {
+    if !anniversary {
+        let from = match interval {
+            Interval::Weekly => beginning_of_week(date),
+            Interval::Monthly => beginning_of_month(date),
+            Interval::Quarterly => beginning_of_quarter(date),
+            Interval::Semiannual => beginning_of_half_year(date),
+            Interval::Yearly => beginning_of_year(date),
+        };
+        let to = match interval {
+            Interval::Weekly => from + Duration::days(6),
+            Interval::Monthly => end_of_month(from),
+            Interval::Quarterly => end_of_quarter(from),
+            Interval::Semiannual => end_of_half_year(from),
+            Interval::Yearly => end_of_year(from),
+        };
+        return (from, to);
+    }
+    let Some(step) = months_per_period(interval) else {
+        let from = previous_weekday(date, subscription_at.weekday());
+        return (from, from + Duration::days(6));
+    };
+    let months_since = (date.year() - subscription_at.year()) * 12 + date.month() as i32
+        - subscription_at.month() as i32;
+    let mut k = months_since.div_euclid(step);
+    if anniversary_start(subscription_at, k * step) > date {
+        k -= 1;
+    }
+    let from = anniversary_start(subscription_at, k * step);
+    let to = anniversary_start(subscription_at, (k + 1) * step) - Duration::days(1);
+    (from, to)
+}
+
 /// Whether a subscription is billed on `today` — the day its billing period
-/// rolls over. Port of the selection in `Subscriptions::BillingDateQuery` /
-/// `OrganizationBillingService#billable_subscriptions` for the calendar case of
-/// every interval and monthly/weekly anniversary (quarterly/semiannual/yearly
-/// anniversary walks are follow-ups; calendar billing is complete).
+/// rolls over (a new period starts). Port of the selection in
+/// `Subscriptions::BillingDateQuery` for every interval and both billing times.
 pub fn due_for_billing(
     interval: Interval,
     anniversary: bool,
     subscription_at: NaiveDate,
     today: NaiveDate,
 ) -> bool {
-    if !anniversary {
-        // Calendar: billed on the first day of the new period.
-        return match interval {
-            Interval::Weekly => today.weekday() == chrono::Weekday::Mon,
-            Interval::Monthly => today.day() == 1,
-            Interval::Quarterly => today.day() == 1 && matches!(today.month(), 1 | 4 | 7 | 10),
-            Interval::Semiannual => today.day() == 1 && matches!(today.month(), 1 | 7),
-            Interval::Yearly => today.day() == 1 && today.month() == 1,
-        };
+    period_containing(interval, anniversary, subscription_at, today).0 == today
+}
+
+/// The billing periods of a run on `billing_at` (any interval): the
+/// subscription-fee period and the usage-charges period. See [`PeriodDates`].
+pub fn billing_boundaries(
+    interval: Interval,
+    anniversary: bool,
+    subscription_at: NaiveDate,
+    billing_at: NaiveDate,
+    pay_in_advance: bool,
+) -> Boundaries {
+    PeriodDates {
+        interval,
+        subscription_at,
+        billing_at,
+        anniversary,
+        pay_in_advance,
     }
-    // Anniversary.
-    match interval {
-        Interval::Weekly => today.weekday() == subscription_at.weekday(),
-        Interval::Monthly => {
-            let day = subscription_at
-                .day()
-                .min(days_in_month(today.year(), today.month()));
-            today.day() == day
-        }
-        // Quarterly/semiannual/yearly anniversary: follow-up.
-        _ => false,
-    }
+    .boundaries()
 }
 
 fn beginning_of_week(date: NaiveDate) -> NaiveDate {
@@ -479,4 +516,125 @@ fn beginning_of_year(date: NaiveDate) -> NaiveDate {
 
 fn end_of_year(date: NaiveDate) -> NaiveDate {
     NaiveDate::from_ymd_opt(date.year(), 12, 31).unwrap()
+}
+
+#[cfg(test)]
+mod interval_period_tests {
+    use super::*;
+
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    fn arrears(interval: Interval, sub: NaiveDate, billing: NaiveDate) -> Boundaries {
+        billing_boundaries(interval, true, sub, billing, false)
+    }
+
+    #[test]
+    fn quarterly_anniversary_rolls_over_on_the_clamped_subscription_day() {
+        let sub = d(2026, 1, 31);
+        for due in [d(2026, 4, 30), d(2026, 7, 31), d(2026, 10, 31), d(2027, 1, 31)] {
+            assert!(due_for_billing(Interval::Quarterly, true, sub, due), "{due}");
+        }
+        for not_due in [d(2026, 4, 29), d(2026, 5, 1), d(2026, 2, 28), d(2026, 5, 31)] {
+            assert!(!due_for_billing(Interval::Quarterly, true, sub, not_due), "{not_due}");
+        }
+        let b = arrears(Interval::Quarterly, sub, d(2026, 4, 30));
+        assert_eq!((b.from_date, b.to_date), (d(2026, 1, 31), d(2026, 4, 29)));
+        assert_eq!((b.charges_from_date, b.charges_to_date), (b.from_date, b.to_date));
+        assert_eq!(b.charges_duration_days, 89);
+        let next = arrears(Interval::Quarterly, sub, d(2026, 7, 31));
+        assert_eq!((next.from_date, next.to_date), (d(2026, 4, 30), d(2026, 7, 30)));
+    }
+
+    #[test]
+    fn semiannual_anniversary_period() {
+        let sub = d(2026, 3, 15);
+        assert!(due_for_billing(Interval::Semiannual, true, sub, d(2026, 9, 15)));
+        assert!(!due_for_billing(Interval::Semiannual, true, sub, d(2026, 6, 15)));
+        let b = arrears(Interval::Semiannual, sub, d(2026, 9, 15));
+        assert_eq!((b.from_date, b.to_date, b.charges_duration_days), (d(2026, 3, 15), d(2026, 9, 14), 184));
+    }
+
+    #[test]
+    fn yearly_anniversary_handles_leap_day_subscriptions() {
+        let sub = d(2024, 2, 29);
+        assert!(due_for_billing(Interval::Yearly, true, sub, d(2025, 2, 28)));
+        assert!(!due_for_billing(Interval::Yearly, true, sub, d(2025, 3, 1)));
+        assert!(due_for_billing(Interval::Yearly, true, sub, d(2028, 2, 29)));
+        assert!(!due_for_billing(Interval::Yearly, true, sub, d(2028, 2, 28)));
+        let b = arrears(Interval::Yearly, sub, d(2025, 2, 28));
+        assert_eq!((b.from_date, b.to_date, b.charges_duration_days), (d(2024, 2, 29), d(2025, 2, 27), 365));
+        let b = arrears(Interval::Yearly, sub, d(2026, 2, 28));
+        assert_eq!((b.from_date, b.to_date), (d(2025, 2, 28), d(2026, 2, 27)));
+    }
+
+    #[test]
+    fn pay_in_advance_bills_fee_forward_and_charges_for_the_closed_period() {
+        let b = billing_boundaries(Interval::Quarterly, true, d(2026, 1, 15), d(2026, 4, 15), true);
+        assert_eq!((b.from_date, b.to_date), (d(2026, 4, 15), d(2026, 7, 14)));
+        assert_eq!((b.charges_from_date, b.charges_to_date), (d(2026, 1, 15), d(2026, 4, 14)));
+        let y = billing_boundaries(Interval::Yearly, false, d(2025, 6, 3), d(2026, 1, 1), true);
+        assert_eq!((y.from_date, y.to_date), (d(2026, 1, 1), d(2026, 12, 31)));
+        assert_eq!((y.charges_from_date, y.charges_to_date), (d(2025, 1, 1), d(2025, 12, 31)));
+    }
+
+    #[test]
+    fn anniversary_periods_partition_time_without_gaps_or_overlaps() {
+        for interval in [Interval::Weekly, Interval::Monthly, Interval::Quarterly, Interval::Semiannual, Interval::Yearly] {
+            for sub in [d(2024, 1, 31), d(2024, 2, 29), d(2025, 8, 30), d(2025, 11, 1)] {
+                let mut day = sub;
+                let (mut from, mut to) = period_containing(interval, true, sub, day);
+                assert_eq!(from, sub, "{interval:?} {sub}");
+                while day < d(2029, 1, 1) {
+                    day += Duration::days(1);
+                    let (f, t) = period_containing(interval, true, sub, day);
+                    if day > to {
+                        assert_eq!(f, to + Duration::days(1), "{interval:?} {sub} {day}");
+                        assert!(due_for_billing(interval, true, sub, day));
+                        from = f;
+                        to = t;
+                    } else {
+                        assert_eq!((f, t), (from, to), "{interval:?} {sub} {day}");
+                        assert!(!due_for_billing(interval, true, sub, day));
+                    }
+                }
+            }
+        }
+    }
+
+    /// The generic period walk agrees with the ported `MonthlyService` on
+    /// every monthly rollover (anniversary + calendar, arrears + advance).
+    #[test]
+    fn monthly_matches_the_monthly_service() {
+        let mut sub = d(2024, 1, 1);
+        while sub < d(2025, 3, 1) {
+            let mut billing = sub + Duration::days(1);
+            while billing < sub + Duration::days(800) {
+                for anniversary in [true, false] {
+                    if !due_for_billing(Interval::Monthly, anniversary, sub, billing) {
+                        continue;
+                    }
+                    for pay_in_advance in [false, true] {
+                        let monthly = MonthlyDates {
+                            subscription_at: sub,
+                            billing_at: billing,
+                            anniversary,
+                            pay_in_advance,
+                            current_usage: false,
+                        }
+                        .boundaries();
+                        let generic = billing_boundaries(Interval::Monthly, anniversary, sub, billing, pay_in_advance);
+                        assert_eq!(
+                            (generic.from_date, generic.to_date, generic.charges_from_date, generic.charges_to_date),
+                            (monthly.from_date, monthly.to_date, monthly.charges_from_date, monthly.charges_to_date),
+                            "sub {sub} billing {billing} anniversary {anniversary} advance {pay_in_advance}"
+                        );
+                    }
+                }
+                billing += Duration::days(1);
+            }
+            sub += Duration::days(3);
+        }
+    }
 }

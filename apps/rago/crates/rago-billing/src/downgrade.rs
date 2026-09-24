@@ -13,10 +13,10 @@
 //! of the period, and **no mid-period credit is issued**. At the next billing
 //! boundary the current subscription is terminated and the pending one activated.
 
-use chrono::{DateTime, Duration, Months, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use rago_core::enums::SubscriptionStatus;
 
-use crate::dates::{due_for_billing, Interval};
+use crate::dates::{period_containing, Interval};
 use rago_core::models::{Plan, Subscription};
 use uuid::Uuid;
 
@@ -130,30 +130,8 @@ pub fn next_billing_date(
     subscription_at: NaiveDate,
     today: NaiveDate,
 ) -> NaiveDate {
-    for days in 1..=400 {
-        let day = today + Duration::days(days);
-        if due_for_billing(interval, anniversary, subscription_at, day) {
-            return day;
-        }
-    }
-    // Anniversary quarterly / semiannual / yearly: step whole periods from the
-    // subscription date.
-    let step = match interval {
-        Interval::Quarterly => 3,
-        Interval::Semiannual => 6,
-        Interval::Weekly | Interval::Monthly => 1,
-        Interval::Yearly => 12,
-    };
-    let mut periods: u32 = 1;
-    loop {
-        let candidate = subscription_at
-            .checked_add_months(Months::new(step * periods))
-            .unwrap_or(today + Duration::days(1));
-        if candidate > today || periods > 1200 {
-            return candidate.max(today + Duration::days(1));
-        }
-        periods += 1;
-    }
+    // The day after the current period ends is the next rollover.
+    period_containing(interval, anniversary, subscription_at, today).1 + Duration::days(1)
 }
 
 #[cfg(test)]
@@ -174,6 +152,12 @@ mod schedule_tests {
     fn anniversary_monthly_uses_the_subscription_day() {
         assert_eq!(next_billing_date(Interval::Monthly, true, d(2026, 1, 15), d(2026, 9, 24)), d(2026, 10, 15));
         assert_eq!(next_billing_date(Interval::Monthly, true, d(2026, 1, 15), d(2026, 9, 10)), d(2026, 9, 15));
+    }
+
+    #[test]
+    fn anniversary_semiannual_clamps_to_short_months() {
+        assert_eq!(next_billing_date(Interval::Semiannual, true, d(2025, 8, 31), d(2026, 2, 27)), d(2026, 2, 28));
+        assert_eq!(next_billing_date(Interval::Semiannual, true, d(2025, 8, 31), d(2026, 2, 28)), d(2026, 8, 31));
     }
 
     #[test]

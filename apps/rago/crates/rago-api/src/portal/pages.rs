@@ -62,6 +62,9 @@ pub fn notice_text(code: &str) -> Option<(&'static str, bool)> {
         "downgrade_unavailable" => ("That plan change is not available for this subscription.", true),
         "cancel_not_confirmed" => ("Tick the confirmation box to cancel the subscription.", true),
         "subscription_unavailable" => ("This subscription can no longer be cancelled.", true),
+        "cancel_scheduled" => ("Your subscription will end at the end of this billing period. You can keep it until then.", false),
+        "cancel_undone" => ("Your subscription continues. The scheduled cancellation was removed.", false),
+        "cancel_pending" => ("Your subscription is set to end. Keep it first, then choose a plan.", true),
         "payment_method_unavailable" => ("Payment methods are managed by the seller for this account.", true),
         _ => return None,
     })
@@ -109,6 +112,8 @@ pub struct PortalView<'a> {
     pub can_manage_payment_method: bool,
     /// Scheduled downgrades: (current subscription id, next plan name, date).
     pub scheduled: &'a [(uuid::Uuid, String, NaiveDate)],
+    /// Subscriptions set to end at period end: (subscription id, last day).
+    pub ending: &'a [(uuid::Uuid, NaiveDate)],
 }
 
 fn section(title: &str, body: String) -> String {
@@ -228,6 +233,13 @@ fn subscriptions_html(v: &PortalView<'_>) -> String {
                 )
             })
             .unwrap_or_default();
+        let ending = v
+            .ending
+            .iter()
+            .find(|(id, _)| *id == sub.id)
+            .map(|(_, last)| format!("<div class=\"muted\">Ends after {}</div>", last.format("%Y-%m-%d")))
+            .unwrap_or_default();
+        let change = format!("{change}{ending}");
         rows.push_str(&format!(
             "<tr><td>{name}{change}</td><td>{status}</td><td>{since}</td><td class=\"num\"><a class=\"btn\" href=\"/portal/{t}/subscriptions/{id}/cancel\">Change or cancel</a></td></tr>",
             name = esc(sub.name.as_deref().filter(|n| !n.is_empty()).unwrap_or(plan_name)),
@@ -287,6 +299,8 @@ pub struct ManageView<'a> {
     pub period_end: Option<NaiveDate>,
     /// An already scheduled change: (plan name, date).
     pub scheduled: Option<(String, NaiveDate)>,
+    /// The last day of a cancellation at period end the customer requested.
+    pub ends_after: Option<NaiveDate>,
     pub options: &'a [DowngradeOption],
 }
 
@@ -316,7 +330,16 @@ pub fn manage_subscription(v: &ManageView<'_>) -> String {
             ),
         ));
     }
-    if v.active && !v.options.is_empty() {
+    if let Some(last) = v.ends_after {
+        content.push_str(&section(
+            "Cancellation scheduled",
+            format!(
+                "<div class=\"body\">Your subscription ends after {}. It stays active until then and is not renewed. Changed your mind? You can keep it until that day.</div><div class=\"body\"><form class=\"inline\" method=\"post\" action=\"/portal/{t}/subscriptions/{id}/resume\"><button type=\"submit\">Keep my subscription</button></form></div>",
+                last.format("%Y-%m-%d")
+            ),
+        ));
+    }
+    if v.active && v.ends_after.is_none() && !v.options.is_empty() {
         let when = v
             .period_end
             .map(|d| format!("on {}", d.format("%Y-%m-%d")))
@@ -335,6 +358,19 @@ pub fn manage_subscription(v: &ManageView<'_>) -> String {
             "Switch to a smaller plan",
             format!(
                 "<p class=\"body muted\">Keep your subscription on a cheaper plan instead of cancelling. You keep the current plan until the period ends; the new price applies from {}.</p><table><thead><tr><th>Plan</th><th class=\"num\">Price</th><th class=\"num\"></th></tr></thead><tbody>{rows}</tbody></table>",
+                esc(&when)
+            ),
+        ));
+    }
+    if v.active && v.ends_after.is_none() {
+        let when = v
+            .period_end
+            .map(|d| format!("until {}", (d - chrono::Duration::days(1)).format("%Y-%m-%d")))
+            .unwrap_or_else(|| "until the end of this billing period".into());
+        content.push_str(&section(
+            "Cancel at the end of the period",
+            format!(
+                "<div class=\"body\"><p>Your subscription stays active {} and is not renewed after that. Usage until then is billed as usual. You can undo this until the period ends.</p><form method=\"post\" action=\"/portal/{t}/subscriptions/{id}/cancel_at_period_end\"><button type=\"submit\">Cancel at period end</button></form></div>",
                 esc(&when)
             ),
         ));
@@ -425,12 +461,43 @@ mod tests {
             active: true,
             period_end: NaiveDate::from_ymd_opt(2026, 10, 1),
             scheduled: None,
+            ends_after: None,
             options: &options,
         });
         assert!(html.contains("name=\"confirm\" value=\"yes\" required"));
+        assert!(html.contains("/cancel_at_period_end"));
+        assert!(html.contains("until 2026-09-30"));
+        assert!(!html.contains("/resume"));
         assert!(html.contains("/downgrade"));
         assert!(html.contains("Starter &lt;b&gt;"));
         assert!(html.contains("on 2026-10-01"));
+        assert!(!html.contains("{{"));
+    }
+
+    #[test]
+    fn scheduled_cancellation_offers_undo_and_hides_plan_changes() {
+        let options = [DowngradeOption { plan_id: uuid::Uuid::nil(), name: "Starter".into(), price: "9.00 USD".into() }];
+        let html = manage_subscription(&ManageView {
+            token: "tok",
+            org_name: "Acme",
+            customer_name: "Ada",
+            expires_at: Utc::now(),
+            notice: Some("cancel_scheduled"),
+            subscription_id: uuid::Uuid::nil(),
+            subscription_name: "Pro",
+            plan_price: "29.00 USD".into(),
+            active: true,
+            period_end: NaiveDate::from_ymd_opt(2026, 10, 1),
+            scheduled: None,
+            ends_after: NaiveDate::from_ymd_opt(2026, 9, 30),
+            options: &options,
+        });
+        assert!(html.contains("ends after 2026-09-30"));
+        assert!(html.contains("/resume"));
+        assert!(!html.contains("/cancel_at_period_end"));
+        assert!(!html.contains("/downgrade"));
+        // Cancelling right away stays available.
+        assert!(html.contains("name=\"confirm\" value=\"yes\" required"));
         assert!(!html.contains("{{"));
     }
 

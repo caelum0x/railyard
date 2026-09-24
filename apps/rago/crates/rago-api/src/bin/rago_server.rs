@@ -75,7 +75,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = std::env::var("RAGO_API_ADDR").unwrap_or_else(|_| "0.0.0.0:3000".into());
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "rago-server listening (API + worker daemon)");
-    let server = axum::serve(listener, rago_api::router(state));
+    let server = axum::serve(
+        listener,
+        rago_api::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    );
 
     tokio::select! {
         r = server => { r?; }

@@ -385,6 +385,32 @@ impl Db {
         .await
     }
 
+    /// Guarded insert of the one-off invoice billing the closing period's usage
+    /// of a pay-in-advance subscription that is being replaced (its fee for
+    /// that period was collected in advance). At most one such invoice exists
+    /// per `(subscription, charges period)`; a re-run returns
+    /// [`BilledInvoice::AlreadyBilled`] before touching any wallet.
+    pub async fn insert_closing_charges_invoice_guarded(
+        &self,
+        invoice: &mut Invoice,
+        fees: &[Fee],
+        settlement: &PrepaidSettlement<'_>,
+        subscription_id: Uuid,
+        charges_from: NaiveDateTime,
+        charges_to: NaiveDateTime,
+    ) -> Result<BilledInvoice> {
+        self.insert_guarded(
+            invoice,
+            fees,
+            settlement,
+            subscription_id,
+            charges_from,
+            charges_to,
+            GuardKind::ClosingCharges,
+        )
+        .await
+    }
+
     async fn insert_subscription_invoice_guarded_inner(
         &self,
         invoice: &mut Invoice,
@@ -394,21 +420,57 @@ impl Db {
         charges_from: NaiveDateTime,
         charges_to: NaiveDateTime,
     ) -> Result<BilledInvoice> {
+        self.insert_guarded(
+            invoice,
+            fees,
+            settlement,
+            subscription_id,
+            charges_from,
+            charges_to,
+            GuardKind::Recurring,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn insert_guarded(
+        &self,
+        invoice: &mut Invoice,
+        fees: &[Fee],
+        settlement: &PrepaidSettlement<'_>,
+        subscription_id: Uuid,
+        charges_from: NaiveDateTime,
+        charges_to: NaiveDateTime,
+        kind: GuardKind,
+    ) -> Result<BilledInvoice> {
         let mut tx = self.pool.begin().await?;
 
         // Reserve the (subscription, period). `ON CONFLICT DO NOTHING` against the
         // unique partial index is the single source of truth: a concurrent racer
         // (or a plain re-run) affects zero rows.
-        let reserved = sqlx::query(
-            "INSERT INTO invoice_subscriptions (\
-                id, organization_id, invoice_id, subscription_id, recurring, \
-                timestamp, from_datetime, to_datetime, charges_from_datetime, charges_to_datetime, \
-                created_at, updated_at) \
-             VALUES (gen_random_uuid(), $1, $2, $3, true, $4, $4, $5, $4, $5, now(), now()) \
-             ON CONFLICT (subscription_id, charges_from_datetime, charges_to_datetime) \
-                 WHERE recurring IS TRUE \
-             DO NOTHING",
-        )
+        let sql = match kind {
+            GuardKind::Recurring => {
+                "INSERT INTO invoice_subscriptions (\
+                    id, organization_id, invoice_id, subscription_id, recurring, invoicing_reason, \
+                    timestamp, from_datetime, to_datetime, charges_from_datetime, charges_to_datetime, \
+                    created_at, updated_at) \
+                 VALUES (gen_random_uuid(), $1, $2, $3, true, 'subscription_periodic', $4, $4, $5, $4, $5, now(), now()) \
+                 ON CONFLICT (subscription_id, charges_from_datetime, charges_to_datetime) \
+                     WHERE recurring IS TRUE \
+                 DO NOTHING"
+            }
+            GuardKind::ClosingCharges => {
+                "INSERT INTO invoice_subscriptions (\
+                    id, organization_id, invoice_id, subscription_id, recurring, invoicing_reason, \
+                    timestamp, from_datetime, to_datetime, charges_from_datetime, charges_to_datetime, \
+                    created_at, updated_at) \
+                 VALUES (gen_random_uuid(), $1, $2, $3, false, 'subscription_terminating', $4, $4, $5, $4, $5, now(), now()) \
+                 ON CONFLICT (subscription_id, charges_from_datetime, charges_to_datetime) \
+                     WHERE recurring IS FALSE AND invoicing_reason = 'subscription_terminating' \
+                 DO NOTHING"
+            }
+        };
+        let reserved = sqlx::query(sql)
         .bind(invoice.organization_id)
         .bind(invoice.id)
         .bind(subscription_id)
@@ -422,9 +484,13 @@ impl Db {
             // Crucially, we return *before* touching any wallet, so a re-run or a
             // lost race never re-draws prepaid credit.
             tx.rollback().await?;
-            let existing = self
-                .existing_period_invoice(subscription_id, charges_from, charges_to)
-                .await?
+            let existing = match kind {
+                GuardKind::Recurring => self.existing_period_invoice(subscription_id, charges_from, charges_to).await?,
+                GuardKind::ClosingCharges => {
+                    self.existing_closing_charges_invoice(subscription_id, charges_from, charges_to).await?
+                }
+            };
+            let existing = existing
                 .ok_or_else(|| {
                     sqlx::Error::Protocol(
                         "re-bill guard fired but no existing invoice found".into(),
@@ -448,6 +514,30 @@ impl Db {
         }
         tx.commit().await?;
         Ok(BilledInvoice::Created)
+    }
+
+    /// The closing-usage invoice already billed for `(subscription, charges
+    /// period)`, if any.
+    pub async fn existing_closing_charges_invoice(
+        &self,
+        subscription_id: Uuid,
+        charges_from: NaiveDateTime,
+        charges_to: NaiveDateTime,
+    ) -> Result<Option<Invoice>> {
+        let row = sqlx::query(
+            "SELECT i.* FROM invoices i \
+             JOIN invoice_subscriptions s ON s.invoice_id = i.id \
+             WHERE s.subscription_id = $1 AND s.charges_from_datetime = $2 \
+               AND s.charges_to_datetime = $3 AND s.recurring IS FALSE \
+               AND s.invoicing_reason = 'subscription_terminating' \
+             LIMIT 1",
+        )
+        .bind(subscription_id)
+        .bind(charges_from)
+        .bind(charges_to)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref().map(mapping::invoice).transpose()
     }
 
     /// The recurring invoice already billed for `(subscription, charges period)`,
@@ -2789,6 +2879,15 @@ impl PrepaidSettlement<'_> {
         transactions: &[],
         updated_wallets: &[],
     };
+}
+
+/// Which re-bill guard reserves an invoice's period.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GuardKind {
+    /// The periodic invoice of a subscription (one per period).
+    Recurring,
+    /// The closing-usage invoice of a replaced pay-in-advance subscription.
+    ClosingCharges,
 }
 
 /// Outcome of a guarded subscription-invoice insert

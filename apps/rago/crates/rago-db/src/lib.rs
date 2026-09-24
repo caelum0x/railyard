@@ -15,6 +15,7 @@
 pub mod billing_gaps;
 pub mod charge_filters;
 pub mod collection;
+pub mod customer_lifecycle;
 pub mod data_api;
 pub mod dunning;
 pub mod error;

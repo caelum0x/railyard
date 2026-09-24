@@ -11,9 +11,10 @@
 //! * prepaid wallet balances with a top-up that creates the paid-credit
 //!   invoice and takes the customer straight to payment;
 //! * a "change or cancel" page per subscription: switch to a cheaper plan at
-//!   the end of the period (scheduled downgrade, see [`crate::plan_change`]) or
-//!   cancel now after an explicit confirmation (same terminate service as the
-//!   API);
+//!   the end of the period (scheduled downgrade, see [`crate::plan_change`]),
+//!   cancel at the end of the period (undoable until then; the final period is
+//!   billed by the termination clock), or cancel now after an explicit
+//!   confirmation (same terminate service as the API);
 //! * payment-method updates, offered only when Stripe is the provider (the
 //!   only one with a hosted payment-method page).
 //!
@@ -40,6 +41,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::auth::Authed;
+use crate::client_ip::ClientIp;
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 
@@ -108,13 +110,17 @@ pub async fn issue(st: &AppState, customer: &Customer, ttl_minutes: i64) -> ApiR
 /// A verified portal request.
 struct Access {
     token: String,
+    /// The customer's public IP on this request, when known.
+    ip: Option<String>,
     claims: PortalClaims,
     customer: Customer,
     expires_at: DateTime<Utc>,
 }
 
 /// Verify signature, expiry, revocation and ownership. `None` = refuse.
-async fn authorize(st: &AppState, raw: &str) -> Result<Option<Access>, ApiError> {
+/// A verified request's public IP is remembered on the customer (the Iyzico
+/// buyer IP for later charges that have no live request).
+async fn authorize(st: &AppState, raw: &str, ip: ClientIp) -> Result<Option<Access>, ApiError> {
     let Ok(peeked) = token::peek(raw) else { return Ok(None) };
     let Some(key) = org_key(st, peeked.organization_id).await? else { return Ok(None) };
     let claims = match token::verify(raw, &key, Utc::now().timestamp()) {
@@ -133,7 +139,13 @@ async fn authorize(st: &AppState, raw: &str) -> Result<Option<Access>, ApiError>
     if customer.organization_id != claims.organization_id || customer.deleted_at.is_some() {
         return Ok(None);
     }
-    Ok(Some(Access { token: raw.to_string(), claims, customer, expires_at: session.expires_at }))
+    let ip = ip.as_string();
+    if let Some(ip) = ip.as_deref() {
+        if let Err(e) = st.db.record_customer_ip(customer.id, ip).await {
+            tracing::warn!(error = %e, customer_id = %customer.id, "could not record the customer's IP");
+        }
+    }
+    Ok(Some(Access { token: raw.to_string(), ip, claims, customer, expires_at: session.expires_at }))
 }
 
 /// Security headers for every portal response.
@@ -189,10 +201,11 @@ pub struct PageQuery {
 /// `GET /portal/:token`.
 pub async fn home(
     State(st): State<AppState>,
+    ip: ClientIp,
     Path(raw): Path<String>,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    let access = match authorize(&st, &raw).await {
+    let access = match authorize(&st, &raw, ip).await {
         Ok(Some(a)) => a,
         Ok(None) => return invalid(),
         Err(e) => return server_error(e),
@@ -211,6 +224,7 @@ async fn render_home(st: &AppState, a: &Access, notice: Option<&str>) -> ApiResu
     let mut subscriptions = Vec::new();
     let mut usage = Vec::new();
     let mut scheduled = Vec::new();
+    let mut ending = Vec::new();
     for sub in subs {
         if !matches!(sub.status, SubscriptionStatus::Active | SubscriptionStatus::Pending) {
             continue;
@@ -224,6 +238,9 @@ async fn render_home(st: &AppState, a: &Access, notice: Option<&str>) -> ApiResu
             continue;
         }
         let plan = st.db.find_plan(sub.plan_id).await?;
+        if let Some(end) = st.db.pending_cancel_at_period_end(sub.id).await? {
+            ending.push((sub.id, last_day(end)));
+        }
         if matches!(sub.status, SubscriptionStatus::Active) {
             let (currency, from, to, rows) = crate::usage::current_period_usage(st, org, &sub).await?;
             usage.push(pages::UsageBlock {
@@ -259,7 +276,14 @@ async fn render_home(st: &AppState, a: &Access, notice: Option<&str>) -> ApiResu
         wallets: &wallets,
         can_manage_payment_method,
         scheduled: &scheduled,
+        ending: &ending,
     }))
+}
+
+/// The last day a subscription ending at `end` (00:00 UTC of the next
+/// period) is active.
+fn last_day(end: DateTime<Utc>) -> chrono::NaiveDate {
+    (end - Duration::seconds(1)).date_naive()
 }
 
 /// The customer's own invoice, or `None`.
@@ -274,9 +298,10 @@ async fn own_invoice(st: &AppState, a: &Access, invoice_id: Uuid) -> ApiResult<O
 /// `GET /portal/:token/invoices/:invoice_id/download` — the invoice PDF.
 pub async fn download_invoice(
     State(st): State<AppState>,
+    ip: ClientIp,
     Path((raw, invoice_id)): Path<(String, Uuid)>,
 ) -> Response {
-    let a = match authorize(&st, &raw).await {
+    let a = match authorize(&st, &raw, ip).await {
         Ok(Some(a)) => a,
         Ok(None) => return invalid(),
         Err(e) => return server_error(e),
@@ -301,7 +326,7 @@ pub async fn download_invoice(
 
 /// Collect `invoice` now and send the customer where it leads.
 async fn pay(st: &AppState, a: &Access, invoice: &rago_core::models::Invoice) -> Response {
-    use rago_jobs::collection::{collect_invoice, CollectOutcome};
+    use rago_jobs::collection::{collect_invoice_from, CollectOutcome};
     if !pages::payable(invoice) {
         return back(&a.token, "already_paid");
     }
@@ -316,7 +341,7 @@ async fn pay(st: &AppState, a: &Access, invoice: &rago_core::models::Invoice) ->
         Err(e) => return server_error(e),
     }
     let transport = rago_integrations::default_transport();
-    let outcome = match collect_invoice(&st.db, &transport, invoice).await {
+    let outcome = match collect_invoice_from(&st.db, &transport, invoice, a.ip.as_deref()).await {
         Ok(o) => o,
         Err(e) => {
             tracing::warn!(error = %e, invoice_id = %invoice.id, "portal payment attempt failed");
@@ -340,9 +365,10 @@ async fn pay(st: &AppState, a: &Access, invoice: &rago_core::models::Invoice) ->
 /// `POST /portal/:token/invoices/:invoice_id/pay`.
 pub async fn pay_invoice(
     State(st): State<AppState>,
+    ip: ClientIp,
     Path((raw, invoice_id)): Path<(String, Uuid)>,
 ) -> Response {
-    let a = match authorize(&st, &raw).await {
+    let a = match authorize(&st, &raw, ip).await {
         Ok(Some(a)) => a,
         Ok(None) => return invalid(),
         Err(e) => return server_error(e),
@@ -366,10 +392,11 @@ fn parse_credits(body: &[u8]) -> Option<Decimal> {
 /// `POST /portal/:token/wallets/:wallet_id/top_up` (form `credits`).
 pub async fn top_up(
     State(st): State<AppState>,
+    ip: ClientIp,
     Path((raw, wallet_id)): Path<(String, Uuid)>,
     body: Bytes,
 ) -> Response {
-    let a = match authorize(&st, &raw).await {
+    let a = match authorize(&st, &raw, ip).await {
         Ok(Some(a)) => a,
         Ok(None) => return invalid(),
         Err(e) => return server_error(e),
@@ -432,10 +459,11 @@ fn plan_price(plan: &rago_core::models::Plan) -> String {
 /// that must be explicitly confirmed.
 pub async fn manage_subscription(
     State(st): State<AppState>,
+    ip: ClientIp,
     Path((raw, subscription_id)): Path<(String, Uuid)>,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    let a = match authorize(&st, &raw).await {
+    let a = match authorize(&st, &raw, ip).await {
         Ok(Some(a)) => a,
         Ok(None) => return invalid(),
         Err(e) => return server_error(e),
@@ -468,6 +496,7 @@ async fn render_manage(st: &AppState, a: &Access, subscription_id: Uuid, notice:
         }
         None => None,
     };
+    let ends_after = st.db.pending_cancel_at_period_end(sub.id).await?.map(last_day);
     let org_name = st.db.organization_name(org).await?.unwrap_or_else(|| "Billing".into());
     let customer_name = a
         .customer
@@ -488,6 +517,7 @@ async fn render_manage(st: &AppState, a: &Access, subscription_id: Uuid, notice:
         active,
         period_end: active.then(|| crate::plan_change::effective_at(&sub, &plan).date_naive()),
         scheduled,
+        ends_after,
         options: &options,
     })))
 }
@@ -508,10 +538,11 @@ fn back_to_manage(token: &str, subscription_id: Uuid, notice: &str) -> Response 
 /// confirmation page and nothing changes.
 pub async fn cancel_subscription(
     State(st): State<AppState>,
+    ip: ClientIp,
     Path((raw, subscription_id)): Path<(String, Uuid)>,
     body: Bytes,
 ) -> Response {
-    let a = match authorize(&st, &raw).await {
+    let a = match authorize(&st, &raw, ip).await {
         Ok(Some(a)) => a,
         Ok(None) => return invalid(),
         Err(e) => return server_error(e),
@@ -530,14 +561,114 @@ pub async fn cancel_subscription(
     }
 }
 
+/// `POST /portal/:token/subscriptions/:subscription_id/cancel_at_period_end` —
+/// end the subscription when its current period ends instead of now. It stays
+/// active (and billed as usual) until then, is not renewed, and the customer
+/// can undo it until that day. A scheduled downgrade is dropped: the customer
+/// chose to leave.
+pub async fn cancel_at_period_end(
+    State(st): State<AppState>,
+    ip: ClientIp,
+    Path((raw, subscription_id)): Path<(String, Uuid)>,
+) -> Response {
+    let a = match authorize(&st, &raw, ip).await {
+        Ok(Some(a)) => a,
+        Ok(None) => return invalid(),
+        Err(e) => return server_error(e),
+    };
+    let sub = match own_subscription(&st, &a, subscription_id).await {
+        Ok(Some(s)) if matches!(s.status, SubscriptionStatus::Active) => s,
+        Ok(_) => return back(&a.token, "subscription_unavailable"),
+        Err(e) => return server_error(e),
+    };
+    match schedule_period_end_cancel(&st, &a, &sub).await {
+        Ok(true) => back(&a.token, "cancel_scheduled"),
+        Ok(false) => back_to_manage(&a.token, sub.id, "subscription_unavailable"),
+        Err(e) => server_error(e),
+    }
+}
+
+async fn schedule_period_end_cancel(
+    st: &AppState,
+    a: &Access,
+    sub: &rago_core::models::Subscription,
+) -> ApiResult<bool> {
+    let org = a.claims.organization_id;
+    let plan = st.db.find_plan(sub.plan_id).await?;
+    let ending_at = crate::plan_change::effective_at(sub, &plan);
+    if !st.db.schedule_cancel_at_period_end(sub.id, ending_at.naive_utc()).await? {
+        return Ok(false);
+    }
+    crate::plan_change::cancel(st, org, sub).await?;
+    subscription_updated(st, org, sub.id, "subscription.cancel_at_period_end_scheduled").await?;
+    Ok(true)
+}
+
+/// `POST /portal/:token/subscriptions/:subscription_id/resume` — undo a
+/// cancellation at period end that has not taken effect yet.
+pub async fn resume_subscription(
+    State(st): State<AppState>,
+    ip: ClientIp,
+    Path((raw, subscription_id)): Path<(String, Uuid)>,
+) -> Response {
+    let a = match authorize(&st, &raw, ip).await {
+        Ok(Some(a)) => a,
+        Ok(None) => return invalid(),
+        Err(e) => return server_error(e),
+    };
+    let sub = match own_subscription(&st, &a, subscription_id).await {
+        Ok(Some(s)) if matches!(s.status, SubscriptionStatus::Active) => s,
+        Ok(_) => return back(&a.token, "subscription_unavailable"),
+        Err(e) => return server_error(e),
+    };
+    let org = a.claims.organization_id;
+    match st.db.undo_cancel_at_period_end(sub.id).await {
+        Ok(true) => match subscription_updated(&st, org, sub.id, "subscription.cancel_at_period_end_undone").await {
+            Ok(()) => back(&a.token, "cancel_undone"),
+            Err(e) => server_error(e),
+        },
+        Ok(false) => back_to_manage(&a.token, sub.id, "subscription_unavailable"),
+        Err(e) => server_error(e),
+    }
+}
+
+/// Queue `subscription.updated` (with the current `ending_at`) and log the
+/// customer's action.
+async fn subscription_updated(st: &AppState, org: Uuid, subscription_id: Uuid, activity: &str) -> ApiResult<()> {
+    let sub = st.db.find_subscription(subscription_id).await?;
+    let plan = st.db.find_plan(sub.plan_id).await?;
+    let ext_customer = st.db.customer_external_id(sub.customer_id).await?.unwrap_or_default();
+    let _ = st
+        .db
+        .insert_activity_log(
+            org,
+            activity,
+            "Subscription",
+            sub.id,
+            Some(&ext_customer),
+            Some(&sub.external_id),
+            &json!({ "ending_at": sub.ending_at.map(|t| t.to_rfc3339()), "source": "customer_portal" }),
+        )
+        .await;
+    crate::emit::webhook(
+        &st.db,
+        org,
+        rago_integrations::webhooks::WebhookKind::SubscriptionUpdated,
+        crate::serializers::subscription(&sub, &plan, &ext_customer),
+    )
+    .await;
+    Ok(())
+}
+
 /// `POST /portal/:token/subscriptions/:subscription_id/downgrade` (form
 /// `plan_id`) — schedule a switch to a cheaper plan at the end of the period.
 pub async fn downgrade_subscription(
     State(st): State<AppState>,
+    ip: ClientIp,
     Path((raw, subscription_id)): Path<(String, Uuid)>,
     body: Bytes,
 ) -> Response {
-    let a = match authorize(&st, &raw).await {
+    let a = match authorize(&st, &raw, ip).await {
         Ok(Some(a)) => a,
         Ok(None) => return invalid(),
         Err(e) => return server_error(e),
@@ -548,6 +679,11 @@ pub async fn downgrade_subscription(
         Ok(_) => return back(&a.token, "subscription_unavailable"),
         Err(e) => return server_error(e),
     };
+    match st.db.pending_cancel_at_period_end(sub.id).await {
+        Ok(Some(_)) => return back_to_manage(&a.token, sub.id, "cancel_pending"),
+        Ok(None) => {}
+        Err(e) => return server_error(e),
+    }
     let Some(plan_id) = form_value(&body, "plan_id").and_then(|v| Uuid::parse_str(v.trim()).ok()) else {
         return back_to_manage(&a.token, sub.id, "downgrade_unavailable");
     };
@@ -574,9 +710,10 @@ pub async fn downgrade_subscription(
 /// scheduled downgrade.
 pub async fn keep_plan(
     State(st): State<AppState>,
+    ip: ClientIp,
     Path((raw, subscription_id)): Path<(String, Uuid)>,
 ) -> Response {
-    let a = match authorize(&st, &raw).await {
+    let a = match authorize(&st, &raw, ip).await {
         Ok(Some(a)) => a,
         Ok(None) => return invalid(),
         Err(e) => return server_error(e),
@@ -594,8 +731,8 @@ pub async fn keep_plan(
 
 /// `POST /portal/:token/payment_method` — Stripe's hosted payment-method page
 /// (only when Stripe is the organization's provider).
-pub async fn payment_method(State(st): State<AppState>, Path(raw): Path<String>) -> Response {
-    let a = match authorize(&st, &raw).await {
+pub async fn payment_method(State(st): State<AppState>, ip: ClientIp, Path(raw): Path<String>) -> Response {
+    let a = match authorize(&st, &raw, ip).await {
         Ok(Some(a)) => a,
         Ok(None) => return invalid(),
         Err(e) => return server_error(e),

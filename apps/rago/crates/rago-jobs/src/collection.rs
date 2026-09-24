@@ -148,10 +148,53 @@ pub fn iyzico_provider<T: HttpTransport>(
     Some(iyzico)
 }
 
+/// Where the Iyzico buyer IP of a charge came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BuyerIpSource {
+    /// The customer's own request that triggered the charge (portal Pay).
+    Live,
+    /// No live request (billing run, dunning, operator retry): the last IP the
+    /// customer was seen from on the portal or a hosted checkout, and when.
+    LastKnown(chrono::DateTime<chrono::Utc>),
+    /// No IP was ever captured for the customer.
+    Unknown,
+}
+
+/// Pick the Iyzico buyer IP: the live request's IP, else the customer's last
+/// known one.
+pub fn resolve_buyer_ip(
+    live: Option<&str>,
+    last_known: Option<(String, chrono::DateTime<chrono::Utc>)>,
+) -> (Option<String>, BuyerIpSource) {
+    if let Some(ip) = live.map(str::trim).filter(|ip| !ip.is_empty()) {
+        return (Some(ip.to_string()), BuyerIpSource::Live);
+    }
+    match last_known {
+        Some((ip, at)) => (Some(ip), BuyerIpSource::LastKnown(at)),
+        None => (None, BuyerIpSource::Unknown),
+    }
+}
+
 /// The Iyzico buyer, read entirely from the customer record (name, email,
 /// country and the stored billing address / identity number). Missing fields
 /// stay empty so the provider refuses with the list of what to complete.
-async fn iyzico_buyer(db: &Db, customer: &Customer) -> Result<IyzicoBuyer, JobError> {
+/// The buyer IP is the live request's (`live_ip`), else the customer's last
+/// known IP — noted in the log, since it may be stale.
+async fn iyzico_buyer(db: &Db, customer: &Customer, live_ip: Option<&str>) -> Result<IyzicoBuyer, JobError> {
+    let (ip, source) = resolve_buyer_ip(live_ip, db.customer_last_ip(customer.id).await?);
+    match &source {
+        BuyerIpSource::Live => {}
+        BuyerIpSource::LastKnown(at) => tracing::info!(
+            customer_id = %customer.id,
+            last_seen_at = %at,
+            "iyzico buyer ip: no live customer request; using the customer's last known IP"
+        ),
+        BuyerIpSource::Unknown => tracing::warn!(
+            customer_id = %customer.id,
+            "iyzico buyer ip: no IP was ever captured for this customer (they have not used the portal \
+             or a hosted checkout); Iyzico receives the provider default"
+        ),
+    }
     let address = db.customer_address(customer.id).await?;
     let street = [address.address_line1.as_deref(), address.address_line2.as_deref()]
         .into_iter()
@@ -170,7 +213,7 @@ async fn iyzico_buyer(db: &Db, customer: &Customer) -> Result<IyzicoBuyer, JobEr
         zip_code: address.zipcode,
         phone: address.phone,
         identity_number: address.identity_number.or_else(|| customer.tax_identification_number.clone()),
-        ip: None,
+        ip,
     })
 }
 
@@ -246,6 +289,18 @@ pub async fn collect_invoice<T: HttpTransport>(
     db: &Db,
     transport: &T,
     invoice: &Invoice,
+) -> Result<CollectOutcome, JobError> {
+    collect_invoice_from(db, transport, invoice, None).await
+}
+
+/// [`collect_invoice`] for a charge the customer triggered from their own
+/// browser (portal Pay / top-up): `live_ip` is their request IP, used as the
+/// Iyzico buyer IP and remembered on the customer for later charges.
+pub async fn collect_invoice_from<T: HttpTransport>(
+    db: &Db,
+    transport: &T,
+    invoice: &Invoice,
+    live_ip: Option<&str>,
 ) -> Result<CollectOutcome, JobError> {
     if invoice.total_amount_cents <= 0 {
         return Ok(CollectOutcome::Skipped(SkipReason::NothingToCollect));
@@ -373,7 +428,7 @@ pub async fn collect_invoice<T: HttpTransport>(
             if iyzico_provider(&provider, invoice.organization_id, transport).is_none() {
                 return Ok(CollectOutcome::Skipped(SkipReason::ProviderNotConfigured));
             }
-            let buyer = iyzico_buyer(db, &customer).await?;
+            let buyer = iyzico_buyer(db, &customer, live_ip).await?;
             let org = invoice.organization_id;
             charge_invoice_with(db, invoice, &customer.external_id, None, |_attempt| {
                 let iyzico = iyzico_provider(&provider, org, transport)
@@ -683,4 +738,31 @@ pub async fn invoice_payment_url<T: HttpTransport>(
         .await
         .map_err(|e| JobError::Payment(e.to_string()))?;
     Ok(Ok(url))
+}
+
+#[cfg(test)]
+mod buyer_ip_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn live_request_ip_wins() {
+        let seen = chrono::Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
+        let (ip, source) = resolve_buyer_ip(Some("85.105.1.2"), Some(("78.1.1.1".into(), seen)));
+        assert_eq!((ip.as_deref(), source), (Some("85.105.1.2"), BuyerIpSource::Live));
+    }
+
+    #[test]
+    fn clock_charges_fall_back_to_the_last_known_ip() {
+        let seen = chrono::Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
+        let (ip, source) = resolve_buyer_ip(None, Some(("78.1.1.1".into(), seen)));
+        assert_eq!((ip.as_deref(), source), (Some("78.1.1.1"), BuyerIpSource::LastKnown(seen)));
+        let (ip, _) = resolve_buyer_ip(Some("  "), Some(("78.1.1.1".into(), seen)));
+        assert_eq!(ip.as_deref(), Some("78.1.1.1"));
+    }
+
+    #[test]
+    fn unknown_when_never_captured() {
+        assert_eq!(resolve_buyer_ip(None, None), (None, BuyerIpSource::Unknown));
+    }
 }

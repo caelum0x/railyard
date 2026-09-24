@@ -288,6 +288,7 @@ async fn handle_dodo(state: &AppState, organization_id: Uuid, event: &rago_integ
 pub async fn iyzico_webhook(
     State(state): State<AppState>,
     Path(organization_id): Path<Uuid>,
+    ip: crate::client_ip::ClientIp,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -297,7 +298,7 @@ pub async fn iyzico_webhook(
     if headers.contains_key("x-iyz-signature-v3") {
         return iyzico_notification(&state, organization_id, &headers, payload).await.into_response();
     }
-    iyzico_browser_return(&state, organization_id, payload).await
+    iyzico_browser_return(&state, organization_id, payload, ip).await
 }
 
 async fn iyzico_notification(state: &AppState, organization_id: Uuid, headers: &HeaderMap, payload: &str) -> Reply {
@@ -355,7 +356,12 @@ async fn iyzico_refund_notification(state: &AppState, organization_id: Uuid, pay
 }
 
 /// The buyer's browser returning from the hosted form (`token=...`).
-async fn iyzico_browser_return(state: &AppState, organization_id: Uuid, payload: &str) -> Response {
+async fn iyzico_browser_return(
+    state: &AppState,
+    organization_id: Uuid,
+    payload: &str,
+    ip: crate::client_ip::ClientIp,
+) -> Response {
     let form = parse_form(payload);
     let Some(token) = form.iter().find(|(k, _)| k == "token").map(|(_, v)| v.clone()).filter(|t| !t.is_empty())
     else {
@@ -388,6 +394,11 @@ async fn iyzico_browser_return(state: &AppState, organization_id: Uuid, payload:
     if payment.is_some() && !belongs {
         return (StatusCode::BAD_REQUEST, "checkout does not match the invoice").into_response();
     }
+    // The buyer's browser is on this request: remember its IP for the
+    // customer's later charges that have no live request.
+    if let (Some(p), Some(ip)) = (payment.as_ref(), ip.as_string()) {
+        remember_buyer_ip(state, organization_id, p.invoice_id, &ip).await;
+    }
     let status = match paid.status {
         PayableStatus::Succeeded => IncomingStatus::Succeeded,
         PayableStatus::Failed => IncomingStatus::Failed,
@@ -407,6 +418,23 @@ async fn iyzico_browser_return(state: &AppState, organization_id: Uuid, payload:
         "Your payment is being processed."
     };
     return_page(provider.success_redirect_url.as_deref(), ok, message)
+}
+
+/// Store `ip` as the last known IP of the customer billed by `invoice_id`.
+async fn remember_buyer_ip(state: &AppState, organization_id: Uuid, invoice_id: Uuid, ip: &str) {
+    let customer = match state.db.find_invoice(invoice_id).await {
+        Ok(Some(inv)) if inv.organization_id == organization_id => inv.customer_id,
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!(error = %e, "iyzico return: invoice lookup failed");
+            None
+        }
+    };
+    if let Some(customer_id) = customer {
+        if let Err(e) = state.db.record_customer_ip(customer_id, ip).await {
+            tracing::warn!(error = %e, "iyzico return: could not record the buyer IP");
+        }
+    }
 }
 
 /// Redirect the buyer to the configured return URL, or show a plain result

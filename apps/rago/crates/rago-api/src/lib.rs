@@ -18,6 +18,7 @@ pub mod breadth;
 pub mod catalog_v2;
 pub mod charge_filters;
 pub mod checkout_webhooks;
+pub mod client_ip;
 pub mod crud;
 pub mod customer_lists;
 pub mod emit;
@@ -275,6 +276,11 @@ pub fn router(state: AppState) -> Router {
         .route("/portal/:token/subscriptions/:subscription_id/cancel", get(portal::manage_subscription).post(portal::cancel_subscription))
         .route("/portal/:token/subscriptions/:subscription_id/downgrade", post(portal::downgrade_subscription))
         .route("/portal/:token/subscriptions/:subscription_id/keep_plan", post(portal::keep_plan))
+        .route(
+            "/portal/:token/subscriptions/:subscription_id/cancel_at_period_end",
+            post(portal::cancel_at_period_end),
+        )
+        .route("/portal/:token/subscriptions/:subscription_id/resume", post(portal::resume_subscription))
         .route("/portal/:token/payment_method", post(portal::payment_method))
         .route("/webhooks/creem/:organization_id", post(checkout_webhooks::creem_webhook))
         .route("/webhooks/dodo/:organization_id", post(checkout_webhooks::dodo_webhook))

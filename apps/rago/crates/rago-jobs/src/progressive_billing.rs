@@ -23,7 +23,7 @@ use rust_decimal::Decimal;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::scheduler::{fee_webhook_object, interval_of, invoice_webhook_object, load_charges, period_bounds};
+use crate::scheduler::{fee_webhook_object, invoice_webhook_object, load_charges};
 use crate::webhook_emit::{record_credit_note_generated, record_invoice_generated, record_webhook};
 use crate::JobError;
 use rago_integrations::webhooks::WebhookKind;
@@ -79,17 +79,9 @@ pub async fn check_usage_thresholds(
         return Ok(None);
     }
 
-    let interval = interval_of(&plan.interval);
-    let anniversary = matches!(
-        subscription.billing_time,
-        rago_core::enums::BillingTime::Anniversary
-    );
-    let sub_at = subscription
-        .subscription_at
-        .map(|t| t.date_naive())
-        .unwrap_or(today);
-    let billing_date = next_billing_date(interval, anniversary, sub_at, today);
-    let (from_date, to_date) = period_bounds(&plan, interval, anniversary, sub_at, billing_date);
+    // The usage period in progress (for pay-in-advance plans too: their
+    // usage is billed at the end of the period it accrued in).
+    let (from_date, to_date) = crate::scheduler::usage_period(&subscription, &plan, today);
     let from = from_date.and_hms_opt(0, 0, 0).unwrap_or_default();
     let to = to_date.and_hms_opt(23, 59, 59).unwrap_or_default();
     let events_to = Utc::now().naive_utc().min(to);
