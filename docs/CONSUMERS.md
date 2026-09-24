@@ -67,8 +67,8 @@ Env for the new Menivor module (all optional; unset = no behavior change):
 `RAILYARD_RAGO_SUBSCRIPTION_PREFIX` (customer mode: `<prefix><workspace or user id>`),
 `RAILYARD_RAGO_RENDER_METRIC` (default `reel_generated`),
 `RAILYARD_RAGO_CREDITS_METRIC` (default `reel_ai_credits`),
-`RAILYARD_RAGO_LLM_METRIC` (default `menivor_llm_call`, needs a count metric
-created in Rago; not in the seeds yet), `RAILYARD_RAGO_TIMEOUT_SECONDS`.
+`RAILYARD_RAGO_LLM_METRIC` (default `menivor_llm_call`, a count metric
+seeded in `apps/rago/seeds/menivor-reels.json` at $0), `RAILYARD_RAGO_TIMEOUT_SECONDS`.
 
 Target wiring: every Menivor LLM/image/TTS call through Relay (image and TTS
 need Relay function configs); render-seconds metering (`reel_render_seconds`)

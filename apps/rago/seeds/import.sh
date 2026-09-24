@@ -9,17 +9,17 @@
 #
 # Usage:
 #   RAGO_API_KEY=<bearer> ./import.sh autogtm.json
-#   RAGO_API_URL=https://rago.internal RAGO_API_KEY=<bearer> ./import.sh menivor.json
+#   RAGO_API_URL=https://rago.internal/api/v1 RAGO_API_KEY=<bearer> ./import.sh menivor.json
 #
 # Env:
-#   RAGO_API_URL   Base URL of the rago API      (default: http://localhost:3000)
+#   RAGO_API_URL   Base URL of the rago API      (default: http://localhost:3000/api/v1)
 #   RAGO_API_KEY   Bearer token for the consumer org   (required)
 #
 # Requires: bash, curl, jq.
 set -euo pipefail
 
 SEED="${1:-}"
-RAGO_API_URL="${RAGO_API_URL:-http://localhost:3000}"
+RAGO_API_URL="${RAGO_API_URL:-http://localhost:3000/api/v1}"
 RAGO_API_KEY="${RAGO_API_KEY:-}"
 
 if [[ -z "$SEED" || ! -f "$SEED" ]]; then

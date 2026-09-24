@@ -6,9 +6,9 @@ one rago **organization** (tenant).
 
 | Seed | Consumer | Metric code(s) | Plan | Charge model |
 |------|----------|----------------|------|--------------|
-| `autogtm.json` | AutoGTM (VCPeer cold email) | `gtm_email_sent`, `gtm_draft` | `autogtm_growth` ($49/mo) | `package` (emails) + `standard` (drafts) |
+| `autogtm.json` | Rally AutoGTM (vcglass cold email) | `gtm_email_sent`, `gtm_draft`, `gtm_topup` | `gtm_usage` ($0 metering mirror, vcglass default) + `autogtm_growth` ($49/mo) | `standard` at $0 (mirror); `package` (emails) + `standard` (drafts) on growth |
 | `menivor.json` | Menivor (video/reel + LLM) | `menivor_media_spend` | `menivor_studio` ($29/mo) | `dynamic` (cost pass-through) |
-| `menivor-reels.json` | Menivor (reel generation) | `reel_generated`, `reel_render_seconds`, `reel_ai_credits` | `menivor_reels` ($0 base) | `standard` (per-unit; matches `RAGO_REEL_PRICING` defaults) |
+| `menivor-reels.json` | Menivor (reel generation + Relay LLM calls) | `reel_generated`, `reel_render_seconds`, `reel_ai_credits`, `menivor_llm_call` | `menivor_reels` ($0 base) | `standard` (per-unit; matches `RAGO_REEL_PRICING` defaults; LLM calls at $0) |
 | `opentypesafe.json` | opentypesafe (System One / Jev) | `systemone_call` | `opentypesafe_pro` ($0 base) | `graduated` (per-call tiers) |
 
 Each file is an envelope:
@@ -37,8 +37,8 @@ Create one org + key **per consumer** directly in Postgres (run against the
 ```sql
 -- AutoGTM tenant (repeat per consumer with a fresh org id + token).
 WITH org AS (
-  INSERT INTO organizations (id, name, created_at, updated_at)
-  VALUES (gen_random_uuid(), 'AutoGTM', now(), now())
+  INSERT INTO organizations (id, name, slug, created_at, updated_at)
+  VALUES (gen_random_uuid(), 'AutoGTM', 'autogtm', now(), now())
   RETURNING id
 )
 INSERT INTO api_keys (id, organization_id, value, name, created_at, updated_at)
@@ -57,7 +57,7 @@ RAGO_API_KEY='rago_live_menivor_...'         ./import.sh menivor.json
 RAGO_API_KEY='rago_live_opentypesafe_...'    ./import.sh opentypesafe.json
 
 # Remote plane:
-RAGO_API_URL=https://rago.example.com RAGO_API_KEY=... ./import.sh menivor.json
+RAGO_API_URL=https://rago.example.com/api/v1 RAGO_API_KEY=... ./import.sh menivor.json
 ```
 
 The script is re-run safe: a `422` (already exists / validation) is reported as
@@ -66,7 +66,7 @@ The script is re-run safe: a `422` (already exists / validation) is reported as
 ## 2. Import — raw curl (no script)
 
 ```bash
-API=http://localhost:3000
+API=http://localhost:3000/api/v1
 KEY='rago_live_autogtm_REPLACE_ME'
 
 # a metric
