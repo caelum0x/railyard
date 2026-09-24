@@ -1,0 +1,12 @@
+# BuildKit picks this up automatically for `-f apps/game-economy/Dockerfile`
+# (per-Dockerfile ignore file), so the repo-root build context stays small
+# without a root .dockerignore that would affect other images.
+*
+!apps/game-economy/Cargo.toml
+!apps/game-economy/Cargo.lock
+!apps/game-economy/crates
+!apps/mint/Cargo.toml
+!apps/mint/crates
+!apps/mint/contracts
+**/target
+**/node_modules
