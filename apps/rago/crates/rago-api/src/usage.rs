@@ -14,11 +14,10 @@
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
-use chrono::{Datelike, NaiveDate, NaiveDateTime, Utc};
+use chrono::{NaiveDate, NaiveDateTime, Utc};
 use rago_billing::charge_to_fee;
-use rago_core::enums::{BillingTime, WalletStatus};
+use rago_core::enums::WalletStatus;
 use rago_core::models::{Fee, Subscription, Wallet};
-use rago_billing::dates::MonthlyDates;
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -94,15 +93,7 @@ pub(crate) async fn current_period_usage(
 ) -> ApiResult<(rago_core::money::Currency, NaiveDate, NaiveDate, Vec<MetricUsage>)> {
     let plan = st.db.find_plan(sub.plan_id).await?;
     let currency = plan.currency();
-    let today = now_date();
-    let dates = MonthlyDates {
-        subscription_at: sub.subscription_at.map(|t| t.date_naive()).unwrap_or(today),
-        billing_at: first_of_next_month(today),
-        anniversary: matches!(sub.billing_time, BillingTime::Anniversary),
-        pay_in_advance: plan.pay_in_advance,
-        current_usage: false,
-    };
-    let b = dates.boundaries();
+    let b = CurrentPeriod::of(sub, &plan);
     let from = b.from_date.and_hms_opt(0, 0, 0).unwrap_or_default();
     let usages = compute_charges_usage(st, org, sub, currency, from, Utc::now().naive_utc()).await?;
     let rows = usages
@@ -126,7 +117,7 @@ async fn load_scope(
     org: uuid::Uuid,
     external_customer_id: &str,
     external_subscription_id: &str,
-) -> ApiResult<(Subscription, rago_core::money::Currency, MonthlyDates)> {
+) -> ApiResult<(Subscription, rago_core::money::Currency, CurrentPeriod)> {
     let customer = st
         .db
         .find_customer_by_external_id(org, external_customer_id)
@@ -142,14 +133,7 @@ async fn load_scope(
     }
     let plan = st.db.find_plan(sub.plan_id).await?;
     let currency = plan.currency();
-    let today = now_date();
-    let dates = MonthlyDates {
-        subscription_at: sub.subscription_at.map(|t| t.date_naive()).unwrap_or(today),
-        billing_at: first_of_next_month(today),
-        anniversary: matches!(sub.billing_time, BillingTime::Anniversary),
-        pay_in_advance: plan.pay_in_advance,
-        current_usage: false,
-    };
+    let dates = CurrentPeriod::of(&sub, &plan);
     Ok((sub, currency, dates))
 }
 
@@ -162,7 +146,7 @@ pub async fn current_usage(
 ) -> ApiResult<Json<Value>> {
     let org = auth.organization.id;
     let (sub, currency, dates) = load_scope(&st, org, &external_customer_id, &q.external_subscription_id).await?;
-    let b = dates.boundaries();
+    let b = dates;
     let from = b.from_date.and_hms_opt(0, 0, 0).unwrap();
     let to = Utc::now().naive_utc();
     let usages = compute_charges_usage(&st, org, &sub, currency, from, to).await?;
@@ -210,7 +194,7 @@ pub async fn projected_usage(
 ) -> ApiResult<Json<Value>> {
     let org = auth.organization.id;
     let (sub, currency, dates) = load_scope(&st, org, &external_customer_id, &q.external_subscription_id).await?;
-    let b = dates.boundaries();
+    let b = dates;
     let from = b.from_date.and_hms_opt(0, 0, 0).unwrap();
     let to_period = b.to_date.and_hms_opt(23, 59, 59).unwrap();
     let now = Utc::now().naive_utc();
@@ -324,11 +308,18 @@ fn now_date() -> NaiveDate {
     Utc::now().date_naive()
 }
 
-fn first_of_next_month(date: NaiveDate) -> NaiveDate {
-    if date.month() == 12 {
-        NaiveDate::from_ymd_opt(date.year() + 1, 1, 1).unwrap()
-    } else {
-        NaiveDate::from_ymd_opt(date.year(), date.month() + 1, 1).unwrap()
+/// The subscription's current usage period (any interval, either billing
+/// time), starting no earlier than the subscription.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CurrentPeriod {
+    pub from_date: NaiveDate,
+    pub to_date: NaiveDate,
+}
+
+impl CurrentPeriod {
+    pub(crate) fn of(sub: &Subscription, plan: &rago_core::models::Plan) -> Self {
+        let (from_date, to_date) = rago_jobs::scheduler::current_usage_period(sub, plan, now_date());
+        Self { from_date, to_date }
     }
 }
 
@@ -542,7 +533,7 @@ pub async fn render_allowance(
 
     // Current-period usage priced through the billing engine (same read path as
     // `current_usage`), summed to a single amount.
-    let b = dates.boundaries();
+    let b = dates;
     let from = b.from_date.and_hms_opt(0, 0, 0).unwrap();
     let now = Utc::now().naive_utc();
     let usages = compute_charges_usage(&st, org, &sub, currency, from, now).await?;

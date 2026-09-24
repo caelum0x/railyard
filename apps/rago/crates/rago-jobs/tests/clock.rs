@@ -568,7 +568,7 @@ async fn billing_cycle_emits_invoice_created_and_fee_created(pool: PgPool) {
     sqlx::query("INSERT INTO plans (id, organization_id, name, code, interval, amount_cents, amount_currency, trial_period, pay_in_advance, created_at, updated_at) VALUES ($1,$2,'Flat','flat',1,1000,'USD',0,false,now(),now())")
         .bind(plan).bind(o).execute(&pool).await.unwrap();
     let sub = Uuid::new_v4();
-    let started = now() - Duration::days(40);
+    let started = now() - Duration::days(70);
     sqlx::query("INSERT INTO subscriptions (id, organization_id, customer_id, plan_id, external_id, status, billing_time, subscription_at, started_at, created_at, updated_at) VALUES ($1,$2,$3,$4,'flat-sub',1,0,$5,$5,now(),now())")
         .bind(sub).bind(o).bind(c).bind(plan).bind(started).execute(&pool).await.unwrap();
 

@@ -14,7 +14,7 @@ use rust_decimal::Decimal;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::dates::MonthlyDates;
+use crate::proration::FeeDates;
 
 /// How to prorate the subscription fee.
 #[derive(Debug, Clone, Copy)]
@@ -33,7 +33,7 @@ pub enum Proration {
 /// Compute the precise subscription fee amount in cents.
 pub fn compute_precise_amount_cents(
     plan_amount_cents: i64,
-    dates: &MonthlyDates,
+    dates: &dyn FeeDates,
     proration: Proration,
 ) -> Decimal {
     match proration {
@@ -51,7 +51,7 @@ pub fn build_subscription_fee(
     subscription: &Subscription,
     invoice_id: Option<Uuid>,
     billing_entity_id: Uuid,
-    dates: &MonthlyDates,
+    dates: &dyn FeeDates,
     proration: Proration,
 ) -> Fee {
     let plan_amount_cents = plan.amount_cents.unwrap_or(0);

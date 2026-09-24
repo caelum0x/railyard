@@ -432,3 +432,201 @@ async fn cancel_at_period_end_in_advance_bills_closing_usage_not_next_fee(pool: 
     assert_eq!((from, to), (d(2026, 2, 1), d(2026, 2, 28)));
     assert_eq!(w.split(id).await, (0, 1_000));
 }
+
+// ---- partial periods: mid-period termination, first period, interval dates ----
+
+async fn end_mid_period(w: &World, sub: Uuid, at: chrono::NaiveDateTime) {
+    sqlx::query("UPDATE subscriptions SET ending_at = $2 WHERE id = $1")
+        .bind(sub)
+        .bind(at)
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+}
+
+async fn credit_notes_of(w: &World, invoice: Uuid) -> Vec<(i64, i64, i32)> {
+    sqlx::query_as::<_, (i64, i64, i32)>(
+        "SELECT n.total_amount_cents, COALESCE(SUM(i.amount_cents), 0)::bigint, n.reason \
+         FROM credit_notes n LEFT JOIN credit_note_items i ON i.credit_note_id = n.id \
+         WHERE n.invoice_id = $1 GROUP BY n.id, n.total_amount_cents, n.reason",
+    )
+    .bind(invoice)
+    .fetch_all(&w.db.pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "../rago-db/migrations")]
+async fn mid_period_termination_in_arrears_bills_a_prorated_final_invoice(pool: PgPool) {
+    let w = world(pool).await;
+    let plan = w.plan(PlanInterval::Monthly, 3_100, false).await;
+    let sub = w
+        .subscription(&plan, "sub-mid-arrears", BillingTime::Calendar, d(2026, 1, 1), SubscriptionStatus::Active, None)
+        .await;
+    w.event(&sub, d(2026, 3, 5), 40).await; // → 1_000, before the termination
+    w.event(&sub, d(2026, 3, 12), 40).await; // after it: never billed
+    end_mid_period(&w, sub.id, d(2026, 3, 10).and_hms_opt(15, 0, 0).unwrap()).await;
+
+    assert_eq!(rago_jobs::clock::subscriptions::terminate_ended_subscriptions(&w.db).await.unwrap(), 1);
+    let invoices = w.invoices_of(sub.id).await;
+    assert_eq!(invoices.len(), 1);
+    let (id, _, from, to) = invoices[0];
+    assert_eq!((from, to), (d(2026, 3, 1), d(2026, 3, 31)));
+    // 10 of 31 days of $31.00 + the usage through the termination.
+    assert_eq!(w.split(id).await, (1_000, 1_000));
+    let issuing: NaiveDate = sqlx::query_scalar("SELECT issuing_date FROM invoices WHERE id = $1")
+        .bind(id)
+        .fetch_one(&w.db.pool)
+        .await
+        .unwrap();
+    assert_eq!(issuing, d(2026, 3, 10));
+    assert_eq!(rago_jobs::clock::subscriptions::terminate_ended_subscriptions(&w.db).await.unwrap(), 0);
+    assert_eq!(w.invoices_of(sub.id).await.len(), 1);
+}
+
+#[sqlx::test(migrations = "../rago-db/migrations")]
+async fn mid_period_termination_of_a_quarterly_plan_uses_the_quarter_day_price(pool: PgPool) {
+    let w = world(pool).await;
+    let plan = w.plan(PlanInterval::Quarterly, 9_000, false).await;
+    let sub = w
+        .subscription(&plan, "sub-mid-q", BillingTime::Calendar, d(2025, 10, 1), SubscriptionStatus::Active, None)
+        .await;
+    end_mid_period(&w, sub.id, d(2026, 2, 14).and_hms_opt(12, 0, 0).unwrap()).await;
+    rago_jobs::clock::subscriptions::terminate_ended_subscriptions(&w.db).await.unwrap();
+    let invoices = w.invoices_of(sub.id).await;
+    assert_eq!(invoices.len(), 1);
+    let (id, _, from, to) = invoices[0];
+    assert_eq!((from, to), (d(2026, 1, 1), d(2026, 3, 31)));
+    // Jan 1 .. Feb 14 = 45 of 90 days.
+    assert_eq!(w.split(id).await, (4_500, 0));
+}
+
+#[sqlx::test(migrations = "../rago-db/migrations")]
+async fn mid_period_termination_in_advance_bills_usage_and_credits_unused_days(pool: PgPool) {
+    let w = world(pool).await;
+    let plan = w.plan(PlanInterval::Monthly, 3_100, true).await;
+    let sub = w
+        .subscription(&plan, "sub-mid-adv", BillingTime::Calendar, d(2026, 1, 1), SubscriptionStatus::Active, None)
+        .await;
+    // March's fee is billed upfront on Mar 1.
+    let r = run_billing_cycle(&w.db, &transport(), &no_charge(), d(2026, 3, 1), false).await.unwrap();
+    assert_eq!(r.billed_invoices.len(), 1);
+    let march = r.billed_invoices[0];
+    assert_eq!(w.split(march).await, (3_100, 0));
+
+    w.event(&sub, d(2026, 3, 5), 40).await; // → 1_000
+    w.event(&sub, d(2026, 3, 12), 40).await; // after the termination
+    end_mid_period(&w, sub.id, d(2026, 3, 10).and_hms_opt(15, 0, 0).unwrap()).await;
+    assert_eq!(rago_jobs::clock::subscriptions::terminate_ended_subscriptions(&w.db).await.unwrap(), 1);
+
+    // Final invoice: usage through the termination, no second fee.
+    let invoices = w.invoices_of(sub.id).await;
+    assert_eq!(invoices.len(), 2);
+    let final_invoice = invoices.iter().find(|(id, ..)| *id != march).unwrap();
+    assert_eq!(w.split(final_invoice.0).await, (0, 1_000));
+    // Credit note on the March invoice: 21 unused days of $31.00.
+    assert_eq!(credit_notes_of(&w, march).await, vec![(2_100, 2_100, 3)]);
+
+    // Re-running the final billing issues nothing more.
+    let sub = w.db.find_subscription(sub.id).await.unwrap();
+    let again = rago_jobs::termination::bill_mid_period_termination(
+        &w.db,
+        &transport(),
+        &sub,
+        &plan,
+        d(2026, 3, 10).and_hms_opt(15, 0, 0).unwrap(),
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(again.credit_note_id.is_none());
+    assert!(!again.invoice.unwrap().created);
+    assert_eq!(credit_notes_of(&w, march).await.len(), 1);
+}
+
+#[sqlx::test(migrations = "../rago-db/migrations")]
+async fn calendar_pay_in_advance_bills_its_prorated_first_period_on_start(pool: PgPool) {
+    use chrono::{Datelike, Duration};
+    let w = world(pool).await;
+    let today = Utc::now().date_naive();
+    let month_start = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap();
+    let next_month = (month_start + Duration::days(32)).with_day(1).unwrap();
+    let month_days = (next_month - month_start).num_days();
+    // $1.00 a day, so the prorated fee is the number of days left.
+    let plan = w.plan(PlanInterval::Monthly, month_days * 100, true).await;
+    let sub = w
+        .subscription(&plan, "sub-start", BillingTime::Calendar, today, SubscriptionStatus::Active, None)
+        .await;
+
+    let n = rago_jobs::clock::subscriptions::bill_starting_subscriptions(&w.db).await.unwrap();
+    assert_eq!(n, 1);
+    let invoices = w.invoices_of(sub.id).await;
+    assert_eq!(invoices.len(), 1);
+    let (id, _, from, to) = invoices[0];
+    assert_eq!((from, to), (month_start, next_month - Duration::days(1)));
+    let days_left = (next_month - today).num_days();
+    assert_eq!(w.split(id).await, (days_left * 100, 0));
+
+    // Idempotent, and the daily run on the start day does not bill it again.
+    assert_eq!(rago_jobs::clock::subscriptions::bill_starting_subscriptions(&w.db).await.unwrap(), 0);
+    run_billing_cycle(&w.db, &transport(), &no_charge(), today, false).await.unwrap();
+    assert_eq!(w.invoices_of(sub.id).await.len(), 1);
+
+    // The next boundary bills the following month in full.
+    let r = run_billing_cycle(&w.db, &transport(), &no_charge(), next_month, false).await.unwrap();
+    assert_eq!(r.billed_invoices.len(), 1);
+    assert_eq!(w.split(r.billed_invoices[0]).await, (month_days * 100, 0));
+}
+
+#[sqlx::test(migrations = "../rago-db/migrations")]
+async fn quarterly_charge_minimum_is_prorated_over_the_quarter(pool: PgPool) {
+    let w = world(pool).await;
+    let plan = w.plan(PlanInterval::Quarterly, 9_000, false).await;
+    sqlx::query("UPDATE charges SET min_amount_cents = 3000 WHERE plan_id = $1")
+        .bind(plan.id)
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+    // Started mid-quarter: Feb 15 .. Mar 31 = 45 of 90 days.
+    let sub = w
+        .subscription(&plan, "sub-min-q", BillingTime::Calendar, d(2026, 2, 15), SubscriptionStatus::Active, None)
+        .await;
+    w.event(&sub, d(2026, 3, 2), 20).await; // → 500 of usage
+    let r = run_billing_cycle(&w.db, &transport(), &no_charge(), d(2026, 4, 1), false).await.unwrap();
+    assert_eq!(r.billed_invoices.len(), 1);
+    // Prorated fee 4_500; usage 500 + true-up to the prorated minimum 1_500.
+    assert_eq!(w.split(r.billed_invoices[0]).await, (4_500, 1_500));
+}
+
+#[sqlx::test(migrations = "../rago-db/migrations")]
+async fn current_usage_period_follows_the_plan_interval(pool: PgPool) {
+    let w = world(pool).await;
+    let quarterly = w.plan(PlanInterval::Quarterly, 9_000, false).await;
+    let cal = w
+        .subscription(&quarterly, "cu-cal", BillingTime::Calendar, d(2025, 11, 20), SubscriptionStatus::Active, None)
+        .await;
+    assert_eq!(
+        rago_jobs::scheduler::current_usage_period(&cal, &quarterly, d(2026, 5, 10)),
+        (d(2026, 4, 1), d(2026, 6, 30))
+    );
+    // The first quarter starts on the subscription day.
+    assert_eq!(
+        rago_jobs::scheduler::current_usage_period(&cal, &quarterly, d(2025, 12, 1)),
+        (d(2025, 11, 20), d(2025, 12, 31))
+    );
+    let anniv = w
+        .subscription(&quarterly, "cu-anniv", BillingTime::Anniversary, d(2026, 1, 31), SubscriptionStatus::Active, None)
+        .await;
+    assert_eq!(
+        rago_jobs::scheduler::current_usage_period(&anniv, &quarterly, d(2026, 5, 10)),
+        (d(2026, 4, 30), d(2026, 7, 30))
+    );
+    let yearly = w.plan(PlanInterval::Yearly, 12_000, true).await;
+    let y = w
+        .subscription(&yearly, "cu-year", BillingTime::Calendar, d(2025, 3, 3), SubscriptionStatus::Active, None)
+        .await;
+    assert_eq!(
+        rago_jobs::scheduler::current_usage_period(&y, &yearly, d(2026, 9, 24)),
+        (d(2026, 1, 1), d(2026, 12, 31))
+    );
+}

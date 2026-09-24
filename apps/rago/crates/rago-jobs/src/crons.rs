@@ -18,6 +18,8 @@ pub struct CronReport {
     pub terminated: u64,
     pub expired_incomplete: u64,
     pub free_trials_ended: u64,
+    /// Pay-in-advance subscriptions billed their first period on starting.
+    pub first_periods_billed: u64,
 }
 
 /// Run the subscription-lifecycle crons once.
@@ -34,6 +36,7 @@ pub async fn run_subscription_crons(db: &Db) -> Result<CronReport, JobError> {
         terminated: crate::clock::subscriptions::terminate_ended_subscriptions(db).await?,
         expired_incomplete: crate::clock::subscriptions::expire_incomplete_subscriptions(db).await?,
         free_trials_ended: db.end_free_trials(now).await?,
+        first_periods_billed: crate::clock::subscriptions::bill_starting_subscriptions(db).await?,
     })
 }
 

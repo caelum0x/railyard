@@ -290,12 +290,19 @@ pub async fn terminate_ended_subscriptions(db: &Db) -> Result<u64, JobError> {
     Ok(terminated)
 }
 
-/// Bill the final period of a subscription whose `ending_at` falls on a
-/// billing boundary (00:00 UTC of a rollover day): the closing period in full
-/// for a pay-in-arrears plan, the closing period's usage for a pay-in-advance
-/// plan (its fee was collected upfront). Both are guarded per (subscription,
-/// period), so a billing run that already billed the period is not repeated.
-/// Mid-period endings are not billed here.
+/// Bill the final invoice of a subscription whose `ending_at` has arrived.
+///
+/// * Ending on a billing boundary (00:00 UTC of a rollover day, cancel at
+///   period end): the closing period in full for a pay-in-arrears plan, the
+///   closing period's usage for a pay-in-advance plan (its fee was collected
+///   upfront).
+/// * Ending mid-period: the prorated final invoice (fee for the days lived in
+///   arrears; usage through the termination; the unused days of a
+///   pay-in-advance fee credited back) — see [`crate::termination`].
+///
+/// Every invoice is guarded per (subscription, period) and the credit note by
+/// the fee's credited amount, so a billing run that already billed the period,
+/// or a retried tick, is not repeated.
 async fn bill_final_period<T: rago_integrations::HttpTransport>(
     db: &Db,
     transport: &T,
@@ -311,7 +318,11 @@ async fn bill_final_period<T: rago_integrations::HttpTransport>(
     let sub_at = sub.subscription_at.map(|t| t.date_naive()).unwrap_or(end_date);
     let at_boundary = end.time() == chrono::NaiveTime::MIN
         && rago_billing::dates::due_for_billing(interval, anniversary, sub_at, end_date);
-    if !at_boundary || sub.started_at.is_some_and(|t| t.date_naive() >= end_date) {
+    if !at_boundary {
+        crate::termination::bill_mid_period_termination(db, transport, &sub, &plan, end, true).await?;
+        return Ok(());
+    }
+    if sub.started_at.is_some_and(|t| t.date_naive() >= end_date) {
         return Ok(());
     }
     if plan.pay_in_advance {
@@ -320,6 +331,63 @@ async fn bill_final_period<T: rago_integrations::HttpTransport>(
         crate::scheduler::bill_and_collect(db, transport, &sub, &plan, interval, anniversary, end_date, true).await?;
     }
     Ok(())
+}
+
+/// `Subscriptions::CreateService` → `BillSubscriptionJob(invoicing_reason:
+/// subscription_starting)`: a pay-in-advance subscription without a free
+/// trial is billed its first period when it starts — in full for anniversary
+/// billing (the period starts that day), prorated from the start day to the
+/// period end for calendar billing started mid-period (which the daily run,
+/// billing only on rollover days, would otherwise never bill). A trial
+/// subscription is billed when its trial ends ([`free_trial_biller`]).
+///
+/// Runs every tick for subscriptions still in their first period whose
+/// period has no invoice yet; the per-period re-bill guard makes it
+/// idempotent with the daily run (both key the invoice by the same period).
+pub async fn bill_starting_subscriptions(db: &Db) -> Result<u64, JobError> {
+    let transport = rago_integrations::default_transport();
+    let today = today();
+    let mut billed = 0;
+    for sub in db.starting_pay_in_advance_subscriptions(Utc::now().naive_utc()).await? {
+        let plan = db.find_plan(sub.plan_id).await?;
+        let span = crate::scheduler::span_of(&sub, &plan, today);
+        if !span.in_first_period(today) {
+            continue;
+        }
+        let period = span.period_of(today);
+        let already = db
+            .existing_period_invoice(
+                sub.id,
+                period.from.and_hms_opt(0, 0, 0).unwrap_or_default(),
+                period.to.and_hms_opt(23, 59, 59).unwrap_or_default(),
+            )
+            .await?
+            .is_some();
+        if already || crate::scheduler::leaves_at_boundary(db, &sub, &plan, today).await? {
+            continue;
+        }
+        match crate::scheduler::bill_and_collect(
+            db,
+            &transport,
+            &sub,
+            &plan,
+            span.interval,
+            span.anniversary,
+            today,
+            true,
+        )
+        .await
+        {
+            Ok(outcome) if outcome.created => billed += 1,
+            Ok(_) => {}
+            Err(e) => tracing::error!(
+                subscription_id = %sub.id,
+                error = %e,
+                "first-period invoice failed; retrying next tick"
+            ),
+        }
+    }
+    Ok(billed)
 }
 
 /// `Clock::ExpireIncompleteSubscriptionsJob` — incomplete subs whose

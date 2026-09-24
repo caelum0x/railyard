@@ -9,7 +9,8 @@
 
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Utc};
 use rago_billing::aggregation::AggregationPeriod;
-use rago_billing::dates::{billing_boundaries, due_for_billing, period_containing, Boundaries, Interval, MonthlyDates};
+use rago_billing::dates::{due_for_billing, Interval};
+use rago_billing::proration::{InvoicePeriod, SubscriptionSpan};
 use rago_billing::generate::{generate_subscription_invoice_with_progressive, ChargeInput};
 use rago_billing::progressive_billing::{ProgressiveBillingInvoice, ProgressiveFee};
 use rago_billing::subscription_fee::Proration;
@@ -131,19 +132,22 @@ pub struct BillOutcome {
 /// `invoice.created` + `fee.created` webhooks (only when the invoice is new),
 /// then collect payment for it. Shared by the in-process cycle and the durable
 /// `bill_subscription` job so both do the full Lago pipeline.
+///
+/// The period dates derive from `plan` and `subscription` (interval, billing
+/// time, start, trial); `_interval` / `_anniversary` are kept for callers.
 #[allow(clippy::too_many_arguments)]
 pub async fn bill_and_collect<T: HttpTransport>(
     db: &Db,
     transport: &T,
     subscription: &Subscription,
     plan: &rago_core::models::Plan,
-    interval: Interval,
-    anniversary: bool,
+    _interval: Interval,
+    _anniversary: bool,
     billing_date: NaiveDate,
     charge: bool,
 ) -> Result<BillOutcome, JobError> {
     let (invoice, fees, created) =
-        bill_one(db, subscription, plan, interval, anniversary, billing_date).await?;
+        bill_one(db, subscription, plan, billing_date).await?;
     announce_and_collect(db, transport, subscription, invoice, fees, created, charge).await
 }
 
@@ -159,18 +163,31 @@ pub async fn bill_closing_charges_and_collect<T: HttpTransport>(
     boundary: NaiveDate,
     charge: bool,
 ) -> Result<Option<BillOutcome>, JobError> {
-    let interval = plan_interval(&plan.interval);
-    let anniversary = matches!(subscription.billing_time, rago_core::enums::BillingTime::Anniversary);
-    let Some((invoice, fees, created)) = bill_scope(
-        db,
-        subscription,
-        plan,
-        interval,
-        anniversary,
-        boundary,
-        InvoiceScope::ClosingCharges,
-    )
-    .await?
+    let Some((invoice, fees, created)) =
+        bill_scope(db, subscription, plan, boundary, InvoiceScope::ClosingCharges).await?
+    else {
+        return Ok(None);
+    };
+    announce_and_collect(db, transport, subscription, invoice, fees, created, charge)
+        .await
+        .map(Some)
+}
+
+/// Bill the final invoice of `subscription` terminated at `end`, mid-period
+/// (see [`crate::termination`]), queue the webhooks and collect. `None` when a
+/// fee-less final invoice (pay-in-advance fee collected upfront) has no usage
+/// to bill. Idempotent per (subscription, period).
+pub(crate) async fn bill_terminating_and_collect<T: HttpTransport>(
+    db: &Db,
+    transport: &T,
+    subscription: &Subscription,
+    plan: &rago_core::models::Plan,
+    end: NaiveDateTime,
+    fee_paid_upfront: bool,
+    charge: bool,
+) -> Result<Option<BillOutcome>, JobError> {
+    let scope = InvoiceScope::Terminating { end, fee_paid_upfront };
+    let Some((invoice, fees, created)) = bill_scope(db, subscription, plan, end.date(), scope).await?
     else {
         return Ok(None);
     };
@@ -283,9 +300,7 @@ pub async fn bill_subscription_external(
         .await?
         .ok_or_else(|| JobError::Payment("subscription_not_found".into()))?;
     let plan = db.find_plan(sub.plan_id).await?;
-    let interval = plan_interval(&plan.interval);
-    let anniversary = matches!(sub.billing_time, rago_core::enums::BillingTime::Anniversary);
-    let (invoice, fees, _) = bill_one(db, &sub, &plan, interval, anniversary, billing_date).await?;
+    let (invoice, fees, _) = bill_one(db, &sub, &plan, billing_date).await?;
     Ok((invoice, fees))
 }
 
@@ -308,19 +323,29 @@ pub async fn bill_and_collect_external<T: HttpTransport>(
     bill_and_collect(db, transport, &sub, &plan, interval, anniversary, billing_date, true).await
 }
 
-/// Billing-period boundaries of the run on `billing_date` for any interval and
-/// billing time: `from_date..=to_date` is the period the subscription fee
-/// covers (the closing period in arrears, the one starting on `billing_date`
-/// in advance) and `charges_from_date..=charges_to_date` the usage period
-/// (always the period that just closed).
-pub(crate) fn period_bounds(
+/// The billing shape and lifetime of `subscription` on `plan`: interval,
+/// billing time, anniversary anchor, start day and (free trial) first
+/// fee-owed day. `fallback` stands in for a missing `subscription_at`.
+pub fn span_of(
+    subscription: &Subscription,
     plan: &rago_core::models::Plan,
-    interval: Interval,
-    anniversary: bool,
-    sub_at: NaiveDate,
-    billing_date: NaiveDate,
-) -> Boundaries {
-    billing_boundaries(interval, anniversary, sub_at, billing_date, plan.pay_in_advance)
+    fallback: NaiveDate,
+) -> SubscriptionSpan {
+    let started = subscription.started_at;
+    let trial_end = match (started, plan.trial_period) {
+        (Some(s), Some(days)) if days > 0.0 => {
+            Some((s + chrono::Duration::seconds((days * 86_400.0) as i64)).date_naive())
+        }
+        _ => None,
+    };
+    SubscriptionSpan {
+        interval: plan_interval(&plan.interval),
+        anniversary: matches!(subscription.billing_time, rago_core::enums::BillingTime::Anniversary),
+        pay_in_advance: plan.pay_in_advance,
+        subscription_at: subscription.subscription_at.map(|t| t.date_naive()).unwrap_or(fallback),
+        started_on: started.map(|t| t.date_naive()),
+        fee_starts_on: trial_end,
+    }
 }
 
 /// The billing period `(from, to)` containing `date` — the window in which
@@ -331,27 +356,26 @@ pub fn usage_period(
     plan: &rago_core::models::Plan,
     date: NaiveDate,
 ) -> (NaiveDate, NaiveDate) {
-    let anniversary = matches!(subscription.billing_time, rago_core::enums::BillingTime::Anniversary);
-    let sub_at = subscription.subscription_at.map(|t| t.date_naive()).unwrap_or(date);
-    period_containing(plan_interval(&plan.interval), anniversary, sub_at, date)
+    let period = span_of(subscription, plan, date).period_of(date);
+    (period.from, period.to)
 }
 
-/// The usage window actually billable for `subscription` inside the charges
-/// period: never before the subscription started (a downgraded-into
-/// subscription shares its `external_id` with the outgoing one, so its first
-/// run must not re-bill the outgoing plan's events). `None` when the
-/// subscription did not exist during the charges period.
-pub(crate) fn billable_charges_window(
+/// The usage period the current-usage views (REST `current_usage` /
+/// `projected_usage`, GraphQL `customerUsage`, the portal, usage alerts)
+/// report on `date`: the billing period containing `date` for the plan's
+/// interval and billing time, starting no earlier than the subscription.
+pub fn current_usage_period(
     subscription: &Subscription,
-    charges_from: NaiveDate,
-    charges_to: NaiveDate,
-) -> Option<(NaiveDate, NaiveDate)> {
-    let started = subscription.started_at.map(|t| t.date_naive());
-    let from = match started {
-        Some(s) if s > charges_from => s,
-        _ => charges_from,
+    plan: &rago_core::models::Plan,
+    date: NaiveDate,
+) -> (NaiveDate, NaiveDate) {
+    let span = span_of(subscription, plan, date);
+    let period = span.period_of(date);
+    let from = match span.started_on {
+        Some(start) if start > period.from && start <= date => start,
+        _ => period.from,
     };
-    (from <= charges_to).then_some((from, charges_to))
+    (from, period.to)
 }
 
 /// Whether a pay-in-advance subscription stops at (or before) `billing_date`
@@ -473,12 +497,17 @@ async fn uncredited_progressive_invoices(
 /// What a billing run invoices for a subscription.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InvoiceScope {
-    /// The periodic invoice: subscription fee + the closed period's usage.
+    /// The periodic invoice: subscription fee (prorated for a first period
+    /// started mid-way or a trial ending mid-way) + the closed period's usage.
     Periodic,
     /// Only the closed period's usage (a pay-in-advance subscription leaving
     /// through a downgrade or a cancellation at period end: its fee for that
     /// period was collected upfront).
     ClosingCharges,
+    /// The final invoice of a subscription terminated mid-period at `end`:
+    /// usage through the termination and, unless the fee of the period was
+    /// collected upfront (`fee_paid_upfront`), the fee for the days lived.
+    Terminating { end: NaiveDateTime, fee_paid_upfront: bool },
 }
 
 /// Bill a single subscription for the period ending at `billing_date`.
@@ -486,74 +515,106 @@ async fn bill_one(
     db: &Db,
     subscription: &Subscription,
     plan: &rago_core::models::Plan,
-    interval: Interval,
-    anniversary: bool,
     billing_date: NaiveDate,
 ) -> Result<(Invoice, Vec<Fee>, bool), JobError> {
-    bill_scope(db, subscription, plan, interval, anniversary, billing_date, InvoiceScope::Periodic)
+    bill_scope(db, subscription, plan, billing_date, InvoiceScope::Periodic)
         .await?
         .ok_or_else(|| JobError::Payment("periodic invoice not produced".into()))
 }
 
-/// Bill `subscription` at `billing_date` for `scope`. `None` only for
-/// [`InvoiceScope::ClosingCharges`] when there is no usage to bill.
+/// The dates of the invoice `scope` bills at `billing_date`.
+fn invoice_period(
+    subscription: &Subscription,
+    plan: &rago_core::models::Plan,
+    billing_date: NaiveDate,
+    scope: InvoiceScope,
+) -> InvoicePeriod {
+    let span = span_of(subscription, plan, billing_date);
+    match scope {
+        InvoiceScope::Periodic | InvoiceScope::ClosingCharges => span.periodic(billing_date),
+        InvoiceScope::Terminating { end, fee_paid_upfront } => SubscriptionSpan {
+            // A period whose fee was never collected upfront is billed for the
+            // days lived, exactly like a pay-in-arrears one.
+            pay_in_advance: span.pay_in_advance && fee_paid_upfront,
+            ..span
+        }
+        .terminating(end.date()),
+    }
+}
+
+/// Bill `subscription` at `billing_date` for `scope`. `None` only for the
+/// fee-less scopes (closing usage, pay-in-advance termination) when there is
+/// nothing to bill.
 async fn bill_scope(
     db: &Db,
     subscription: &Subscription,
     plan: &rago_core::models::Plan,
-    interval: Interval,
-    anniversary: bool,
     billing_date: NaiveDate,
     scope: InvoiceScope,
 ) -> Result<Option<(Invoice, Vec<Fee>, bool)>, JobError> {
-    let closing = scope == InvoiceScope::ClosingCharges;
     let currency = plan.currency();
-    let sub_at = subscription
-        .subscription_at
-        .map(|t| t.date_naive())
-        .unwrap_or(billing_date);
-
-    let bounds = period_bounds(plan, interval, anniversary, sub_at, billing_date);
-    // The re-bill guard key: the subscription-fee period of a periodic
-    // invoice, the usage period of a closing-usage invoice.
-    let (key_from, key_to) = if closing {
-        (bounds.charges_from_date, bounds.charges_to_date)
-    } else {
-        (bounds.from_date, bounds.to_date)
+    let period = invoice_period(subscription, plan, billing_date, scope);
+    let proration = match scope {
+        InvoiceScope::ClosingCharges => Proration::Zero,
+        InvoiceScope::Periodic | InvoiceScope::Terminating { .. } => period.fee_proration(),
     };
-    let from = key_from.and_hms_opt(0, 0, 0).unwrap_or_default();
-    let to = key_to.and_hms_opt(23, 59, 59).unwrap_or_default();
+    // Without a subscription fee (collected upfront, or a trial covering the
+    // days billed) the invoice is only worth issuing for usage.
+    let fee_less = matches!(proration, Proration::Zero);
+    let optional = match scope {
+        InvoiceScope::Periodic => false,
+        InvoiceScope::ClosingCharges => true,
+        InvoiceScope::Terminating { .. } => fee_less,
+    };
+    // The re-bill guard key: the subscription-fee period of a periodic or a
+    // fee-bearing final invoice, the usage period of a usage-only one. Both
+    // are whole periods, so a retry always finds the same key.
+    let (key, recurring_guard) = match scope {
+        InvoiceScope::Periodic => (period.fee_period, true),
+        InvoiceScope::ClosingCharges => (period.charges_period, false),
+        InvoiceScope::Terminating { .. } => (period.fee_period, !fee_less),
+    };
+    let from = key.from.and_hms_opt(0, 0, 0).unwrap_or_default();
+    let to = key.to.and_hms_opt(23, 59, 59).unwrap_or_default();
 
-    // Usage charges cover the period that closed (for pay-in-advance plans that
-    // is the period before the fee period), from the subscription's start.
-    let (loaded, progressive_row_ids, progressive) = match billable_charges_window(
-        subscription,
-        bounds.charges_from_date,
-        bounds.charges_to_date,
-    ) {
-        Some((charges_from, charges_to)) => {
-            let period_from = bounds.charges_from_date.and_hms_opt(0, 0, 0).unwrap_or_default();
-            let events_from = charges_from.and_hms_opt(0, 0, 0).unwrap_or_default();
-            let charges_to = charges_to.and_hms_opt(23, 59, 59).unwrap_or_default();
-            // Aggregated over the billable window (Lago's `charges_from_datetime`
-            // is the start date for a subscription that began mid-period).
-            let loaded = load_charges(db, subscription, plan, events_from, charges_to, charges_to).await?;
-            // Usage already billed mid-period by progressive invoices is credited back.
-            let (row_ids, progressive) =
-                uncredited_progressive_invoices(db, subscription.id, period_from, charges_to).await?;
-            (loaded, row_ids, progressive)
-        }
-        None => (Vec::new(), Vec::new(), Vec::new()),
+    // Usage charges: the billable window of the charges period, never before
+    // the subscription started (a downgraded-into subscription shares its
+    // `external_id` with the outgoing one, so its first run must not re-bill
+    // the outgoing plan's events) and never after its termination.
+    let (loaded, progressive_row_ids, progressive) = if period.charges_window.is_empty() {
+        (Vec::new(), Vec::new(), Vec::new())
+    } else {
+        let period_from = period.charges_period.from.and_hms_opt(0, 0, 0).unwrap_or_default();
+        let events_from = period.charges_window.from.and_hms_opt(0, 0, 0).unwrap_or_default();
+        let day_end = period.charges_window.to.and_hms_opt(23, 59, 59).unwrap_or_default();
+        let charges_to = match scope {
+            InvoiceScope::Terminating { end, .. } => end.min(day_end),
+            _ => day_end,
+        };
+        // Aggregated over the billable window (Lago's `charges_from_datetime`
+        // is the start date for a subscription that began mid-period, its
+        // `charges_to_datetime` the termination time).
+        let loaded = load_charges(db, subscription, plan, events_from, charges_to, charges_to).await?;
+        // Usage already billed mid-period by progressive invoices is credited back.
+        let (row_ids, progressive) =
+            uncredited_progressive_invoices(db, subscription.id, period_from, charges_to).await?;
+        (loaded, row_ids, progressive)
     };
     let charge_inputs: Vec<ChargeInput> = loaded
         .iter()
         .map(|(m, c, e, p)| ChargeInput { metric: m, charge: c, events: e, period: Some(*p) })
         .collect();
+    if optional && charge_inputs.is_empty() && progressive.is_empty() {
+        return Ok(None);
+    }
 
     let taxes = db.organization_taxes(subscription.organization_id).await?;
     // Issued on the billing day: the closing day in arrears, the first day of
-    // the paid-ahead period in advance.
-    let issuing_date = key_to.min(billing_date);
+    // the paid-ahead period in advance, the termination day for a final invoice.
+    let issuing_date = match scope {
+        InvoiceScope::Terminating { end, .. } => end.date(),
+        _ => key.to.min(billing_date),
+    };
     let mut invoice = blank_invoice(subscription, &currency, issuing_date);
     // A draft grace period (customer override, else organization default)
     // keeps the invoice as an unnumbered draft until the window ends.
@@ -564,28 +625,35 @@ async fn bill_scope(
     {
         invoice.status = InvoiceStatus::Draft;
     }
-    if closing && charge_inputs.is_empty() {
-        return Ok(None);
-    }
     let (mut fees, progressive_results) = generate_subscription_invoice_with_progressive(
         &mut invoice,
         plan,
         subscription,
-        &monthly_for_single_day(sub_at, billing_date, anniversary, plan.pay_in_advance),
-        if closing { Proration::Zero } else { Proration::Full },
+        &period,
+        proration,
         &charge_inputs,
         &taxes,
         &[],
         &progressive,
     )?;
-    if closing {
-        // The fee for this period was collected in advance: no subscription
-        // line (its amount is zero, so the totals are unchanged), and nothing
-        // to issue when the closing period had no billable usage.
+    if fee_less {
+        // No subscription line (its amount is zero, so the totals are unchanged).
         fees.retain(|f| !matches!(f.fee_type, Some(rago_core::enums::FeeType::Subscription)));
-        if invoice.fees_amount_cents <= 0 && progressive.is_empty() {
-            return Ok(None);
-        }
+    }
+    if optional && invoice.fees_amount_cents <= 0 && progressive.is_empty() {
+        return Ok(None);
+    }
+    if let Some(fee) = fees
+        .iter_mut()
+        .find(|f| matches!(f.fee_type, Some(rago_core::enums::FeeType::Subscription)))
+    {
+        // `Fees::SubscriptionService` records the billed window on the fee.
+        fee.properties = json!({
+            "from_datetime": period.fee_window.from.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc().to_rfc3339(),
+            "to_datetime": period.fee_window.to.and_hms_opt(23, 59, 59).unwrap_or_default().and_utc().to_rfc3339(),
+            "period_days": period.fee_period.days(),
+            "billed_days": period.fee_window.days(),
+        });
     }
 
     // Apply prepaid wallet credit (after tax) before persisting, so the invoice
@@ -599,14 +667,14 @@ async fn bill_scope(
         updated_wallets: &settlement.updated_wallets,
     };
 
-    // Re-bill guard: at most one recurring invoice per (subscription, period).
+    // Re-bill guard: at most one invoice per (subscription, period, kind).
     // A re-run for the same subscription+period returns the existing invoice
     // instead of creating a duplicate (which the payment path would double-charge).
-    let billed = if closing {
-        db.insert_closing_charges_invoice_guarded(&mut invoice, &fees, &prepaid, subscription.id, from, to)
+    let billed = if recurring_guard {
+        db.insert_subscription_invoice_with_prepaid_guarded(&mut invoice, &fees, &prepaid, subscription.id, from, to)
             .await?
     } else {
-        db.insert_subscription_invoice_with_prepaid_guarded(&mut invoice, &fees, &prepaid, subscription.id, from, to)
+        db.insert_closing_charges_invoice_guarded(&mut invoice, &fees, &prepaid, subscription.id, from, to)
             .await?
     };
     match billed {
@@ -625,6 +693,7 @@ async fn bill_scope(
         }
     }
 }
+
 
 fn plan_interval(interval: &Option<PlanInterval>) -> Interval {
     match interval {
@@ -654,24 +723,6 @@ pub fn started_on_or_after(
 /// Public alias for the billing `Interval` of a plan (used by the queue).
 pub fn interval_of(interval: &Option<PlanInterval>) -> Interval {
     plan_interval(interval)
-}
-
-/// The subscription fee needs a `MonthlyDates` for single-day-price proration;
-/// for non-monthly plans this is only used when prorating (not here, where we
-/// bill the full period), so a monthly view suffices.
-fn monthly_for_single_day(
-    sub_at: NaiveDate,
-    billing_at: NaiveDate,
-    anniversary: bool,
-    pay_in_advance: bool,
-) -> MonthlyDates {
-    MonthlyDates {
-        subscription_at: sub_at,
-        billing_at,
-        anniversary,
-        pay_in_advance,
-        current_usage: false,
-    }
 }
 
 pub(crate) fn fee_webhook_object(fee: &Fee, invoice: &Invoice) -> serde_json::Value {

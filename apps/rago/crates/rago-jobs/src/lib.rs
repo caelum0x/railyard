@@ -41,6 +41,7 @@ pub mod receipts;
 pub mod refunds;
 pub mod scheduler;
 pub mod sso;
+pub mod termination;
 pub mod vies;
 pub mod webhook_delivery;
 pub mod wallet_credits;

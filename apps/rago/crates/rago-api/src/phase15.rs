@@ -328,25 +328,12 @@ pub(crate) async fn current_usage_amount(
     org: Uuid,
     sub: &rago_core::models::Subscription,
 ) -> ApiResult<i64> {
-    use chrono::{Datelike, NaiveDate, Utc};
-    use rago_billing::dates::MonthlyDates;
+    use chrono::Utc;
     let plan = st.db.find_plan(sub.plan_id).await?;
     let currency = plan.currency();
     let charges = st.db.charges_for_plan(plan.id).await?;
-    let today = Utc::now().date_naive();
-    let billing_at = if today.month() == 12 {
-        NaiveDate::from_ymd_opt(today.year() + 1, 1, 1).unwrap()
-    } else {
-        NaiveDate::from_ymd_opt(today.year(), today.month() + 1, 1).unwrap()
-    };
-    let dates = MonthlyDates {
-        subscription_at: sub.subscription_at.map(|t| t.date_naive()).unwrap_or(today),
-        billing_at,
-        anniversary: matches!(sub.billing_time, rago_core::enums::BillingTime::Anniversary),
-        pay_in_advance: plan.pay_in_advance,
-        current_usage: false,
-    };
-    let from = dates.boundaries().from_date.and_hms_opt(0, 0, 0).unwrap();
+    let period = crate::usage::CurrentPeriod::of(sub, &plan);
+    let from = period.from_date.and_hms_opt(0, 0, 0).unwrap_or_default();
     let to = Utc::now().naive_utc();
     let mut amount = 0i64;
     for charge in &charges {

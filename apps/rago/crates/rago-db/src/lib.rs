@@ -37,6 +37,7 @@ pub mod portal;
 pub mod progressive;
 pub mod provider_checkouts;
 pub mod repo;
+pub mod termination;
 pub mod receipts;
 pub mod refunds;
 pub mod rest_extras;

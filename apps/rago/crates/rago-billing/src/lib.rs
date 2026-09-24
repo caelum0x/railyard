@@ -36,6 +36,7 @@ pub mod invoices;
 mod json;
 pub mod prepaid;
 pub mod progressive_billing;
+pub mod proration;
 pub mod subscription_fee;
 pub mod subscriptions;
 pub mod trials;

@@ -6,9 +6,7 @@ use axum::extract::{Path, Query, State};
 use axum::Json;
 use chrono::Utc;
 use rago_billing::aggregation::AggregationPeriod;
-use rago_billing::dates::MonthlyDates;
 use rago_billing::generate::{generate_subscription_invoice, ChargeInput};
-use rago_billing::subscription_fee::Proration;
 use rago_billing::wallets::{build_transaction, increase_balance, WalletCredit};
 use rago_core::enums::*;
 use rago_core::models::*;
@@ -412,14 +410,35 @@ pub(crate) async fn terminate_subscription_now(
     // A downgrade scheduled to replace this subscription goes with it.
     crate::plan_change::cancel(st, organization_id, &sub).await?;
     let was_pending = matches!(sub.status, SubscriptionStatus::Pending);
+    let terminated_at = now();
+    if matches!(sub.status, SubscriptionStatus::Active) {
+        // `BillSubscriptionJob(subscription_terminating)`: the prorated final
+        // invoice (and the unused-days credit note of a pay-in-advance fee)
+        // is issued before the subscription stops. Idempotent, so a retry
+        // after a failure never bills twice.
+        let transport = rago_integrations::default_transport();
+        if let Err(e) = rago_jobs::termination::bill_mid_period_termination(
+            &st.db,
+            &transport,
+            &sub,
+            &plan,
+            terminated_at.naive_utc(),
+            true,
+        )
+        .await
+        {
+            tracing::error!(subscription_id = %sub.id, error = %e, "final invoice on termination failed");
+            return Err(ApiError::Internal("final_invoice_failed".into()));
+        }
+    }
     if was_pending {
         sub.status = SubscriptionStatus::Canceled;
     } else {
         sub.status = SubscriptionStatus::Terminated;
-        sub.terminated_at = Some(now());
+        sub.terminated_at = Some(terminated_at);
     }
-    sub.canceled_at = Some(now());
-    sub.updated_at = now();
+    sub.canceled_at = Some(terminated_at);
+    sub.updated_at = terminated_at;
     st.db.update_subscription(&sub).await?;
 
     let ext_customer = external_customer_id_for(st, sub.customer_id).await?;
@@ -1015,21 +1034,6 @@ fn coupon_frequency_from_str(s: String) -> Option<CouponFrequency> {
     })
 }
 
-// Small helper: next month (year, month) for building the billing_at anchor.
-trait NextMonth {
-    fn year_next_month(&self) -> (i32, u32);
-}
-impl NextMonth for chrono::NaiveDate {
-    fn year_next_month(&self) -> (i32, u32) {
-        use chrono::Datelike;
-        if self.month() == 12 {
-            (self.year() + 1, 1)
-        } else {
-            (self.year(), self.month() + 1)
-        }
-    }
-}
-
 // ---- refunds ---------------------------------------------------------------
 //
 // `POST /invoices/:id/refund` lives in [`crate::refunds`]: it refunds the
@@ -1308,19 +1312,12 @@ pub(crate) async fn compute_subscription_invoice(
     let currency = plan.currency();
     let charges = st.db.charges_for_plan(plan.id).await?;
 
-    // Current calendar-month billing period.
-    let sub_at = sub.subscription_at.unwrap_or_else(now).date_naive();
+    // The in-progress billing period for the plan's interval and billing
+    // time, prorated from the subscription start (or trial end).
     let today = now().date_naive();
-    let dates = MonthlyDates {
-        subscription_at: sub_at,
-        billing_at: chrono::NaiveDate::from_ymd_opt(today.year_next_month().0, today.year_next_month().1, 1).unwrap(),
-        anniversary: matches!(sub.billing_time, BillingTime::Anniversary),
-        pay_in_advance: plan.pay_in_advance,
-        current_usage: false,
-    };
-    let b = dates.boundaries();
-    let from = b.from_date.and_hms_opt(0, 0, 0).unwrap();
-    let to = b.to_date.and_hms_opt(23, 59, 59).unwrap();
+    let dates = rago_jobs::scheduler::span_of(sub, &plan, today).current(today);
+    let from = dates.charges_window.from.and_hms_opt(0, 0, 0).unwrap_or_default();
+    let to = dates.charges_window.to.and_hms_opt(23, 59, 59).unwrap_or_default();
 
     // Load metrics + events per charge.
     let mut loaded: Vec<(BillableMetric, Charge, Vec<Event>, AggregationPeriod)> = Vec::new();
@@ -1355,7 +1352,7 @@ pub(crate) async fn compute_subscription_invoice(
         &plan,
         sub,
         &dates,
-        Proration::Full,
+        dates.fee_proration(),
         &charge_inputs,
         &taxes,
         &[],

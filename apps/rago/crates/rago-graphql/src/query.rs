@@ -17,14 +17,6 @@ fn limit(per_page: Option<i64>) -> i64 {
     per_page.filter(|p| *p > 0).unwrap_or(PER_PAGE)
 }
 
-fn first_of_next_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
-    use chrono::Datelike;
-    if date.month() == 12 {
-        chrono::NaiveDate::from_ymd_opt(date.year() + 1, 1, 1).unwrap()
-    } else {
-        chrono::NaiveDate::from_ymd_opt(date.year(), date.month() + 1, 1).unwrap()
-    }
-}
 
 #[derive(Default)]
 pub struct Query;
@@ -278,17 +270,10 @@ impl Query {
         let currency = plan.currency();
         let charges = db(ctx).charges_for_plan(plan.id).await?;
 
-        // Current calendar-month period.
+        // The current billing period for the plan's interval and billing time.
         let today = chrono::Utc::now().date_naive();
-        let billing_at = first_of_next_month(today);
-        let dates = rago_billing::dates::MonthlyDates {
-            subscription_at: sub.subscription_at.map(|t| t.date_naive()).unwrap_or(today),
-            billing_at,
-            anniversary: matches!(sub.billing_time, rago_core::enums::BillingTime::Anniversary),
-            pay_in_advance: plan.pay_in_advance,
-            current_usage: false,
-        };
-        let from = dates.boundaries().from_date.and_hms_opt(0, 0, 0).unwrap();
+        let (period_from, _) = rago_jobs::scheduler::current_usage_period(&sub, &plan, today);
+        let from = period_from.and_hms_opt(0, 0, 0).unwrap_or_default();
         let to = chrono::Utc::now().naive_utc();
 
         let mut amount_cents = 0i64;

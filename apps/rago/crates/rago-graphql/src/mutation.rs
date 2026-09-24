@@ -4,11 +4,9 @@
 //! authenticated organization.
 
 use async_graphql::{Context, InputObject, Json, Object, Result};
-use chrono::{Datelike, Utc};
+use chrono::Utc;
 use rago_billing::aggregation::AggregationPeriod;
-use rago_billing::dates::MonthlyDates;
 use rago_billing::generate::{generate_subscription_invoice, ChargeInput};
-use rago_billing::subscription_fee::Proration;
 use rago_billing::wallets::{build_transaction, increase_balance, WalletCredit};
 use rago_core::enums::*;
 use rago_core::models as m;
@@ -382,14 +380,33 @@ impl Mutation {
         // A subscription that never started is canceled; an active one is
         // terminated (`Subscriptions::TerminateService`).
         let was_pending = matches!(sub.status, SubscriptionStatus::Pending);
+        let terminated_at = now();
+        if matches!(sub.status, SubscriptionStatus::Active) {
+            // The prorated final invoice (and the unused-days credit note of a
+            // pay-in-advance fee) is issued before the subscription stops.
+            let transport = rago_integrations::default_transport();
+            rago_jobs::termination::bill_mid_period_termination(
+                db(ctx),
+                &transport,
+                &sub,
+                &plan,
+                terminated_at.naive_utc(),
+                true,
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!(subscription_id = %sub.id, error = %e, "final invoice on termination failed");
+                async_graphql::Error::new("final_invoice_failed")
+            })?;
+        }
         if was_pending {
             sub.status = SubscriptionStatus::Canceled;
         } else {
             sub.status = SubscriptionStatus::Terminated;
-            sub.terminated_at = Some(now());
+            sub.terminated_at = Some(terminated_at);
         }
-        sub.canceled_at = Some(now());
-        sub.updated_at = now();
+        sub.canceled_at = Some(terminated_at);
+        sub.updated_at = terminated_at;
         db(ctx).update_subscription(&sub).await?;
         let ext = db(ctx).customer_external_id(sub.customer_id).await?.unwrap_or_default();
         let kind = if was_pending { WebhookKind::SubscriptionCanceled } else { WebhookKind::SubscriptionTerminated };
@@ -600,22 +617,12 @@ impl Mutation {
         let currency = plan.currency();
         let charges = db(ctx).charges_for_plan(plan.id).await?;
 
+        // The in-progress billing period for the plan's interval and billing
+        // time, prorated from the subscription start (or trial end).
         let today = now().date_naive();
-        let billing_at = if today.month() == 12 {
-            chrono::NaiveDate::from_ymd_opt(today.year() + 1, 1, 1).unwrap()
-        } else {
-            chrono::NaiveDate::from_ymd_opt(today.year(), today.month() + 1, 1).unwrap()
-        };
-        let dates = MonthlyDates {
-            subscription_at: sub.subscription_at.map(|t| t.date_naive()).unwrap_or(today),
-            billing_at,
-            anniversary: matches!(sub.billing_time, BillingTime::Anniversary),
-            pay_in_advance: plan.pay_in_advance,
-            current_usage: false,
-        };
-        let b = dates.boundaries();
-        let from = b.from_date.and_hms_opt(0, 0, 0).unwrap();
-        let to = b.to_date.and_hms_opt(23, 59, 59).unwrap();
+        let dates = rago_jobs::scheduler::span_of(&sub, &plan, today).current(today);
+        let from = dates.charges_window.from.and_hms_opt(0, 0, 0).unwrap_or_default();
+        let to = dates.charges_window.to.and_hms_opt(23, 59, 59).unwrap_or_default();
 
         let mut loaded: Vec<(m::BillableMetric, m::Charge, Vec<m::Event>, AggregationPeriod)> =
             Vec::new();
@@ -647,7 +654,7 @@ impl Mutation {
             &plan,
             &sub,
             &dates,
-            Proration::Full,
+            dates.fee_proration(),
             &charge_inputs,
             &taxes,
             &[],

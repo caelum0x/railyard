@@ -11,7 +11,7 @@ use rago_core::money::Currency;
 use crate::aggregation::AggregationPeriod;
 use crate::charge_to_fee_in_period;
 use crate::commitments::charge_true_up;
-use crate::dates::MonthlyDates;
+use crate::proration::FeeDates;
 use crate::error::Result;
 use crate::invoices::{assemble_invoice, CouponApplication};
 use crate::progressive_billing::{
@@ -40,7 +40,7 @@ pub fn generate_subscription_invoice(
     invoice: &mut Invoice,
     plan: &Plan,
     subscription: &Subscription,
-    dates: &MonthlyDates,
+    dates: &dyn FeeDates,
     proration: Proration,
     charges: &[ChargeInput],
     taxes: &[Tax],
@@ -71,7 +71,7 @@ pub fn generate_subscription_invoice_with_progressive(
     invoice: &mut Invoice,
     plan: &Plan,
     subscription: &Subscription,
-    dates: &MonthlyDates,
+    dates: &dyn FeeDates,
     proration: Proration,
     charges: &[ChargeInput],
     taxes: &[Tax],
@@ -140,14 +140,14 @@ fn charge_true_up_fee(
     fee: &Fee,
     charge: &Charge,
     subscription: &Subscription,
-    dates: &MonthlyDates,
+    dates: &dyn FeeDates,
     currency: Currency,
 ) -> Option<Fee> {
     if charge.min_amount_cents <= 0 || charge.pay_in_advance {
         return None;
     }
-    let from = dates.compute_charges_from_date();
-    let to = dates.compute_charges_to_date();
+    let from = dates.charges_from_date();
+    let to = dates.charges_to_date();
     let started = subscription.started_at.map(|d| d.date_naive()).unwrap_or(from);
     let effective_from = if started > from { started } else { from };
     let days_to_bill = (to - effective_from).num_days() + 1;
