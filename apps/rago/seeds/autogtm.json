@@ -1,6 +1,6 @@
 {
   "consumer": "autogtm",
-  "description": "Rago catalog seed for Rally AutoGTM (vcglass, ex-VCPeer cold email / GTM automation). Meters outbound cold emails, AI-generated drafts, and credited card top-ups. Two plans: `gtm_usage` (the plan vcglass subscribes a project to by default, RAGO_GTM_PLAN_CODE; $0 metering mirror, because customers are charged through the local Creem balance) and `autogtm_growth` (flat monthly seat plus metered usage, for tenants billed by Rago directly).",
+  "description": "Rago catalog seed for Rally AutoGTM (vcglass, ex-VCPeer cold email / GTM automation). Meters outbound cold emails, AI-generated drafts, and credited card top-ups. Two plans: `gtm_usage` (the plan vcglass subscribes a project to by default, RAGO_GTM_PLAN_CODE; $0 metering mirror, because customers are charged through the local Creem balance) and `autogtm_growth` (flat monthly seat plus metered usage, for tenants billed by Rago directly). Also mirrors Relay LLM spend (`relay_llm_usage`) at $0; the Relay route for the Rally gateway key points at this org.",
   "currency": "USD",
   "billable_metrics": [
     {
@@ -23,6 +23,14 @@
       "description": "One event per card top-up credited to a project's local balance (vcglass lib/autogtm/rago-billing.ts meterRagoTopup, sent only when RAGO_GTM_TOPUP_METERING=1). Sums `properties.amount_cents`. Audit metric: the customer already paid through Creem, so every plan charges it at $0.",
       "aggregation_type": "sum_agg",
       "field_name": "amount_cents",
+      "recurring": false
+    },
+    {
+      "name": "Relay LLM Spend",
+      "code": "relay_llm_usage",
+      "description": "One event per LLM inference routed through Railyard Relay (Relay cost feed, RELAY_COST_FEED_FORMAT=rago; transaction_id = Relay event id). Sums `properties.charged_micros` (retail spend in micro-USD). Properties also carry model, route, input/output/total tokens, charged_usd and settlement.",
+      "aggregation_type": "sum_agg",
+      "field_name": "charged_micros",
       "recurring": false
     }
   ],
@@ -55,6 +63,14 @@
         },
         {
           "billable_metric_code": "gtm_topup",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0"
+          }
+        },
+        {
+          "billable_metric_code": "relay_llm_usage",
           "charge_model": "standard",
           "invoiceable": true,
           "properties": {
@@ -98,6 +114,14 @@
           "properties": {
             "amount": "0"
           }
+        },
+        {
+          "billable_metric_code": "relay_llm_usage",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0"
+          }
         }
       ]
     }
@@ -105,15 +129,19 @@
   "sample_events": [
     {
       "code": "gtm_email_sent",
-      "note": "POST /events { event: { transaction_id, external_subscription_id, code: 'gtm_email_sent' } } \u2014 one per send."
+      "note": "POST /events { event: { transaction_id, external_subscription_id, code: 'gtm_email_sent' } } — one per send."
     },
     {
       "code": "gtm_draft",
-      "note": "POST /events { event: { transaction_id, external_subscription_id, code: 'gtm_draft' } } \u2014 one per generated draft."
+      "note": "POST /events { event: { transaction_id, external_subscription_id, code: 'gtm_draft' } } — one per generated draft."
     },
     {
       "code": "gtm_topup",
-      "note": "POST /events { event: { transaction_id: 'topup:<chargeId>', external_subscription_id, code: 'gtm_topup', properties: { amount_cents } } } \u2014 one per credited top-up (opt-in via RAGO_GTM_TOPUP_METERING=1)."
+      "note": "POST /events { event: { transaction_id: 'topup:<chargeId>', external_subscription_id, code: 'gtm_topup', properties: { amount_cents } } } — one per credited top-up (opt-in via RAGO_GTM_TOPUP_METERING=1)."
+    },
+    {
+      "code": "relay_llm_usage",
+      "note": "Sent by Relay, not vcglass: POST /events { event: { transaction_id: <relay event id>, external_subscription_id: <RELAY_RAGO_ROUTES_JSON subscription_id>, code: 'relay_llm_usage', properties: { charged_micros, total_tokens, model, ... } } }."
     }
   ]
 }

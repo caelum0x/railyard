@@ -6,10 +6,10 @@ one rago **organization** (tenant).
 
 | Seed | Consumer | Metric code(s) | Plan | Charge model |
 |------|----------|----------------|------|--------------|
-| `autogtm.json` | Rally AutoGTM (vcglass cold email) | `gtm_email_sent`, `gtm_draft`, `gtm_topup` | `gtm_usage` ($0 metering mirror, vcglass default) + `autogtm_growth` ($49/mo) | `standard` at $0 (mirror); `package` (emails) + `standard` (drafts) on growth |
+| `autogtm.json` | Rally AutoGTM (vcglass cold email + Relay LLM spend) | `gtm_email_sent`, `gtm_draft`, `gtm_topup`, `relay_llm_usage` | `gtm_usage` ($0 metering mirror, vcglass default) + `autogtm_growth` ($49/mo) | `standard` at $0 (mirror); `package` (emails) + `standard` (drafts) on growth |
 | `menivor.json` | Menivor (video/reel + LLM) | `menivor_media_spend` | `menivor_studio` ($29/mo) | `dynamic` (cost pass-through) |
 | `menivor-reels.json` | Menivor (reel generation + Relay LLM calls) | `reel_generated`, `reel_render_seconds`, `reel_ai_credits`, `menivor_llm_call` | `menivor_reels` ($0 base) | `standard` (per-unit; matches `RAGO_REEL_PRICING` defaults; LLM calls at $0) |
-| `opentypesafe.json` | opentypesafe (System One / Jev) | `systemone_call` | `opentypesafe_pro` ($0 base) | `graduated` (per-call tiers) |
+| `opentypesafe.json` | opentypesafe / OpenJev (System One / Jev + Relay LLM spend) | `systemone_call`, `relay_llm_usage` | `opentypesafe_pro` ($0 base) | `graduated` (per-call tiers); `relay_llm_usage` passed through at cost |
 
 Each file is an envelope:
 
@@ -27,6 +27,13 @@ and a plan (with nested `charges`) maps to `POST /plans { "plan": {...} }`.
 See `crates/rago-api/src/handlers.rs` (`create_billable_metric`, `create_plan`)
 and the enums in `crates/rago-core/src/enums.rs` (`AggregationType`,
 `ChargeModel`, `PlanInterval`).
+
+`relay_llm_usage` is the metric Railyard Relay's cost feed emits
+(`RELAY_COST_FEED_FORMAT=rago`): a `sum_agg` over `properties.charged_micros`
+(retail spend in micro-USD). Each consumer that routes LLM calls through Relay
+gets it in its own org. Point the consumer's gateway key at that org with
+`RELAY_RAGO_ROUTES_JSON` (see `apps/relay/README.md`), and create the Rago
+subscription whose external id matches the route's `subscription_id`.
 
 ## 0. One-time: create the consumer org + API key
 

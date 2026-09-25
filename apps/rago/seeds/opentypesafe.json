@@ -1,6 +1,6 @@
 {
   "consumer": "opentypesafe",
-  "description": "Rago catalog seed for opentypesafe (System One / Jev typed-decision calls). Pure usage-based plan: a free tier of decision calls, then graduated per-call pricing that drops as volume grows.",
+  "description": "Rago catalog seed for opentypesafe (System One / Jev typed-decision calls). Pure usage-based plan: a free tier of decision calls, then graduated per-call pricing that drops as volume grows. Relay LLM spend behind OpenJev calls (`relay_llm_usage`, micro-USD) is passed through at cost: $0.000001 per unit = $1 per $1 of retail Relay spend.",
   "currency": "USD",
   "billable_metrics": [
     {
@@ -8,6 +8,14 @@
       "code": "systemone_call",
       "description": "One event per System One (Jev) decision/inference call served through the typesafe layer. Counted, not summed.",
       "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "Relay LLM Spend",
+      "code": "relay_llm_usage",
+      "description": "One event per LLM inference routed through Railyard Relay (Relay cost feed, RELAY_COST_FEED_FORMAT=rago; transaction_id = Relay event id). Sums `properties.charged_micros` (retail spend in micro-USD). Properties also carry model, route, input/output/total tokens, charged_usd and settlement.",
+      "aggregation_type": "sum_agg",
+      "field_name": "charged_micros",
       "recurring": false
     }
   ],
@@ -48,6 +56,14 @@
               }
             ]
           }
+        },
+        {
+          "billable_metric_code": "relay_llm_usage",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.000001"
+          }
         }
       ]
     }
@@ -56,6 +72,10 @@
     {
       "code": "systemone_call",
       "note": "POST /events { event: { transaction_id, external_subscription_id, code: 'systemone_call' } } — one per decision call."
+    },
+    {
+      "code": "relay_llm_usage",
+      "note": "Sent by Relay: POST /events { event: { transaction_id: <relay event id>, external_subscription_id: <RELAY_RAGO_ROUTES_JSON subscription_id>, code: 'relay_llm_usage', properties: { charged_micros, total_tokens, model, ... } } }."
     }
   ]
 }

@@ -18,6 +18,20 @@
 //!   an explicit `RELAY_RAGO_SUBSCRIPTION_MAP` entry wins, otherwise
 //!   `RELAY_RAGO_SUBSCRIPTION_PREFIX + <api key public id>`. Create the Rago
 //!   subscription with that external id when provisioning the key.
+//! * Multi-org routing: `RELAY_RAGO_ROUTES_JSON` maps a gateway API-key public
+//!   id to its own Rago org bearer and subscription, so each consumer product
+//!   (Rally/AutoGTM, OpenJev, Menivor, ...) is billed in its own Rago tenant:
+//!
+//!   ```json
+//!   {"abcdefghijkl": {"api_key_env": "RAGO_KEY_AUTOGTM", "subscription_id": "autogtm-relay"},
+//!    "mnopqrstuvwx": {"api_key": "rago_live_...", "subscription_id": "openjev-relay"}}
+//!   ```
+//!
+//!   A routed key wins over the single-org settings. Unrouted keys fall back to
+//!   `RELAY_COST_FEED_BEARER` plus the map/prefix above (the original
+//!   single-org mode). With routes configured the default bearer is optional;
+//!   an unrouted key with no default bearer fails delivery and is retried, then
+//!   dead-lettered, rather than being billed to the wrong org.
 //! * `code` is the billable metric (`RELAY_RAGO_METRIC_CODE`, default
 //!   `relay_llm_usage`). Configure it in Rago as a `sum_agg` over
 //!   `charged_micros` (retail spend) or `total_tokens`.
@@ -28,20 +42,61 @@ use std::time::Duration;
 use async_trait::async_trait;
 use relay_cost_feed::{CostEvent, CostEventPublisher, CostFeedError, Result};
 use reqwest::Url;
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub const DEFAULT_RAGO_METRIC_CODE: &str = "relay_llm_usage";
 const RAGO_EVENTS_PATH: &str = "/api/v1/events";
 const MICROS_PER_USD: i64 = 1_000_000;
 
-/// Validated Rago delivery settings.
+/// Where one gateway API key's usage is billed: a Rago org (selected by its
+/// bearer) and the subscription inside that org.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RagoRoute {
+    pub api_key: String,
+    pub subscription_id: String,
+}
+
+impl std::fmt::Debug for RagoRoute {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RagoRoute")
+            .field("api_key", &"<redacted>")
+            .field("subscription_id", &self.subscription_id)
+            .finish()
+    }
+}
+
+/// Resolved delivery target for one cost event.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RagoTarget<'a> {
+    pub api_key: &'a str,
+    pub subscription_id: String,
+}
+
+/// Validated Rago delivery settings.
+#[derive(Clone, PartialEq, Eq)]
 pub struct RagoFeedConfig {
     pub events_url: Url,
-    pub api_key: String,
+    /// Single-org bearer used for keys without an explicit route.
+    pub api_key: Option<String>,
     pub metric_code: String,
     pub subscription_prefix: String,
     pub subscription_map: BTreeMap<String, String>,
+    /// Per-gateway-key routes to separate Rago orgs.
+    pub routes: BTreeMap<String, RagoRoute>,
+}
+
+impl std::fmt::Debug for RagoFeedConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RagoFeedConfig")
+            .field("events_url", &self.events_url)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("metric_code", &self.metric_code)
+            .field("subscription_prefix", &self.subscription_prefix)
+            .field("subscription_map", &self.subscription_map)
+            .field("routes", &self.routes)
+            .finish()
+    }
 }
 
 impl RagoFeedConfig {
@@ -52,11 +107,11 @@ impl RagoFeedConfig {
     pub fn from_env(base_url: &str, bearer: Option<String>) -> std::result::Result<Self, String> {
         let api_key = bearer
             .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                "RELAY_COST_FEED_FORMAT=rago requires RELAY_COST_FEED_BEARER (a Rago API key)"
-                    .to_string()
-            })?;
+            .filter(|value| !value.is_empty());
+        let routes = match env_trimmed("RELAY_RAGO_ROUTES_JSON") {
+            Some(raw) => parse_routes(&raw, env_trimmed)?,
+            None => BTreeMap::new(),
+        };
         let metric_code = env_trimmed("RELAY_RAGO_METRIC_CODE")
             .unwrap_or_else(|| DEFAULT_RAGO_METRIC_CODE.to_string());
         let subscription_prefix = env_trimmed("RELAY_RAGO_SUBSCRIPTION_PREFIX").unwrap_or_default();
@@ -70,16 +125,25 @@ impl RagoFeedConfig {
             metric_code,
             subscription_prefix,
             subscription_map,
+            routes,
         )
     }
 
     pub fn new(
         base_url: &str,
-        api_key: String,
+        api_key: Option<String>,
         metric_code: String,
         subscription_prefix: String,
         subscription_map: BTreeMap<String, String>,
+        routes: BTreeMap<String, RagoRoute>,
     ) -> std::result::Result<Self, String> {
+        if api_key.is_none() && routes.is_empty() {
+            return Err(
+                "RELAY_COST_FEED_FORMAT=rago requires RELAY_COST_FEED_BEARER (a Rago API key) \
+                 or RELAY_RAGO_ROUTES_JSON"
+                    .into(),
+            );
+        }
         let mut events_url =
             Url::parse(base_url).map_err(|error| format!("invalid Rago URL: {error}"))?;
         if !matches!(events_url.scheme(), "http" | "https") || events_url.host_str().is_none() {
@@ -91,8 +155,14 @@ impl RagoFeedConfig {
         if matches!(events_url.path(), "" | "/") {
             events_url.set_path(RAGO_EVENTS_PATH);
         }
-        if api_key.contains(['\r', '\n']) {
-            return Err("Rago API key contains newlines".into());
+        if api_key
+            .as_deref()
+            .is_some_and(|key| key.is_empty() || key.contains(['\r', '\n']))
+        {
+            return Err("Rago API key is empty or contains newlines".into());
+        }
+        for (key_id, route) in &routes {
+            validate_route(key_id, route)?;
         }
         if metric_code.is_empty()
             || !metric_code
@@ -107,15 +177,34 @@ impl RagoFeedConfig {
             metric_code,
             subscription_prefix,
             subscription_map,
+            routes,
         })
     }
 
     /// Rago external subscription id billed for a Relay API-key principal.
     pub fn subscription_for(&self, owner_principal: &str) -> String {
+        if let Some(route) = self.routes.get(owner_principal) {
+            return route.subscription_id.clone();
+        }
         self.subscription_map
             .get(owner_principal)
             .cloned()
             .unwrap_or_else(|| format!("{}{owner_principal}", self.subscription_prefix))
+    }
+
+    /// The Rago org bearer and subscription for a Relay API-key principal, or
+    /// `None` when the key has no route and there is no single-org bearer.
+    pub fn target_for(&self, owner_principal: &str) -> Option<RagoTarget<'_>> {
+        if let Some(route) = self.routes.get(owner_principal) {
+            return Some(RagoTarget {
+                api_key: &route.api_key,
+                subscription_id: route.subscription_id.clone(),
+            });
+        }
+        self.api_key.as_deref().map(|api_key| RagoTarget {
+            api_key,
+            subscription_id: self.subscription_for(owner_principal),
+        })
     }
 
     /// The Lago-compatible event envelope for one Relay cost event.
@@ -173,10 +262,19 @@ impl RagoCostEventPublisher {
 #[async_trait]
 impl CostEventPublisher for RagoCostEventPublisher {
     async fn publish(&self, event: &CostEvent) -> Result<()> {
+        let target = self
+            .config
+            .target_for(&event.owner_principal)
+            .ok_or_else(|| {
+                CostFeedError::Publish(format!(
+                    "no Rago route for API key {} and no default Rago API key",
+                    event.owner_principal
+                ))
+            })?;
         let response = self
             .client
             .post(self.config.events_url.clone())
-            .bearer_auth(&self.config.api_key)
+            .bearer_auth(target.api_key)
             .header("idempotency-key", event.event_id.to_string())
             .json(&self.config.envelope(event))
             .send()
@@ -253,6 +351,66 @@ fn parse_subscription_map(raw: &str) -> std::result::Result<BTreeMap<String, Str
     Ok(map)
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRoute {
+    api_key: Option<String>,
+    api_key_env: Option<String>,
+    subscription_id: String,
+}
+
+/// Parse `RELAY_RAGO_ROUTES_JSON`. `lookup` resolves `api_key_env` names so the
+/// JSON itself can stay free of secrets.
+fn parse_routes(
+    raw: &str,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> std::result::Result<BTreeMap<String, RagoRoute>, String> {
+    let parsed: BTreeMap<String, RawRoute> = serde_json::from_str(raw).map_err(|error| {
+        format!(
+            "RELAY_RAGO_ROUTES_JSON must be a JSON object of api-key id to \
+             {{\"api_key\" or \"api_key_env\", \"subscription_id\"}}: {error}"
+        )
+    })?;
+    let mut routes = BTreeMap::new();
+    for (key_id, route) in parsed {
+        let api_key = match (route.api_key, route.api_key_env) {
+            (Some(value), None) => value.trim().to_string(),
+            (None, Some(name)) => lookup(name.trim()).ok_or_else(|| {
+                format!("RELAY_RAGO_ROUTES_JSON route {key_id}: env var {name} is unset or empty")
+            })?,
+            _ => {
+                return Err(format!(
+                    "RELAY_RAGO_ROUTES_JSON route {key_id}: set exactly one of api_key or api_key_env"
+                ));
+            }
+        };
+        let route = RagoRoute {
+            api_key,
+            subscription_id: route.subscription_id.trim().to_string(),
+        };
+        validate_route(&key_id, &route)?;
+        routes.insert(key_id.trim().to_string(), route);
+    }
+    Ok(routes)
+}
+
+fn validate_route(key_id: &str, route: &RagoRoute) -> std::result::Result<(), String> {
+    if key_id.trim().is_empty() {
+        return Err("RELAY_RAGO_ROUTES_JSON keys must be non-empty API-key ids".into());
+    }
+    if route.api_key.is_empty() || route.api_key.contains(['\r', '\n']) {
+        return Err(format!(
+            "RELAY_RAGO_ROUTES_JSON route {key_id}: Rago API key is empty or contains newlines"
+        ));
+    }
+    if route.subscription_id.is_empty() {
+        return Err(format!(
+            "RELAY_RAGO_ROUTES_JSON route {key_id}: subscription_id must be non-empty"
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use relay_contract::{Microdollars, Usage};
@@ -264,18 +422,23 @@ mod tests {
     fn config(map: BTreeMap<String, String>) -> RagoFeedConfig {
         RagoFeedConfig::new(
             "https://rago.example.com",
-            "rago-key".into(),
+            Some("rago-key".into()),
             DEFAULT_RAGO_METRIC_CODE.into(),
             "relay_".into(),
             map,
+            BTreeMap::new(),
         )
         .expect("valid Rago config")
     }
 
     fn metered_event() -> CostEvent {
+        metered_event_for("abcdefghijkl")
+    }
+
+    fn metered_event_for(owner: &str) -> CostEvent {
         CostEvent::metered(
             Uuid::now_v7(),
-            "abcdefghijkl",
+            owner,
             "tensorzero::model_name::gpt-4o-mini",
             InferenceRoute::OpenAiChatCompletions,
             Usage {
@@ -338,12 +501,187 @@ mod tests {
         assert!(
             RagoFeedConfig::new(
                 "https://rago.example.com",
-                "k".into(),
+                Some("k".into()),
                 "bad code".into(),
                 String::new(),
-                BTreeMap::new()
+                BTreeMap::new(),
+                BTreeMap::new(),
             )
             .is_err()
         );
+    }
+
+    fn two_org_config() -> RagoFeedConfig {
+        let routes = parse_routes(
+            r#"{
+                "autogtmkey01": {"api_key_env": "RAGO_KEY_AUTOGTM", "subscription_id": "autogtm-relay"},
+                "openjevkey01": {"api_key": "rago-openjev", "subscription_id": "openjev-relay"}
+            }"#,
+            |name| (name == "RAGO_KEY_AUTOGTM").then(|| "rago-autogtm".to_string()),
+        )
+        .expect("valid routes");
+        RagoFeedConfig::new(
+            "https://rago.example.com",
+            None,
+            DEFAULT_RAGO_METRIC_CODE.into(),
+            "relay_".into(),
+            BTreeMap::new(),
+            routes,
+        )
+        .expect("routes alone are enough")
+    }
+
+    #[test]
+    fn routed_keys_resolve_to_separate_orgs() {
+        let config = two_org_config();
+        let autogtm = config.target_for("autogtmkey01").expect("routed");
+        assert_eq!(autogtm.api_key, "rago-autogtm");
+        assert_eq!(autogtm.subscription_id, "autogtm-relay");
+        let openjev = config.target_for("openjevkey01").expect("routed");
+        assert_eq!(openjev.api_key, "rago-openjev");
+        assert_eq!(openjev.subscription_id, "openjev-relay");
+        // No default bearer: an unrouted key is never billed to some other org.
+        assert!(config.target_for("strangerkey1").is_none());
+        let envelope = config.envelope(&metered_event_for("openjevkey01"));
+        assert_eq!(
+            envelope["event"]["external_subscription_id"],
+            "openjev-relay"
+        );
+    }
+
+    #[test]
+    fn single_org_mode_still_works_alongside_routes() {
+        let routes = BTreeMap::from([(
+            "openjevkey01".to_string(),
+            RagoRoute {
+                api_key: "rago-openjev".into(),
+                subscription_id: "openjev-relay".into(),
+            },
+        )]);
+        let config = RagoFeedConfig::new(
+            "https://rago.example.com",
+            Some("rago-default".into()),
+            DEFAULT_RAGO_METRIC_CODE.into(),
+            "relay_".into(),
+            BTreeMap::new(),
+            routes,
+        )
+        .expect("valid");
+        let fallback = config.target_for("abcdefghijkl").expect("default org");
+        assert_eq!(fallback.api_key, "rago-default");
+        assert_eq!(fallback.subscription_id, "relay_abcdefghijkl");
+        assert_eq!(
+            config.target_for("openjevkey01").expect("routed").api_key,
+            "rago-openjev"
+        );
+    }
+
+    #[test]
+    fn invalid_routes_are_rejected() {
+        let none = |_: &str| None;
+        assert!(parse_routes("[]", none).is_err());
+        assert!(parse_routes(r#"{"k": {"subscription_id": "s"}}"#, none).is_err());
+        assert!(
+            parse_routes(
+                r#"{"k": {"api_key": "a", "api_key_env": "B", "subscription_id": "s"}}"#,
+                none
+            )
+            .is_err()
+        );
+        assert!(
+            parse_routes(
+                r#"{"k": {"api_key_env": "MISSING", "subscription_id": "s"}}"#,
+                none
+            )
+            .is_err()
+        );
+        assert!(parse_routes(r#"{"k": {"api_key": "a", "subscription_id": " "}}"#, none).is_err());
+        assert!(parse_routes(r#"{" ": {"api_key": "a", "subscription_id": "s"}}"#, none).is_err());
+        assert!(
+            parse_routes(
+                r#"{"k": {"api_key": "a", "subscription_id": "s", "x": 1}}"#,
+                none
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn debug_output_redacts_bearers() {
+        let rendered = format!("{:?}", two_org_config());
+        assert!(!rendered.contains("rago-autogtm"));
+        assert!(!rendered.contains("rago-openjev"));
+        assert!(rendered.contains("openjev-relay"));
+    }
+
+    /// End to end over HTTP: two gateway keys land in two Rago orgs.
+    #[tokio::test]
+    async fn two_keys_publish_into_two_orgs() {
+        use std::sync::{Arc, Mutex};
+
+        use axum::{Router, extract::State, http::HeaderMap, routing::post};
+
+        type Seen = Arc<Mutex<Vec<(String, Value)>>>;
+        async fn capture(
+            State(seen): State<Seen>,
+            headers: HeaderMap,
+            axum::Json(body): axum::Json<Value>,
+        ) -> axum::http::StatusCode {
+            let bearer = headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            seen.lock().expect("lock").push((bearer, body));
+            axum::http::StatusCode::OK
+        }
+
+        let seen: Seen = Arc::default();
+        let app = Router::new()
+            .route("/api/v1/events", post(capture))
+            .with_state(seen.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "test-only mock Rago server, aborted at the end of the test"
+        )]
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+
+        let mut config = two_org_config();
+        config.events_url = Url::parse(&format!("http://{addr}/api/v1/events")).expect("url");
+        let publisher = RagoCostEventPublisher::new(config).expect("publisher");
+        publisher
+            .publish(&metered_event_for("autogtmkey01"))
+            .await
+            .expect("autogtm delivered");
+        publisher
+            .publish(&metered_event_for("openjevkey01"))
+            .await
+            .expect("openjev delivered");
+        let unrouted = publisher.publish(&metered_event_for("strangerkey1")).await;
+        assert!(
+            unrouted.is_err(),
+            "unrouted key must not be billed anywhere"
+        );
+        server.abort();
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].0, "Bearer rago-autogtm");
+        assert_eq!(
+            seen[0].1["event"]["external_subscription_id"],
+            "autogtm-relay"
+        );
+        assert_eq!(seen[1].0, "Bearer rago-openjev");
+        assert_eq!(
+            seen[1].1["event"]["external_subscription_id"],
+            "openjev-relay"
+        );
+        assert_eq!(seen[1].1["event"]["code"], DEFAULT_RAGO_METRIC_CODE);
     }
 }

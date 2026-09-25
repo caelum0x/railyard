@@ -314,6 +314,7 @@ Relay in **postpaid meter-only** mode instead of prepaid Mint billing:
 | `RELAY_RAGO_METRIC_CODE` | Rago billable metric code (default `relay_llm_usage`). Configure it as a `sum_agg` over `charged_micros` (retail spend) or `total_tokens`. |
 | `RELAY_RAGO_SUBSCRIPTION_PREFIX` | Prefix for the Rago `external_subscription_id`, which defaults to `<prefix><api key public id>`. |
 | `RELAY_RAGO_SUBSCRIPTION_MAP` | Optional JSON object mapping API-key public ids to explicit Rago subscription ids. |
+| `RELAY_RAGO_ROUTES_JSON` | Optional multi-org routing: JSON object mapping an API-key public id to `{"api_key_env": "<env var holding that org's Rago key>", "subscription_id": "..."}` (or an inline `"api_key"`). Routed keys bill into their own Rago org; unrouted keys use `RELAY_COST_FEED_BEARER` and the map/prefix above. With routes set, `RELAY_COST_FEED_BEARER` is optional, and an unrouted key without it is retried and then dead-lettered instead of being billed to another org. |
 | `RELAY_OPERATOR_KEY_IDS` | Comma-separated API-key public ids allowed to aggregate spend across all keys (`?scope=all`), replay any dead letter, and manage spend caps. List the UI's `TENSORZERO_API_KEY` here. |
 
 In `rago` format each event is posted as a Lago-compatible usage event whose
