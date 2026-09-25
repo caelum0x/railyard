@@ -226,6 +226,11 @@ async fn api_key_rotate_and_destroy(pool: PgPool) {
     let new_id = d["rotateApiKey"]["id"].as_str().unwrap().to_string();
     let resp = run(&schema, &org, r#"mutation($id: ID!) { destroyApiKey(id: $id) }"#, json!({ "id": new_id })).await;
     data(&resp);
+
+    // apiKeys lists only live keys: the rotated-out and destroyed ones are gone
+    let resp = run(&schema, &org, r#"{ apiKeys { id } }"#, json!({})).await;
+    let listed = data(&resp)["apiKeys"].as_array().unwrap().clone();
+    assert!(listed.iter().all(|k| k["id"] != key.id.to_string() && k["id"] != new_id.as_str()), "{listed:?}");
 }
 
 // ---- catalog v2: products + rate cards + pricing units + commitments ------

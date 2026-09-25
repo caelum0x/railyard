@@ -2279,12 +2279,13 @@ impl Db {
         mapping::organization(&row)
     }
 
-    /// API keys for an org `(id, name, value, created_at)`.
+    /// Active (not expired / rotated-out / destroyed) API keys for an org
+    /// `(id, name, value, created_at)`, newest first.
     pub async fn list_api_keys(
         &self,
         org: Uuid,
     ) -> Result<Vec<(Uuid, Option<String>, String, NaiveDateTime)>> {
-        let rows = sqlx::query("SELECT id, name, value, created_at FROM api_keys WHERE organization_id = $1 ORDER BY created_at DESC")
+        let rows = sqlx::query("SELECT id, name, value, created_at FROM api_keys WHERE organization_id = $1 AND (expires_at IS NULL OR expires_at > now()) ORDER BY created_at DESC")
             .bind(org).fetch_all(&self.pool).await?;
         Ok(rows
             .iter()

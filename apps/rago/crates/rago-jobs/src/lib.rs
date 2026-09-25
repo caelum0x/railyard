@@ -19,6 +19,7 @@
 //! [`rago_integrations::HttpTransport`], so the whole pipeline runs against an
 //! in-memory transport in tests and demos.
 
+pub mod admin_cli;
 pub mod bill_subscription;
 pub mod assistant;
 pub mod clock;

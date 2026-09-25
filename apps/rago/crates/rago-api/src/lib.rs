@@ -257,6 +257,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/billing.js", get(admin_billing_js))
         .route("/admin/integrations.js", get(admin_integrations_js))
         .route("/admin/quotes.js", get(admin_quotes_js))
+        .route("/admin/keys.js", get(admin_keys_js))
         .route("/admin/sso/callback", get(admin_page))
         .route("/integrations/oauth/callback", get(integration_hub::oauth_callback))
         .route("/auth/sso/authorize", post(integration_hub::sso_authorize))
@@ -300,7 +301,7 @@ async fn health() -> Json<Value> {
 /// `GET /admin` — the operator console (static HTML + vanilla JS, no build
 /// step): overview analytics, customers, subscriptions, plans and metrics,
 /// invoices with their actions, credit notes, wallets, coupons, add-ons, taxes,
-/// webhooks, dunning, events, exports and settings. The page and scripts are
+/// webhooks, dunning, events, exports, settings and API keys. The page and scripts are
 /// served unauthenticated, but every data request carries the operator's
 /// `Authorization: Bearer <api-key>` against the same authenticated API — there
 /// is no server-side data bypass.
@@ -335,6 +336,9 @@ async fn admin_integrations_js() -> impl axum::response::IntoResponse {
 }
 async fn admin_quotes_js() -> impl axum::response::IntoResponse {
     admin_js(include_str!("../assets/admin-quotes.js"))
+}
+async fn admin_keys_js() -> impl axum::response::IntoResponse {
+    admin_js(include_str!("../assets/admin-keys.js"))
 }
 
 // --- fees/estimate: drives the billing engine without persistence -----------

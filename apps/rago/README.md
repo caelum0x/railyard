@@ -45,6 +45,19 @@ cargo run --release --bin rago-worker      # durable worker / CLI (work, crons, 
 cargo run --release --bin rago-scheduler   # billing scheduler
 ```
 
+### Bootstrapping a tenant (organization + API key)
+
+Rago has no public signup. Create each consumer's organization and first key
+with the worker; it prints the key once as `API_KEY=...` (logs go to stderr):
+
+```bash
+rago-worker create-org --name "AutoGTM" [--slug autogtm] [--currency USD] [--email ops@example.com]
+rago-worker create-api-key --org autogtm --name relay   # extra key; --org takes the id or slug
+```
+
+After that, sign in to `/admin` with the key and manage keys (create, rotate,
+delete) under **Operations → API keys**.
+
 ## Live transports
 
 Every external call — payments (Stripe / GoCardless / Adyen / Creem / Dodo

@@ -38,6 +38,7 @@
     logout: "M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9",
     retry: "M1 4v6h6M23 20v-6h-6M20.5 9A9 9 0 005.6 5.6L1 10m22 4l-4.6 4.4A9 9 0 013.5 15",
     pay: "M2 7h20v10H2zM2 11h20",
+    key: "M15 7a2 2 0 110 4 2 2 0 010-4zM21 9a6 6 0 01-7.7 5.7L11 17H9v2H7v2H3v-3.6l6.3-6.3A6 6 0 1121 9z",
   };
   function icon(name, label) {
     const d = ICON_PATHS[name] || ICON_PATHS.plus;

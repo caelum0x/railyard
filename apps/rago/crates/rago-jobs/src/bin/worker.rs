@@ -1,6 +1,11 @@
 //! Rago durable worker/CLI — drives the Postgres-backed job queue, crons, and
-//! webhook re-delivery.
+//! webhook re-delivery, and bootstraps tenants.
 //!
+//! Subcommands (argv, print the new API key once — see `rago_jobs::admin_cli`):
+//! - `create-org --name <NAME> [--slug] [--currency] [--email] [--key-name]`
+//! - `create-api-key --org <ORG_ID|SLUG> [--name]`
+//!
+//! Without a subcommand, the job is selected by
 //! `RAGO_CMD`:
 //! - `enqueue` — enqueue billing jobs for subs due on `RAGO_BILLING_DATE`.
 //! - `enqueue-one` — enqueue one billing job (`RAGO_ORG`, `RAGO_SUB_EXTERNAL`,
@@ -19,10 +24,24 @@ use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let admin_cmd = match rago_jobs::admin_cli::parse_args(&argv) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
+
+    // Admin subcommands keep stdout for the `KEY=value` block only.
+    let log_to_stderr = admin_cmd.is_some();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
+        .with_writer(move || -> Box<dyn std::io::Write> {
+            if log_to_stderr { Box::new(std::io::stderr()) } else { Box::new(std::io::stdout()) }
+        })
         .init();
 
     let db = Db::connect(
@@ -31,6 +50,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
     db.migrate().await?;
+
+    if let Some(cmd) = admin_cmd {
+        match rago_jobs::admin_cli::run(&db, &cmd).await {
+            Ok(created) => {
+                print!("{}", rago_jobs::admin_cli::render(&created));
+                eprintln!("Store API_KEY in the consumer's secret store now; this command does not print it again.");
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
 
     let cmd = std::env::var("RAGO_CMD").unwrap_or_else(|_| "work".into());
     let billing_date = std::env::var("RAGO_BILLING_DATE")
