@@ -10,6 +10,7 @@ one rago **organization** (tenant).
 | `menivor.json` | Menivor (video/reel + LLM) | `menivor_media_spend` | `menivor_studio` ($29/mo) | `dynamic` (cost pass-through) |
 | `menivor-reels.json` | Menivor (reel generation + Relay LLM calls) | `reel_generated`, `reel_render_seconds`, `reel_ai_credits`, `menivor_llm_call` | `menivor_reels` ($0 base) | `standard` (per-unit; matches `RAGO_REEL_PRICING` defaults; LLM calls at $0) |
 | `opentypesafe.json` | opentypesafe / OpenJev (System One / Jev + Relay LLM spend) | `systemone_call`, `relay_llm_usage` | `opentypesafe_pro` ($0 base) | `graduated` (per-call tiers); `relay_llm_usage` passed through at cost |
+| `scribase.json` | Scribase (backend cloud usage mirror, env-gated in control-api) | `scribase_database_gb`, `scribase_storage_gb`, `scribase_backup_gb`, `scribase_egress_gb`, `scribase_compute_hours`, `scribase_function_invocations` | `scribase_usage` ($0 metering mirror; Scribase's own flat per-environment billing stays the charge of record) | `max_agg` gauges (hourly samples) + `sum_agg` increments, all `standard` at $0 |
 
 Each file is an envelope:
 
@@ -62,6 +63,7 @@ the consumer's secret store.
 RAGO_API_KEY='rago_live_autogtm_REPLACE_ME' ./import.sh autogtm.json
 RAGO_API_KEY='rago_live_menivor_...'         ./import.sh menivor.json
 RAGO_API_KEY='rago_live_opentypesafe_...'    ./import.sh opentypesafe.json
+RAGO_API_KEY='rago_live_scribase_...'        ./import.sh scribase.json
 
 # Remote plane:
 RAGO_API_URL=https://rago.example.com/api/v1 RAGO_API_KEY=... ./import.sh menivor.json

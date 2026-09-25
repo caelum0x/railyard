@@ -1,0 +1,85 @@
+{
+  "consumer": "scribase",
+  "description": "Rago catalog seed for Scribase (backend cloud). Scribase's own billing (flat price per environment with hard caps and capacity packs) stays authoritative; this catalog receives the optional usage mirror the Scribase control plane posts from its meter pass when SCRIBASE_RAGO_URL and SCRIBASE_RAGO_API_KEY are set (crates/control-api/src/adapters/rago_usage.rs). One Rago subscription per Scribase environment, external id `scribase_{organization_id}_{project_id}_{environment_id}` by default (SCRIBASE_RAGO_SUBSCRIPTION_TEMPLATE). Every event carries `properties.value` as a decimal string plus organization_id, project_id and environment_id.",
+  "currency": "USD",
+  "billable_metrics": [
+    {
+      "name": "Scribase Database Size (GB)",
+      "code": "scribase_database_gb",
+      "description": "Hourly sample of the environment's Postgres database size in GB. Peak over the period.",
+      "aggregation_type": "max_agg",
+      "field_name": "value",
+      "recurring": false
+    },
+    {
+      "name": "Scribase File Storage (GB)",
+      "code": "scribase_storage_gb",
+      "description": "Hourly sample of the environment's file storage in GB. Peak over the period.",
+      "aggregation_type": "max_agg",
+      "field_name": "value",
+      "recurring": false
+    },
+    {
+      "name": "Scribase Backup Storage (GB)",
+      "code": "scribase_backup_gb",
+      "description": "Hourly sample of pending and available backup bytes in GB. Peak over the period.",
+      "aggregation_type": "max_agg",
+      "field_name": "value",
+      "recurring": false
+    },
+    {
+      "name": "Scribase Egress (GB)",
+      "code": "scribase_egress_gb",
+      "description": "Increment of response bytes (GB) the data-plane log shipper reported since the last mirrored mark. Summed.",
+      "aggregation_type": "sum_agg",
+      "field_name": "value",
+      "recurring": false
+    },
+    {
+      "name": "Scribase Compute Hours",
+      "code": "scribase_compute_hours",
+      "description": "Increment of hours the environment spent ready since the last mirrored mark. Summed.",
+      "aggregation_type": "sum_agg",
+      "field_name": "value",
+      "recurring": false
+    },
+    {
+      "name": "Scribase Function Invocations",
+      "code": "scribase_function_invocations",
+      "description": "Increment of edge-function requests the gateway forwarded since the last mirrored mark. Summed.",
+      "aggregation_type": "sum_agg",
+      "field_name": "value",
+      "recurring": false
+    }
+  ],
+  "plans": [
+    {
+      "name": "Scribase Usage Mirror",
+      "code": "scribase_usage",
+      "interval": "monthly",
+      "description": "Metering mirror at $0: every charge is zero-priced, so Rago records Scribase usage without invoicing it. Scribase's flat per-environment price (collected through its own billing provider) is the charge of record. Price the charges only if an operator moves Scribase billing onto Rago.",
+      "amount_cents": 0,
+      "amount_currency": "USD",
+      "pay_in_advance": false,
+      "bill_charges_monthly": true,
+      "charges": [
+        { "billable_metric_code": "scribase_database_gb", "charge_model": "standard", "invoiceable": true, "properties": { "amount": "0.0" } },
+        { "billable_metric_code": "scribase_storage_gb", "charge_model": "standard", "invoiceable": true, "properties": { "amount": "0.0" } },
+        { "billable_metric_code": "scribase_backup_gb", "charge_model": "standard", "invoiceable": true, "properties": { "amount": "0.0" } },
+        { "billable_metric_code": "scribase_egress_gb", "charge_model": "standard", "invoiceable": true, "properties": { "amount": "0.0" } },
+        { "billable_metric_code": "scribase_compute_hours", "charge_model": "standard", "invoiceable": true, "properties": { "amount": "0.0" } },
+        { "billable_metric_code": "scribase_function_invocations", "charge_model": "standard", "invoiceable": true, "properties": { "amount": "0.0" } }
+      ]
+    }
+  ],
+  "sample_events": [
+    {
+      "code": "scribase_database_gb",
+      "note": "POST /events { event: { transaction_id: 'scribase:<subscription>:database_gb:h<hour epoch>', external_subscription_id: 'scribase_<org>_<project>_<env>', code: 'scribase_database_gb', timestamp, properties: { value: '0.250000', organization_id, project_id, environment_id } } }. At most one per hour per environment."
+    },
+    {
+      "code": "scribase_egress_gb",
+      "note": "POST /events { event: { transaction_id: 'scribase:<subscription>:egress_gb:p<period epoch>:<from>-<to>', external_subscription_id, code: 'scribase_egress_gb', timestamp, properties: { value: '<to - from>', ... } } }. Replays of the same increment are dropped by Rago as duplicates."
+    }
+  ]
+}
