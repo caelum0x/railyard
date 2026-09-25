@@ -6,7 +6,7 @@ one rago **organization** (tenant).
 
 | Seed | Consumer | Metric code(s) | Plan | Charge model |
 |------|----------|----------------|------|--------------|
-| `autogtm.json` | Rally AutoGTM (vcglass cold email + Relay LLM spend) | `gtm_email_sent`, `gtm_draft`, `gtm_topup`, `relay_llm_usage` | `gtm_usage` ($0 metering mirror, vcglass default) + `autogtm_growth` ($49/mo) | `standard` at $0 (mirror); `package` (emails) + `standard` (drafts) on growth |
+| `autogtm.json` | Rally AutoGTM (vcglass cold email + Relay LLM spend + Rally plan/seat mirror) | `gtm_email_sent`, `gtm_draft`, `gtm_topup`, `relay_llm_usage`, `rally_plan_event`, `rally_seats` | `gtm_usage` ($0 metering mirror, vcglass default) + `autogtm_growth` ($49/mo) + `rally_plan_mirror` ($0 plan/seat mirror) | `standard` at $0 (mirror); `package` (emails) + `standard` (drafts) on growth |
 | `menivor.json` | Menivor (video/reel + LLM) | `menivor_media_spend` | `menivor_studio` ($29/mo) | `dynamic` (cost pass-through) |
 | `menivor-reels.json` | Menivor (reel generation + Relay LLM calls) | `reel_generated`, `reel_render_seconds`, `reel_ai_credits`, `menivor_llm_call` | `menivor_reels` ($0 base) | `standard` (per-unit; matches `RAGO_REEL_PRICING` defaults; LLM calls at $0) |
 | `opentypesafe.json` | opentypesafe / OpenJev (System One / Jev + Relay LLM spend) | `systemone_call`, `relay_llm_usage` | `opentypesafe_pro` ($0 base) | `graduated` (per-call tiers); `relay_llm_usage` passed through at cost |

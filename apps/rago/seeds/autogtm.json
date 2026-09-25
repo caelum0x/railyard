@@ -1,6 +1,6 @@
 {
   "consumer": "autogtm",
-  "description": "Rago catalog seed for Rally AutoGTM (vcglass, ex-VCPeer cold email / GTM automation). Meters outbound cold emails, AI-generated drafts, and credited card top-ups. Two plans: `gtm_usage` (the plan vcglass subscribes a project to by default, RAGO_GTM_PLAN_CODE; $0 metering mirror, because customers are charged through the local Creem balance) and `autogtm_growth` (flat monthly seat plus metered usage, for tenants billed by Rago directly). Also mirrors Relay LLM spend (`relay_llm_usage`) at $0; the Relay route for the Rally gateway key points at this org.",
+  "description": "Rago catalog seed for Rally AutoGTM (vcglass, ex-VCPeer cold email / GTM automation). Meters outbound cold emails, AI-generated drafts, and credited card top-ups. Two plans: `gtm_usage` (the plan vcglass subscribes a project to by default, RAGO_GTM_PLAN_CODE; $0 metering mirror, because customers are charged through the local Creem balance) and `autogtm_growth` (flat monthly seat plus metered usage, for tenants billed by Rago directly). Also mirrors Relay LLM spend (`relay_llm_usage`) at $0; the Relay route for the Rally gateway key points at this org. Rally plan lifecycle and seat counts mirror into `rally_plan_event` and `rally_seats` on the $0 `rally_plan_mirror` plan (one mirror subscription per Rally account).",
   "currency": "USD",
   "billable_metrics": [
     {
@@ -31,6 +31,21 @@
       "description": "One event per LLM inference routed through Railyard Relay (Relay cost feed, RELAY_COST_FEED_FORMAT=rago; transaction_id = Relay event id). Sums `properties.charged_micros` (retail spend in micro-USD). Properties also carry model, route, input/output/total tokens, charged_usd and settlement.",
       "aggregation_type": "sum_agg",
       "field_name": "charged_micros",
+      "recurring": false
+    },
+    {
+      "name": "Rally Plan Events",
+      "code": "rally_plan_event",
+      "description": "One event per Rally plan transition (activated, renewed, updated, past_due, cancelled, expired) for founder plans (Creem) and VC tiers, sent by vcglass lib/railyard/plan-mirror.ts when RAGO_URL + RAGO_API_KEY are set. Counted. Properties carry plan, state, provider, account_kind and, when known, amount_cents, billing_cycle and seat_limit. Audit metric: the payment rail already charged the customer.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "Rally Seats",
+      "code": "rally_seats",
+      "description": "One event per Rally seat change (VC team seats, agency client-viewer seats) carrying `properties.seats` = seats in use after the change. max_agg, so a period reports its peak seat count.",
+      "aggregation_type": "max_agg",
+      "field_name": "seats",
       "recurring": false
     }
   ],
@@ -117,6 +132,34 @@
         },
         {
           "billable_metric_code": "relay_llm_usage",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rally Plan Mirror",
+      "code": "rally_plan_mirror",
+      "interval": "monthly",
+      "description": "Mirror subscription vcglass creates once per Rally account (user, VC firm, agency) with external id rally-mirror-<kind>-<id> (RAGO_RALLY_PLAN_CODE). $0 base and $0 charges: plan lifecycle and seat counts are visible in Rago while Creem and the VC checkout stay the payment rails.",
+      "amount_cents": 0,
+      "amount_currency": "USD",
+      "pay_in_advance": false,
+      "bill_charges_monthly": true,
+      "charges": [
+        {
+          "billable_metric_code": "rally_plan_event",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0"
+          }
+        },
+        {
+          "billable_metric_code": "rally_seats",
           "charge_model": "standard",
           "invoiceable": true,
           "properties": {
