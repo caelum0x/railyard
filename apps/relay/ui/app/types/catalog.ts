@@ -122,6 +122,8 @@ export interface ProviderKey {
   provider: string;
   label: string;
   env_var: string;
+  /** False: requests routed only to this provider fail with `provider_not_configured`. */
+  enabled: boolean;
   source: ProviderKeySource;
   key_hint?: string;
   stored: boolean;

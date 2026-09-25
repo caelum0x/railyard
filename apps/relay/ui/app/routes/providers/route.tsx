@@ -287,7 +287,7 @@ function KeySourceBadge({ providerKey }: { providerKey: ProviderKey }) {
   if (providerKey.source === "environment") {
     return <Badge variant="outline">From {providerKey.env_var}</Badge>;
   }
-  return <Badge variant="warning">Not configured</Badge>;
+  return <Badge variant="warning">Not configured (disabled)</Badge>;
 }
 
 function ProviderKeyRow({

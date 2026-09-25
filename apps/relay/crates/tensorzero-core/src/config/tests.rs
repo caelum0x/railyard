@@ -2220,6 +2220,49 @@ async fn test_relay_cloud_runtime_config_loads_with_postgres_and_r2() {
     assert_eq!(endpoint.as_deref(), Some("https://storage.example.com"));
 }
 
+/// Relay must boot with ANY subset of provider keys: no provider credential in
+/// the shipped runtime config may read `env::` at load time, and the
+/// cost-first default (Groq) must be what `functions.chat` samples.
+#[tokio::test]
+async fn test_relay_runtime_config_loads_without_any_provider_key() {
+    for var in [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GROQ_API_KEY",
+        "OPENROUTER_API_KEY",
+    ] {
+        tensorzero_unsafe_helpers::remove_env_var_tests_only(var);
+    }
+    tensorzero_unsafe_helpers::set_env_var_tests_only("R2_BUCKET_NAME", "relay-bucket");
+    tensorzero_unsafe_helpers::set_env_var_tests_only(
+        "R2_S3_ENDPOINT",
+        "https://storage.example.com",
+    );
+
+    let config_str = include_str!("../../../../config/tensorzero.toml");
+    let config = toml::from_str(config_str).expect("Relay runtime config should parse as TOML");
+    let config = Box::pin(Config::load_unwritten_config(ConfigInput::Fresh(config)))
+        .await
+        .expect("Relay runtime config must load with no provider API keys set");
+
+    let groq = config
+        .models
+        .table
+        .get("llama-3.3-70b-versatile")
+        .expect("Relay ships a Groq free-tier model");
+    assert_eq!(groq.routing.first().map(AsRef::as_ref), Some("groq"));
+
+    let chat = config.functions.get("chat").expect("chat function");
+    let default = chat
+        .variants()
+        .get("default")
+        .expect("chat default variant");
+    let crate::variant::VariantConfig::ChatCompletion(default) = &default.inner else {
+        panic!("chat default variant must be a chat_completion variant");
+    };
+    assert_eq!(default.model().as_ref(), "llama-3.3-70b-versatile");
+}
+
 #[tokio::test]
 async fn test_config_object_storage_endpoint_env_var_missing_errors() {
     let config_str = r#"

@@ -13,6 +13,10 @@
 //!   request's TensorZero `credentials` map with the stored key, or the slot's
 //!   environment variable when no key is stored, so env-only deployments keep
 //!   working unchanged. A client-supplied credential for the same slot wins.
+//! * Availability: any subset of keys boots. A slot with no key is DISABLED;
+//!   a request that needs only disabled providers is refused with 503
+//!   `provider_not_configured` (see `provider_availability.rs`), the Providers
+//!   page shows the slot as not configured, and startup logs the summary.
 //! * Consistency: every replica re-reads the table every
 //!   [`CREDENTIAL_REFRESH_INTERVAL`], and the replica that handled a write
 //!   refreshes immediately.
@@ -36,10 +40,14 @@ use ring::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use tensorzero_auth::middleware::RequestApiKeyExtension;
+use tensorzero_core::utils::gateway::SwappableConfig;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 use crate::billing::MAX_REQUEST_BODY_BYTES;
+use crate::provider_availability::{
+    Availability, BodyShape, PROVIDER_NOT_CONFIGURED, evaluate, rewrite_model, target_from_body,
+};
 use crate::relay_access::{is_operator, require_operator};
 
 /// Env var holding the 32-byte credential master key (base64 or 64 hex chars).
@@ -88,6 +96,13 @@ pub const PROVIDER_KEY_SLOTS: &[ProviderKeySlot] = &[
         test: ConnectionTest::Anthropic("https://api.anthropic.com/v1/models"),
     },
     ProviderKeySlot {
+        name: "relay_groq_api_key",
+        provider: "groq",
+        label: "Groq (free tier, default)",
+        env_var: "GROQ_API_KEY",
+        test: ConnectionTest::Bearer("https://api.groq.com/openai/v1/models"),
+    },
+    ProviderKeySlot {
         name: "relay_openrouter_api_key",
         provider: "openrouter",
         label: "OpenRouter (failover)",
@@ -98,6 +113,12 @@ pub const PROVIDER_KEY_SLOTS: &[ProviderKeySlot] = &[
 
 fn slot(name: &str) -> Option<&'static ProviderKeySlot> {
     PROVIDER_KEY_SLOTS.iter().find(|slot| slot.name == name)
+}
+
+fn slot_for_provider(provider: &str) -> Option<&'static ProviderKeySlot> {
+    PROVIDER_KEY_SLOTS
+        .iter()
+        .find(|slot| slot.provider == provider)
 }
 
 fn env_value(slot: &ProviderKeySlot) -> Option<String> {
@@ -197,6 +218,9 @@ pub struct ProviderKeys {
     cipher: Option<Arc<LessSafeKey>>,
     cache: Arc<RwLock<CredentialCache>>,
     http: reqwest::Client,
+    /// Live gateway config, used to refuse requests that need only disabled
+    /// providers. `None` skips the check (credentials are still injected).
+    routes: Option<SwappableConfig>,
 }
 
 impl ProviderKeys {
@@ -212,6 +236,46 @@ impl ProviderKeys {
                 .timeout(TEST_TIMEOUT)
                 .build()
                 .unwrap_or_default(),
+            routes: None,
+        }
+    }
+
+    /// Judge provider availability against the live gateway config.
+    #[must_use]
+    pub fn with_routes(mut self, routes: SwappableConfig) -> Self {
+        self.routes = Some(routes);
+        self
+    }
+
+    /// Whether a provider type has a usable key right now.
+    fn provider_enabled(&self, provider: &str) -> bool {
+        slot_for_provider(provider).is_some_and(|slot| self.effective(slot).is_some())
+    }
+
+    /// One line per slot for the startup log: which providers serve traffic.
+    pub fn log_availability(&self) {
+        let (enabled, disabled): (Vec<_>, Vec<_>) = PROVIDER_KEY_SLOTS
+            .iter()
+            .partition(|slot| self.effective(slot).is_some());
+        let names = |slots: &[&ProviderKeySlot]| {
+            slots
+                .iter()
+                .map(|slot| slot.provider)
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        tracing::info!(
+            enabled = %names(&enabled),
+            disabled = %names(&disabled),
+            "Relay providers: requests needing only disabled providers fail with `provider_not_configured`"
+        );
+        for slot in disabled {
+            tracing::warn!(
+                provider = slot.provider,
+                env_var = slot.env_var,
+                "Relay provider disabled: no key stored in Relay and {} is unset",
+                slot.env_var
+            );
         }
     }
 
@@ -343,6 +407,7 @@ impl ProviderKeys {
             provider: slot.provider,
             label: slot.label,
             env_var: slot.env_var,
+            enabled: source != KeySource::Missing,
             source,
             key_hint: meta.as_ref().map(|meta| meta.key_hint.clone()).or(env_hint),
             stored: meta.is_some(),
@@ -369,6 +434,9 @@ pub struct ProviderKeyView {
     pub provider: &'static str,
     pub label: &'static str,
     pub env_var: &'static str,
+    /// The provider serves traffic. `false` means requests routed only to it
+    /// fail with `provider_not_configured`.
+    pub enabled: bool,
     pub source: KeySource,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_hint: Option<String>,
@@ -683,7 +751,47 @@ fn credentials_field(method: &axum::http::Method, path: &str) -> Option<&'static
     }
 }
 
-/// Supply stored/env provider keys as TensorZero dynamic credentials.
+/// Which request bodies name a target this gateway can judge for availability.
+fn body_shape(path: &str) -> Option<BodyShape> {
+    if path.ends_with("/openai/v1/chat/completions") {
+        Some(BodyShape::OpenAiChat)
+    } else if path.ends_with("/inference") {
+        Some(BodyShape::Native)
+    } else {
+        None
+    }
+}
+
+/// HTTP 503 `provider_not_configured`: every route of the request needs a
+/// provider that has no key. Not a policy status (402/429), so OpenAI-style
+/// callers such as Rally fall back to their own direct path.
+fn provider_not_configured(providers: &[String]) -> Response {
+    let hints = providers
+        .iter()
+        .map(|provider| match slot_for_provider(provider) {
+            Some(slot) => format!("{} ({})", slot.provider, slot.env_var),
+            None => provider.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(ApiErrorEnvelope {
+            error: ApiError {
+                message: format!(
+                    "no provider for this model is configured on this Relay; disabled: {hints}. Set the key on the gateway or store it on the Providers page."
+                ),
+                kind: Some("relay_provider_error".into()),
+                code: Some(PROVIDER_NOT_CONFIGURED.into()),
+                param: Some("model".into()),
+            },
+        }),
+    )
+        .into_response()
+}
+
+/// Supply stored/env provider keys as TensorZero dynamic credentials, and
+/// refuse (or resolve) requests whose providers are disabled.
 pub async fn provider_credentials_middleware(
     State(keys): State<ProviderKeys>,
     request: Request,
@@ -692,8 +800,9 @@ pub async fn provider_credentials_middleware(
     let Some(field) = credentials_field(request.method(), request.uri().path()) else {
         return next.run(request).await;
     };
+    let shape = body_shape(request.uri().path()).filter(|_| keys.routes.is_some());
     let supplied = keys.dynamic_credentials();
-    if supplied.is_empty() {
+    if supplied.is_empty() && shape.is_none() {
         return next.run(request).await;
     }
     let (mut parts, body) = request.into_parts();
@@ -707,24 +816,65 @@ pub async fn provider_credentials_middleware(
             );
         }
     };
-    let rebuilt = match serde_json::from_slice::<serde_json::Value>(&bytes) {
-        Ok(serde_json::Value::Object(mut object)) => {
-            let credentials = object
-                .entry(field.to_string())
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-            if let Some(existing) = credentials.as_object_mut() {
-                for (name, value) in supplied {
-                    // A caller-supplied credential for the same slot wins.
-                    existing.entry(name).or_insert(value);
-                }
-            }
-            serde_json::to_vec(&serde_json::Value::Object(object)).ok()
-        }
-        // Not a JSON object: leave it for the handler to reject.
-        _ => None,
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        // Not JSON: leave it for the handler to reject.
+        return next
+            .run(Request::from_parts(parts, Body::from(bytes)))
+            .await;
     };
-    let body = match rebuilt {
-        Some(rebuilt) => {
+    let target = shape.and_then(|shape| target_from_body(shape, &value).map(|t| (shape, t)));
+    let serde_json::Value::Object(object) = &mut value else {
+        // Not a JSON object: leave it for the handler to reject.
+        return next
+            .run(Request::from_parts(parts, Body::from(bytes)))
+            .await;
+    };
+    if let (Some(routes), Some((shape, target))) = (&keys.routes, target) {
+        let caller_slots = object
+            .get(field)
+            .and_then(serde_json::Value::as_object)
+            .map(|credentials| credentials.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let enabled = |provider: &str| {
+            keys.provider_enabled(provider)
+                || slot_for_provider(provider)
+                    .is_some_and(|slot| caller_slots.iter().any(|name| name == slot.name))
+        };
+        let has_slot = |provider: &str| slot_for_provider(provider).is_some();
+        let config = routes.load();
+        match evaluate(&target, config.as_ref(), &has_slot, &enabled) {
+            Availability::Servable => {}
+            Availability::ResolveTo(model) => {
+                tracing::info!(
+                    requested = ?target,
+                    resolved = %model,
+                    "Relay resolved a shorthand model whose provider is disabled to the catalog model"
+                );
+                rewrite_model(shape, object, &model);
+            }
+            Availability::NotConfigured(providers) => {
+                tracing::warn!(
+                    target = ?target,
+                    disabled = ?providers,
+                    "Relay refused a request: provider_not_configured"
+                );
+                return provider_not_configured(&providers);
+            }
+        }
+    }
+    if !supplied.is_empty() {
+        let credentials = object
+            .entry(field.to_string())
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        if let Some(existing) = credentials.as_object_mut() {
+            for (name, value) in supplied {
+                // A caller-supplied credential for the same slot wins.
+                existing.entry(name).or_insert(value);
+            }
+        }
+    }
+    let body = match serde_json::to_vec(&value) {
+        Ok(rebuilt) => {
             if parts
                 .headers
                 .contains_key(axum::http::header::CONTENT_LENGTH)
@@ -736,7 +886,7 @@ pub async fn provider_credentials_middleware(
             }
             Body::from(rebuilt)
         }
-        None => Body::from(bytes),
+        Err(_) => Body::from(bytes),
     };
     next.run(Request::from_parts(parts, body)).await
 }
@@ -786,6 +936,32 @@ mod tests {
             credentials_field(&post, "/relay/billing/wallet/top_up"),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn disabled_providers_fail_with_provider_not_configured() {
+        let response = provider_not_configured(&["groq".into(), "openai".into()]);
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["code"], "provider_not_configured");
+        let message = body["error"]["message"].as_str().unwrap();
+        assert!(message.contains("groq (GROQ_API_KEY)"), "{message}");
+        assert!(message.contains("openai (OPENAI_API_KEY)"), "{message}");
+    }
+
+    #[test]
+    fn every_slot_is_a_distinct_provider_type() {
+        for slot in PROVIDER_KEY_SLOTS {
+            assert_eq!(slot_for_provider(slot.provider).unwrap().name, slot.name);
+        }
+        assert!(slot_for_provider("groq").is_some());
+        assert!(body_shape("/openai/v1/chat/completions") == Some(BodyShape::OpenAiChat));
+        assert!(body_shape("/inference") == Some(BodyShape::Native));
+        assert!(body_shape("/batch_inference").is_none());
+        assert!(body_shape("/openai/v1/embeddings").is_none());
     }
 
     #[test]

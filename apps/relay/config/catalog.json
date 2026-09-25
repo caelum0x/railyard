@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": "relay-default-catalog-2026-09-24",
+  "revision": "relay-default-catalog-2026-09-25-groq",
   "generated_at_ms": 1790208000000,
   "models": [
     {
@@ -137,6 +137,52 @@
       "enabled": true
     },
     {
+      "id": "tensorzero::model_name::llama-3.3-70b-versatile",
+      "provider": "tensorzero",
+      "display_name": "Llama 3.3 70B (Groq)",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "embeddings": false,
+        "tools": true,
+        "vision": false,
+        "json_schema": true,
+        "streaming": true,
+        "batch": false
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 590000,
+        "output_micro_usd_per_million": 790000,
+        "source": "operator_override"
+      },
+      "context_window_tokens": 131072,
+      "max_output_tokens": 32768,
+      "enabled": true
+    },
+    {
+      "id": "tensorzero::model_name::llama-3.1-8b-instant",
+      "provider": "tensorzero",
+      "display_name": "Llama 3.1 8B Instant (Groq)",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "embeddings": false,
+        "tools": true,
+        "vision": false,
+        "json_schema": true,
+        "streaming": true,
+        "batch": false
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 50000,
+        "output_micro_usd_per_million": 80000,
+        "source": "operator_override"
+      },
+      "context_window_tokens": 131072,
+      "max_output_tokens": 131072,
+      "enabled": true
+    },
+    {
       "id": "openai/gpt-4o-mini",
       "provider": "openai",
       "display_name": "OpenAI GPT-4o mini",
@@ -225,6 +271,52 @@
         "source": "provider_list"
       },
       "context_window_tokens": 8192,
+      "enabled": true
+    },
+    {
+      "id": "groq/llama-3.3-70b-versatile",
+      "provider": "groq",
+      "display_name": "Groq Llama 3.3 70B Versatile",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "embeddings": false,
+        "tools": true,
+        "vision": false,
+        "json_schema": true,
+        "streaming": true,
+        "batch": false
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 590000,
+        "output_micro_usd_per_million": 790000,
+        "source": "provider_list"
+      },
+      "context_window_tokens": 131072,
+      "max_output_tokens": 32768,
+      "enabled": true
+    },
+    {
+      "id": "groq/llama-3.1-8b-instant",
+      "provider": "groq",
+      "display_name": "Groq Llama 3.1 8B Instant",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "embeddings": false,
+        "tools": true,
+        "vision": false,
+        "json_schema": true,
+        "streaming": true,
+        "batch": false
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 50000,
+        "output_micro_usd_per_million": 80000,
+        "source": "provider_list"
+      },
+      "context_window_tokens": 131072,
+      "max_output_tokens": 131072,
       "enabled": true
     }
   ]

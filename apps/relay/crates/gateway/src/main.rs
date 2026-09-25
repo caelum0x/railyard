@@ -46,6 +46,7 @@ mod cli;
 mod cost_feed;
 mod live_prices;
 mod metering;
+mod provider_availability;
 mod provider_health_persistence;
 mod provider_keys;
 mod provider_status;

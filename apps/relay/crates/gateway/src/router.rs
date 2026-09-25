@@ -199,10 +199,13 @@ pub async fn build_axum_router(
             .clone()
             .map(relay_storage_postgres::PostgresProviderCredentialStore::new),
         crate::provider_keys::master_key_from_env().map_err(billing_config_error)?,
-    );
+    )
+    .with_routes(app_state.config());
     if let Err(error) = provider_keys.reload().await {
         tracing::error!(error = %error, "Relay stored provider keys could not be loaded; using environment keys");
     }
+    // Any subset of provider keys boots; say which providers serve traffic.
+    provider_keys.log_availability();
     provider_keys.spawn_refresh(&app_state.deferred_tasks, shutdown_token.clone());
     // Innermost Relay layer: fills TensorZero `dynamic::` provider credentials
     // right before the inference handler parses the request.

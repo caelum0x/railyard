@@ -35,20 +35,70 @@ endpoint = "env::R2_S3_ENDPOINT"
 # │ provider resolves its key as a `dynamic::relay_*_api_key` credential that   │
 # │ the gateway supplies per request (crates/gateway/src/provider_keys.rs):     │
 # │ the key stored on the Providers page (AES-256-GCM under                     │
-# │ RELAY_CREDENTIALS_KEY) or, when none is stored, the named env variable.     │
+# │ RELAY_CREDENTIALS_KEY) or, when none is stored, the named env variable      │
+# │ (GROQ_API_KEY, OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY).      │
+# │                                                                             │
+# │ ANY SUBSET OF KEYS BOOTS. No location here reads `env::` directly, so a     │
+# │ missing provider key never aborts startup. A provider without a key is     │
+# │ DISABLED: a request whose every route needs a disabled provider is refused │
+# │ with HTTP 503 `provider_not_configured`, and the Providers page / startup  │
+# │ log show it as "Not configured". Trade-off: batch-status polling carries   │
+# │ no request credentials, so batch inference needs a key stored in Relay.   │
 # │                                                                             │
 # │ FAILOVER. Each model routes to its primary provider first and to OpenRouter │
 # │ second: when the primary errors (outage, 5xx, exhausted retries, open       │
-# │ circuit) TensorZero retries the same request on the next provider. Billing  │
-# │ prices the Relay model name (`tensorzero::model_name::<name>`), so the      │
-# │ retail price is identical whichever provider served the request.           │
+# │ circuit, or no key) TensorZero retries the request on the next provider.   │
+# │ Billing prices the Relay model name (`tensorzero::model_name::<name>`), so  │
+# │ the retail price is identical whichever provider served the request.       │
 # │                                                                             │
-# │ Primary providers keep an `env::` fallback: batch polling (which carries no │
-# │ request credentials) and deployments that never store keys in Relay still  │
-# │ work, so OPENAI_API_KEY / ANTHROPIC_API_KEY remain required at startup.     │
-# │ The OpenRouter failover leg falls back to `none`: without an OpenRouter key │
-# │ (stored or OPENROUTER_API_KEY) it simply fails over to nothing.             │
+# │ COST-FIRST DEFAULT. Groq's free tier serves `functions.chat` and the        │
+# │ unpinned `passport_text` default; OpenRouter is the free failover leg.     │
 # └────────────────────────────────────────────────────────────────────────────┘
+
+# Shorthand names (`tensorzero::model_name::groq::llama-3.3-70b-versatile`,
+# what Rally and Menivor send) use these per-provider-type defaults, so they
+# resolve through the same Relay credential slots as the named models below.
+[provider_types.groq.defaults]
+api_key_location = "dynamic::relay_groq_api_key"
+
+[provider_types.openrouter.defaults]
+api_key_location = "dynamic::relay_openrouter_api_key"
+
+[provider_types.anthropic.defaults]
+api_key_location = "dynamic::relay_anthropic_api_key"
+
+[provider_types.openai.defaults]
+api_key_location = "dynamic::relay_openai_api_key"
+
+# Groq free-tier models. Named after the Groq model id so a shorthand request
+# for the same id whose provider has no key (e.g. Menivor's
+# `tensorzero::model_name::openai::llama-3.3-70b-versatile`) is resolved to this
+# catalog entry by the gateway instead of failing.
+[models."llama-3.3-70b-versatile"]
+routing = ["groq", "openrouter"]
+
+[models."llama-3.3-70b-versatile".providers.groq]
+type = "groq"
+model_name = "llama-3.3-70b-versatile"
+api_key_location = "dynamic::relay_groq_api_key"
+
+[models."llama-3.3-70b-versatile".providers.openrouter]
+type = "openrouter"
+model_name = "meta-llama/llama-3.3-70b-instruct:free"
+api_key_location = "dynamic::relay_openrouter_api_key"
+
+[models."llama-3.1-8b-instant"]
+routing = ["groq", "openrouter"]
+
+[models."llama-3.1-8b-instant".providers.groq]
+type = "groq"
+model_name = "llama-3.1-8b-instant"
+api_key_location = "dynamic::relay_groq_api_key"
+
+[models."llama-3.1-8b-instant".providers.openrouter]
+type = "openrouter"
+model_name = "meta-llama/llama-3.1-8b-instruct"
+api_key_location = "dynamic::relay_openrouter_api_key"
 
 [models."gpt-4o-mini"]
 routing = ["openai", "openrouter"]
@@ -56,12 +106,12 @@ routing = ["openai", "openrouter"]
 [models."gpt-4o-mini".providers.openai]
 type = "openai"
 model_name = "gpt-4o-mini"
-api_key_location = { default = "dynamic::relay_openai_api_key", fallback = "env::OPENAI_API_KEY" }
+api_key_location = "dynamic::relay_openai_api_key"
 
 [models."gpt-4o-mini".providers.openrouter]
 type = "openrouter"
 model_name = "openai/gpt-4o-mini"
-api_key_location = { default = "dynamic::relay_openrouter_api_key", fallback = "none" }
+api_key_location = "dynamic::relay_openrouter_api_key"
 
 [models."gpt-4o"]
 routing = ["openai", "openrouter"]
@@ -69,12 +119,12 @@ routing = ["openai", "openrouter"]
 [models."gpt-4o".providers.openai]
 type = "openai"
 model_name = "gpt-4o"
-api_key_location = { default = "dynamic::relay_openai_api_key", fallback = "env::OPENAI_API_KEY" }
+api_key_location = "dynamic::relay_openai_api_key"
 
 [models."gpt-4o".providers.openrouter]
 type = "openrouter"
 model_name = "openai/gpt-4o"
-api_key_location = { default = "dynamic::relay_openrouter_api_key", fallback = "none" }
+api_key_location = "dynamic::relay_openrouter_api_key"
 
 [models."claude-sonnet"]
 routing = ["anthropic", "openrouter"]
@@ -82,12 +132,12 @@ routing = ["anthropic", "openrouter"]
 [models."claude-sonnet".providers.anthropic]
 type = "anthropic"
 model_name = "claude-sonnet-4-5"
-api_key_location = { default = "dynamic::relay_anthropic_api_key", fallback = "env::ANTHROPIC_API_KEY" }
+api_key_location = "dynamic::relay_anthropic_api_key"
 
 [models."claude-sonnet".providers.openrouter]
 type = "openrouter"
 model_name = "anthropic/claude-sonnet-4.5"
-api_key_location = { default = "dynamic::relay_openrouter_api_key", fallback = "none" }
+api_key_location = "dynamic::relay_openrouter_api_key"
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                              EMBEDDING MODELS                               │
@@ -99,12 +149,12 @@ routing = ["openai", "openrouter"]
 [embedding_models."text-embedding-3-small".providers.openai]
 type = "openai"
 model_name = "text-embedding-3-small"
-api_key_location = { default = "dynamic::relay_openai_api_key", fallback = "env::OPENAI_API_KEY" }
+api_key_location = "dynamic::relay_openai_api_key"
 
 [embedding_models."text-embedding-3-small".providers.openrouter]
 type = "openrouter"
 model_name = "openai/text-embedding-3-small"
-api_key_location = { default = "dynamic::relay_openrouter_api_key", fallback = "none" }
+api_key_location = "dynamic::relay_openrouter_api_key"
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                 FUNCTIONS                                   │
@@ -119,18 +169,23 @@ api_key_location = { default = "dynamic::relay_openrouter_api_key", fallback = "
 
 # General-purpose chat entry point.
 #
-# FAILOVER. `default` (OpenAI) serves all sampled traffic. `anthropic` has no
-# `weight`, which makes it a TensorZero fallback variant: it is tried only when
-# the sampled variant fails (provider outage, exhausted retries, open circuit),
-# so an OpenAI incident degrades to Claude instead of failing every request.
+# COST-FIRST. `default` runs on Groq's free tier (OpenRouter failover inside the
+# model). `openai` and `anthropic` have no `weight`, which makes them TensorZero
+# fallback variants: they are tried only when the sampled variant fails (outage,
+# exhausted retries, open circuit, or no Groq/OpenRouter key), so a Groq
+# incident degrades to a paid provider only when that provider has a key.
 # Billing is per function selector, so the retail price does not change.
 [functions.chat]
 type = "chat"
 
 [functions.chat.variants.default]
 type = "chat_completion"
-model = "gpt-4o-mini"
+model = "llama-3.3-70b-versatile"
 weight = 1.0
+
+[functions.chat.variants.openai]
+type = "chat_completion"
+model = "gpt-4o-mini"
 
 [functions.chat.variants.anthropic]
 type = "chat_completion"
@@ -151,21 +206,26 @@ model = "claude-sonnet"
 # on the wrong model. To add a text provider, add its `[models.*]` entry above
 # and a variant below whose name is the lowercased provider id.
 #
-# `openai` also carries weight = 1.0 so a passport_text call that does NOT pin a
-# variant still resolves (to the historical default model). `anthropic` has no
-# weight: it is never sampled, stays reachable by explicit provider pin, and
-# doubles as the failover variant when the sampled OpenAI variant fails.
+# `groq` carries weight = 1.0 so a passport_text call that does NOT pin a
+# variant resolves to the free Groq model (cost-first default). `openai` and
+# `anthropic` have no weight: they are never sampled, stay reachable by explicit
+# provider pin, and double as failover variants when the Groq variant fails.
 # Billing prices are per function selector
 # (`tensorzero::function_name::passport_text`), so every provider variant bills
 # at the one operator-published passport_text price regardless of model.
 [functions.passport_text]
 type = "chat"
 
-# provider = "openai"  -> gpt-4o-mini (also the unpinned default).
+# provider = "groq" -> llama-3.3-70b-versatile (also the unpinned default).
+[functions.passport_text.variants.groq]
+type = "chat_completion"
+model = "llama-3.3-70b-versatile"
+weight = 1.0
+
+# provider = "openai" -> gpt-4o-mini.
 [functions.passport_text.variants.openai]
 type = "chat_completion"
 model = "gpt-4o-mini"
-weight = 1.0
 
 # provider = "anthropic" -> claude-sonnet.
 [functions.passport_text.variants.anthropic]
