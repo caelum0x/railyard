@@ -1,0 +1,14 @@
+# BuildKit picks this up automatically for `-f apps/vend/Dockerfile`
+# (per-Dockerfile ignore file), so the repo-root build context holds only the
+# two workspaces the image compiles: vend and the mint crates it path-depends on
+# (vend-mint-client -> apps/mint/crates/{mint-core,mint-protocol,...}).
+*
+!apps/vend/Cargo.toml
+!apps/vend/Cargo.lock
+!apps/vend/crates
+!apps/mint/Cargo.toml
+!apps/mint/crates
+!apps/mint/contracts
+**/target
+**/node_modules
+**/.env*

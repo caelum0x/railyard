@@ -1,0 +1,15 @@
+# BuildKit picks this up automatically for `-f apps/turnstile/Dockerfile`
+# (per-Dockerfile ignore file), so the repo-root build context holds only the
+# two workspaces the image compiles: turnstile and agent-runtime (for the
+# `aitp-client` path dependency).
+*
+!apps/turnstile/Cargo.toml
+!apps/turnstile/Cargo.lock
+!apps/turnstile/crates
+!apps/agent-runtime/Cargo.toml
+!apps/agent-runtime/Cargo.lock
+!apps/agent-runtime/rust-toolchain.toml
+!apps/agent-runtime/crates
+**/target
+**/node_modules
+**/.env*

@@ -1,257 +1,235 @@
-# Railyard shared plane — co-deploy on the A1 box
+# Railyard shared plane: co-deploy on one box
 
-How the four money/metering services — **rago**, **relay-gateway**, **mint**,
-**abacus** — run side by side on the single Oracle A1 (arm64) box, behind one
-**Caddy** front door, sharing **one Postgres** (distinct databases) and one
-**ClickHouse** for event/observability storage.
+How the Railyard services run side by side on the single products box, behind
+one **Caddy** front door and **one shared Postgres** (one database and role per
+service). There is no ClickHouse: Relay stores its observability data in
+Postgres too.
 
-Each service is self-contained: it binds a distinct host port, owns its own
-database, and **runs its schema migrations at process startup** — so a deploy is
-"pull image, set env, restart"; there is no separate migration step to forget.
+The deploy kit that implements this doc lives in the `infra-box` repo:
+
+| What | Where (infra-box) |
+|---|---|
+| Compose file (source of truth for ports and profiles) | `stacks/railyard/docker-compose.yml` |
+| Shared Postgres 16 + pg_cron, per-app DB/role init | `stacks/postgres/`, `stacks/postgres/init/10-app-dbs.sh` |
+| Env templates (seeded to `/etc/products/<svc>.env`) | `env/<svc>.env.example` |
+| Caddy site blocks (commented until DNS exists) | `caddy/Caddyfile` |
+| Serial image builds | `build/build-railyard.sh` |
+| Installer | `install.sh railyard [svc...]` |
+
+Each service owns its own database and **runs its schema migrations at process
+startup**, so a deploy is "build image, fill env, `docker compose up -d`". There
+is no separate migration step.
+
+Every service is behind a compose **profile**, so a plain `docker compose up`
+starts nothing. Enable services explicitly:
+
+```bash
+sudo ./install.sh railyard                                   # rago mint relay
+sudo ./install.sh railyard vend turnstile game-economy        # next wave
+sudo ./install.sh railyard abacus relay-ui                    # spend caps + operator console
+```
 
 ---
 
 ## 1. Topology
 
 ```
-                          ┌──────────────── Caddy (:80/:443, TLS) ───────────────┐
-                          │  rago.<domain>    → 127.0.0.1:3000  (rago API+GraphQL)│
-   internet ───────────►  │  relay.<domain>   → 127.0.0.1:3100  (relay-gateway)   │
-                          │  mint.<domain>    → 127.0.0.1:8080  (mint-server)     │
-                          │  abacus.<domain>  → 127.0.0.1:8100  (abacus-proxy)    │
-                          └───────────────────────┬──────────────────────────────┘
-                                                  │  (all services bind 127.0.0.1 only)
-        ┌─────────────────────────────────────────┼───────────────────────────────┐
-        │                                          │                               │
-   ┌────▼─────┐   ┌──────────────┐   ┌─────────────▼┐   ┌──────────┐        ┌───────▼────────┐
-   │  rago    │   │ relay-gateway│   │    mint      │   │  abacus  │        │   Postgres     │
-   │  :3000   │   │   :3100      │   │    :8080     │   │  :8100   │        │  (one server)  │
-   │  db=rago │   │ ClickHouse   │   │   db=mint    │   │ db=abacus│        │  rago/mint/    │
-   └────┬─────┘   └──────┬───────┘   └──────┬───────┘   └────┬─────┘        │  abacus DBs    │
-        │                │                  │                │              └────────────────┘
-        └── Postgres ────┘  ClickHouse ─────┴── Postgres ────┘ ── Postgres          │
-                            (rago + relay share the ClickHouse event store)   ┌─────▼──────┐
-                                                                              │ ClickHouse │
-                                                                              └────────────┘
+                     Caddy (:80/:443, TLS)  <svc>.$RAILYARD_DOMAIN
+                                   |
+   internet  ---->   rago.      -> 127.0.0.1:3300
+                     relay.     -> 127.0.0.1:3100
+                     mint.      -> 127.0.0.1:3400
+                     vend.      -> 127.0.0.1:3600
+                     turnstile. -> 127.0.0.1:3700
+                     game.      -> 127.0.0.1:3800
+                     abacus.    -> 127.0.0.1:3900
+                     relay-ui.  -> 127.0.0.1:4000  (basic_auth; SSH tunnel preferred)
+                                   |
+        docker network "products-net" (services call each other by name)
+                                   |
+   rago:3000  relay:3000  mint:8080  vend:8090  turnstile:8101
+   game-economy:8102  abacus:8100  relay-ui:4000
+                                   |
+                     postgres:5432 (stacks/postgres; host 127.0.0.1:5433)
+       databases: rago  mint  relay  vend  turnstile  game_economy  abacus
 ```
 
-### Port map (host)
+### Port map
 
-| Service        | Host port | Bind env / config                     | Notes |
-|----------------|-----------|---------------------------------------|-------|
-| rago (API+GraphQL+worker) | **3000** | `RAGO_API_ADDR=0.0.0.0:3000` | one process: API + billing daemon + webhook re-delivery |
-| relay-gateway (TensorZero) | **3100** | `config/tensorzero.toml → bind_address` **or** container port map `3100:3000` | TensorZero's own default is `:3000`, which collides with rago — **remap to 3100** |
-| mint-server    | **8080** | `MINT_BIND_ADDR=0.0.0.0:8080` | AITP-402 ledger |
-| abacus-proxy   | **8100** | `ABACUS_BIND_ADDR=0.0.0.0:8100` | agent spend proxy (default is already `:8100`) |
+Every host port binds `127.0.0.1` only; Caddy is the only public listener.
+Containers keep their built-in default port; the compose file remaps the host
+side so nothing collides with Menivor (8080) or OpenJev (3000).
 
-> **Why relay moves to 3100:** relay-gateway is TensorZero, whose
-> `bind_address` defaults to `0.0.0.0:3000` — the same port rago claims. On the
-> shared box pick a distinct host port for relay. Either edit
-> `apps/relay/config/tensorzero.toml` `bind_address = "0.0.0.0:3100"`, or keep
-> the internal `:3000` and publish it on the host as `3100:3000` in the
-> container runtime. This doc assumes host **3100**.
+| Service | Profile | Host port | Container port | Health | Database |
+|---|---|---|---|---|---|
+| rago (API + GraphQL + billing worker) | `railyard` | 3300 | 3000 | `GET /health` | `rago` |
+| relay (LLM gateway) | `railyard` | 3100 | 3000 | `GET /health` | `relay` |
+| mint (ledger, holds, receipts) | `railyard` | 3400 | 8080 | `GET /healthz`, `/readyz` | `mint` |
+| vend (white-label LLM API) | `vend` | 3600 | 8090 | `GET /readyz` | `vend` |
+| turnstile (AITP-402 paid tools) | `turnstile` | 3700 | 8101 | `GET /healthz` | `turnstile` |
+| game-economy (game storefront, IAP credits) | `game-economy` | 3800 | 8102 | `GET /healthz` | `game_economy` |
+| abacus (per-agent LLM spend caps) | `abacus` | 3900 | 8100 | `GET /healthz`, `/readyz` | `abacus` |
+| relay-ui (Relay operator console) | `relay-ui` | 4000 | 4000 | `GET /health` | reads `relay` |
 
-Bind every service to `127.0.0.1` (loopback) and let Caddy be the only public
-listener. The table shows `0.0.0.0` because that is each app's in-container
-default; publish them as `127.0.0.1:<port>:<port>` so nothing but Caddy is
-reachable from the internet.
+On-box consumers (Menivor, OpenJev, FlowBlast if co-hosted) use the in-network
+names: `http://rago:3000`, `http://relay:3000`, `http://mint:8080`,
+`http://abacus:8100`, `http://game-economy:8102`. Off-box consumers (Rally on
+the Oracle micro) use the public Caddy hosts.
 
 ---
 
-## 2. One Postgres, distinct databases
+## 2. One Postgres, one database per service
 
-A single Postgres server (managed, e.g. Neon, or a local container on the box)
-hosts one database per stateful service. Isolating by **database** (rather than a
-shared database with per-app schemas) keeps each app's embedded migrator as the
-sole owner of its DDL and avoids cross-app migration-history collisions —
-important because rago was previously dump-restored and its `_prisma_migrations`
-were empty (see memory). Distinct databases sidestep that class of drift.
+`stacks/postgres` runs Postgres 16 with pg_cron (Relay's Postgres
+observability backend needs it). On first init, and again on every
+`install.sh postgres`, `init/10-app-dbs.sh` creates one login role and one
+owned database per service from the passwords in `/etc/products/postgres.env`.
+An empty password skips that database, so next-wave databases only appear once
+you enable the service.
 
-```sql
--- run once as a superuser, then hand each app its own least-privilege role
-CREATE DATABASE rago;
-CREATE DATABASE mint;
-CREATE DATABASE abacus;
+| Password var (postgres.env) | Role | Database | Used by |
+|---|---|---|---|
+| `RAGO_DB_PASSWORD` | `rago_app` | `rago` | rago |
+| `MINT_DB_PASSWORD` | `mint_app` | `mint` | mint |
+| `RELAY_DB_PASSWORD` | `relay_app` | `relay` | relay, relay-ui |
+| `VEND_DB_PASSWORD` | `vend_app` | `vend` | vend |
+| `TURNSTILE_DB_PASSWORD` | `turnstile_app` | `turnstile` | turnstile |
+| `GAME_ECONOMY_DB_PASSWORD` | `game_economy_app` | `game_economy` | game-economy |
+| `ABACUS_DB_PASSWORD` | `abacus_app` | `abacus` | abacus |
 
-CREATE ROLE rago_app   LOGIN PASSWORD '...';
-CREATE ROLE mint_app   LOGIN PASSWORD '...';
-CREATE ROLE abacus_app LOGIN PASSWORD '...';
+Separate databases keep each service's embedded migrator the only owner of its
+DDL, so migration histories never collide.
 
-GRANT ALL PRIVILEGES ON DATABASE rago   TO rago_app;
-GRANT ALL PRIVILEGES ON DATABASE mint   TO mint_app;
-GRANT ALL PRIVILEGES ON DATABASE abacus TO abacus_app;
-```
-
-- If your provider allows only **one** database (some free tiers do), fall back
-  to one database with a **schema per app** (`rago`, `mint`, `abacus`) and set
-  each DSN's `search_path` / `options=-csearch_path=<schema>`. Keep the roles
-  separate so one app cannot read another's tables.
-- **relay-gateway (TensorZero) does not use Postgres.** Its state store is
-  **ClickHouse** (inference/observability). rago can *optionally* use the same
-  ClickHouse for its event store. Point both at one ClickHouse database.
-
-### Migrations at startup — confirmed per app
+### Migrations at startup
 
 | Service | Mechanism | Trigger |
-|---------|-----------|---------|
-| rago    | embedded `sqlx::migrate!("./migrations")` (`rago-db` `MIGRATOR`), run on boot | automatic when `DATABASE_URL` set |
-| mint    | server runs migrations at startup | automatic when `DATABASE_URL` set (production mode) |
-| abacus  | migrated Postgres product store | automatic when `ABACUS_DATABASE_URL` set |
-| relay   | TensorZero applies its ClickHouse migrations at gateway startup | automatic when `CLICKHOUSE_URL` set |
-
-No app needs a manual pre-deploy `migrate` command; restarting the process is
-sufficient. After importing rago seeds (see `rago/seeds/`), no migration change
-is involved — seeds go over the REST API, not the schema.
+|---|---|---|
+| rago | embedded sqlx migrator (`rago-db`) | `DATABASE_URL` set |
+| mint | migrations at server start (production mode) | `DATABASE_URL` set |
+| relay | Postgres migrations at gateway start (observability, API keys, provider credentials) | `TENSORZERO_POSTGRES_URL` set |
+| vend | migrations at server start | `DATABASE_URL` set |
+| turnstile | migrations at server start | `TURNSTILE_DATABASE_URL` set |
+| game-economy | migrations at server start | `GAME_DATABASE_URL` set |
+| abacus | migrated Postgres product store (policy, receipts, open holds) | `ABACUS_DATABASE_URL` set |
 
 ---
 
 ## 3. Env matrix
 
-Shared building blocks (define once, reuse in each app's env):
+The templates in `infra-box/env/` are the complete lists; this table names the
+required keys. `install.sh` refuses to start a service while its env file still
+contains `replace` or `example.com`.
 
-```bash
-PG_HOST=<postgres-host>          # e.g. ep-xxx.eu-central-1.aws.neon.tech
-PG_SSL=require                   # rago defaults SSL ON in prod
-CH_URL=http://127.0.0.1:8123     # shared ClickHouse
-```
+| Service | Env file | Required keys |
+|---|---|---|
+| rago | `rago.env` | `DATABASE_URL`, `RAGO_API_ADDR=0.0.0.0:3000`, `RAGO_JWT_SECRET` (refuses to boot without it in release), `RAGO_ENCRYPTION_KEY` |
+| relay | `relay.env` | `TENSORZERO_POSTGRES_URL`, R2 object storage (`R2_BUCKET_NAME`, `R2_S3_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`), `RELAY_CREDENTIALS_KEY`. Provider keys (`GROQ_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`): any subset boots; a provider without a key answers 503 `provider_not_configured`. Optional: `RELAY_OPERATOR_KEY_IDS`, Rago cost feed (`RELAY_COST_FEED_URL=http://rago:3000/api/v1/events`, `RELAY_COST_FEED_FORMAT=rago`, `RELAY_COST_FEED_BEARER` or `RELAY_RAGO_ROUTES_JSON`) |
+| mint | `mint.env` | `MINT_BIND_ADDR=0.0.0.0:8080`, `DATABASE_URL`, `MINT_API_KEY`, `MINT_SIGNING_KEY`, `MINT_PAYER_KEYS_JSON` |
+| vend | `vend.env` | `DATABASE_URL`, `MINT_BASE`, `MINT_API_KEY`, `RELAY_BASE=http://relay:3000`, `RELAY_KEY`, payout accounts, `VEND_MODEL_RATES_JSON`, `VEND_ADMIN_TOKEN_SHA256` |
+| turnstile | `turnstile.env` | `MINT_SERVER_URL`, `TURNSTILE_API_KEY`, `TURNSTILE_PAYEE`, `TURNSTILE_DATABASE_URL`, `TURNSTILE_ADMIN_TOKEN`; host file `/srv/railyard/turnstile/tools.json` |
+| game-economy | `game-economy.env` | `RAILYARD_MINT_URL`, `MINT_API_KEY`, `GAME_REVENUE_ACCOUNT`, `GAME_DATABASE_URL`, `GAME_AUTH_SECRET`, `GAME_SERVER_SECRET`, `GAME_ADMIN_TOKEN`; host file `/srv/railyard/game-economy/catalog.json` |
+| abacus | `abacus.env` | `ABACUS_DATABASE_URL`, `ABACUS_API_KEY`, `MINT_SERVER_URL=http://mint:8080`, `MINT_API_KEY`, `UPSTREAM_BASE_URL=http://relay:3000`, `UPSTREAM_PATH=/openai/v1/chat/completions`, `ABACUS_PROVIDER=relay`; optional `ABACUS_ADMIN_API_KEY` (operator API). Host files `/srv/railyard/abacus/agents.json` (required) and `pricing.json` (Relay model prices; unpriced models fail with `model_not_priced`) |
+| relay-ui | `relay-ui.env` | `TENSORZERO_POSTGRES_URL` (relay database), `TENSORZERO_API_KEY` (a Relay key created with `gateway --create-api-key`); `TENSORZERO_GATEWAY_URL=http://relay:3000` is pinned in compose |
 
-### rago  (`apps/rago/.env`)
+Relay's gateway auth is on (`config/tensorzero.toml` `[gateway.auth]`), so
+every caller, including Abacus pass-through traffic and the console, needs a
+Relay API key. Abacus forwards the caller's own `Authorization: Bearer` key to
+Relay.
 
-| Var | Value | Required |
-|-----|-------|----------|
-| `DATABASE_URL` | `postgres://rago_app:***@$PG_HOST:5432/rago?sslmode=require` | yes |
-| `RAGO_API_ADDR` | `127.0.0.1:3000` | yes |
-| `RAGO_JWT_SECRET` | `openssl rand -hex 32` (refuses to boot without it in release) | yes |
-| `RAGO_TICK_SECS` | `15` | no |
-| `RAGO_BILLING_HOUR` | `0` (UTC) | no |
-| `RAGO_RATE_LIMIT` | `6000` | no |
-| `CLICKHOUSE_URL` / `CLICKHOUSE_DATABASE` | `$CH_URL` / `rago` | optional event store |
-| `RUST_LOG` | `info` | no |
-
-### relay-gateway  (`apps/relay`)
-
-| Var / config | Value | Required |
-|--------------|-------|----------|
-| `bind_address` (`config/tensorzero.toml`) | `0.0.0.0:3100` (or map `3100:3000`) | yes |
-| `CLICKHOUSE_URL` | `$CH_URL` (its primary datastore) | yes |
-| provider keys (OpenAI/Anthropic/etc.) | per `config/tensorzero.toml` model providers | as used |
-
-### mint  (`apps/mint/.env`)
-
-| Var | Value | Required |
-|-----|-------|----------|
-| `MINT_BIND_ADDR` | `127.0.0.1:8080` | yes |
-| `DATABASE_URL` | `postgres://mint_app:***@$PG_HOST:5432/mint?sslmode=require` | yes (enables production mode) |
-| `MINT_API_KEY` | long random shared key for non-health routes | yes |
-| `MINT_SIGNING_KEY` | hex-encoded 32-byte receipt-signing seed | yes |
-| `MINT_PAYER_KEYS_JSON` | AITP-402 payer verification keys (JSON array) | yes (for paid traffic) |
-| `MINT_KYC_PROVIDER` (+ `PERSONA_API_KEY` / `STRIPE_API_KEY`) | real KYC for cash-out (else redeem is DENIED) | for redemptions |
-| `USDC_RPC_URL` / `USDC_TOKEN_CONTRACT` | crypto on/off-ramp | optional |
-
-### abacus  (`apps/abacus`)
-
-| Var | Value | Required |
-|-----|-------|----------|
-| `ABACUS_BIND_ADDR` | `127.0.0.1:8100` | yes |
-| `ABACUS_DATABASE_URL` | `postgres://abacus_app:***@$PG_HOST:5432/abacus?sslmode=require` | yes (enables shared Postgres store + hold recovery) |
-| `ABACUS_API_KEY` | proxy secret (`X-API-Key`) | yes |
-| `UPSTREAM_BASE_URL` | e.g. `https://api.openai.com` | yes |
-| `ABACUS_PROVIDER` | `openai` (default) | no |
-| `ABACUS_AGENT_CONFIG` | path to agent → treasury/payee JSON | yes |
-| `ABACUS_PRICING_CONFIG` | per-provider/model rate overlay JSON | optional |
-| `ABACUS_RECEIPT_LOG` | path for signed receipt projection | no |
-| Mint linkage | `MINT_*` base URL + API key so abacus holds settle against mint | yes (for real spend) |
+Consumer-side env (Rally, Menivor, OpenJev, Scribase, FlowBlast) is listed in
+the matching `infra-box/env/*.env.example` sections and in
+[`docs/CONSUMERS.md`](../docs/CONSUMERS.md).
 
 ---
 
 ## 4. Caddy front door
 
-`/etc/caddy/Caddyfile` — subdomain routing, automatic TLS:
+`infra-box/caddy/Caddyfile` has one commented block per service under the
+"Railyard" section. `RAILYARD_DOMAIN` (caddy.env) must be an apex zone, e.g.
+`ereboslab.com`, giving `rago.ereboslab.com`: Cloudflare's free Universal SSL
+covers one subdomain level only. Uncomment the blocks for the services you
+enabled, then `sudo ./install.sh caddy`; it refuses to load a block whose
+`{$VAR}` is empty.
 
-```caddyfile
-rago.example.com {
-	encode zstd gzip
-	reverse_proxy 127.0.0.1:3000
-}
+- Streaming services (relay, vend, turnstile, abacus, relay-ui) use
+  `flush_interval -1` and long read timeouts.
+- relay-ui has no login of its own and can create API keys and store provider
+  keys. Its block requires `basic_auth` (`RELAY_UI_USER`,
+  `RELAY_UI_PASSWORD_HASH` from `caddy hash-password`). The preferred access is
+  an SSH tunnel: `ssh -L 4000:127.0.0.1:4000 <box>`.
 
-relay.example.com {
-	encode zstd gzip
-	reverse_proxy 127.0.0.1:3100
-}
-
-mint.example.com {
-	encode zstd gzip
-	reverse_proxy 127.0.0.1:8080
-}
-
-abacus.example.com {
-	encode zstd gzip
-	reverse_proxy 127.0.0.1:8100
-}
-```
-
-Path-based routing on a single host is also fine if you prefer one domain — but
-mind that these apps use absolute paths (`/events`, `/plans`, `/v1/...`,
-`/v1/proxy`), so a `handle_path` strip prefix is required per app; subdomains
-avoid that entirely and are the recommended layout.
-
-Reload after edits: `caddy reload --config /etc/caddy/Caddyfile`.
+The apps use absolute paths (`/api/v1/events`, `/v1/holds`, `/v1/proxy`, ...),
+so subdomains are the supported layout; path-prefix routing would need a
+`handle_path` strip per app.
 
 ---
 
-## 5. Process supervision (PM2 / systemd)
+## 5. Builds
 
-The box already runs PM2 (see deploy memory). Each service is one long-lived
-process; PM2 restarts it and re-runs its startup migrations automatically.
+Images are built on the box from a checkout at `/srv/src/railyard`
+(`RAILYARD_SRC`), one service at a time (`build/build-railyard.sh` holds a lock
+so a Rust build never overlaps another heavy build). Every Dockerfile uses
+multi-arch bases and compiles from source, so the same file builds natively on
+amd64 or arm64.
 
-```bash
-# examples — adjust binary paths to the shipped standalone builds
-pm2 start ./rago-server        --name rago    --cwd apps/rago         # binds :3000
-pm2 start ./relay-gateway      --name relay   --cwd apps/relay        # binds :3100
-pm2 start ./mint-server        --name mint    --cwd apps/mint         # binds :8080
-pm2 start ./abacus-proxy       --name abacus  --cwd apps/abacus       # binds :8100
-pm2 save
-```
+| Service | Build context | Dockerfile | Context trimmed by |
+|---|---|---|---|
+| rago | `apps/rago` | `Dockerfile` | none (small dir; a clean checkout has no `target/`) |
+| mint | `apps/mint` | `Dockerfile` | `apps/mint/.dockerignore` |
+| relay | `apps/relay` | `Dockerfile` | `apps/relay/.dockerignore` |
+| relay-ui | `apps/relay` | `ui/Dockerfile` | `apps/relay/ui/Dockerfile.dockerignore` |
+| vend | repo root | `apps/vend/Dockerfile` | `apps/vend/Dockerfile.dockerignore` (vend + mint crates) |
+| turnstile | repo root | `apps/turnstile/Dockerfile` | `apps/turnstile/Dockerfile.dockerignore` (turnstile + agent-runtime) |
+| game-economy | repo root | `apps/game-economy/Dockerfile` | `apps/game-economy/Dockerfile.dockerignore` (game-economy + mint) |
+| abacus | repo root | `apps/abacus/Dockerfile` | `apps/abacus/Dockerfile.dockerignore` (abacus + agent-runtime) |
 
-> A1 is arm64 with limited RAM/disk — build the standalone binaries off-box
-> (linux/arm64) and ship the artifacts, as with the vcpeer deploy method. Do not
-> compile on the box.
+The repo-root images path-depend on sibling workspaces, which is why their
+context is the repo root. BuildKit reads the per-Dockerfile
+`<Dockerfile>.dockerignore`, so each root build uploads only the workspaces it
+compiles.
+
+Memory limits in compose: rago and relay 512 MB, relay-ui 384 MB, every other
+service 256 MB.
 
 ---
 
-## 6. Deploy order & smoke test
+## 6. Deploy order and smoke test
 
-1. Provision Postgres (3 DBs + roles) and ClickHouse.
-2. Start **rago**, **mint**, **abacus** — each migrates its DB on boot.
-3. Start **relay-gateway** (ClickHouse migrations on boot).
-4. Bring up Caddy.
-5. Health checks:
+1. `sudo ./install.sh env`, fill `/etc/products/{postgres,rago,mint,relay}.env`.
+2. `sudo ./install.sh railyard` (brings up Postgres, builds and starts rago,
+   mint, relay; each migrates its database on boot).
+3. Create Relay API keys (one per consumer product, one for relay-ui):
+   `docker compose -p railyard exec relay gateway --config-file /app/config/tensorzero.toml --create-api-key`
+4. Optional services: fill their env files and host files, add their DB
+   passwords to `postgres.env`, then `sudo ./install.sh railyard <svc...>`.
+5. Uncomment the matching Caddy blocks and `sudo ./install.sh caddy`.
+6. Health checks from the box:
    ```bash
-   curl -fsS https://rago.example.com/health        # rago
-   curl -fsS https://mint.example.com/healthz       # mint
-   curl -fsS https://relay.example.com/health       # relay-gateway (TensorZero)
-   curl -fsS https://abacus.example.com/healthz     # abacus
+   curl -fsS http://127.0.0.1:3300/health    # rago
+   curl -fsS http://127.0.0.1:3100/health    # relay
+   curl -fsS http://127.0.0.1:3400/healthz   # mint
+   curl -fsS http://127.0.0.1:3900/healthz   # abacus (if enabled)
+   curl -fsS http://127.0.0.1:4000/health    # relay-ui (if enabled)
    ```
-6. Seed rago catalogs per consumer (see `rago/seeds/README.md`):
+7. Seed Rago catalogs per consumer (see `apps/rago/seeds/README.md`):
    ```bash
-   RAGO_API_URL=https://rago.example.com RAGO_API_KEY=<autogtm-key>      ./rago/seeds/import.sh rago/seeds/autogtm.json
-   RAGO_API_URL=https://rago.example.com RAGO_API_KEY=<menivor-key>      ./rago/seeds/import.sh rago/seeds/menivor.json
-   RAGO_API_URL=https://rago.example.com RAGO_API_KEY=<opentypesafe-key> ./rago/seeds/import.sh rago/seeds/opentypesafe.json
+   cd apps/rago/seeds
+   RAGO_API_URL=https://rago.<apex>/api/v1 RAGO_API_KEY=<autogtm-key>      ./import.sh autogtm.json
+   RAGO_API_URL=https://rago.<apex>/api/v1 RAGO_API_KEY=<menivor-key>      ./import.sh menivor.json
+   RAGO_API_URL=https://rago.<apex>/api/v1 RAGO_API_KEY=<opentypesafe-key> ./import.sh opentypesafe.json
    ```
 
 ---
 
-## 7. Notes & gotchas
+## 7. Notes
 
-- **Port collision (rago ↔ relay):** both default to `:3000`. relay must move to
-  `3100` (§1). This is the single most likely footgun on the shared box.
-- **Neon migration history:** the rago DB was dump-restored with an empty
-  `_prisma_migrations`; keeping rago on its **own** database lets its embedded
-  sqlx migrator own the schema cleanly. Reconcile any pre-existing drift with
-  idempotent additive SQL before first boot (see memory).
-- **Secrets:** never commit `.env`; supply `RAGO_JWT_SECRET`, `MINT_API_KEY`,
-  `MINT_SIGNING_KEY`, `ABACUS_API_KEY` from the secret store. Rotate anything
-  ever pasted in chat.
-- **Mint is the authoritative money ledger;** abacus holds settle against it.
-  Keep their API keys and the abacus agent-config treasury/payee identities in
-  sync, or abacus falls back to single-replica JSON snapshots.
+- **Mint is the authoritative money ledger.** Abacus holds, game-economy
+  purchases, vend settlements and turnstile payments all settle against it;
+  keep `MINT_API_KEY` and the Mint account ids in `agents.json`,
+  `GAME_REVENUE_ACCOUNT` and the vend payout accounts in sync with real Mint
+  accounts.
+- **Secrets:** never commit a filled env file. Generate with
+  `openssl rand -hex 32`. Rotate anything that was ever pasted in chat.
+- **Backups:** the box's nightly restic backup (`infra-box/backup/backup.sh`)
+  includes a `pg_dumpall` of the shared Postgres, so every Railyard database is
+  covered.

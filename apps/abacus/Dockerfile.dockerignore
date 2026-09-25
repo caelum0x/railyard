@@ -1,0 +1,15 @@
+# BuildKit picks this up automatically for `-f apps/abacus/Dockerfile`
+# (per-Dockerfile ignore file), so the repo-root build context holds only the
+# two workspaces the image compiles: abacus and agent-runtime (for the
+# `aitp-client` path dependency).
+*
+!apps/abacus/Cargo.toml
+!apps/abacus/Cargo.lock
+!apps/abacus/crates
+!apps/agent-runtime/Cargo.toml
+!apps/agent-runtime/Cargo.lock
+!apps/agent-runtime/rust-toolchain.toml
+!apps/agent-runtime/crates
+**/target
+**/node_modules
+**/.env*

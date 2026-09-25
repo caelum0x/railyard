@@ -1,5 +1,17 @@
 # syntax=docker/dockerfile:1.7
+#
+# BUILD CONTEXT = the railyard repo ROOT, NOT apps/vend:
+#   docker build -f apps/vend/Dockerfile -t railyard/vend-server .
+# vend-mint-client path-depends on apps/mint/crates/{mint-core,mint-protocol}
+# (`../../../mint/crates/...`), so the mint workspace is recreated as a sibling
+# under /src/apps. Dockerfile.dockerignore trims the context to these two
+# workspaces.
 FROM rust:1.94-bookworm AS builder
+
+WORKDIR /src/apps/mint
+COPY apps/mint/Cargo.toml ./
+COPY apps/mint/crates ./crates
+COPY apps/mint/contracts ./contracts
 
 WORKDIR /src/apps/vend
 COPY apps/vend/Cargo.toml apps/vend/Cargo.lock ./

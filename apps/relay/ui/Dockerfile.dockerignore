@@ -1,0 +1,46 @@
+# Build context for the Relay UI image: `docker build -f ui/Dockerfile .` run
+# from apps/relay. BuildKit uses this per-Dockerfile ignore file instead of
+# apps/relay/.dockerignore (which excludes ui/ and pnpm-lock.yaml because the
+# gateway image does not need them). The UI build needs the pnpm workspace
+# root files, ui/, and crates/ (it compiles the tensorzero-node N-API binding).
+
+# Rust / cargo build artifacts
+**/target
+**/target-rust-analyzer
+**/recipe.json
+/release
+
+# Node artifacts: dependencies are installed inside the image
+**/node_modules
+ui/build
+**/dist
+ui/fixtures
+ui/e2e_tests
+ui/test-results
+ui/playwright-report
+**/*.junit.xml
+
+# Python
+**/.venv
+
+# Editor / tooling / CI metadata
+**/.vscode
+**/.claude
+.buildkite
+.github
+
+# Secrets and local environment: NEVER copy into the image
+**/.env*
+gcp_jwt_key.json
+.credentials/
+
+# Repo docs / examples / clients not needed by the UI build
+/recipes
+/clients
+/docs
+/examples
+/ci
+
+# VCS
+.git
+.gitignore
