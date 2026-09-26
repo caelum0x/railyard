@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": "relay-default-catalog-2026-09-25-groq",
-  "generated_at_ms": 1790208000000,
+  "revision": "relay-default-catalog-2026-09-26-groq-gpt-oss",
+  "generated_at_ms": 1790380800000,
   "models": [
     {
       "id": "tensorzero::function_name::chat",
@@ -137,9 +137,55 @@
       "enabled": true
     },
     {
+      "id": "tensorzero::model_name::openai/gpt-oss-120b",
+      "provider": "tensorzero",
+      "display_name": "GPT-OSS 120B (Groq)",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "embeddings": false,
+        "tools": true,
+        "vision": false,
+        "json_schema": true,
+        "streaming": true,
+        "batch": false
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 150000,
+        "output_micro_usd_per_million": 600000,
+        "source": "operator_override"
+      },
+      "context_window_tokens": 131072,
+      "max_output_tokens": 65536,
+      "enabled": true
+    },
+    {
+      "id": "tensorzero::model_name::openai/gpt-oss-20b",
+      "provider": "tensorzero",
+      "display_name": "GPT-OSS 20B (Groq)",
+      "aliases": [],
+      "capabilities": {
+        "chat": true,
+        "embeddings": false,
+        "tools": true,
+        "vision": false,
+        "json_schema": true,
+        "streaming": true,
+        "batch": false
+      },
+      "pricing": {
+        "input_micro_usd_per_million": 75000,
+        "output_micro_usd_per_million": 300000,
+        "source": "operator_override"
+      },
+      "context_window_tokens": 131072,
+      "max_output_tokens": 65536,
+      "enabled": true
+    },
+    {
       "id": "tensorzero::model_name::llama-3.3-70b-versatile",
       "provider": "tensorzero",
-      "display_name": "Llama 3.3 70B (Groq)",
+      "display_name": "Llama 3.3 70B alias (runs GPT-OSS 120B on Groq)",
       "aliases": [],
       "capabilities": {
         "chat": true,
@@ -162,7 +208,7 @@
     {
       "id": "tensorzero::model_name::llama-3.1-8b-instant",
       "provider": "tensorzero",
-      "display_name": "Llama 3.1 8B Instant (Groq)",
+      "display_name": "Llama 3.1 8B alias (runs GPT-OSS 20B on Groq)",
       "aliases": [],
       "capabilities": {
         "chat": true,
@@ -274,9 +320,9 @@
       "enabled": true
     },
     {
-      "id": "groq/llama-3.3-70b-versatile",
+      "id": "groq/openai/gpt-oss-120b",
       "provider": "groq",
-      "display_name": "Groq Llama 3.3 70B Versatile",
+      "display_name": "Groq GPT-OSS 120B",
       "aliases": [],
       "capabilities": {
         "chat": true,
@@ -288,18 +334,18 @@
         "batch": false
       },
       "pricing": {
-        "input_micro_usd_per_million": 590000,
-        "output_micro_usd_per_million": 790000,
+        "input_micro_usd_per_million": 150000,
+        "output_micro_usd_per_million": 600000,
         "source": "provider_list"
       },
       "context_window_tokens": 131072,
-      "max_output_tokens": 32768,
+      "max_output_tokens": 65536,
       "enabled": true
     },
     {
-      "id": "groq/llama-3.1-8b-instant",
+      "id": "groq/openai/gpt-oss-20b",
       "provider": "groq",
-      "display_name": "Groq Llama 3.1 8B Instant",
+      "display_name": "Groq GPT-OSS 20B",
       "aliases": [],
       "capabilities": {
         "chat": true,
@@ -311,12 +357,12 @@
         "batch": false
       },
       "pricing": {
-        "input_micro_usd_per_million": 50000,
-        "output_micro_usd_per_million": 80000,
+        "input_micro_usd_per_million": 75000,
+        "output_micro_usd_per_million": 300000,
         "source": "provider_list"
       },
       "context_window_tokens": 131072,
-      "max_output_tokens": 131072,
+      "max_output_tokens": 65536,
       "enabled": true
     }
   ]

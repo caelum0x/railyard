@@ -55,7 +55,7 @@ endpoint = "env::R2_S3_ENDPOINT"
 # │ unpinned `passport_text` default; OpenRouter is the free failover leg.     │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-# Shorthand names (`tensorzero::model_name::groq::llama-3.3-70b-versatile`,
+# Shorthand names (`tensorzero::model_name::groq::openai/gpt-oss-120b`,
 # what Rally and Menivor send) use these per-provider-type defaults, so they
 # resolve through the same Relay credential slots as the named models below.
 [provider_types.groq.defaults]
@@ -71,20 +71,55 @@ api_key_location = "dynamic::relay_anthropic_api_key"
 api_key_location = "dynamic::relay_openai_api_key"
 
 # Groq free-tier models. Named after the Groq model id so a shorthand request
-# for the same id whose provider has no key (e.g. Menivor's
-# `tensorzero::model_name::openai::llama-3.3-70b-versatile`) is resolved to this
+# for the same id whose provider has no key (e.g.
+# `tensorzero::model_name::openai::openai/gpt-oss-120b`) is resolved to this
 # catalog entry by the gateway instead of failing.
+#
+# Groq retired llama-3.3-70b-versatile and llama-3.1-8b-instant (2026-09); the
+# replacements are OpenAI's open-weight gpt-oss models, served by Groq and by
+# OpenRouter under the same ids.
+[models."openai/gpt-oss-120b"]
+routing = ["groq", "openrouter"]
+
+[models."openai/gpt-oss-120b".providers.groq]
+type = "groq"
+model_name = "openai/gpt-oss-120b"
+api_key_location = "dynamic::relay_groq_api_key"
+
+[models."openai/gpt-oss-120b".providers.openrouter]
+type = "openrouter"
+model_name = "openai/gpt-oss-120b"
+api_key_location = "dynamic::relay_openrouter_api_key"
+
+[models."openai/gpt-oss-20b"]
+routing = ["groq", "openrouter"]
+
+[models."openai/gpt-oss-20b".providers.groq]
+type = "groq"
+model_name = "openai/gpt-oss-20b"
+api_key_location = "dynamic::relay_groq_api_key"
+
+[models."openai/gpt-oss-20b".providers.openrouter]
+type = "openrouter"
+model_name = "openai/gpt-oss-20b"
+api_key_location = "dynamic::relay_openrouter_api_key"
+
+# COMPATIBILITY ALIASES for the retired Groq ids. Consumers that still send
+# `tensorzero::model_name::llama-3.3-70b-versatile` (or the no-key shorthand
+# `openai::llama-3.3-70b-versatile`, resolved to this entry) keep working and run
+# on the gpt-oss replacement. A direct `groq::llama-3.3-70b-versatile` shorthand
+# bypasses the catalog and fails at Groq: move consumers to the new ids.
 [models."llama-3.3-70b-versatile"]
 routing = ["groq", "openrouter"]
 
 [models."llama-3.3-70b-versatile".providers.groq]
 type = "groq"
-model_name = "llama-3.3-70b-versatile"
+model_name = "openai/gpt-oss-120b"
 api_key_location = "dynamic::relay_groq_api_key"
 
 [models."llama-3.3-70b-versatile".providers.openrouter]
 type = "openrouter"
-model_name = "meta-llama/llama-3.3-70b-instruct:free"
+model_name = "openai/gpt-oss-120b"
 api_key_location = "dynamic::relay_openrouter_api_key"
 
 [models."llama-3.1-8b-instant"]
@@ -92,12 +127,12 @@ routing = ["groq", "openrouter"]
 
 [models."llama-3.1-8b-instant".providers.groq]
 type = "groq"
-model_name = "llama-3.1-8b-instant"
+model_name = "openai/gpt-oss-20b"
 api_key_location = "dynamic::relay_groq_api_key"
 
 [models."llama-3.1-8b-instant".providers.openrouter]
 type = "openrouter"
-model_name = "meta-llama/llama-3.1-8b-instruct"
+model_name = "openai/gpt-oss-20b"
 api_key_location = "dynamic::relay_openrouter_api_key"
 
 [models."gpt-4o-mini"]
@@ -180,7 +215,7 @@ type = "chat"
 
 [functions.chat.variants.default]
 type = "chat_completion"
-model = "llama-3.3-70b-versatile"
+model = "openai/gpt-oss-120b"
 weight = 1.0
 
 [functions.chat.variants.openai]
@@ -216,10 +251,10 @@ model = "claude-sonnet"
 [functions.passport_text]
 type = "chat"
 
-# provider = "groq" -> llama-3.3-70b-versatile (also the unpinned default).
+# provider = "groq" -> openai/gpt-oss-120b (also the unpinned default).
 [functions.passport_text.variants.groq]
 type = "chat_completion"
-model = "llama-3.3-70b-versatile"
+model = "openai/gpt-oss-120b"
 weight = 1.0
 
 # provider = "openai" -> gpt-4o-mini.

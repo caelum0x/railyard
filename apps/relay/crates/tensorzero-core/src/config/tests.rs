@@ -2248,7 +2248,7 @@ async fn test_relay_runtime_config_loads_without_any_provider_key() {
     let groq = config
         .models
         .table
-        .get("llama-3.3-70b-versatile")
+        .get("openai/gpt-oss-120b")
         .expect("Relay ships a Groq free-tier model");
     assert_eq!(groq.routing.first().map(AsRef::as_ref), Some("groq"));
 
@@ -2260,7 +2260,7 @@ async fn test_relay_runtime_config_loads_without_any_provider_key() {
     let crate::variant::VariantConfig::ChatCompletion(default) = &default.inner else {
         panic!("chat default variant must be a chat_completion variant");
     };
-    assert_eq!(default.model().as_ref(), "llama-3.3-70b-versatile");
+    assert_eq!(default.model().as_ref(), "openai/gpt-oss-120b");
 }
 
 #[tokio::test]
