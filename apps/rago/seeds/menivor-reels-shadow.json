@@ -1,0 +1,93 @@
+{
+  "consumer": "menivor",
+  "description": "SHADOW variant of menivor-reels.json: same metrics and plan code, every charge amount 0 so Rago only records reel/LLM usage and can never produce a non-zero invoice. Use while Menivor bills through its own credit packs (Creem); switch to menivor-reels.json only when Rago becomes the charge of record.",
+  "currency": "USD",
+  "billable_metrics": [
+    {
+      "name": "Reels generated",
+      "code": "reel_generated",
+      "description": "One event per billable reel produced. Counted, not summed.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "Reel render seconds",
+      "code": "reel_render_seconds",
+      "description": "Output video duration billed per whole second. `properties.seconds` carries the quantity.",
+      "aggregation_type": "sum_agg",
+      "field_name": "seconds",
+      "recurring": false
+    },
+    {
+      "name": "Reel AI credits",
+      "code": "reel_ai_credits",
+      "description": "AI model credits (LLM / image / voice) consumed by the render. `properties.credits` carries the quantity.",
+      "aggregation_type": "sum_agg",
+      "field_name": "credits",
+      "recurring": false
+    },
+    {
+      "name": "Menivor LLM calls",
+      "code": "menivor_llm_call",
+      "description": "One event per LLM call Menivor routes through Relay (videogen apps/api/app/integrations/railyard/metering.py, RAILYARD_RAGO_LLM_METRIC). `properties` carries calls, model, provider, prompt_chars, completion_chars, routed_via. Counted, not summed. Token spend is recorded by Relay itself; this metric is the per-product call count.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    }
+  ],
+  "plans": [
+    {
+      "name": "Menivor Reels",
+      "code": "menivor_reels",
+      "interval": "monthly",
+      "description": "Shadow mirror: all charges $0 (usage visibility only).",
+      "amount_cents": 0,
+      "amount_currency": "USD",
+      "pay_in_advance": false,
+      "bill_charges_monthly": true,
+      "charges": [
+        {
+          "billable_metric_code": "reel_generated",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0"
+          }
+        },
+        {
+          "billable_metric_code": "reel_render_seconds",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0"
+          }
+        },
+        {
+          "billable_metric_code": "reel_ai_credits",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0"
+          }
+        },
+        {
+          "billable_metric_code": "menivor_llm_call",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0"
+          }
+        }
+      ]
+    }
+  ],
+  "sample_events": [
+    {
+      "code": "reel_generated",
+      "note": "POST /reels/usage { render_id, external_subscription_id, generated: true, render_seconds: 30, ai_credits: 8 } expands into one reel_generated event plus reel_render_seconds (properties.seconds) and reel_ai_credits (properties.credits) events, idempotent by render_id."
+    },
+    {
+      "code": "menivor_llm_call",
+      "note": "POST /events { event: { transaction_id: 'llm:<request_id>', external_subscription_id, code: 'menivor_llm_call', properties: { calls: 1, model, provider, prompt_chars, completion_chars, routed_via } } } — one per Relay-routed call."
+    }
+  ]
+}
