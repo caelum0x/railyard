@@ -852,6 +852,14 @@ pub async fn provider_credentials_middleware(
                 );
                 rewrite_model(shape, object, &model);
             }
+            Availability::FailoverTo(model) => {
+                tracing::debug!(
+                    requested = ?target,
+                    resolved = %model,
+                    "Relay runs a shorthand model on its catalog twin so it can fail over"
+                );
+                rewrite_model(shape, object, &model);
+            }
             Availability::NotConfigured(providers) => {
                 tracing::warn!(
                     target = ?target,

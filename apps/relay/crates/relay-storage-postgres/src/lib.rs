@@ -21,8 +21,8 @@ pub use billing_summary::{
     PostgresBillingSummaryStore,
 };
 pub use budget::{
-    BudgetDecision, KeyBudgetError, KeyBudgetInput, KeyBudgetStatus, MAX_BUDGET_NOTE_CHARS,
-    PostgresKeyBudgetStore,
+    BudgetDecision, BudgetPeriod, KeyBudgetError, KeyBudgetInput, KeyBudgetStatus,
+    MAX_BUDGET_NOTE_CHARS, PostgresKeyBudgetStore,
 };
 pub use catalog_price::{
     CatalogPriceError, CatalogPriceInput, CatalogPriceOverride, MAX_PRICE_MICRO_USD_PER_MILLION,

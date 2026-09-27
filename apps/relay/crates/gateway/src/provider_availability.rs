@@ -10,6 +10,9 @@
 //!   a model named `<model>` that IS servable, the request is resolved to that
 //!   catalog entry (e.g. Menivor sends `openai::llama-3.3-70b-versatile` for
 //!   Groq models; with no OpenAI key it runs on the Groq-backed catalog model).
+//!   When the slot HAS a key and is the first route of a same-id catalog model
+//!   with another enabled route, the request also runs on that catalog model,
+//!   so a failure at the requested provider fails over to the paid floor.
 //! * `tensorzero::model_name::<name>` (catalog model) needs ANY provider in its
 //!   routing to have a key (routing fails over to the next one).
 //! * `tensorzero::function_name::<name>` needs ANY chat-completion variant whose
@@ -119,6 +122,11 @@ pub enum Availability {
     /// Run the request with the OpenAI/native model rewritten to this catalog
     /// model name (a shorthand whose provider is disabled).
     ResolveTo(String),
+    /// Run the request on this catalog model: the shorthand's provider is
+    /// enabled and is the catalog model's FIRST route, so the first attempt is
+    /// unchanged, but a failure there (rate limit, exhausted quota, outage)
+    /// now fails over to the catalog model's later routes (the paid floor).
+    FailoverTo(String),
     /// Refuse: every route needs one of these disabled provider types.
     NotConfigured(Vec<String>),
 }
@@ -138,7 +146,8 @@ pub fn evaluate(
         InferenceTarget::Model(name) => {
             let mut missing = BTreeSet::new();
             if model_servable(name, routes, has_slot, enabled, &mut missing) {
-                return Availability::Servable;
+                return failover_twin(name, routes, has_slot, enabled)
+                    .map_or(Availability::Servable, Availability::FailoverTo);
             }
             // A shorthand whose provider is disabled resolves to the catalog
             // model of the same id when that one can run.
@@ -168,6 +177,28 @@ pub fn evaluate(
             }
         }
     }
+}
+
+/// The catalog model a servable shorthand should run on so it can fail over.
+///
+/// Consumers send `groq::<model>` shorthands, which the core sends to that one
+/// provider with no fallback. When the catalog defines a model with the same id
+/// whose routing STARTS with that provider and has at least one other enabled
+/// route, running the catalog model keeps the first attempt identical and adds
+/// the later routes as a floor. Anything else is left exactly as requested.
+fn failover_twin(
+    name: &str,
+    routes: &dyn RouteLookup,
+    has_slot: &dyn Fn(&str) -> bool,
+    enabled: &dyn Fn(&str) -> bool,
+) -> Option<String> {
+    let (provider, model) = split_shorthand(name, has_slot)?;
+    let providers = routes.model_provider_types(model)?;
+    let (first, rest) = providers.split_first()?;
+    let has_floor = rest
+        .iter()
+        .any(|later| later != provider && (!has_slot(later) || enabled(later)));
+    (first == provider && has_floor).then(|| model.to_string())
 }
 
 /// `provider::model` when `name` is a shorthand for a Relay-managed provider.
@@ -308,6 +339,53 @@ mod tests {
         assert_eq!(
             check(model("openai::gpt-4o-mini"), groq),
             Availability::NotConfigured(vec!["openai".into()])
+        );
+    }
+
+    #[test]
+    fn enabled_shorthand_gains_the_catalog_floor_when_its_provider_routes_first() {
+        // Groq first, OpenRouter floor enabled: run the catalog model so a
+        // Groq failure fails over instead of reaching the caller.
+        assert_eq!(
+            check(
+                model("groq::llama-3.3-70b-versatile"),
+                &["groq", "openrouter"]
+            ),
+            Availability::FailoverTo("llama-3.3-70b-versatile".into())
+        );
+        assert_eq!(
+            check(model("openai::gpt-4o-mini"), &["openai", "openrouter"]),
+            Availability::FailoverTo("gpt-4o-mini".into())
+        );
+        // No enabled later route: nothing to fail over to, request unchanged.
+        assert_eq!(
+            check(model("groq::llama-3.3-70b-versatile"), &["groq"]),
+            Availability::Servable
+        );
+        // The shorthand's provider is not the catalog's first route: the
+        // caller's explicit provider choice stands.
+        assert_eq!(
+            check(
+                model("openrouter::llama-3.3-70b-versatile"),
+                &["groq", "openrouter"]
+            ),
+            Availability::Servable
+        );
+        // No catalog twin, unmanaged provider or catalog name: unchanged.
+        assert_eq!(
+            check(
+                model("groq::openai/gpt-oss-safeguard-20b"),
+                &["groq", "openrouter"]
+            ),
+            Availability::Servable
+        );
+        assert_eq!(
+            check(model("mistral::large"), &["groq", "openrouter"]),
+            Availability::Servable
+        );
+        assert_eq!(
+            check(model("gpt-4o-mini"), &["openai", "openrouter"]),
+            Availability::Servable
         );
     }
 

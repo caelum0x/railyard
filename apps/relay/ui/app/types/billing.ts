@@ -173,7 +173,12 @@ export interface KeyBudget {
   monthly_limit_micros: number;
   month_to_date_micros: number;
   remaining_micros: number;
+  /** Optional per-UTC-day cap. */
+  daily_limit_micros?: number;
+  day_to_date_micros?: number;
   exceeded: boolean;
+  /** The daily cap is configured and reached (blocked until the next UTC day). */
+  daily_exceeded?: boolean;
   note?: string;
   updated_by: string;
   updated_at_ms: number;

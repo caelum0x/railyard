@@ -44,11 +44,7 @@ import {
   formatUsd,
   scopeFromUrl,
 } from "~/components/billing/BillingShared";
-import type {
-  BillingScope,
-  BillingStatus,
-  KeyBudget,
-} from "~/types/billing";
+import type { BillingScope, BillingStatus, KeyBudget } from "~/types/billing";
 
 const MAX_NOTE_CHARS = 280;
 const KEY_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -134,6 +130,19 @@ export async function action({ request }: Route.ActionArgs) {
       { status: 400 },
     );
   }
+  const dailyRaw = String(formData.get("dailyLimitUsd") ?? "").trim();
+  const dailyMicros = dailyRaw === "" ? null : parseUsdToMicros(dailyRaw);
+  if (dailyRaw !== "" && (dailyMicros === null || dailyMicros > micros)) {
+    return data<ActionResult>(
+      {
+        ok: false,
+        error:
+          "The daily cap must be a positive amount no larger than the monthly cap.",
+        fieldErrors: { dailyLimitUsd: "For example 2 or 1.50" },
+      },
+      { status: 400 },
+    );
+  }
   const note = String(formData.get("note") ?? "").trim();
   if (note.length > MAX_NOTE_CHARS) {
     return data<ActionResult>(
@@ -148,11 +157,14 @@ export async function action({ request }: Route.ActionArgs) {
   try {
     await client.upsertBudget(keyId, {
       monthly_limit_micros: micros,
+      daily_limit_micros: dailyMicros,
       note: note || null,
     });
+    const daily =
+      dailyMicros === null ? "" : ` and a ${formatUsd(dailyMicros)} daily cap`;
     return data<ActionResult>({
       ok: true,
-      message: `Saved a ${formatUsd(micros)} monthly cap for ${keyId}.`,
+      message: `Saved a ${formatUsd(micros)} monthly cap${daily} for ${keyId}.`,
     });
   } catch (error) {
     logger.error("Failed to save Relay spend cap", error);
@@ -213,7 +225,10 @@ function UsageBar({ budget }: { budget: KeyBudget }) {
         aria-valuemax={100}
         aria-valuenow={Math.round(ratio * 100)}
       >
-        <div className={`${tone} h-full`} style={{ width: `${ratio * 100}%` }} />
+        <div
+          className={`${tone} h-full`}
+          style={{ width: `${ratio * 100}%` }}
+        />
       </div>
       <span className="text-fg-secondary text-xs">
         {Math.round(ratio * 100)}%
@@ -227,7 +242,11 @@ function BudgetForm({ submitting }: { submitting: boolean }) {
   const fieldErrors =
     actionData && !actionData.ok ? (actionData.fieldErrors ?? {}) : {};
   return (
-    <Form method="post" className="flex flex-wrap items-end gap-3" preventScrollReset>
+    <Form
+      method="post"
+      className="flex flex-wrap items-end gap-3"
+      preventScrollReset
+    >
       <input type="hidden" name="intent" value="upsert" />
       <div className="flex flex-col gap-1">
         <Label htmlFor="budget-key">API key public id</Label>
@@ -256,6 +275,22 @@ function BudgetForm({ submitting }: { submitting: boolean }) {
         />
         {fieldErrors.limitUsd && (
           <span className="text-xs text-red-600">{fieldErrors.limitUsd}</span>
+        )}
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label htmlFor="budget-daily-limit">Daily cap (USD, optional)</Label>
+        <Input
+          id="budget-daily-limit"
+          name="dailyLimitUsd"
+          inputMode="decimal"
+          placeholder="2.00"
+          className="w-36"
+          aria-invalid={fieldErrors.dailyLimitUsd ? true : undefined}
+        />
+        {fieldErrors.dailyLimitUsd && (
+          <span className="text-xs text-red-600">
+            {fieldErrors.dailyLimitUsd}
+          </span>
         )}
       </div>
       <div className="flex min-w-64 flex-1 flex-col gap-1">
@@ -296,14 +331,19 @@ function BudgetsContent({
           {status && <BillingStatusBanner status={status} />}
           <p className="text-fg-secondary text-sm">
             A spend cap bounds an API key&apos;s charged spend per UTC calendar
-            month. Once reached, the gateway answers new inference from that
-            key with HTTP 429 <span className="font-mono">relay_spend_cap_exceeded</span>{" "}
-            before contacting any provider, in both prepaid and postpaid modes.
+            month, with an optional smaller cap per UTC day. Once reached, the
+            gateway answers new inference from that key with HTTP 429{" "}
+            <span className="font-mono">relay_spend_cap_exceeded</span> before
+            contacting any provider, in both prepaid and postpaid modes.
           </p>
           <ScopeToggle scope={scope} operator={operator} />
           {actionData && (
             <p
-              className={actionData.ok ? "text-sm text-green-700" : "text-sm text-red-600"}
+              className={
+                actionData.ok
+                  ? "text-sm text-green-700"
+                  : "text-sm text-red-600"
+              }
               role={actionData.ok ? "status" : "alert"}
             >
               {actionData.ok ? actionData.message : actionData.error}
@@ -349,9 +389,13 @@ function BudgetsContent({
                   <TableRow key={budget.owner_principal}>
                     <TableCell>
                       <div className="flex flex-col">
-                        <span className="font-mono">{budget.owner_principal}</span>
+                        <span className="font-mono">
+                          {budget.owner_principal}
+                        </span>
                         {budget.note && (
-                          <span className="text-fg-muted text-xs">{budget.note}</span>
+                          <span className="text-fg-muted text-xs">
+                            {budget.note}
+                          </span>
                         )}
                       </div>
                     </TableCell>
@@ -359,7 +403,15 @@ function BudgetsContent({
                       {formatUsd(budget.monthly_limit_micros)}
                     </TableCell>
                     <TableCell className="text-right">
-                      {formatUsd(budget.month_to_date_micros)}
+                      <div className="flex flex-col items-end">
+                        <span>{formatUsd(budget.month_to_date_micros)}</span>
+                        {budget.daily_limit_micros != null && (
+                          <span className="text-fg-muted text-xs">
+                            today {formatUsd(budget.day_to_date_micros ?? 0)} of{" "}
+                            {formatUsd(budget.daily_limit_micros)}
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-right">
                       {formatUsd(budget.remaining_micros)}
@@ -367,8 +419,12 @@ function BudgetsContent({
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <UsageBar budget={budget} />
-                        {budget.exceeded && (
+                        {budget.exceeded ? (
                           <Badge variant="destructive">Blocked</Badge>
+                        ) : (
+                          budget.daily_exceeded && (
+                            <Badge variant="destructive">Blocked today</Badge>
+                          )
                         )}
                       </div>
                     </TableCell>

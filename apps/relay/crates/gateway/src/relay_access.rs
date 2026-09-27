@@ -150,7 +150,7 @@ pub struct RelayRuntimeStatus {
     pub auth_enabled: bool,
     /// Postgres is configured (required for every durable billing surface).
     pub postgres_configured: bool,
-    /// Per-key monthly spend caps are enforced.
+    /// Per-key monthly and daily spend caps are enforced.
     pub budgets_enforced: bool,
     pub cost_feed: CostFeedStatus,
 }

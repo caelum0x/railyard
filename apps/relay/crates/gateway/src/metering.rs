@@ -9,7 +9,7 @@
 //! operator catalog's retail rate. The existing cost-feed worker then forwards
 //! those events (e.g. to Rago), and the billing dashboard aggregates them.
 //!
-//! [`spend_cap_middleware`] enforces per-key monthly caps from
+//! [`spend_cap_middleware`] enforces per-key monthly and daily caps from
 //! `relay_key_budgets` in BOTH modes, before any provider I/O.
 //!
 //! Metering is best-effort accounting, not a money path: an event append
@@ -42,7 +42,9 @@ use relay_billing::{ModelId, PriceTable, Usage};
 use relay_contract::Microdollars;
 use relay_cost_feed::CostFeedError;
 use relay_cost_feed::{CostEvent, CostEventStore, InferenceRoute};
-use relay_storage_postgres::{BudgetDecision, PostgresKeyBudgetStore, PostgresMeteredBatchStore};
+use relay_storage_postgres::{
+    BudgetDecision, BudgetPeriod, PostgresKeyBudgetStore, PostgresMeteredBatchStore,
+};
 use serde_json::json;
 use tensorzero_auth::middleware::RequestApiKeyExtension;
 use tokio_util::task::TaskTracker;
@@ -591,7 +593,8 @@ impl SpendCapState {
     }
 }
 
-/// Reject billable requests from keys that reached their monthly spend cap.
+/// Reject billable requests from keys that reached their monthly or daily
+/// spend cap.
 ///
 /// A budget lookup failure is logged and fails OPEN: caps protect against
 /// runaway keys, and the durable billing path already fails closed on its own
@@ -613,7 +616,11 @@ pub async fn spend_cap_middleware(
         return next.run(request).await;
     };
     match state.budgets.check(&principal).await {
-        Ok(BudgetDecision::Exceeded { limit, spent }) => spend_cap_exceeded(limit, spent),
+        Ok(BudgetDecision::Exceeded {
+            period,
+            limit,
+            spent,
+        }) => spend_cap_exceeded(period, limit, spent),
         Ok(BudgetDecision::Unlimited | BudgetDecision::Within { .. }) => next.run(request).await,
         Err(error) => {
             tracing::error!(error = %error, "Relay spend-cap lookup failed; allowing request");
@@ -622,22 +629,30 @@ pub async fn spend_cap_middleware(
     }
 }
 
-fn spend_cap_exceeded(limit: Microdollars, spent: Microdollars) -> Response {
+fn spend_cap_exceeded(period: BudgetPeriod, limit: Microdollars, spent: Microdollars) -> Response {
+    let (scope, resets) = match period {
+        BudgetPeriod::Day => ("daily", "the next UTC day"),
+        BudgetPeriod::Month => ("monthly", "the next UTC month"),
+    };
+    let mut error = json!({
+        "message": format!(
+            "{scope} spend cap reached for this API key ({} of {} micro-USD used); raise the cap in Relay billing or wait for {resets}",
+            spent.get(),
+            limit.get()
+        ),
+        "type": "relay_spend_cap_exceeded",
+        "code": "relay_spend_cap_exceeded",
+        "period": period.as_str(),
+        "limit_micros": limit.get(),
+        "spent_micros": spent.get(),
+    });
+    // Kept for callers written against the monthly-only response.
+    if period == BudgetPeriod::Month {
+        error["month_to_date_micros"] = json!(spent.get());
+    }
     (
         StatusCode::TOO_MANY_REQUESTS,
-        Json(json!({
-            "error": {
-                "message": format!(
-                    "monthly spend cap reached for this API key ({} of {} micro-USD used); raise the cap in Relay billing or wait for the next UTC month",
-                    spent.get(),
-                    limit.get()
-                ),
-                "type": "relay_spend_cap_exceeded",
-                "code": "relay_spend_cap_exceeded",
-                "limit_micros": limit.get(),
-                "month_to_date_micros": spent.get(),
-            }
-        })),
+        Json(json!({ "error": error })),
     )
         .into_response()
 }
@@ -645,6 +660,44 @@ fn spend_cap_exceeded(limit: Microdollars, spent: Microdollars) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn cap_body(response: Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn spend_cap_errors_name_the_period_that_was_reached() {
+        let daily = spend_cap_exceeded(
+            BudgetPeriod::Day,
+            Microdollars::new(2_000_000),
+            Microdollars::new(2_100_000),
+        );
+        assert_eq!(daily.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = cap_body(daily).await;
+        assert_eq!(body["error"]["code"], json!("relay_spend_cap_exceeded"));
+        assert_eq!(body["error"]["period"], json!("day"));
+        assert_eq!(body["error"]["limit_micros"], json!(2_000_000));
+        assert_eq!(body["error"]["spent_micros"], json!(2_100_000));
+        assert!(body["error"].get("month_to_date_micros").is_none());
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("next UTC day")
+        );
+
+        let monthly = spend_cap_exceeded(
+            BudgetPeriod::Month,
+            Microdollars::new(30_000_000),
+            Microdollars::new(30_000_000),
+        );
+        let body = cap_body(monthly).await;
+        assert_eq!(body["error"]["period"], json!("month"));
+        assert_eq!(body["error"]["month_to_date_micros"], json!(30_000_000));
+    }
 
     #[test]
     fn response_request_id_prefers_inference_id() {
@@ -706,7 +759,11 @@ mod tests {
 
     #[test]
     fn spend_cap_response_is_429_with_machine_code() {
-        let response = spend_cap_exceeded(Microdollars::new(10), Microdollars::new(12));
+        let response = spend_cap_exceeded(
+            BudgetPeriod::Month,
+            Microdollars::new(10),
+            Microdollars::new(12),
+        );
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 }

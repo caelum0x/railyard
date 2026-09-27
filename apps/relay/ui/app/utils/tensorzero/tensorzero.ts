@@ -848,7 +848,11 @@ export class TensorZeroClient extends BaseTensorZeroClient {
    */
   async upsertBudget(
     keyId: string,
-    request: { monthly_limit_micros: number; note?: string | null },
+    request: {
+      monthly_limit_micros: number;
+      daily_limit_micros?: number | null;
+      note?: string | null;
+    },
   ): Promise<KeyBudget> {
     const response = await this.fetch(
       `/relay/billing/budgets/${encodeURIComponent(keyId)}`,
