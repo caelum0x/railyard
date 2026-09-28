@@ -1,0 +1,19 @@
+[package]
+name = "switchyard-store"
+description = "Switchyard persistence: the Store trait, an in-memory store (tests, single-box dev) and the Postgres store (sqlx, migrations)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+switchyard-core.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+ulid.workspace = true
