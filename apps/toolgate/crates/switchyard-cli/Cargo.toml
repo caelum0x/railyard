@@ -1,0 +1,35 @@
+[package]
+name = "switchyard-cli"
+description = "The Switchyard CLI (`switchyard`, alias `sy`): device-code login, search, describe, call, balance, top-up, keys, write-only credentials, SKILL.md bundles, project caps and a stdio MCP shim."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "switchyard"
+path = "src/bin/switchyard.rs"
+
+[[bin]]
+name = "sy"
+path = "src/bin/sy.rs"
+
+[dependencies]
+clap.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+switchyard-server.workspace = true
+switchyard-testkit.workspace = true
+switchyard-store.workspace = true
+switchyard-auth.workspace = true
+switchyard-vault.workspace = true
+axum.workspace = true
+secrecy.workspace = true
+reqwest.workspace = true
