@@ -9,6 +9,8 @@
 //! - [`dto`]     — request/response boundary types (µ$ `i64`, never floats).
 //! - [`handlers`]— one thin module per resource group.
 //! - [`shared`]  — `Arc`-sharing newtypes so the facades see one store.
+//! - [`metrics`] — `GET /metrics` (Prometheus text) and the receipt-chain check.
+//! - [`shadow`]  — `MINT_SHADOW=1`: the ramp that refuses every deposit and payout.
 
 pub mod attestation;
 pub mod auth;
@@ -16,8 +18,10 @@ pub mod dto;
 pub mod error;
 pub mod handlers;
 pub mod jobs;
+pub mod metrics;
 pub mod payer_registry;
 pub mod router;
+pub mod shadow;
 pub mod shared;
 pub mod state;
 pub mod views;

@@ -38,6 +38,11 @@
 //!   funding ramp when no payment provider is configured. Without it, a
 //!   production deployment with no provider refuses to start rather than silently
 //!   funding against a fake ramp.
+//! - `MINT_SHADOW=1` — shadow mode (RY-MT1): production store, API, receipts and
+//!   sweeps, but a ramp that refuses every deposit and payout, so no money moves.
+//!   Refused together with a configured payment provider or `MINT_DEV_FUNDING=1`.
+//! - `MINT_METRICS_TOKEN` — bearer token for `GET /metrics`; unset ⇒ only direct
+//!   (non-proxied) scrapes are served.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -281,6 +286,8 @@ enum RampChoice {
     Real,
     /// The in-memory dev [`FakeRamp`] the registry falls back to — dev only.
     DevFake,
+    /// Shadow mode: the refusing [`mint_server::shadow::ShadowRamp`].
+    Shadow,
 }
 
 /// Pure funding-ramp selection: a configured provider is always used; the dev
@@ -289,7 +296,21 @@ fn choose_ramp(
     production: bool,
     has_provider: bool,
     dev_funding: bool,
+    shadow: bool,
 ) -> anyhow::Result<RampChoice> {
+    if shadow {
+        if has_provider {
+            bail!(
+                "MINT_SHADOW=1 with a payment provider configured: a hosted checkout could take a \
+                 buyer's money that shadow mode would never credit. Remove the provider keys or \
+                 unset MINT_SHADOW."
+            );
+        }
+        if dev_funding {
+            bail!("MINT_SHADOW=1 and MINT_DEV_FUNDING=1 are mutually exclusive");
+        }
+        return Ok(RampChoice::Shadow);
+    }
     if has_provider {
         return Ok(RampChoice::Real);
     }
@@ -444,8 +465,15 @@ fn load_kyc_gate(
 fn resolve_ramp(payments: &PaymentRegistry, production: bool) -> anyhow::Result<Arc<dyn Ramp>> {
     let has_provider = payments.active_count() > 0;
     let dev_funding = std::env::var("MINT_DEV_FUNDING").ok().as_deref() == Some("1");
-    match choose_ramp(production, has_provider, dev_funding)? {
+    let shadow = mint_server::shadow::shadow_enabled();
+    match choose_ramp(production, has_provider, dev_funding, shadow)? {
         RampChoice::Real => Ok(payments.ramp()),
+        RampChoice::Shadow => {
+            tracing::warn!(
+                "MINT_SHADOW=1 — shadow mode: every deposit and payout is refused; no money moves"
+            );
+            Ok(Arc::new(mint_server::shadow::ShadowRamp))
+        }
         RampChoice::DevFake => {
             if production {
                 tracing::warn!(
@@ -583,26 +611,53 @@ mod tests {
     #[test]
     fn ramp_uses_real_provider_whenever_one_is_configured() {
         // A configured provider is always used, regardless of mode or dev flag.
-        assert_eq!(choose_ramp(true, true, false).unwrap(), RampChoice::Real);
-        assert_eq!(choose_ramp(false, true, true).unwrap(), RampChoice::Real);
+        assert_eq!(
+            choose_ramp(true, true, false, false).unwrap(),
+            RampChoice::Real
+        );
+        assert_eq!(
+            choose_ramp(false, true, true, false).unwrap(),
+            RampChoice::Real
+        );
     }
 
     #[test]
     fn ramp_dev_fake_allowed_in_dev_without_provider() {
         assert_eq!(
-            choose_ramp(false, false, false).unwrap(),
+            choose_ramp(false, false, false, false).unwrap(),
             RampChoice::DevFake
         );
     }
 
     #[test]
     fn ramp_dev_fake_refused_in_production_without_opt_in() {
-        let err = choose_ramp(true, false, false).unwrap_err();
+        let err = choose_ramp(true, false, false, false).unwrap_err();
         assert!(err.to_string().contains("refusing to start"));
     }
 
     #[test]
+    fn ramp_shadow_refuses_money_in_production_without_a_provider() {
+        assert_eq!(
+            choose_ramp(true, false, false, true).unwrap(),
+            RampChoice::Shadow
+        );
+    }
+
+    #[test]
+    fn ramp_shadow_refuses_to_start_with_a_provider_or_dev_funding() {
+        let err = choose_ramp(true, true, false, true).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("MINT_SHADOW=1 with a payment provider"));
+        let err = choose_ramp(true, false, true, true).unwrap_err();
+        assert!(err.to_string().contains("mutually exclusive"));
+    }
+
+    #[test]
     fn ramp_dev_fake_allowed_in_production_only_with_explicit_opt_in() {
-        assert_eq!(choose_ramp(true, false, true).unwrap(), RampChoice::DevFake);
+        assert_eq!(
+            choose_ramp(true, false, true, false).unwrap(),
+            RampChoice::DevFake
+        );
     }
 }

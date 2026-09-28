@@ -1,6 +1,6 @@
 //! Route table. `build_router` wires every §4 route to its handler, layers the
 //! API-key auth middleware over the protected routes, and leaves `/healthz` +
-//! `/readyz` unauthenticated.
+//! `/readyz` unauthenticated (`/metrics` has its own token or direct-only check).
 
 use axum::middleware;
 use axum::routing::{delete, get, post};
@@ -14,6 +14,7 @@ use crate::handlers::{
     mint_redeem, payer_keys, payouts, positions, provider_reports, providers, receipts, reserve, reversals,
     statements, streams, transfers, verification_keys,
 };
+use crate::metrics;
 use crate::state::AppState;
 
 /// Build the full application router for a concrete store `S`.
@@ -129,6 +130,11 @@ pub fn build_router<S: LedgerStore + 'static>(state: AppState<S>) -> Router {
     let public = Router::new()
         .route("/healthz", get(health::healthz))
         .route("/readyz", get(health::readyz::<S>))
+        // Prometheus text; bearer token or direct (non-proxied) scrapes only.
+        .route(
+            "/metrics",
+            get(metrics::metrics::<S>).layer(axum::Extension(metrics::MetricsState::from_env())),
+        )
         .route(
             "/.well-known/mint-verification-keys.json",
             get(verification_keys::get::<S>),
