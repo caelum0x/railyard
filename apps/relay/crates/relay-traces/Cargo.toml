@@ -1,0 +1,30 @@
+[package]
+name = "relay-traces"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Per-API-key trace reads and the trace retention job for Relay (RY-RL3 / OSS9)"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "relay-traces-retention"
+path = "src/bin/retention.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true

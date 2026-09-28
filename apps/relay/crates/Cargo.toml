@@ -21,6 +21,7 @@ members = [
     "relay-hedge",
     "relay-sdk",
     "relay-storage-postgres",
+    "relay-traces",
     "reqwest-sse-stream",
     "tensorzero-auth",
     "tensorzero-client",

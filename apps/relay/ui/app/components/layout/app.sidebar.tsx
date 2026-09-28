@@ -84,6 +84,11 @@ const navigation: NavigationSection[] = [
         icon: Model,
       },
       {
+        title: "Key Traces",
+        url: "/observability/keys",
+        icon: Inferences,
+      },
+      {
         title: "Model Catalog",
         url: "/models",
         icon: LayoutGrid,

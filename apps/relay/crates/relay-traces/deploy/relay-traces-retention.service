@@ -1,0 +1,18 @@
+# Trace retention for Relay (RY-RL3, owner decision OD-RY2).
+# Keeps full prompt/output bodies 14 days and trace metadata 90 days.
+# Install on box 2 next to the Relay gateway; not enabled by this repo.
+[Unit]
+Description=Relay trace retention (14 d bodies, 90 d metadata)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs inside the Relay container, which already has TENSORZERO_POSTGRES_URL
+# from /etc/products/relay.env and reaches `postgres` on products-net.
+# Windows are overridable per run; the defaults are the OD-RY2 values.
+ExecStart=/usr/bin/docker compose -p railyard exec -T \
+  -e RELAY_TRACE_BODY_RETENTION_DAYS=14 \
+  -e RELAY_TRACE_METADATA_RETENTION_DAYS=90 \
+  relay relay-traces-retention
+Nice=10

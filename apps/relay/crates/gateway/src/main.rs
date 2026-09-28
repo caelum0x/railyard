@@ -53,6 +53,7 @@ mod provider_status;
 mod rago_feed;
 mod relay_access;
 mod relay_health;
+mod relay_traces;
 mod router;
 mod routes;
 mod settlement_evidence;

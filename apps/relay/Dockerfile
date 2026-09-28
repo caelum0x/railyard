@@ -42,7 +42,9 @@ COPY --from=planner /relay/crates/recipe.json recipe.json
 COPY crates/rust-toolchain.toml rust-toolchain.toml
 RUN cargo chef cook --release -p gateway ${CARGO_BUILD_FLAGS}
 COPY crates/ .
-RUN cargo build -p gateway --release ${CARGO_BUILD_FLAGS}
+# `relay-traces` ships the trace retention job (RY-RL3, OD-RY2) in the same
+# image; it reuses the gateway's dependency layer.
+RUN cargo build -p gateway -p relay-traces --release ${CARGO_BUILD_FLAGS}
 
 # ========== runtime ==========
 
@@ -56,6 +58,8 @@ RUN useradd -m -s /bin/bash gateway
 
 # The compiled gateway binary.
 COPY --from=builder /relay/crates/target/release/gateway /usr/local/bin/gateway
+# Trace retention job, run by a host systemd timer via `docker compose exec`.
+COPY --from=builder /relay/crates/target/release/relay-traces-retention /usr/local/bin/relay-traces-retention
 
 # Checked-in runtime config (`tensorzero.toml`) and the default retail catalog
 # (`catalog.json`). Secrets are never baked in — they arrive as env vars.

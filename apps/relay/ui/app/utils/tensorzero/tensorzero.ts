@@ -20,6 +20,13 @@ import type {
   WalletBalance,
   WalletCredit,
 } from "~/types/billing";
+import {
+  traceListQuery,
+  type TraceDetail,
+  type TraceListOptions,
+  type TracePage,
+  type TraceScope,
+} from "~/types/traces";
 import type {
   CatalogModel,
   CatalogSnapshot,
@@ -906,6 +913,30 @@ export class TensorZeroClient extends BaseTensorZeroClient {
    */
   async getProviderHealth(): Promise<ProviderHealthReport> {
     return this.getRelayData<ProviderHealthReport>("/v1/relay/provider_health");
+  }
+
+  /**
+   * Lists traces for the authenticated API key, newest first (RY-RL3).
+   * Operator keys may pass `scope: "all"`, optionally narrowed by `key`.
+   */
+  async listRelayTraces(options?: TraceListOptions): Promise<TracePage> {
+    return this.getRelayData<TracePage>(
+      `/relay/traces${traceListQuery(options)}`,
+    );
+  }
+
+  /**
+   * Reads one trace with its model calls and stored bodies. The gateway
+   * answers 404 for a trace owned by another key.
+   */
+  async getRelayTrace(
+    inferenceId: string,
+    options?: { scope?: TraceScope },
+  ): Promise<TraceDetail> {
+    const scope = options?.scope === "all" ? "?scope=all" : "";
+    return this.getRelayData<TraceDetail>(
+      `/relay/traces/${encodeURIComponent(inferenceId)}${scope}`,
+    );
   }
 
   /**

@@ -3327,6 +3327,7 @@ dependencies = [
  "relay-cost-feed",
  "relay-hedge",
  "relay-storage-postgres",
+ "relay-traces",
  "reqwest 0.13.3",
  "reqwest-sse-stream",
  "ring",
@@ -6625,6 +6626,20 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "relay-traces"
+version = "2026.6.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

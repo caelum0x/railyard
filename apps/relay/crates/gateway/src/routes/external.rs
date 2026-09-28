@@ -252,6 +252,11 @@ fn build_meta_observability_routes(
             put(crate::billing_summary::upsert_budget_handler)
                 .delete(crate::billing_summary::delete_budget_handler),
         )
+        .route("/relay/traces", get(crate::relay_traces::list_traces_handler))
+        .route(
+            "/relay/traces/{inference_id}",
+            get(crate::relay_traces::get_trace_handler),
+        )
         .route(
             "/v1/relay/provider_health",
             get(crate::provider_status::provider_health_handler),

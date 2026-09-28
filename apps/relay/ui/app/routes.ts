@@ -186,6 +186,11 @@ export default [
     ]),
 
     route("models", "routes/observability/models/route.tsx"),
+    route("keys", "routes/observability/keys/route.tsx"),
+    route(
+      "keys/:inference_id",
+      "routes/observability/keys/$inference_id/route.tsx",
+    ),
   ]),
 
   // Model catalog

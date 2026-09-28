@@ -16,6 +16,7 @@ relay-contract = { path = "../relay-contract" }
 relay-cost-feed = { path = "../relay-cost-feed" }
 relay-hedge = { path = "../relay-hedge" }
 relay-storage-postgres = { path = "../relay-storage-postgres" }
+relay-traces = { path = "../relay-traces" }
 reqwest.workspace = true
 async-trait = { workspace = true }
 axum = { workspace = true }
