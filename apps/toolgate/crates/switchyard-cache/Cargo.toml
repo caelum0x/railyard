@@ -1,0 +1,10 @@
+[package]
+name = "switchyard-cache"
+description = "Switchyard response cache (TTL, byte budget) and single-flight dedupe of identical concurrent calls."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+serde_json.workspace = true
