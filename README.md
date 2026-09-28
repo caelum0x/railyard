@@ -20,8 +20,13 @@ The durable asset is the **settlement rail underneath every app**: **Mint** (a f
 | **identity-lock** | Provider-agnostic locked character/brand/persona identity, resolved through Relay for consistent generation. Source path: `apps/context-passport`. | runnable slice |
 | **ledgerline** | Gross-margin lens: revenue + provider COGS on one Mint-backed ledger, settled through a durable outbox. | runnable slice |
 | **game-economy** | Storefront for card packs, cosmetics and battle passes on Mint hold/capture. | runnable slice |
+| **Switchyard** (`apps/toolgate`, working name) | The tool rail next to Relay: one `sk-t0-` key reaches a schema-typed catalog (our products first, free/public APIs second, BYO keys third) with Mint hold/capture, Rago events, SSRF-safe egress, an MCP server and the `sy` CLI. | MVP implemented; see below |
 
 `apps/ranguard` (userspace integrity-monitor demo) and `apps/rithub-forge` (an optional Forgejo-based deployment, separate from Rithub) are not part of the rail.
+
+## Switchyard (tool rail)
+
+`apps/toolgate` is a standalone cargo workspace (`cd apps/toolgate && cargo test --workspace`; no root workspace member line is needed, same as Abacus and Rago). It serves `/v1/tools/*` (search by task, describe with price, call, batch), `/mcp` (streamable HTTP, OAuth 2.1 with PKCE, DCR, CIMD and the device flow for `sy login`), `/admin` and `llms.txt`. Keys are Relay's own `sk-t0-` keys, so one key covers models and tools. Paid calls hold on Mint before the upstream call and capture the exact cost; failures release the hold. Every call is written to a hash-chained audit log together with its Rago `tool_call` event in one transaction. See `apps/toolgate/README.md`.
 
 ## Consumed by
 Menivor (`../videogen`) and other products call Railyard over HTTP + shared contract packages — they do **not** own it.
