@@ -19,6 +19,7 @@ ts-rs.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

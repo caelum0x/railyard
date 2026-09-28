@@ -46,7 +46,7 @@ failure from us.
    plain, streaming and with a tool call, and every fallback leg once. A route is green
    only when its **first configured provider** served the call, so a failover that
    still answers customers is red for us. It pages the ntfy `railyard` topic and
-   pushes latency to VictoriaMetrics. Cost: about 26 calls a day at 5 output tokens
+   pushes latency to VictoriaMetrics. Cost: about 34 calls a day (9 routes x 3 + 7 fallback legs, after RY-RL2) at 5 output tokens
    (48 for the tool call), on Claude credits and the Groq and OpenRouter tiers; about $0.
 3. **Keep Bifrost ready as a provider layer (RY-RL4, Wave E).** Bifrost runs as a
    loopback sidecar behind a per-model flag. Money, caps and receipts stay in Relay.
@@ -93,8 +93,8 @@ runs), which is the evidence for tripwire 1.
 
 ## Follow-ups
 
-- RY-RL2: named `claude-haiku` (4.5) and `claude-sonnet-5` routes; LiteLLM price
-  cross-check report.
+- RY-RL2 (done): named `claude-haiku` (4.5) and `claude-sonnet-5` routes; LiteLLM price
+  cross-check report (`relay-price-crosscheck`, read-only).
 - RY-RL4 (Wave E): Bifrost spike. Its numbers are added to this record.
 - Owner: answer OD-RY1 in the Wave D session; create the canary key and push monitor
   (tool README, "Owner setup").

@@ -2,6 +2,19 @@
   "note": "Generated from apps/relay/config/tensorzero.toml by provider_canary.py --write-routes. Do not edit by hand; tests fail when it is stale.",
   "routes": [
     {
+      "name": "claude-haiku",
+      "legs": [
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5"
+        },
+        {
+          "provider": "openrouter",
+          "model": "anthropic/claude-haiku-4.5"
+        }
+      ]
+    },
+    {
       "name": "claude-sonnet",
       "legs": [
         {
@@ -11,6 +24,19 @@
         {
           "provider": "openrouter",
           "model": "anthropic/claude-sonnet-4.5"
+        }
+      ]
+    },
+    {
+      "name": "claude-sonnet-5",
+      "legs": [
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5"
+        },
+        {
+          "provider": "openrouter",
+          "model": "anthropic/claude-sonnet-5"
         }
       ]
     },

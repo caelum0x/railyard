@@ -127,8 +127,10 @@ class CanaryTest(unittest.TestCase):
         rc, result, log = self.run_canary()
         self.assertEqual(rc, 1)
         self.assertFalse(result["ok"])
-        self.assertEqual(result["failedStage"], "claude-sonnet")
-        self.assertIn("served by openrouter, expected anthropic", result["detail"])
+        # Every Anthropic-first route is red; the first one is named, the rest counted.
+        self.assertEqual(result["failedStage"], "claude-haiku")
+        self.assertIn("served by openrouter, expected anthropic (+2 more)", result["detail"])
+        self.assertRegex(log, r"claude-sonnet plain: \d+ ms, served by openrouter")
         self.assertNotIn("canary-key", log + json.dumps(result))
 
     def test_broken_openrouter_floor_is_found_by_the_leg_probe(self):
@@ -166,7 +168,7 @@ class CanaryTest(unittest.TestCase):
         self.set_state(no_tools=["anthropic"])
         rc, result, _ = self.run_canary()
         self.assertEqual(rc, 1)
-        self.assertIn("claude-sonnet tool: no_tool_call", result["detail"])
+        self.assertIn("claude-haiku tool: no_tool_call (+2 more)", result["detail"])
 
     def test_stream_contract_drift_is_red(self):
         self.set_state(no_done=["groq"])

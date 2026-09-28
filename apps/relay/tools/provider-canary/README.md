@@ -26,11 +26,14 @@ provider. So when the Anthropic key is revoked, `claude-sonnet` still answers th
 OpenRouter for customers, and the canary turns red with
 `claude-sonnet plain: served by openrouter, expected anthropic`.
 
+Every Anthropic-first route (`claude-sonnet`, `claude-haiku`, `claude-sonnet-5`) turns red
+together when the Anthropic key breaks; the detail names the first and counts the rest.
+
 A route whose primary has no key and is not required (today: `openai` for `gpt-4o` and
 `gpt-4o-mini`) is checked on its next configured provider instead. A route with no
 configured provider at all is skipped and counted in the detail.
 
-Today's config gives 7 routes x 3 calls + 5 fallback legs = 26 calls a day.
+Today's config gives 9 routes x 3 calls + 7 fallback legs = 34 calls a day.
 
 ## Output
 

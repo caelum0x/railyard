@@ -1,6 +1,7 @@
 //! Relay-owned model discovery and pricing service.
 
 mod error;
+pub mod litellm;
 mod model;
 pub mod openrouter;
 mod service;
@@ -11,11 +12,11 @@ pub use model::{
     CatalogModel, CatalogSnapshot, ModelCapabilities, ModelPrice, PriceQuote, PriceQuoteRequest,
     PricingSource,
 };
-pub use service::{CatalogService, bundled_snapshot};
 pub use openrouter::{
     FeedOptions, HttpOpenRouterCatalogSource, MergeReport, OPENROUTER_MODELS_URL,
     merge_openrouter_feed,
 };
+pub use service::{CatalogService, bundled_snapshot};
 pub use source::{CatalogSource, JsonCatalogSource, StaticCatalogSource};
 
 pub const CATALOG_SCHEMA_VERSION: u16 = 1;
