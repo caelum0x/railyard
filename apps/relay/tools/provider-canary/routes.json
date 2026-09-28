@@ -1,0 +1,96 @@
+{
+  "note": "Generated from apps/relay/config/tensorzero.toml by provider_canary.py --write-routes. Do not edit by hand; tests fail when it is stale.",
+  "routes": [
+    {
+      "name": "claude-sonnet",
+      "legs": [
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-4-5"
+        },
+        {
+          "provider": "openrouter",
+          "model": "anthropic/claude-sonnet-4.5"
+        }
+      ]
+    },
+    {
+      "name": "gpt-4o",
+      "legs": [
+        {
+          "provider": "openai",
+          "model": "gpt-4o"
+        },
+        {
+          "provider": "openrouter",
+          "model": "openai/gpt-4o"
+        }
+      ]
+    },
+    {
+      "name": "gpt-4o-mini",
+      "legs": [
+        {
+          "provider": "openai",
+          "model": "gpt-4o-mini"
+        },
+        {
+          "provider": "openrouter",
+          "model": "openai/gpt-4o-mini"
+        }
+      ]
+    },
+    {
+      "name": "llama-3.1-8b-instant",
+      "legs": [
+        {
+          "provider": "groq",
+          "model": "openai/gpt-oss-20b"
+        },
+        {
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b"
+        }
+      ]
+    },
+    {
+      "name": "llama-3.3-70b-versatile",
+      "legs": [
+        {
+          "provider": "groq",
+          "model": "openai/gpt-oss-120b"
+        },
+        {
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-120b"
+        }
+      ]
+    },
+    {
+      "name": "openai/gpt-oss-120b",
+      "legs": [
+        {
+          "provider": "groq",
+          "model": "openai/gpt-oss-120b"
+        },
+        {
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-120b"
+        }
+      ]
+    },
+    {
+      "name": "openai/gpt-oss-20b",
+      "legs": [
+        {
+          "provider": "groq",
+          "model": "openai/gpt-oss-20b"
+        },
+        {
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b"
+        }
+      ]
+    }
+  ]
+}
