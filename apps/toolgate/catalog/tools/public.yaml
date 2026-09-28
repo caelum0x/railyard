@@ -1,0 +1,323 @@
+# Free and public routes (15 tools + the Photon geocoder fallback). Declarative
+# tools need no Rust: `request` is rendered with minijinja and `output` maps the
+# provider's JSON onto the capability's canonical output.
+- id: web.search.searxng
+  capability: web.search
+  provider: searxng
+  title: Web search via self-hosted SearXNG
+  description: Metasearch over our own SearXNG instance. Free.
+  side_effect: read
+  auth: none
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 3600
+  idempotent: true
+  timeout_s: 20
+  request:
+    url: "{{ config.searxng_url }}/search"
+    query: { q: "{{ input.q }}", format: json, language: "{{ input.language }}" }
+    output:
+      results: { $each: /results, $map: { title: /title, url: /url, snippet: /content } }
+    results_pointer: /results
+  example:
+    input: { q: "rust axum tutorial", limit: 3 }
+    output: { results: [{ title: "Axum docs", url: "https://docs.rs/axum", snippet: "Ergonomic web framework" }] }
+
+- id: web.search.brave
+  capability: web.search
+  provider: brave
+  title: Web search via Brave Search API (your key)
+  description: Brave's independent web index. Needs your own Brave API key (free tier available); unmetered.
+  side_effect: read
+  auth: byo_required
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 3600
+  idempotent: true
+  timeout_s: 20
+  request:
+    url: https://api.search.brave.com/res/v1/web/search
+    query: { q: "{{ input.q }}", count: "{{ input.limit | default(10) }}", search_lang: "{{ input.language }}" }
+    headers: { accept: application/json }
+    output:
+      results: { $each: /web/results, $map: { title: /title, url: /url, snippet: /description } }
+    results_pointer: /results
+
+- id: web.read.readable
+  capability: web.read
+  provider: readable
+  title: Read a page as markdown (in-process readability)
+  description: Fetches any public HTTPS page through the SSRF-safe egress and extracts the main text as markdown. Free.
+  side_effect: read
+  auth: none
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 900
+  idempotent: true
+  timeout_s: 30
+  native: web.read.readable
+  example:
+    input: { url: "https://example.com" }
+    output: { url: "https://example.com", title: "Example Domain", markdown: "# Example Domain\n\nThis domain is for use in examples.", truncated: false }
+
+- id: geo.geocode.nominatim
+  capability: geo.geocode
+  provider: nominatim
+  title: Geocode with OpenStreetMap Nominatim
+  description: Address or place to coordinates from OpenStreetMap. Free, 1 request per second.
+  side_effect: read
+  auth: none
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 86400
+  idempotent: true
+  timeout_s: 15
+  request:
+    url: https://nominatim.openstreetmap.org/search
+    query: { q: "{{ input.q }}", format: jsonv2, limit: "{{ input.limit | default(5) }}", countrycodes: "{{ input.country | lower if input.country }}" }
+    output:
+      results: { $each: "", $map: { name: /display_name, lat: /lat, lon: /lon, kind: /type } }
+    results_pointer: /results
+  example:
+    input: { q: "Brandenburger Tor, Berlin", limit: 1 }
+    output: { results: [{ name: "Brandenburger Tor, Pariser Platz, Berlin", lat: "52.5162", lon: "13.3777" }] }
+
+- id: geo.geocode.photon
+  capability: geo.geocode
+  provider: photon
+  title: Geocode with Photon (komoot)
+  description: OpenStreetMap-based geocoder; fallback for Nominatim. Free. Cannot filter by country.
+  side_effect: read
+  auth: none
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 86400
+  idempotent: true
+  timeout_s: 15
+  unsupported_fields: [country]
+  request:
+    url: https://photon.komoot.io/api/
+    query: { q: "{{ input.q }}", limit: "{{ input.limit | default(5) }}" }
+    output:
+      results: { $each: /features, $map: { name: /properties/name, lat: /geometry/coordinates/1, lon: /geometry/coordinates/0, kind: /properties/osm_value } }
+    results_pointer: /results
+
+- id: weather.forecast.open-meteo
+  capability: weather.forecast
+  provider: open-meteo
+  title: Forecast from Open-Meteo
+  description: Hourly temperature and precipitation forecast. Keyless and free.
+  side_effect: read
+  auth: none
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 900
+  idempotent: true
+  timeout_s: 15
+  request:
+    url: https://api.open-meteo.com/v1/forecast
+    query:
+      latitude: "{{ input.lat }}"
+      longitude: "{{ input.lon }}"
+      hourly: temperature_2m,precipitation
+      forecast_days: "{{ input.days | default(3) }}"
+      timezone: auto
+    output: { timezone: /timezone, hourly: /hourly, units: /hourly_units }
+  example:
+    input: { lat: 52.52, lon: 13.41, days: 1 }
+    output: { timezone: Europe/Berlin, hourly: { time: ["2026-09-29T00:00"], temperature_2m: [11.2], precipitation: [0.0] }, units: { temperature_2m: "°C" } }
+
+- id: knowledge.wikipedia.summary
+  capability: knowledge.lookup
+  provider: wikipedia
+  title: Wikipedia page summary
+  description: The lead summary of a Wikipedia article via Wikimedia REST. Keyless and free.
+  side_effect: read
+  auth: none
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 86400
+  idempotent: true
+  timeout_s: 15
+  request:
+    url: "https://{{ input.lang | default('en') }}.wikipedia.org/api/rest_v1/page/summary/{{ input.title | replace(' ', '_') | pathseg }}"
+    output: { title: /title, summary: /extract, url: /content_urls/desktop/page, thumbnail: /thumbnail/source }
+  example:
+    input: { title: "Ada Lovelace" }
+    output: { title: "Ada Lovelace", summary: "Augusta Ada King, Countess of Lovelace was an English mathematician...", url: "https://en.wikipedia.org/wiki/Ada_Lovelace", thumbnail: null }
+
+- id: research.papers.openalex
+  capability: research.papers.search
+  provider: openalex
+  title: Paper search via OpenAlex
+  description: 250M+ scholarly works with authors, year and DOI. Keyless and free.
+  side_effect: read
+  auth: none
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 21600
+  idempotent: true
+  timeout_s: 20
+  request:
+    url: https://api.openalex.org/works
+    query: { search: "{{ input.q }}", per-page: "{{ input.limit | default(10) }}", mailto: "{{ config.contact_email }}" }
+    output:
+      results:
+        $each: /results
+        $map:
+          title: /display_name
+          authors: /authorships/*/author/display_name
+          year: /publication_year
+          url: { $first: [/primary_location/landing_page_url, /id] }
+          doi: /doi
+    results_pointer: /results
+
+- id: research.papers.arxiv
+  capability: research.papers.search
+  provider: arxiv
+  title: Paper search via arXiv
+  description: Preprints from arXiv (physics, maths, CS, ML). Keyless and free; one request every 3 seconds.
+  side_effect: read
+  auth: none
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 21600
+  idempotent: true
+  timeout_s: 30
+  native: research.papers.arxiv
+
+- id: dev.github.repos.search
+  capability: dev.repo.search
+  provider: github
+  title: GitHub repository search
+  description: Search public GitHub repositories. Keyless at a low rate; add your GitHub token for higher limits (unmetered).
+  side_effect: read
+  auth: byo_optional
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 3600
+  idempotent: true
+  timeout_s: 20
+  request:
+    url: https://api.github.com/search/repositories
+    query:
+      q: "{{ input.q }}"
+      per_page: "{{ input.limit | default(10) }}"
+      sort: "{% if input.sort != 'best-match' %}{{ input.sort | default('stars') }}{% endif %}"
+    headers: { accept: application/vnd.github+json, x-github-api-version: "2022-11-28" }
+    output:
+      total: /total_count
+      results:
+        $each: /items
+        $map: { name: /full_name, url: /html_url, description: /description, stars: /stargazers_count, language: /language }
+    results_pointer: /results
+
+- id: dev.package.info.registries
+  capability: dev.package.info
+  provider: package-registries
+  title: Package info from npm, PyPI or crates.io
+  description: Latest version, license and links straight from the public registry. Keyless and free.
+  side_effect: read
+  auth: none
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 3600
+  idempotent: true
+  timeout_s: 15
+  native: dev.package.info.registries
+  example:
+    input: { ecosystem: crates, name: serde }
+    output: { ecosystem: crates, name: serde, version: "1.0.228", description: "A generic serialization/deserialization framework", license: "MIT OR Apache-2.0", homepage: "https://serde.rs", repository: "https://github.com/serde-rs/serde" }
+
+- id: company.sec.filings
+  capability: company.filings
+  provider: sec-edgar
+  title: SEC EDGAR filings
+  description: Recent filings for a US-listed company by ticker or CIK, with document links. Keyless and free.
+  side_effect: read
+  auth: none
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 3600
+  idempotent: true
+  timeout_s: 20
+  native: company.sec.filings
+
+- id: company.lei.lookup
+  capability: company.identity
+  provider: gleif
+  title: LEI lookup via GLEIF
+  description: Global legal entity records by legal name or LEI code. Keyless and free.
+  side_effect: read
+  auth: none
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 86400
+  idempotent: true
+  timeout_s: 20
+  request:
+    url: https://api.gleif.org/api/v1/lei-records
+    query:
+      "filter[entity.legalName]": "{{ input.name }}"
+      "filter[lei]": "{{ input.lei }}"
+      "page[size]": "{{ input.limit | default(10) }}"
+    headers: { accept: application/vnd.api+json }
+    output:
+      results:
+        $each: /data
+        $map:
+          lei: /attributes/lei
+          name: /attributes/entity/legalName/name
+          jurisdiction: /attributes/entity/jurisdiction
+          status: /attributes/entity/status
+          country: /attributes/entity/legalAddress/country
+          city: /attributes/entity/legalAddress/city
+    results_pointer: /results
+
+- id: domain.dns.lookup
+  capability: domain.dns
+  provider: doh
+  title: DNS lookup over HTTPS
+  description: DNS records from Cloudflare's DNS-over-HTTPS resolver. Keyless and free.
+  side_effect: read
+  auth: none
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 300
+  idempotent: true
+  timeout_s: 10
+  request:
+    url: https://cloudflare-dns.com/dns-query
+    query: { name: "{{ input.name }}", type: "{{ input.type | default('A') }}" }
+    headers: { accept: application/dns-json }
+    output:
+      status: /Status
+      answers: { $each: /Answer, $map: { name: /name, type: /type, ttl: /TTL, data: /data } }
+  example:
+    input: { name: example.com, type: MX }
+    output: { status: 0, answers: [{ name: example.com, type: 15, ttl: 3600, data: "0 ." }] }
+
+- id: domain.rdap.whois
+  capability: domain.whois
+  provider: rdap
+  title: Domain registration via RDAP
+  description: Registrar, dates, status and nameservers from the registry's RDAP server (found through IANA's bootstrap file). Free.
+  side_effect: read
+  auth: none
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 21600
+  idempotent: true
+  timeout_s: 20
+  native: domain.rdap.whois
+
+- id: social.hn.search
+  capability: social.search
+  provider: hn-algolia
+  title: Hacker News search (Algolia)
+  description: Stories and comments from Hacker News. Keyless and free.
+  side_effect: read
+  auth: none
+  price: { basis: per_call, micros: 0 }
+  cache_ttl_s: 600
+  idempotent: true
+  timeout_s: 15
+  request:
+    url: https://hn.algolia.com/api/v1/search
+    query: { query: "{{ input.q }}", tags: "{{ input.tags | default('story') }}", hitsPerPage: "{{ input.limit | default(20) }}" }
+    output:
+      results:
+        $each: /hits
+        $map:
+          title: { $first: [/title, /story_title] }
+          url: { $first: [/url, /story_url] }
+          points: /points
+          comments: /num_comments
+          author: /author
+          created_at: /created_at
+    results_pointer: /results

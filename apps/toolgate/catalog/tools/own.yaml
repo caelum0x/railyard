@@ -1,0 +1,146 @@
+# Our own products. Native adapters (typed Rust clients) serve these; the team's
+# stored credential for the product wins, else the platform service credential.
+- id: relay.chat.complete
+  capability: llm.chat
+  provider: relay
+  title: LLM completion through Relay
+  description: Any Relay model with your same sk-t0 key. Relay bills the tokens on the shared balance, so Switchyard adds no charge.
+  side_effect: read
+  auth: caller_key
+  price: { basis: per_call, micros: 0 }
+  timeout_s: 120
+  native: relay.chat.complete
+  example:
+    input: { model: "openrouter::meta-llama/llama-3.3-70b-instruct:free", messages: [{ role: user, content: "Say hi" }], max_tokens: 16 }
+    output: { content: "Hi!", model: "openrouter::meta-llama/llama-3.3-70b-instruct:free", usage: { prompt_tokens: 9, completion_tokens: 3 } }
+
+- id: scribase.db.query
+  capability: db.query
+  provider: scribase
+  title: Read-only SQL on a Scribase database
+  description: Runs one read-only statement inside a bounded read-only transaction on a Scribase environment or branch. Needs your Scribase agent token (scb_agt_).
+  side_effect: read
+  auth: byo_required
+  price: { basis: per_success, micros: 50 }
+  timeout_s: 30
+  native: scribase.db.query
+  example:
+    input: { organization: acme, project: web, query: "select id, email from users limit 2" }
+    output: { columns: [id, email], rows: [[1, "a@acme.com"], [2, "b@acme.com"]] }
+
+- id: scribase.db.branch.create
+  capability: db.branch
+  provider: scribase
+  title: Create a Scribase copy-on-write branch
+  description: A copy-on-write database branch for an agent task. Needs your Scribase agent token.
+  side_effect: write
+  auth: byo_required
+  price: { basis: per_success, micros: 10000 }
+  timeout_s: 60
+  native: scribase.db.branch.create
+
+- id: scribase.auth.magic_link.send
+  capability: auth.magic_link
+  provider: scribase
+  title: Send a Scribase magic link
+  description: Sends a passwordless sign-in link to an app user; delivery goes through Rally mail. Needs the project's anon key stored as your Scribase credential.
+  side_effect: send
+  auth: byo_required
+  price: { basis: per_success, micros: 400 }
+  timeout_s: 20
+  native: scribase.auth.magic_link.send
+
+- id: rally.leads.search
+  capability: leads.search
+  provider: rally
+  title: Rally lead search
+  description: Companies or people from Rally's lawful data (registries, places, VC database), priced per result returned.
+  side_effect: read
+  auth: own_product
+  price: { basis: per_result, micros: 2000, unit: result, units_from: /limit, default_units: 25, max_units: 100 }
+  cache_ttl_s: 3600
+  idempotent: true
+  timeout_s: 30
+  requires_any: [[filters], [domains]]
+  native: rally.leads.search
+  example:
+    input: { kind: companies, filters: { industry: software, country: DE }, limit: 5 }
+    output: { results: [{ name: "Acme GmbH", domain: "acme.de" }], total: 1 }
+
+- id: rally.company.enrich
+  capability: company.enrich
+  provider: rally
+  title: Rally company enrichment
+  description: Domain to company profile from Rally's data. Billed only when a company is found.
+  side_effect: read
+  auth: own_product
+  price: { basis: per_success, micros: 5000 }
+  cache_ttl_s: 86400
+  idempotent: true
+  timeout_s: 30
+  native: rally.company.enrich
+  example:
+    input: { domain: stripe.com }
+    output: { domain: stripe.com, company: { name: Stripe, industry: Payments } }
+
+- id: rally.email.verify
+  capability: email.verify
+  provider: rally
+  title: Rally email verification
+  description: Syntax, MX (over DNS-over-HTTPS), disposable-domain and role-account checks. Billed per completed verification.
+  side_effect: read
+  auth: none
+  price: { basis: per_success, micros: 200 }
+  cache_ttl_s: 86400
+  idempotent: true
+  timeout_s: 15
+  native: rally.email.verify
+  example:
+    input: { email: "founder@stripe.com" }
+    output: { email: "founder@stripe.com", result: deliverable, checks: { syntax: true, mx: true, disposable: false, role: false } }
+
+- id: rally.email.send
+  capability: email.send
+  provider: rally
+  title: Rally transactional send
+  description: One transactional email from a verified sender domain; the Idempotency-Key is forwarded so a retry never sends twice. $0.40 per 1,000 recipients.
+  side_effect: send
+  auth: own_product
+  price: { basis: per_unit, micros: 400, unit: recipient, units_from: /to, max_units: 50 }
+  timeout_s: 30
+  native: rally.email.send
+
+- id: menivor.video.render
+  capability: video.render
+  provider: menivor
+  title: Menivor short-video render
+  description: Subject or script to a rendered short video. Async; returns a job id to poll with menivor.video.status (free). Priced per requested second.
+  side_effect: spend
+  auth: own_product
+  price: { basis: per_unit, micros: 20000, unit: second, units_from: /duration_s, default_units: 30, max_units: 180 }
+  timeout_s: 60
+  native: menivor.video.render
+
+- id: menivor.video.status
+  capability: video.status
+  provider: menivor
+  title: Menivor render status
+  description: Progress and final video URLs for a render job. Free.
+  side_effect: read
+  auth: own_product
+  price: { basis: per_call, micros: 0 }
+  timeout_s: 15
+  native: menivor.video.status
+
+- id: menivor.tts.speak
+  capability: speech.tts
+  provider: menivor
+  title: Menivor text to speech
+  description: Edge-tts class voices; returns an audio job/URL. Near-zero price per 1k characters.
+  side_effect: read
+  auth: own_product
+  price: { basis: per_unit, micros: 50, unit: 1k_chars, units_from: /text, unit_divisor: 1000, max_units: 20 }
+  cache_ttl_s: 86400
+  idempotent: true
+  timeout_s: 60
+  native: menivor.tts.speak

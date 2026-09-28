@@ -1,0 +1,11 @@
+id: lead-to-video
+name: Lead to video
+description: Find companies, enrich and verify a contact, render a personalised short video with Menivor, and email it through Rally. One key, one balance.
+tool_ids:
+  - rally.leads.search
+  - rally.company.enrich
+  - rally.email.verify
+  - menivor.video.render
+  - menivor.video.status
+  - rally.email.send
+version: 1

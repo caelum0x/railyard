@@ -1,0 +1,39 @@
+- id: domain.dns
+  title: DNS lookup
+  description: Resolve DNS records (A, AAAA, MX, TXT, CNAME, NS) for a domain over DNS-over-HTTPS.
+  tags: [dns, mx, txt, records, domain, resolve, spf, dmarc]
+  input_schema:
+    type: object
+    properties:
+      name: { type: string, pattern: "^[A-Za-z0-9_.-]+$", maxLength: 253 }
+      type: { type: string, enum: [A, AAAA, MX, TXT, CNAME, NS, SOA, CAA], default: A }
+    required: [name]
+    additionalProperties: false
+  output_schema:
+    type: object
+    properties:
+      name: { type: string }
+      type: { type: string }
+      answers: { type: array }
+    required: [answers]
+
+- id: domain.whois
+  title: Domain registration (RDAP/WHOIS)
+  description: Registration data for a domain via RDAP (registrar, creation and expiry dates, status, nameservers).
+  tags: [whois, rdap, domain, registrar, expiry, registration]
+  input_schema:
+    type: object
+    properties:
+      domain: { type: string, pattern: "^[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$" }
+    required: [domain]
+    additionalProperties: false
+  output_schema:
+    type: object
+    properties:
+      domain: { type: string }
+      registrar: { type: [string, "null"] }
+      created: { type: [string, "null"] }
+      expires: { type: [string, "null"] }
+      status: { type: array }
+      nameservers: { type: array }
+    required: [domain]

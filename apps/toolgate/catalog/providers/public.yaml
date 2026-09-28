@@ -1,0 +1,94 @@
+# Free and public routes. Etiquette (rate limits, contact User-Agent) is
+# enforced per provider with a token bucket.
+- id: searxng
+  title: SearXNG (self-hosted)
+  kind: public
+  egress_host_from_config: searxng_url
+  rate_per_s: 5
+  burst: 10
+- id: readable
+  title: In-process readability extractor
+  kind: public
+  rate_per_s: 5
+  burst: 10
+- id: nominatim
+  title: OpenStreetMap Nominatim
+  kind: public
+  egress_hosts: [nominatim.openstreetmap.org]
+  rate_per_s: 1
+  burst: 1
+  docs_url: https://operations.osmfoundation.org/policies/nominatim/
+- id: photon
+  title: Photon (komoot) geocoder
+  kind: public
+  egress_hosts: [photon.komoot.io]
+  rate_per_s: 1
+  burst: 2
+- id: open-meteo
+  title: Open-Meteo
+  kind: public
+  egress_hosts: [api.open-meteo.com]
+  rate_per_s: 5
+  burst: 10
+- id: wikipedia
+  title: Wikimedia REST
+  kind: public
+  egress_hosts: ["*.wikipedia.org"]
+  rate_per_s: 10
+  burst: 20
+- id: openalex
+  title: OpenAlex
+  kind: public
+  egress_hosts: [api.openalex.org]
+  rate_per_s: 10
+  burst: 10
+- id: arxiv
+  title: arXiv API
+  kind: public
+  egress_hosts: [export.arxiv.org]
+  rate_per_s: 0.34
+  burst: 1
+- id: github
+  title: GitHub REST
+  kind: public
+  egress_hosts: [api.github.com]
+  rate_per_s: 0.5
+  burst: 5
+  credential: { header: Authorization, prefix: "Bearer " }
+- id: package-registries
+  title: npm, PyPI and crates.io registries
+  kind: public
+  egress_hosts: [registry.npmjs.org, pypi.org, crates.io]
+  rate_per_s: 5
+  burst: 10
+- id: sec-edgar
+  title: SEC EDGAR
+  kind: public
+  egress_hosts: [www.sec.gov, data.sec.gov]
+  rate_per_s: 8
+  burst: 8
+  docs_url: https://www.sec.gov/os/accessing-edgar-data
+- id: gleif
+  title: GLEIF LEI API
+  kind: public
+  egress_hosts: [api.gleif.org]
+  rate_per_s: 5
+  burst: 10
+- id: doh
+  title: DNS over HTTPS (Cloudflare)
+  kind: public
+  egress_hosts: [cloudflare-dns.com]
+  rate_per_s: 20
+  burst: 20
+- id: rdap
+  title: RDAP (IANA bootstrap)
+  kind: public
+  egress_hosts: [data.iana.org]
+  rate_per_s: 2
+  burst: 4
+- id: hn-algolia
+  title: Hacker News (Algolia)
+  kind: public
+  egress_hosts: [hn.algolia.com]
+  rate_per_s: 5
+  burst: 10

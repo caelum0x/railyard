@@ -1,0 +1,94 @@
+# Canonical capability contracts: one input schema per capability. Every tool
+# that serves the capability maps this input to its provider, so fallback only
+# ever crosses providers that can take the caller's actual input.
+- id: web.search
+  title: Search the web
+  description: Web search results (title, URL, snippet) for a text query.
+  tags: [search, web, google, results, links]
+  input_schema:
+    type: object
+    properties:
+      q: { type: string, minLength: 1, maxLength: 400, description: Search query }
+      limit: { type: integer, minimum: 1, maximum: 20, default: 10 }
+      language: { type: string, maxLength: 10, description: "BCP-47 language, e.g. en" }
+    required: [q]
+    additionalProperties: false
+  output_schema:
+    type: object
+    properties:
+      results:
+        type: array
+        items:
+          type: object
+          properties:
+            title: { type: [string, "null"] }
+            url: { type: [string, "null"] }
+            snippet: { type: [string, "null"] }
+    required: [results]
+
+- id: web.read
+  title: Read a web page as markdown
+  description: Fetch a public HTTPS page and return its readable main text as clean markdown with the title.
+  tags: [scrape, crawl, page, article, markdown, readability, url, extract]
+  input_schema:
+    type: object
+    properties:
+      url: { type: string, pattern: "^https://", maxLength: 2048 }
+      max_chars: { type: integer, minimum: 100, maximum: 200000, default: 20000 }
+    required: [url]
+    additionalProperties: false
+  output_schema:
+    type: object
+    properties:
+      url: { type: string }
+      title: { type: [string, "null"] }
+      markdown: { type: string }
+      truncated: { type: boolean }
+    required: [url, markdown]
+
+- id: social.search
+  title: Search Hacker News
+  description: Search Hacker News stories and comments by keyword.
+  tags: [hn, hackernews, social, discussion, startup, tech, news]
+  input_schema:
+    type: object
+    properties:
+      q: { type: string, minLength: 1, maxLength: 300 }
+      tags: { type: string, enum: [story, comment, show_hn, ask_hn], default: story }
+      limit: { type: integer, minimum: 1, maximum: 50, default: 20 }
+    required: [q]
+    additionalProperties: false
+  output_schema:
+    type: object
+    properties:
+      results:
+        type: array
+        items:
+          type: object
+          properties:
+            title: { type: [string, "null"] }
+            url: { type: [string, "null"] }
+            points: { type: [integer, "null"] }
+            comments: { type: [integer, "null"] }
+            author: { type: [string, "null"] }
+            created_at: { type: [string, "null"] }
+    required: [results]
+
+- id: knowledge.lookup
+  title: Look up a topic summary
+  description: A short encyclopedic summary of a topic (Wikipedia page summary).
+  tags: [wikipedia, encyclopedia, summary, definition, who, what, topic, knowledge]
+  input_schema:
+    type: object
+    properties:
+      title: { type: string, minLength: 1, maxLength: 300, description: Page title or topic }
+      lang: { type: string, pattern: "^[a-z]{2,3}$", default: en }
+    required: [title]
+    additionalProperties: false
+  output_schema:
+    type: object
+    properties:
+      title: { type: [string, "null"] }
+      summary: { type: [string, "null"] }
+      url: { type: [string, "null"] }
+      thumbnail: { type: [string, "null"] }

@@ -1,0 +1,9 @@
+# Bring-your-own-key providers: calls use the team's stored credential and are
+# not metered.
+- id: brave
+  title: Brave Search API
+  kind: byo
+  egress_hosts: [api.search.brave.com]
+  credential: { header: X-Subscription-Token }
+  rate_per_s: 1
+  burst: 1

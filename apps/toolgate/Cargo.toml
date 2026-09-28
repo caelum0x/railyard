@@ -1,0 +1,88 @@
+# apps/toolgate — Switchyard, the tool rail (working name "toolgate").
+#
+# One Relay key reaches a schema-typed catalog of tools: our own products
+# (Relay, Scribase, Rally, Menivor) first, free/public routes second, BYO keys
+# third. Every paid call is pre-authorised with a Mint hold, captured at the
+# exact cost, mirrored to Rago as a `tool_call` event and chained into an
+# append-only audit log.
+#
+# Standalone cargo workspace like apps/abacus, apps/mint and apps/rago. It is
+# never a member of any root workspace.
+#
+# Build/test from here ONLY:  cd apps/toolgate && cargo test --workspace
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+thiserror = "2"
+ulid = "1.2"
+async-trait = "0.1"
+anyhow = "1"
+futures = "0.3"
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+tower = { version = "0.5", features = ["util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "macros",
+    "migrate",
+    "chrono",
+    "json",
+] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+jsonschema = { version = "0.46", default-features = false }
+minijinja = { version = "2", default-features = false, features = ["builtins", "serde"] }
+chacha20poly1305 = "0.10"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+base64 = "0.22"
+sha2 = "0.10"
+hex = "0.4"
+url = "2"
+secrecy = "0.10"
+zeroize = "1.8"
+clap = { version = "4", features = ["derive", "env"] }
+roxmltree = "0.20"
+subtle = "2"
+
+switchyard-core = { path = "crates/switchyard-core" }
+switchyard-catalog = { path = "crates/switchyard-catalog" }
+switchyard-adapters = { path = "crates/switchyard-adapters" }
+switchyard-egress = { path = "crates/switchyard-egress" }
+switchyard-vault = { path = "crates/switchyard-vault" }
+switchyard-meter = { path = "crates/switchyard-meter" }
+switchyard-cache = { path = "crates/switchyard-cache" }
+switchyard-auth = { path = "crates/switchyard-auth" }
+switchyard-store = { path = "crates/switchyard-store" }
+switchyard-mcp = { path = "crates/switchyard-mcp" }
+switchyard-server = { path = "crates/switchyard-server" }
+switchyard-testkit = { path = "crates/switchyard-testkit" }
+
+# The Mac this is developed on is disk-constrained: no debuginfo keeps target/
+# small. Release keeps a small static-ish binary for the arm64 box.
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

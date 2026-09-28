@@ -1,0 +1,43 @@
+- id: geo.geocode
+  title: Geocode an address or place
+  description: Turn an address or place name into coordinates (latitude, longitude) with a display name.
+  tags: [geocode, address, place, map, coordinates, location, osm]
+  input_schema:
+    type: object
+    properties:
+      q: { type: string, minLength: 2, maxLength: 300, description: Free-form address or place }
+      limit: { type: integer, minimum: 1, maximum: 10, default: 5 }
+      country: { type: string, pattern: "^[a-zA-Z]{2}$", description: ISO country code filter }
+    required: [q]
+    additionalProperties: false
+  output_schema:
+    type: object
+    properties:
+      results:
+        type: array
+        items:
+          type: object
+          properties:
+            name: { type: [string, "null"] }
+            lat: { type: [number, string, "null"] }
+            lon: { type: [number, string, "null"] }
+    required: [results]
+
+- id: weather.forecast
+  title: Weather forecast
+  description: Hourly weather forecast (temperature and precipitation) for coordinates.
+  tags: [weather, forecast, temperature, rain, precipitation, climate]
+  input_schema:
+    type: object
+    properties:
+      lat: { type: number, minimum: -90, maximum: 90 }
+      lon: { type: number, minimum: -180, maximum: 180 }
+      days: { type: integer, minimum: 1, maximum: 16, default: 3 }
+    required: [lat, lon]
+    additionalProperties: false
+  output_schema:
+    type: object
+    properties:
+      timezone: { type: [string, "null"] }
+      hourly: { type: [object, "null"] }
+      units: { type: [object, "null"] }

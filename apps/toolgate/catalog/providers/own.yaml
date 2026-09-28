@@ -1,0 +1,26 @@
+# Our own products. Their base URLs come from server config, and each host is
+# added to the egress allowlist at startup.
+- id: relay
+  title: Relay (Railyard model rail)
+  kind: own
+  egress_host_from_config: relay_url
+  tos_resale_ok: true
+- id: scribase
+  title: Scribase
+  kind: own
+  egress_host_from_config: scribase_url
+  tos_resale_ok: true
+  credential: { header: Authorization, prefix: "Bearer " }
+- id: rally
+  title: Rally
+  kind: own
+  egress_host_from_config: rally_url
+  tos_resale_ok: true
+  credential: { header: Authorization, prefix: "Bearer " }
+  egress_hosts: [cloudflare-dns.com]
+- id: menivor
+  title: Menivor
+  kind: own
+  egress_host_from_config: menivor_url
+  tos_resale_ok: true
+  credential: { header: Authorization, prefix: "Bearer " }
