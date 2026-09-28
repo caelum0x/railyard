@@ -1,0 +1,42 @@
+[package]
+name = "switchyard-server"
+description = "Switchyard HTTP API, call pipeline, MCP endpoint, OAuth 2.1 routes and /admin console."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "switchyard-server"
+path = "src/main.rs"
+
+[dependencies]
+switchyard-core.workspace = true
+switchyard-catalog.workspace = true
+switchyard-adapters.workspace = true
+switchyard-egress.workspace = true
+switchyard-vault.workspace = true
+switchyard-meter.workspace = true
+switchyard-cache.workspace = true
+switchyard-auth.workspace = true
+switchyard-store.workspace = true
+switchyard-mcp.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+tower.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
+secrecy.workspace = true
+url.workspace = true
+base64.workspace = true
+anyhow.workspace = true
+sqlx.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+switchyard-testkit.workspace = true
+ulid.workspace = true
+sha2.workspace = true

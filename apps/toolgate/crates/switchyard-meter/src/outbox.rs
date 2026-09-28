@@ -7,11 +7,23 @@ use std::time::Duration;
 use chrono::Utc;
 use switchyard_store::Store;
 
+use crate::mint::{MintError, MintTransport};
 use crate::rago::RagoTransport;
 
+/// Delivers `rago_event`, `mint_capture` and `mint_release` rows. Mint rows
+/// exist only when a settlement could not reach Mint during the call; they
+/// replay with the same idempotency key, so a retry can never double-charge.
 pub struct OutboxWorker {
     pub store: Arc<dyn Store>,
     pub rago: Option<Arc<dyn RagoTransport>>,
+    pub mint: Option<Arc<dyn MintTransport>>,
+}
+
+fn mint_result(r: Result<crate::mint::MintReceipt, MintError>) -> Result<(), String> {
+    match r {
+        Ok(_) | Err(MintError::HoldNotFound) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -40,6 +52,23 @@ impl OutboxWorker {
         for item in due {
             let result = match (item.kind.as_str(), &self.rago) {
                 ("rago_event", Some(rago)) => rago.send_event(&item.payload).await.map_err(|e| e.message),
+                ("mint_capture", _) => {
+                    let p = &item.payload;
+                    let s = |k: &str| p.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                    let amount = p.get("amount_micros").and_then(|v| v.as_i64()).unwrap_or(0);
+                    match &self.mint {
+                        Some(m) => mint_result(m.capture(&s("hold_id"), amount, &s("to"), &s("idem_key")).await),
+                        None => Err("mint not configured".to_string()),
+                    }
+                }
+                ("mint_release", _) => {
+                    let p = &item.payload;
+                    let s = |k: &str| p.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                    match &self.mint {
+                        Some(m) => mint_result(m.release(&s("hold_id"), &s("idem_key")).await),
+                        None => Err("mint not configured".to_string()),
+                    }
+                }
                 ("rago_event", None) => {
                     // Rago not configured: keep the row for when it is.
                     report.skipped += 1;
