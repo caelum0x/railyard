@@ -1,0 +1,19 @@
+[Unit]
+Description=Railyard: reconcile Relay cost events with Rago usage for yesterday (RY-RG1)
+Documentation=file:///srv/src/railyard/tools/reconcile-relay-rago/README.md
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/products/reconcile-relay-rago.env
+ExecStart=/usr/bin/python3 /srv/src/railyard/tools/reconcile-relay-rago/reconcile.py
+StateDirectory=railyard/reconcile-relay-rago
+StateDirectoryMode=0750
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=256M
+TimeoutStartSec=20min
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true

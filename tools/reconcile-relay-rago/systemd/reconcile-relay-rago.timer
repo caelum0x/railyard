@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly Relay and Rago reconciliation (RY-RG1)
+
+[Timer]
+# After the restic backup (03:30 UTC), inside the night window.
+OnCalendar=*-*-* 04:20:00 UTC
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
