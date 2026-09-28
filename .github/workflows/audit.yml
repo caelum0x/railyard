@@ -1,0 +1,38 @@
+# Weekly audit on the self-hosted Mac runner (RY-CI1).
+# gitleaks over the full git history, and cargo-audit (RustSec) on the lockfiles
+# of the services that ship. Tools are installed by infra-box/ci/install-runner.sh
+# --install-tools; a missing tool fails the job instead of skipping it.
+name: audit
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: [self-hosted, macOS, ARM64, railyard-ship]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: gitleaks (full history)
+        run: |
+          command -v gitleaks >/dev/null || { echo "::error::gitleaks is not installed on the runner"; exit 1; }
+          gitleaks git --no-banner --redact --exit-code 1 .
+
+      - name: cargo audit (rago, mint, relay)
+        run: |
+          command -v cargo-audit >/dev/null || { echo "::error::cargo-audit is not installed on the runner"; exit 1; }
+          rc=0
+          for lock in apps/rago/Cargo.lock apps/mint/Cargo.lock apps/relay/crates/Cargo.lock; do
+            echo "== $lock"
+            cargo audit --file "$lock" || rc=1
+          done
+          exit $rc

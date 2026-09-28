@@ -1,0 +1,79 @@
+# Ship Railyard services to box 2 from the Mac (RY-CI1, deploy policy OD-RY4).
+#
+# * A green `ci` run on a push to main ships the services in CI_AUTO_SERVICES
+#   (default: relay) with no click, when their app directory changed since the
+#   SHA that is live on the box.
+# * Money services (CI_APPROVAL_SERVICES, default: mint) ship only from
+#   "Run workflow" with approve set to the service name: the one approval click.
+# * Nothing ships until RAILYARD_AUTO_DEPLOY=1 in ~/.infra-box/ci.env on the Mac.
+#
+# Images are built on the Mac (arm64) and shipped with infra-box/build/ship-image.sh.
+# No image is built on a box. An unhealthy image is restored automatically.
+name: ship
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Service to ship
+        type: choice
+        options: [relay, rago, mint]
+        default: relay
+      approve:
+        description: For mint (money service), type "mint" to approve this ship
+        type: string
+        default: ""
+      force:
+        description: Ship even if the app directory did not change
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ship-railyard
+  cancel-in-progress: false
+
+jobs:
+  ship:
+    name: ship ${{ matrix.service }}
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: [self-hosted, macOS, ARM64, railyard-ship]
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        service: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.service) || '["relay","rago","mint"]') }}
+    env:
+      SHIP_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      SHIP_TRIGGER: ${{ github.event_name == 'workflow_dispatch' && 'dispatch' || 'push' }}
+      SHIP_APPROVE: ${{ inputs.approve }}
+      SHIP_FORCE: ${{ inputs.force && '1' || '0' }}
+      SHIP_SERVICE: ${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SHIP_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Ship
+        run: |
+          [ -n "${INFRA_BOX_DIR:-}" ] && [ -x "$INFRA_BOX_DIR/ci/ship-railyard.sh" ] \
+            || { echo "::error::INFRA_BOX_DIR is not set in the runner .env (run infra-box/ci/install-runner.sh)"; exit 1; }
+          args=(--service "$SHIP_SERVICE" --src "$GITHUB_WORKSPACE" --sha "$SHIP_SHA" --trigger "$SHIP_TRIGGER")
+          [ -n "$SHIP_APPROVE" ] && args+=(--approve "$SHIP_APPROVE")
+          [ "$SHIP_FORCE" = 1 ] && args+=(--force)
+          bash "$INFRA_BOX_DIR/ci/ship-railyard.sh" "${args[@]}"

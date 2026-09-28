@@ -1,0 +1,74 @@
+# CI for railyard on the self-hosted Mac runner (RY-CI1).
+# cargo test per deployed app: rago and mint (whole workspaces) and Relay's own
+# crates (the TensorZero upstream crates are tested upstream; relay-storage-postgres
+# needs a database and is covered by its own integration run).
+# Pull requests run only when they come from this repository; the runner's job
+# guard (infra-box/ci/lib/guard-job.sh) refuses forks as a second layer.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  rust:
+    name: cargo test (${{ matrix.app }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, railyard-ship]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - app: rago
+            dir: apps/rago
+            args: --workspace
+          - app: mint
+            dir: apps/mint
+            args: --workspace
+          - app: relay
+            dir: apps/relay/crates
+            args: >-
+              -p relay-aitp -p relay-aitp-wire -p relay-billing -p relay-catalog
+              -p relay-contract -p relay-cost-feed -p relay-hedge -p relay-sdk
+    env:
+      # Kept between runs so each job builds incrementally from the last one.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/../.cargo-target/${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Mac disk guard
+        run: |
+          free=$(df -Pk "$HOME" | awk 'NR == 2 { printf "%d", $4 / 1048576 }')
+          echo "free disk: ${free} GB"
+          [ "$free" -ge "${CI_MAC_MIN_FREE_GB:-5}" ] || { echo "::error::the Mac has ${free} GB free"; exit 1; }
+
+      - name: cargo test
+        working-directory: ${{ matrix.dir }}
+        run: cargo test --locked ${{ matrix.args }}
+
+      - name: Trim the cargo cache when the Mac is low on disk
+        if: always()
+        run: |
+          free=$(df -Pk "$HOME" | awk 'NR == 2 { printf "%d", $4 / 1048576 }')
+          if [ "$free" -lt 15 ]; then
+            echo "free disk ${free} GB < 15 GB: removing $CARGO_TARGET_DIR"
+            rm -rf "$CARGO_TARGET_DIR"
+          fi
