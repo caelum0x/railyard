@@ -1,7 +1,7 @@
 // Deploy records for `railyard deploy` and `railyard rollback` (RYP-D4).
 // A token only ever reads and writes its own org's deploys.
 
-import { addApp, AppError, normaliseAppName } from "../../../../lib/apps.ts";
+import { addApp, AppError, normaliseAppName, pausedMessage } from "../../../../lib/apps.ts";
 import { access } from "../../../../lib/ladder.ts";
 import type { Repo } from "../../../../lib/repo.ts";
 import type { Deploy } from "../../../../lib/types.ts";
@@ -43,7 +43,8 @@ export function parseDeployInput(body: unknown): DeployInput | string {
 
 export async function recordDeploy(repo: Repo, orgId: string, input: DeployInput, now: Date): Promise<{ status: number; body: Record<string, unknown> }> {
   const a = access(await repo.getEntitlement(orgId), now);
-  if (a.state === "paused") return { status: 402, body: { error: "Railyard is paused. Resume it on the Billing screen." } };
+  const paused = pausedMessage(a);
+  if (paused) return { status: 402, body: { error: paused } };
   // The CLI sends the folder name when --app is not given ("My Shop"); apps are
   // stored under the normalised name ("my-shop"), so look up that one.
   let app = await repo.findAppByName(orgId, normaliseAppName(input.app));

@@ -38,6 +38,25 @@ export async function startDevice(repo: Repo, consoleUrl: string, now: Date) {
   };
 }
 
+/**
+ * A device code that is approved at birth, for a server that already knows the
+ * org (the Scribase bridge, PY1.0). The caller hands the raw code to the CLI
+ * that will poll `/api/v1/device/token` once; only its hash is stored.
+ */
+export async function createApprovedDevice(repo: Repo, orgId: string, userId: string, ttlSeconds: number, now: Date): Promise<string> {
+  const deviceCode = randomToken(32);
+  await repo.createDeviceCode({
+    device_code_hash: await sha256Hex(deviceCode),
+    user_code: userCode(),
+    org_id: orgId,
+    user_id: userId,
+    approved_at: now.toISOString(),
+    consumed_at: null,
+    expires_at: new Date(now.getTime() + ttlSeconds * 1000).toISOString(),
+  });
+  return deviceCode;
+}
+
 export async function approveDevice(repo: Repo, rawCode: string, orgId: string, userId: string, now: Date): Promise<boolean> {
   const code = rawCode.trim().toUpperCase();
   if (!/^[A-Z]{4}-[A-Z]{4}$/.test(code)) return false;

@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DENYLIST_PATH = join(HERE, "copy-denylist.json");
-export const PINNED_VERSION = "2026-09-29.2";
+export const PINNED_VERSION = "2026-09-29.3";
 export const PRODUCT = "railyard";
 
 export function loadDenylist(path = DENYLIST_PATH) {

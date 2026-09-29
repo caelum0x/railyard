@@ -2,7 +2,7 @@
 // `railyard`, with the project's service role. Server-only.
 
 import type { Repo } from "./repo.ts";
-import type { ApiToken, App, BillingEvent, Deploy, DeviceCode, Entitlement, Org } from "./types.ts";
+import type { ApiToken, App, BillingEvent, Deploy, DeviceCode, Entitlement, Org, ScribaseBinding } from "./types.ts";
 
 type Fetch = typeof fetch;
 
@@ -138,5 +138,20 @@ export class PostgrestRepo implements Repo {
       "return=representation",
     );
     return rows.length === 1;
+  }
+  async findScribaseBinding(scribaseOrgId: string) {
+    return this.one<ScribaseBinding>(`scribase_bindings?scribase_org_id=eq.${encodeURIComponent(scribaseOrgId)}`);
+  }
+  async bindScribaseOrg(scribaseOrgId: string, orgId: string) {
+    // The unique key on scribase_org_id makes the first binding win a race;
+    // the loser reads the winner's row.
+    await this.req("POST", "scribase_bindings", { scribase_org_id: scribaseOrgId, org_id: orgId }, "resolution=ignore-duplicates,return=minimal");
+    const b = await this.findScribaseBinding(scribaseOrgId);
+    if (!b) throw new Error("could not bind the Scribase organization");
+    return b;
+  }
+  async recordBridgeMessage(messageId: string) {
+    const { status } = await this.req("POST", "bridge_messages", { message_id: messageId }, "return=minimal");
+    return status !== 409;
   }
 }

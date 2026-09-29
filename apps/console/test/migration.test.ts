@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATION = join(ROOT, "db/migrations/0001_railyard_console.sql");
+const BRIDGE = join(ROOT, "db/migrations/0002_scribase_bridge.sql");
 const have = spawnSync("pg_ctl", ["--version"]).status === 0 && spawnSync("initdb", ["--version"]).status === 0;
 
 test("0001 applies twice on a scratch cluster; RLS on; anon has no access", { skip: have ? false : "pg_ctl/initdb not installed" }, () => {
@@ -34,4 +35,33 @@ test("0001 applies twice on a scratch cluster; RLS on; anon has no access", { sk
   // Replay protection is a database guarantee, not only application code.
   psql(["-c", "insert into railyard.billing_events (webhook_id, event_type, outcome) values ('dodo:m1', 'payment.succeeded', 'applied')"]);
   assert.throws(() => psql(["-c", "insert into railyard.billing_events (webhook_id, event_type, outcome) values ('dodo:m1', 'payment.succeeded', 'applied')"]), /duplicate key/);
+});
+
+test("0002 (Scribase bridge) applies twice after 0001; add-on plan allowed; bindings unique; anon has no access", { skip: have ? false : "pg_ctl/initdb not installed" }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "ry-pg-"));
+  const port = String(57000 + Math.floor(Math.random() * 2000));
+  after(() => {
+    spawnSync("pg_ctl", ["-D", join(dir, "data"), "-m", "immediate", "stop"], { stdio: "ignore" });
+    rmSync(dir, { recursive: true, force: true });
+  });
+  execFileSync("initdb", ["-D", join(dir, "data"), "-U", "postgres", "-A", "trust", "--no-sync"], { stdio: "ignore" });
+  execFileSync("pg_ctl", ["-D", join(dir, "data"), "-o", `-p ${port} -k ${dir} -c listen_addresses=''`, "-w", "start"], { stdio: "ignore" });
+  const psql = (args: string[]) => execFileSync("psql", ["-h", dir, "-p", port, "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-qAt", ...args], { encoding: "utf8" });
+  psql(["-c", "create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;"]);
+  psql(["-f", MIGRATION]);
+  psql(["-f", BRIDGE]);
+  psql(["-f", MIGRATION]);
+  psql(["-f", BRIDGE]);
+  const org = psql(["-c", "insert into railyard.orgs (name, owner_user_id) values ('Acme', gen_random_uuid()) returning id"]).trim();
+  psql(["-c", `insert into railyard.entitlements (org_id, plan, status, addon_slots) values ('${org}', 'addon', 'active', '{deploy,analytics}')`]);
+  assert.throws(() => psql(["-c", `update railyard.entitlements set plan = 'free' where org_id = '${org}'`]), /entitlements_plan_check/);
+  psql(["-c", `insert into railyard.scribase_bindings (scribase_org_id, org_id) values ('org_abc', '${org}')`]);
+  assert.throws(() => psql(["-c", `insert into railyard.scribase_bindings (scribase_org_id, org_id) values ('org_other', '${org}')`]), /duplicate key/);
+  assert.throws(() => psql(["-c", `insert into railyard.scribase_bindings (scribase_org_id, org_id) values ('bad id;', '${org}')`]), /check constraint/);
+  psql(["-c", "insert into railyard.bridge_messages (message_id) values ('scribase:m1')"]);
+  assert.throws(() => psql(["-c", "insert into railyard.bridge_messages (message_id) values ('scribase:m1')"]), /duplicate key/);
+  const noRls = psql(["-c", "select count(*) from pg_tables where schemaname = 'railyard' and not rowsecurity"]).trim();
+  assert.equal(noRls, "0");
+  const anon = psql(["-c", "select count(*) from information_schema.role_table_grants where table_schema = 'railyard' and grantee in ('anon', 'authenticated')"]).trim();
+  assert.equal(anon, "0");
 });

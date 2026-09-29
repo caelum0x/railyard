@@ -32,3 +32,19 @@ test("errors never include the key", async () => {
   const repo = new PostgrestRepo({ url: "https://p", serviceRoleKey: "super-secret-key", fetchImpl: fake(500).fetchImpl });
   await assert.rejects(repo.listApps("o"), (e: Error) => !e.message.includes("super-secret-key") && /failed with 500/.test(e.message));
 });
+
+test("Scribase bridge: a replayed bridge message (409) reads as a replay; binding ignores duplicates and reads the winner", async () => {
+  const replay = new PostgrestRepo({ url: "https://p", serviceRoleKey: "k", fetchImpl: fake(409).fetchImpl });
+  assert.equal(await replay.recordBridgeMessage("scribase:m1"), false);
+  const calls: { url: string; init: RequestInit }[] = [];
+  const fetchImpl = (async (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    if (init.method === "POST") return new Response(null, { status: 201 });
+    return new Response(JSON.stringify([{ scribase_org_id: "org_a", org_id: "winner", created_at: "t" }]), { status: 200 });
+  }) as typeof fetch;
+  const repo = new PostgrestRepo({ url: "https://p", serviceRoleKey: "k", fetchImpl });
+  const b = await repo.bindScribaseOrg("org_a", "loser");
+  assert.equal(b.org_id, "winner");
+  assert.equal(new Headers(calls[0].init.headers).get("prefer"), "resolution=ignore-duplicates,return=minimal");
+  assert.equal(calls[1].url, "https://p/rest/v1/scribase_bindings?scribase_org_id=eq.org_a");
+});

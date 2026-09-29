@@ -1,6 +1,6 @@
 {
   "name": "copy-denylist",
-  "version": "2026-09-29.2",
+  "version": "2026-09-29.3",
   "owner": "P-A3 (shared lane)",
   "rulesDoc": "gtm/policy/CLAIMS-RULES.md",
   "howToUse": "Vendor this file verbatim into each repo's copy-lint test. Matching semantics are defined in CLAIMS-RULES.md section 4. Do not edit the vendored copy; change the source here, bump version, and re-vendor.",
@@ -1955,6 +1955,179 @@
         ],
         "miss": [
           "One plan, billed monthly or yearly"
+        ]
+      }
+    },
+    {
+      "id": "portfolio-ott-drm",
+      "category": "unlaunched-feature",
+      "products": [
+        "scribase",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "OTT_DRM_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:multi-drm|drm(?:-protected| protected| protection)?|digital rights management|widevine|fairplay|playready)\\b"
+      },
+      "reason": "Version 2026-09-29.3 (Wave P, PY1.0): the portfolio add-on and cross-product copy may describe Menivor channels. No product has real DRM yet (OD-MV6); the word comes back only with OTT_DRM_LIVE (MV20). Same pattern as menivor-ott-drm, extended to the other products.",
+      "fix": "Say \"protected streaming\", and only where tier 1 protection is on.",
+      "examples": {
+        "hit": [
+          "DRM for every video in the bundle",
+          "Widevine included with the add-on"
+        ],
+        "miss": [
+          "Protected streaming with signed playback links",
+          "Your own video channel with a web player"
+        ]
+      }
+    },
+    {
+      "id": "portfolio-ott-comparison",
+      "category": "competitor",
+      "products": [
+        "scribase",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:netflix(?:[- ](?:style|like|for|of))?|your own netflix)\\b"
+      },
+      "reason": "Version 2026-09-29.3 (Wave P, PY1.0): \"Netflix-style\" and \"your own Netflix\" borrow another company's brand in any product, not only Menivor. No flag brings them back.",
+      "fix": "Name what the customer gets: \"your own video channel with a web player and apps\".",
+      "examples": {
+        "hit": [
+          "A Netflix-style channel for your app",
+          "Build your own Netflix on Postgres"
+        ],
+        "miss": [
+          "Your own video channel with a web player",
+          "A storefront for your videos"
+        ]
+      }
+    },
+    {
+      "id": "addon-unlaunched",
+      "category": "unlaunched-feature",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "ADDON_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:portfolio add-?ons?|(?:deploy|analytics|flags|uptime|ai|billing|consent) add-?ons?|add-?on (?:bundle|slots?)|(?:railyard|portfolio) (?:bundle|pack)|scribase add (?:deploy|analytics|flags|uptime|ai|billing|consent))\\b"
+      },
+      "reason": "Version 2026-09-29.3 (Wave P, PY1.1): the Scribase portfolio add-on (deploy, analytics, flags, errors, uptime, ai, billing, consent slots, plus the Menivor reel and Rally mail grants) is not sold until the Dodo compliance answer (owner item X1) and the live product (Y1). ADDON_LIVE is set only when the add-on checkout runs in live mode. The signed-in console card is shown only when the add-on product id is configured, so app-ui is not in scope.",
+      "fix": "Say \"Add-ons: arriving\" or leave it out.",
+      "examples": {
+        "hit": [
+          "Add the portfolio add-on for every app",
+          "Run scribase add analytics to see visitors",
+          "One add-on bundle for deploy and analytics"
+        ],
+        "miss": [
+          "Add-ons: arriving",
+          "Add a table to your project",
+          "Run scribase add storage-s3"
+        ]
+      }
+    },
+    {
+      "id": "rally-capacity-purchase",
+      "category": "unlaunched-feature",
+      "products": [
+        "rally"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "RALLY_CAPACITY_PURCHASE_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:buy (?:new |extra |more )?(?:sending )?(?:domains?|mailboxes|inboxes)|(?:domains?|mailboxes|inboxes) (?:bought|registered|set up) for you|we (?:buy|register|set up) (?:your |the )?(?:domains?|mailboxes|inboxes)|order (?:new |extra )?(?:domains?|mailboxes|inboxes))\\b"
+      },
+      "reason": "Version 2026-09-29.3 (Wave P, PR1.3): Rally buying domains and mailboxes for customers (Mode B) waits for the written Dodo answer (owner items X1 b and R1). Until RALLY_CAPACITY_PURCHASE_LIVE is on, public copy describes only connecting the customer's own domain and mailbox (Mode A).",
+      "fix": "Say \"Connect the mailbox you already use\".",
+      "examples": {
+        "hit": [
+          "Buy domains and mailboxes in one click",
+          "Mailboxes set up for you in minutes",
+          "We buy your domains for you"
+        ],
+        "miss": [
+          "Connect the mailbox you already use",
+          "Rally checks your domain's DNS and fixes it"
+        ]
+      }
+    },
+    {
+      "id": "at-cost",
+      "category": "unmeasured-number",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "sourceEscape": true,
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:at[- ]cost|cost price|no markup|zero markup)\\b"
+      },
+      "reason": "Version 2026-09-29.3 (Wave P, PY1.0): \"at cost\" is a price claim. It is allowed only next to a live price source (a copy-source marker naming the provider price feed or the plan config), so the reader can check the number it rests on.",
+      "fix": "Render the provider price from its live source and mark it with copy-source, or say \"billed to you monthly\".",
+      "examples": {
+        "hit": [
+          "Domains at cost",
+          "Mailboxes billed at cost, no markup",
+          "Pass-through at-cost pricing"
+        ],
+        "miss": [
+          "Billed to your card each month",
+          "The price shows before you pay",
+          "Domains at cost (copy-source: https://api.example/prices)"
         ]
       }
     }

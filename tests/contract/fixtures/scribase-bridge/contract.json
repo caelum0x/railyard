@@ -1,0 +1,76 @@
+{
+  "contract": "scribase-bridge",
+  "version": 1,
+  "package": "Wave P PY1.0 (RYP-E6)",
+  "note": "Scribase control-api (CA/adapters/railyard/bridge_client.rs) sends these requests; Railyard console (apps/console/app/api/v1/bridge/scribase) answers. Both sides test against this file. Every request is a POST with Standard Webhooks headers (webhook-id, webhook-timestamp, webhook-signature: v1,<base64 HMAC-SHA256 of id.timestamp.body>) under the shared secret RAILYARD_SCRIBASE_BRIDGE_SECRET (whsec_...).",
+  "base_path": "/api/v1/bridge/scribase",
+  "cases": [
+    {
+      "name": "first use creates the org",
+      "route": "orgs",
+      "request": {"scribase_org_id": "org_fixture", "name": "Fixture Co", "addon": {"active": true, "slots": ["analytics", "deploy", "ai"], "renews_at": "2026-10-29T12:00:00Z", "caps": {"apps": 5, "analytics_events_month": 3000000}}},
+      "status": 200,
+      "response_keys": ["addon", "created", "org_id"],
+      "response_match": {"created": true, "addon": {"active": true, "slots": ["ai", "analytics", "deploy"]}}
+    },
+    {
+      "name": "second call returns the same org",
+      "route": "orgs",
+      "request": {"scribase_org_id": "org_fixture", "name": "Fixture Co", "addon": {"active": true, "slots": ["analytics", "deploy", "ai"], "renews_at": "2026-10-29T12:00:00Z", "caps": {"apps": 5, "analytics_events_month": 3000000}}},
+      "status": 200,
+      "response_keys": ["addon", "created", "org_id"],
+      "response_match": {"created": false}
+    },
+    {
+      "name": "claim for an entitled slot",
+      "route": "claims",
+      "request": {"scribase_org_id": "org_fixture", "slot": "deploy"},
+      "status": 200,
+      "response_keys": ["claim", "expires_in", "token_endpoint"],
+      "response_match": {"expires_in": 120}
+    },
+    {
+      "name": "claim for a slot outside the add-on",
+      "route": "claims",
+      "request": {"scribase_org_id": "org_fixture", "slot": "flags"},
+      "status": 402,
+      "response_keys": ["error"]
+    },
+    {
+      "name": "claim for an unknown org",
+      "route": "claims",
+      "request": {"scribase_org_id": "org_unknown", "slot": "deploy"},
+      "status": 404,
+      "response_keys": ["error"]
+    },
+    {
+      "name": "proof for a slot",
+      "route": "proof",
+      "request": {"scribase_org_id": "org_fixture", "slot": "analytics"},
+      "status": 200,
+      "response_keys": ["live", "next", "proof", "slot", "state"],
+      "response_match": {"slot": "analytics"}
+    },
+    {
+      "name": "lapsed add-on",
+      "route": "orgs",
+      "request": {"scribase_org_id": "org_fixture", "name": "Fixture Co", "addon": {"active": false, "slots": ["analytics", "deploy", "ai"], "renews_at": null, "caps": {"apps": 5, "analytics_events_month": 3000000}}},
+      "status": 200,
+      "response_keys": ["addon", "created", "org_id"],
+      "response_match": {"created": false, "addon": {"active": false}}
+    },
+    {
+      "name": "claim after the add-on lapsed",
+      "route": "claims",
+      "request": {"scribase_org_id": "org_fixture", "slot": "deploy"},
+      "status": 402,
+      "response_keys": ["error"]
+    }
+  ],
+  "unsigned": {"status": 401, "response_keys": ["error"]},
+  "replayed_id": {"status": 409, "response_keys": ["error"]},
+  "slot_state": {
+    "states": ["live", "arriving", "not_entitled", "no_proof_yet"],
+    "proof": {"kind": "string", "id": "string", "at": "RFC 3339 string"}
+  }
+}

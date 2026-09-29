@@ -1,0 +1,24 @@
+{
+  "version": "2026-09-29.3",
+  "note": "One or more failing fixtures per rule added in 2026-09-29.3 (Wave P, PY1.0). Each string must fail the lint for its rule, on the surface and product given, with no flag on.",
+  "fixtures": [
+    {"rule": "portfolio-ott-drm", "product": "railyard", "surface": "marketing", "text": "DRM for every video you ship"},
+    {"rule": "portfolio-ott-drm", "product": "scribase", "surface": "docs", "text": "Widevine keys stored in your project"},
+    {"rule": "portfolio-ott-drm", "product": "rally", "surface": "outbound", "text": "DRM-protected demo videos"},
+    {"rule": "menivor-ott-drm", "product": "menivor", "surface": "marketing", "text": "DRM on every title"},
+    {"rule": "portfolio-ott-comparison", "product": "railyard", "surface": "marketing", "text": "A Netflix-style launch for your app"},
+    {"rule": "portfolio-ott-comparison", "product": "scribase", "surface": "outbound", "text": "Build your own Netflix on Postgres"},
+    {"rule": "menivor-ott-comparison", "product": "menivor", "surface": "outbound", "text": "your own Netflix in a weekend"},
+    {"rule": "addon-unlaunched", "product": "scribase", "surface": "marketing", "text": "Add the portfolio add-on to Pro"},
+    {"rule": "addon-unlaunched", "product": "scribase", "surface": "docs", "text": "Run scribase add analytics"},
+    {"rule": "addon-unlaunched", "product": "railyard", "surface": "outbound", "text": "One add-on bundle for deploy and analytics"},
+    {"rule": "addon-unlaunched", "product": "menivor", "surface": "marketing", "text": "A launch reel comes with the portfolio add-on"},
+    {"rule": "addon-unlaunched", "product": "rally", "surface": "api-public", "text": "Mail allowance from the portfolio add-on"},
+    {"rule": "rally-capacity-purchase", "product": "rally", "surface": "marketing", "text": "Buy domains and mailboxes in one click"},
+    {"rule": "rally-capacity-purchase", "product": "rally", "surface": "outbound", "text": "We set up your mailboxes"},
+    {"rule": "at-cost", "product": "rally", "surface": "marketing", "text": "Domains at cost"},
+    {"rule": "at-cost", "product": "railyard", "surface": "app-ui", "text": "Priced at cost, no markup"},
+    {"rule": "at-cost", "product": "scribase", "surface": "docs", "text": "SMS at-cost pricing"},
+    {"rule": "at-cost", "product": "menivor", "surface": "outbound", "text": "Renders at cost price"}
+  ]
+}

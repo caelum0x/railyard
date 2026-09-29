@@ -1,6 +1,8 @@
 // Row shapes of the `railyard` schema (db/migrations/0001_railyard_console.sql).
 
-export type Plan = "none" | "trial" | "railyard";
+// "addon": the org is bound to a Scribase org and paid for by the Scribase
+// portfolio add-on (Wave P PY1.0/PY1.1); Scribase owns its billing.
+export type Plan = "none" | "trial" | "railyard" | "addon";
 export type EntitlementStatus = "inactive" | "trialing" | "active" | "paused" | "cancelled";
 
 export interface Org {
@@ -34,6 +36,16 @@ export interface Entitlement {
   paused: boolean;
   cancel_at_period_end: boolean;
   updated_at: string;
+  /** Add-on orgs only (migration 0002): the slots the Scribase add-on unlocks. */
+  addon_slots?: string[];
+  addon_renews_at?: string | null;
+}
+
+/** A Railyard org created by the Scribase bridge, bound to one Scribase org (migration 0002). */
+export interface ScribaseBinding {
+  scribase_org_id: string;
+  org_id: string;
+  created_at: string;
 }
 
 export interface BillingEvent {

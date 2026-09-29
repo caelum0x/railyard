@@ -40,6 +40,20 @@ Usage, Billing), one primary action on each, a pause switch and one-click cancel
 | `DODO_API_BASE` | var | Defaults to the test host |
 | `RAILYARD_DODO_LIVE` | var | Owner only: `1` allows the live host |
 | `RAILYARD_CONSOLE_URL`, `RAILYARD_INSIGHTS_URL` | var | Public URLs |
+| `RAILYARD_SCRIBASE_BRIDGE_SECRET` | secret | Standard Webhooks secret (`whsec_...`) shared with Scribase control-api for the bridge (Wave P PY1.0). Unset keeps the bridge off (503). |
+
+## Scribase bridge (Wave P PY1.0)
+
+Scribase sells Railyard inside its portfolio add-on. Its control-api calls
+`/api/v1/bridge/scribase/{orgs,claims,proof}`, server to server and signed
+(`app/api/v1/bridge/scribase/service.ts`). The first call creates the Railyard
+org bound to the Scribase org id (no second sign-up, table
+`railyard.scribase_bindings`, migration `0002`), and the add-on state is
+mirrored into the entitlement as plan `addon`. A lapsed add-on pauses the org
+and keeps its data. Keys reach only the Scribase CLI: a claim is a one-time,
+pre-approved device code that the CLI exchanges at `/api/v1/device/token` and
+writes to the credentials file. The contract is
+`tests/contract/fixtures/scribase-bridge/contract.json` at the repo root.
 
 ## Tests
 
@@ -56,7 +70,8 @@ test starts a throwaway local Postgres.
 ## Owner steps
 
 1. Create the `railyard` brand and the three test-mode products; set the env above.
-2. Apply `db/migrations/0001_railyard_console.sql` to the console's Scribase project
+2. Apply `db/migrations/0001_railyard_console.sql`, then
+   `db/migrations/0002_scribase_bridge.sql`, to the console's Scribase project
    and add `railyard` to its exposed schemas.
 3. Enable Google and GitHub sign-in on that project with
    `https://railyard.ereboslab.com/auth/callback` as a redirect URL.

@@ -114,12 +114,20 @@ export interface Access {
   appsLimit: number;
   eventsLimit: number;
   trialDaysLeft: number | null;
+  /** Set when the Scribase portfolio add-on pays for this org (billing lives in Scribase). */
+  via?: "addon";
 }
 
 /** What the org may do right now. A trial past its end date gives no access. */
 export function access(ent: Entitlement | null, now: Date): Access {
   if (!ent) return { state: "no_card", canAddApps: false, appsLimit: 0, eventsLimit: 0, trialDaysLeft: null };
   const limits = { appsLimit: ent.apps_limit, eventsLimit: ent.events_limit, trialDaysLeft: null as number | null };
+  if (ent.plan === "addon") {
+    // Scribase bills the add-on. When it lapses the org is paused, never
+    // emptied: apps, deploys and events stay until it is renewed.
+    const on = ent.status === "active" && !ent.paused;
+    return { state: on ? "active" : "paused", canAddApps: on, ...limits, via: "addon" };
+  }
   if (ent.paused) return { state: "paused", canAddApps: false, ...limits };
   if (ent.plan === "railyard") return { state: ent.cancel_at_period_end ? "cancelling" : "active", canAddApps: true, ...limits };
   if (ent.plan === "trial" && ent.trial_ends_at) {

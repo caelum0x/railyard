@@ -19,12 +19,20 @@ export function normaliseAppName(raw: string): string {
   return raw.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
 }
 
+/** The plain message for a paused org, or null when the org is not paused. */
+export function pausedMessage(a: { state: string; via?: "addon" }): string | null {
+  if (a.state !== "paused") return null;
+  return a.via === "addon"
+    ? "The Scribase add-on has ended, so this is paused. Your apps and data are kept; renew the add-on in Scribase billing to continue."
+    : "Railyard is paused. Resume it on the Billing screen.";
+}
+
 export async function addApp(repo: Repo, orgId: string, rawName: string, now: Date): Promise<App> {
   const name = normaliseAppName(rawName);
   if (!APP_NAME.test(name)) throw new AppError("invalid_name", "Use letters, numbers and dashes.");
   const a = access(await repo.getEntitlement(orgId), now);
   if (!a.canAddApps) {
-    throw new AppError("no_plan", a.state === "paused" ? "Railyard is paused. Resume it on the Billing screen." : "Add a card on the Billing screen first ($1, credited back).");
+    throw new AppError("no_plan", pausedMessage(a) ?? "Add a card on the Billing screen first ($1, credited back).");
   }
   const apps = await repo.listApps(orgId);
   if (apps.length >= a.appsLimit) throw new AppError("limit", `Your plan includes ${a.appsLimit} apps.`);

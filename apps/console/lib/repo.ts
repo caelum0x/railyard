@@ -2,7 +2,7 @@
 // this interface: `MemoryRepo` (tests and local dev without a database) and
 // `PostgrestRepo` (the console's Scribase project, schema `railyard`).
 
-import type { ApiToken, App, BillingEvent, Deploy, DeviceCode, Entitlement, Org } from "./types.ts";
+import type { ApiToken, App, BillingEvent, Deploy, DeviceCode, Entitlement, Org, ScribaseBinding } from "./types.ts";
 
 export interface Repo {
   findOrgByUser(userId: string): Promise<Org | null>;
@@ -30,6 +30,12 @@ export interface Repo {
   findDeviceByHash(hash: string): Promise<DeviceCode | null>;
   approveDevice(userCode: string, orgId: string, userId: string, at: string): Promise<boolean>;
   consumeDevice(hash: string, at: string): Promise<boolean>;
+  // Scribase bridge (Wave P PY1.0, migration 0002).
+  findScribaseBinding(scribaseOrgId: string): Promise<ScribaseBinding | null>;
+  /** Binds the org; returns the existing binding when the Scribase org is already bound. */
+  bindScribaseOrg(scribaseOrgId: string, orgId: string): Promise<ScribaseBinding>;
+  /** Records a bridge message id; false when it was seen before (a replay). */
+  recordBridgeMessage(messageId: string): Promise<boolean>;
 }
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -43,6 +49,8 @@ export class MemoryRepo implements Repo {
   deploys: Deploy[] = [];
   tokens: ApiToken[] = [];
   devices: DeviceCode[] = [];
+  bindings: ScribaseBinding[] = [];
+  bridgeMessages: string[] = [];
   now: () => Date;
 
   constructor(now: () => Date = () => new Date()) {
@@ -149,6 +157,21 @@ export class MemoryRepo implements Repo {
     const d = this.devices.find((x) => x.device_code_hash === hash && x.approved_at && !x.consumed_at);
     if (!d) return false;
     this.devices = this.devices.map((x) => (x === d ? { ...x, consumed_at: at } : x));
+    return true;
+  }
+  async findScribaseBinding(scribaseOrgId: string) {
+    return clone(this.bindings.find((b) => b.scribase_org_id === scribaseOrgId) ?? null);
+  }
+  async bindScribaseOrg(scribaseOrgId: string, orgId: string) {
+    const existing = this.bindings.find((b) => b.scribase_org_id === scribaseOrgId);
+    if (existing) return clone(existing);
+    const b: ScribaseBinding = { scribase_org_id: scribaseOrgId, org_id: orgId, created_at: this.now().toISOString() };
+    this.bindings = [...this.bindings, b];
+    return clone(b);
+  }
+  async recordBridgeMessage(messageId: string) {
+    if (this.bridgeMessages.includes(messageId)) return false;
+    this.bridgeMessages = [...this.bridgeMessages, messageId];
     return true;
   }
 }
