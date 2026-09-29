@@ -109,8 +109,5 @@ pub async fn resolve(st: &AppState, org_id: &str, tool: &ToolManifest) -> Result
 /// Team keys for third-party providers are unmetered; our own products and
 /// platform credentials are metered at the tool's price.
 pub fn metered(kind: ProviderKind, cred: Option<&Credential>) -> bool {
-    match (kind, cred) {
-        (ProviderKind::Byo | ProviderKind::Public, Some(c)) if !c.platform => false,
-        _ => true,
-    }
+    !matches!((kind, cred), (ProviderKind::Byo | ProviderKind::Public, Some(c)) if !c.platform)
 }

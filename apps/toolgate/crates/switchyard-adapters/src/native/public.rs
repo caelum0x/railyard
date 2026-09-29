@@ -121,8 +121,8 @@ pub fn filings_from_submissions(cik: &str, sub: &Value, form: Option<&str>, max:
     let (forms, dates, accs, docs) = (col("form"), col("filingDate"), col("accessionNumber"), col("primaryDocument"));
     let cik_num = cik.trim_start_matches('0');
     let mut out = Vec::new();
-    for i in 0..forms.len() {
-        let f = forms[i].as_str().unwrap_or("");
+    for (i, f) in forms.iter().enumerate() {
+        let f = f.as_str().unwrap_or("");
         if form.map(|want| !f.eq_ignore_ascii_case(want)).unwrap_or(false) {
             continue;
         }

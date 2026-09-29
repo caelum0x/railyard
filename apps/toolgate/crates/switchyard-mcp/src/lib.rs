@@ -144,7 +144,7 @@ pub async fn handle_http_body(backend: &dyn McpBackend, body: &Value) -> Option<
                     out.push(r);
                 }
             }
-            (!out.is_empty()).then(|| Value::Array(out))
+            (!out.is_empty()).then_some(Value::Array(out))
         }
         single => handle_message(backend, single).await,
     }

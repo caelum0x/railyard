@@ -105,7 +105,7 @@ impl Price {
     ///
     /// - `status`: provider HTTP status class of the final attempt (0 = network/timeout).
     /// - `units`: units the adapter observed (results returned, seconds rendered).
-    /// - `reported_cost`: the provider's own reported charge, when it has one.
+    /// - `reported_cost`: amount the upstream billed us for this call, if it tells us.
     /// - `bill_on_4xx`: tool flag; only applies to `per_call` pricing.
     /// - `hold`: the reserved amount; a capture never exceeds it.
     pub fn settle(&self, status: u16, units: Option<u64>, reported_cost: Option<i64>, bill_on_4xx: bool, hold: i64) -> i64 {

@@ -30,7 +30,7 @@ pub async fn main_entry() -> i32 {
 pub fn usd(micros: i64) -> String {
     let sign = if micros < 0 { "-" } else { "" };
     let m = micros.unsigned_abs();
-    if m % 10_000 == 0 {
+    if m.is_multiple_of(10_000) {
         format!("{sign}${}.{:02}", m / 1_000_000, (m % 1_000_000) / 10_000)
     } else {
         format!("{sign}${}.{:06}", m / 1_000_000, m % 1_000_000)

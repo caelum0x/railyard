@@ -330,6 +330,7 @@ impl AuthServer {
         u.to_string()
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn issue_tokens(
         &self,
         family_id: &str,
