@@ -1,0 +1,9 @@
+# Railyard product packages (Wave E). apps/relay keeps its own workspace.
+packages:
+  - apps/console
+  - apps/insights-edge
+  - packages/cli
+  - packages/mcp
+allowBuilds:
+  esbuild: set this to true or false
+  workerd: set this to true or false

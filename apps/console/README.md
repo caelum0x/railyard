@@ -1,0 +1,64 @@
+# Railyard console
+
+The signed-in console for Railyard (RYP-D1, Wave E package Y-2): sign in with
+Google or GitHub, a $1 card check that is credited back, a 14-day trial with the
+plan's limits, then one plan billed monthly or yearly. Three screens (Apps,
+Usage, Billing), one primary action on each, a pause switch and one-click cancel.
+
+## How it works
+
+- **Sign-in:** the console's own Scribase project handles Google and GitHub
+  (OAuth with PKCE). The console reads the user from the auth server, creates the
+  org and its entitlements row, and keeps a signed, HttpOnly session cookie.
+- **Data:** schema `railyard` in the same Scribase project
+  (`db/migrations/0001_railyard_console.sql`), reached with the service role
+  from the server only. RLS is on with no policies.
+- **Money ladder:** `lib/ladder.ts` (pure). Checkout sessions carry signed
+  metadata, so a payment link with made-up metadata cannot name an org.
+  `lib/webhook.ts` verifies the Standard Webhooks signature and timestamp,
+  ignores replays (unique message id), applies the ladder, and credits or debits
+  the $1 on the customer's wallet with idempotency keys. A refund of the card
+  check reverses the credit and ends the trial.
+- **CLI sign-in:** a device flow at `/api/v1/device/code` and
+  `/api/v1/device/token`; the user approves the code at `/device`. Tokens are
+  org-scoped and stored as SHA-256 hashes.
+- **Test mode only:** the payment client refuses the live host unless
+  `RAILYARD_DODO_LIVE=1` is set by the owner.
+
+## Environment
+
+| Name | Where | What |
+|---|---|---|
+| `SCRIBASE_URL` | var | The console's Scribase project URL |
+| `SCRIBASE_ANON_KEY` | secret | Project anon key (sign-in calls only) |
+| `SCRIBASE_SERVICE_ROLE_KEY` | secret | Project service role (schema `railyard`) |
+| `RAILYARD_SESSION_SECRET` | secret | 32+ random bytes; signs sessions and checkout metadata |
+| `DODO_API_KEY` | secret | Test-mode key of the `railyard` brand |
+| `DODO_WEBHOOK_SECRET` | secret | Webhook signing secret (`whsec_...`) |
+| `DODO_BRAND_ID` | var | Brand id; events for other brands are ignored |
+| `DODO_PRODUCT_ID_CARD_CHECK`, `DODO_PRODUCT_ID_MONTH`, `DODO_PRODUCT_ID_YEAR` | var | The three products |
+| `DODO_API_BASE` | var | Defaults to the test host |
+| `RAILYARD_DODO_LIVE` | var | Owner only: `1` allows the live host |
+| `RAILYARD_CONSOLE_URL`, `RAILYARD_INSIGHTS_URL` | var | Public URLs |
+
+## Tests
+
+```sh
+pnpm install --filter @railyard/console
+node --test test/*.test.ts        # journey, webhook, ladder, tokens, repo, component, bundle, migration
+```
+
+The journey test runs sign-in, the $1 checkout, the webhook and "Add app" against
+in-memory fakes of the payment and auth servers. The bundle test runs
+`next build` with sentinel secrets and greps the client bundle. The migration
+test starts a throwaway local Postgres.
+
+## Owner steps
+
+1. Create the `railyard` brand and the three test-mode products; set the env above.
+2. Apply `db/migrations/0001_railyard_console.sql` to the console's Scribase project
+   and add `railyard` to its exposed schemas.
+3. Enable Google and GitHub sign-in on that project with
+   `https://railyard.ereboslab.com/auth/callback` as a redirect URL.
+4. Point the webhook at `/api/billing/webhook`, then run one card check and one
+   refund in test mode and record the result.

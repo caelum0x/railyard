@@ -1,0 +1,22 @@
+{
+	// Railyard console on Cloudflare Workers (OpenNext adapter), our account.
+	// Nothing secret lives here. Secrets are set with `wrangler secret put`
+	// by the owner: DODO_API_KEY, DODO_WEBHOOK_SECRET, SCRIBASE_ANON_KEY,
+	// SCRIBASE_SERVICE_ROLE_KEY, RAILYARD_SESSION_SECRET.
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "railyard-console",
+	"main": ".open-next/worker.js",
+	"compatibility_date": "2026-09-20",
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	"workers_dev": false,
+	"preview_urls": false,
+	"assets": { "binding": "ASSETS", "directory": ".open-next/assets" },
+	"observability": { "enabled": true, "head_sampling_rate": 1 },
+	// Until the Railyard domain and Dodo brand exist (owner items 11 and 18).
+	"routes": [{ "pattern": "railyard.ereboslab.com", "custom_domain": true }],
+	"vars": {
+		"RAILYARD_CONSOLE_URL": "https://railyard.ereboslab.com",
+		"RAILYARD_INSIGHTS_URL": "https://insights.railyard.ereboslab.com",
+		"DODO_API_BASE": "https://test.dodopayments.com"
+	}
+}

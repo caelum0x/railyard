@@ -1,0 +1,32 @@
+{
+  "name": "@railyard/console",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Railyard console: sign-in, the money ladder, apps, usage and billing (RYP-D1).",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --port 3020",
+    "build": "next build",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:deploy": "opennextjs-cloudflare deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "test:bundle": "node --test test/bundle-secrets.test.ts"
+  },
+  "dependencies": {
+    "next": "14.2.35",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@opennextjs/cloudflare": "1.15.1",
+    "@types/node": "22.9.0",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "typescript": "5.6.3",
+    "wrangler": "4.139.0"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}
