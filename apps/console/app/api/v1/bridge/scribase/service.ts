@@ -65,6 +65,8 @@ export interface BridgeDeps {
   insights?: InsightsClient | null;
   /** Public base of the edge collector and page tag. */
   insightsUrl?: string;
+  /** P-Y1 transition: accept unbound ids and orgs syncs without `addon.as_of` (RAILYARD_BRIDGE_ACCEPT_LEGACY=1). */
+  acceptLegacy?: boolean;
 }
 
 export interface BridgeResult {
@@ -105,6 +107,8 @@ interface AddonState {
   slots: AddonSlot[];
   renews_at: string | null;
   caps: { apps: number; analytics_events_month: number };
+  /** Scribase's time (epoch ms) for this state; null only from a legacy sender. */
+  as_of: number | null;
 }
 
 interface SyncInput {
@@ -115,9 +119,16 @@ interface SyncInput {
 
 const isInt = (v: unknown, max: number): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= max;
 
-function parseAddon(v: unknown): AddonState | string {
+// as_of may run at most the signature tolerance ahead of our clock.
+const AS_OF_SKEW_MS = 300_000;
+
+function parseAddon(v: unknown, nowMs: number, acceptLegacy: boolean): AddonState | string {
   if (!v || typeof v !== "object") return "addon must be an object";
   const a = v as Record<string, unknown>;
+  let as_of: number | null = null;
+  if (a.as_of === undefined && acceptLegacy) as_of = null;
+  else if (typeof a.as_of === "number" && Number.isSafeInteger(a.as_of) && a.as_of > 0 && a.as_of <= nowMs + AS_OF_SKEW_MS) as_of = a.as_of;
+  else return "addon.as_of must be the time of this state in epoch milliseconds";
   if (typeof a.active !== "boolean") return "addon.active must be true or false";
   if (!Array.isArray(a.slots) || !a.slots.every((s) => (ADDON_SLOTS as readonly unknown[]).includes(s))) {
     return `addon.slots must list only: ${ADDON_SLOTS.join(", ")}`;
@@ -129,19 +140,19 @@ function parseAddon(v: unknown): AddonState | string {
     return "addon.caps needs apps and analytics_events_month as whole numbers";
   }
   const slots = [...new Set(a.slots as AddonSlot[])].sort();
-  return { active: a.active, slots, renews_at: renews as string | null, caps: { apps: caps.apps, analytics_events_month: caps.analytics_events_month } };
+  return { active: a.active, slots, renews_at: renews as string | null, caps: { apps: caps.apps, analytics_events_month: caps.analytics_events_month }, as_of };
 }
 
 function parseOrgRef(b: Record<string, unknown>): string | null {
   return typeof b.scribase_org_id === "string" && ORG_ID.test(b.scribase_org_id) ? b.scribase_org_id : null;
 }
 
-function parseSync(body: Record<string, unknown>): SyncInput | string {
+function parseSync(body: Record<string, unknown>, nowMs: number, acceptLegacy: boolean): SyncInput | string {
   const scribase_org_id = parseOrgRef(body);
   if (!scribase_org_id) return "scribase_org_id must be 1-128 letters, digits, dashes or underscores";
   const name = typeof body.name === "string" ? body.name.trim() : "";
   if (name.length < 1 || name.length > 80) return "name must be 1-80 characters";
-  const addon = parseAddon(body.addon);
+  const addon = parseAddon(body.addon, nowMs, acceptLegacy);
   if (typeof addon === "string") return addon;
   return { scribase_org_id, name, addon };
 }
@@ -178,12 +189,20 @@ export async function syncOrg(repo: Repo, input: SyncInput, now: Date, sites?: S
     orgId = (await repo.bindScribaseOrg(input.scribase_org_id, org.id)).org_id;
   }
   const current = (await repo.getEntitlement(orgId)) ?? emptyEntitlement(orgId, now);
-  const ent = await repo.saveEntitlement(withAddon(current, input.addon, now));
+  const saved = await repo.saveAddonEntitlement(withAddon(current, input.addon, now), input.addon.as_of);
+  if (!saved) {
+    // A newer state already arrived (a late or out-of-order delivery): nothing changes.
+    const kept = (await repo.getEntitlement(orgId)) ?? current;
+    return {
+      status: 200,
+      body: { org_id: orgId, created: false, addon: { active: kept.status === "active", slots: kept.addon_slots ?? [] }, stale: true },
+    };
+  }
   // Caps and pauses reach the edge collector with the next site-entry read.
   if (sites) await syncSites(sites, repo, orgId, now);
   return {
     status: 200,
-    body: { org_id: orgId, created, addon: { active: ent.status === "active", slots: ent.addon_slots ?? [] } },
+    body: { org_id: orgId, created, addon: { active: saved.status === "active", slots: saved.addon_slots ?? [] } },
   };
 }
 
@@ -377,10 +396,22 @@ async function aiUsageFor(deps: BridgeDeps, body: Record<string, unknown>): Prom
 
 export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights" | "ai" | "ai_usage";
 
+/**
+ * The route a signed message id names (P-Y1). Scribase sends
+ * `webhook-id: msg_<route>_<24 hex>`; the id is inside the signed content, so
+ * a signature made for one route never verifies on another.
+ */
+export function routeOfId(id: string | null): string | null {
+  const m = /^msg_([a-z_]{2,20})_([0-9a-f]{24})$/.exec(id ?? "");
+  return m ? m[1] : null;
+}
+
 /** Verify, refuse replays, parse, dispatch. Framework-free so the routes stay three lines. */
 export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers: WebhookHeaders, raw: string): Promise<BridgeResult> {
   const now = deps.now();
   if (!(await verify(deps.secret, headers, raw, Math.floor(now.getTime() / 1000)))) return fail(401, "invalid signature");
+  const named = routeOfId(headers.id);
+  if (named !== route && !(named === null && deps.acceptLegacy)) return fail(401, "the signed message was made for another route");
   let body: unknown;
   try {
     body = JSON.parse(raw);
@@ -392,7 +423,7 @@ export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers
   const b = body as Record<string, unknown>;
   switch (route) {
     case "orgs": {
-      const input = parseSync(b);
+      const input = parseSync(b, now.getTime(), deps.acceptLegacy === true);
       return typeof input === "string" ? fail(400, input) : syncOrg(deps.repo, input, now, deps.sites);
     }
     case "claims":

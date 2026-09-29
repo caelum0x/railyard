@@ -61,6 +61,23 @@ export class PostgrestRepo implements Repo {
     const { rows } = await this.req<Entitlement>("POST", "entitlements?on_conflict=org_id", ent, "resolution=merge-duplicates,return=representation");
     return rows[0] ?? ent;
   }
+  async saveAddonEntitlement(ent: Entitlement, asOf: number | null) {
+    if (asOf === null) return this.saveEntitlement(ent);
+    if (!Number.isSafeInteger(asOf) || asOf < 0) throw new Error("addon as_of must be a whole number of milliseconds");
+    const org = encodeURIComponent(ent.org_id);
+    const row = { ...ent, addon_as_of: asOf };
+    // One conditional statement: the row changes only when no newer state is stored.
+    const guarded = `entitlements?org_id=eq.${org}&or=(addon_as_of.is.null,addon_as_of.lte.${asOf})`;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { rows } = await this.req<Entitlement>("PATCH", guarded, row, "return=representation");
+      if (rows[0]) return rows[0];
+      if (await this.getEntitlement(ent.org_id)) return null; // a newer state is stored
+      const created = await this.req<Entitlement>("POST", "entitlements", row, "resolution=ignore-duplicates,return=representation");
+      if (created.rows[0]) return created.rows[0];
+      // Someone created it between the two calls: take the guarded path again.
+    }
+    return null;
+  }
   async recordBillingEvent(ev: BillingEvent) {
     const { status } = await this.req("POST", "billing_events", ev, "return=minimal");
     return status !== 409;

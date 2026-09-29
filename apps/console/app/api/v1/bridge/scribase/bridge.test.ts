@@ -29,6 +29,9 @@ const SECRET = `whsec_${Buffer.from("scribase-bridge-test-secret-0032").toString
 const T0 = new Date("2026-09-29T12:00:00Z");
 
 let n = 0;
+/** A route-bound Standard Webhooks id, as Scribase sends it (P-Y1). */
+const rid = (route: string, k: number | string) => `msg_${route}_${String(k).replace(/[^0-9a-f]/g, "").padStart(24, "0").slice(-24)}`;
+
 async function call(
   repo: MemoryRepo,
   route: "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights" | "ai" | "ai_usage",
@@ -37,7 +40,7 @@ async function call(
 ) {
   const at = opts.at ?? T0;
   const body = JSON.stringify(payload);
-  const id = opts.id ?? `msg_${++n}`;
+  const id = opts.id ?? rid(route, (++n).toString(16));
   const ts = String(Math.floor(at.getTime() / 1000));
   const signature = await sign(opts.secret ?? SECRET, id, ts, body);
   return handleBridge(
@@ -48,11 +51,12 @@ async function call(
   );
 }
 
-const addon = (active = true, slots = ["deploy", "analytics", "ai"]) => ({
+const addon = (active = true, slots = ["deploy", "analytics", "ai"], as_of = T0.getTime()) => ({
   active,
   slots,
   renews_at: "2026-10-29T12:00:00Z",
   caps: { apps: 5, analytics_events_month: 3_000_000 },
+  as_of,
 });
 
 test("first use creates one Railyard org bound to the Scribase org; a second call returns the same org", async () => {
@@ -106,9 +110,9 @@ test("requests must carry a valid Standard Webhooks signature, a fresh timestamp
     JSON.stringify(payload),
   );
   assert.equal(stale.status, 401);
-  const ok = await call(repo, "orgs", payload, { id: "msg_once" });
+  const ok = await call(repo, "orgs", payload, { id: rid("orgs", "a1") });
   assert.equal(ok.status, 200);
-  const replay = await call(repo, "orgs", payload, { id: "msg_once" });
+  const replay = await call(repo, "orgs", payload, { id: rid("orgs", "a1") });
   assert.equal(replay.status, 409);
   assert.equal(repo.orgs.size, 1);
 });
@@ -130,7 +134,7 @@ test("input is validated at the boundary", async () => {
   const notJson = await handleBridge(
     { repo, secret: SECRET, consoleUrl: "https://c", now: () => T0 },
     "orgs",
-    { id: "m-nj", timestamp: String(Math.floor(T0.getTime() / 1000)), signature: await sign(SECRET, "m-nj", String(Math.floor(T0.getTime() / 1000)), "{nope") },
+    { id: rid("orgs", "b2"), timestamp: String(Math.floor(T0.getTime() / 1000)), signature: await sign(SECRET, rid("orgs", "b2"), String(Math.floor(T0.getTime() / 1000)), "{nope") },
     "{nope",
   );
   assert.equal(notJson.status, 400);
@@ -312,4 +316,54 @@ test("ai slot (PY1.4): one key per project for the control plane only, a one-tim
   assert.deepEqual(usage.body.providers, [{ provider: "anthropic", hint: "...1234", updated_at: T0.toISOString() }]);
   await call(repo, "orgs", { scribase_org_id: "org_noai", name: "N", addon: addon(true, ["deploy"]) });
   assert.equal((await call(repo, "ai", { scribase_org_id: "org_noai", project: "x" })).status, 402);
+});
+
+test("P-Y1: a signature made for one route never works on another", async () => {
+  const repo = new MemoryRepo(() => T0);
+  await call(repo, "orgs", { scribase_org_id: "org_route", name: "Route", addon: addon() });
+  const payload = { scribase_org_id: "org_route", slot: "deploy" };
+  // Signed for proof, delivered to claims: refused before anything is read or written.
+  const crossed = await call(repo, "claims", payload, { id: rid("proof", "c3") });
+  assert.equal(crossed.status, 401);
+  assert.match(String(crossed.body.error), /another route/);
+  // ai vs ai_usage share a prefix; each id names exactly one route.
+  assert.equal((await call(repo, "ai", { scribase_org_id: "org_route", project: "shop" }, { id: rid("ai_usage", "c4") })).status, 401);
+  assert.equal((await call(repo, "ai_usage", { scribase_org_id: "org_route", project: "shop" }, { id: rid("ai", "c5") })).status, 401);
+  // An id without a route (the P1 sender) is refused unless the transition flag is on.
+  assert.equal((await call(repo, "proof", payload, { id: "msg_legacy_1" })).status, 401);
+  const legacy = await call(repo, "proof", payload, { id: "msg_legacy_2", extra: { acceptLegacy: true } });
+  assert.equal(legacy.status, 200);
+  // The flag never lets an id that names another route through.
+  assert.equal((await call(repo, "claims", payload, { id: rid("proof", "c6"), extra: { acceptLegacy: true } })).status, 401);
+});
+
+test("P-Y1: a late orgs sync with an older as_of changes nothing, whatever order it arrives in", async () => {
+  const repo = new MemoryRepo(() => T0);
+  const t = T0.getTime();
+  const on = await call(repo, "orgs", { scribase_org_id: "org_order", name: "Order", addon: addon(true, undefined, t - 5_000) });
+  const orgId = on.body.org_id as string;
+  // The cancel (newer) arrives, then the activation sent earlier arrives late.
+  const off = await call(repo, "orgs", { scribase_org_id: "org_order", name: "Order", addon: addon(false, undefined, t - 1_000) });
+  assert.equal((off.body.addon as { active: boolean }).active, false);
+  const late = await call(repo, "orgs", { scribase_org_id: "org_order", name: "Order", addon: addon(true, undefined, t - 3_000) });
+  assert.equal(late.status, 200);
+  assert.equal(late.body.stale, true);
+  assert.equal((late.body.addon as { active: boolean }).active, false, "the late activation did not flip the entitlement");
+  assert.equal((await repo.getEntitlement(orgId))?.status, "inactive");
+  assert.equal((await repo.getEntitlement(orgId))?.addon_as_of, t - 1_000);
+  assert.equal((await call(repo, "claims", { scribase_org_id: "org_order", slot: "deploy" })).status, 402);
+  // A newer activation does apply.
+  const again = await call(repo, "orgs", { scribase_org_id: "org_order", name: "Order", addon: addon(true, undefined, t) });
+  assert.equal((again.body.addon as { active: boolean }).active, true);
+  assert.equal(again.body.stale, undefined);
+});
+
+test("P-Y1: as_of is required (outside the transition flag) and may not sit in the future", async () => {
+  const repo = new MemoryRepo(() => T0);
+  const base = { scribase_org_id: "org_asof", name: "AsOf" };
+  const { as_of: _drop, ...noAsOf } = addon();
+  assert.equal((await call(repo, "orgs", { ...base, addon: noAsOf })).status, 400);
+  assert.equal((await call(repo, "orgs", { ...base, addon: { ...addon(), as_of: "yesterday" } })).status, 400);
+  assert.equal((await call(repo, "orgs", { ...base, addon: addon(true, undefined, T0.getTime() + 3_600_000) })).status, 400);
+  assert.equal((await call(repo, "orgs", { ...base, addon: noAsOf }, { extra: { acceptLegacy: true } })).status, 200);
 });

@@ -47,6 +47,7 @@ Usage, Billing), one primary action on each, a pause switch and one-click cancel
 | `RELAY_TENANT_KEY` | secret | The Relay tenant key from `relay-tenancy.sh tenant-key` (BYOK only; see `apps/relay/config/tenants/README.md`) |
 | `RAILYARD_CREDENTIALS_KEY` | secret | 32 random bytes, base64: seals customers' provider keys |
 | `RAILYARD_SCRIBASE_BRIDGE_SECRET` | secret | Standard Webhooks secret (`whsec_...`) shared with Scribase control-api for the bridge (Wave P PY1.0). Unset keeps the bridge off (503). |
+| `RAILYARD_BRIDGE_ACCEPT_LEGACY` | var | P-Y1 transition only. `1` also accepts bridge calls from a Scribase build older than contract version 2 (message id without the route, `orgs` without `addon.as_of`). Unset (the default) refuses them. Set it only for the minutes between the console deploy and the Scribase control-api deploy, then remove it. |
 
 ## Scribase bridge (Wave P PY1.0)
 

@@ -1,8 +1,8 @@
 {
   "contract": "scribase-bridge",
-  "version": 1,
+  "version": 2,
   "package": "Wave P PY1.0 (RYP-E6)",
-  "note": "Scribase control-api (CA/adapters/railyard/bridge_client.rs) sends these requests; Railyard console (apps/console/app/api/v1/bridge/scribase) answers. Both sides test against this file. Every request is a POST with Standard Webhooks headers (webhook-id, webhook-timestamp, webhook-signature: v1,<base64 HMAC-SHA256 of id.timestamp.body>) under the shared secret RAILYARD_SCRIBASE_BRIDGE_SECRET (whsec_...).",
+  "note": "Scribase control-api (CA/adapters/railyard/bridge_client.rs) sends these requests; Railyard console (apps/console/app/api/v1/bridge/scribase) answers. Both sides test against this file. Every request is a POST with Standard Webhooks headers (webhook-id, webhook-timestamp, webhook-signature: v1,<base64 HMAC-SHA256 of id.timestamp.body>) under the shared secret RAILYARD_SCRIBASE_BRIDGE_SECRET (whsec_...). Version 2 (P-Y1): webhook-id is msg_<route>_<24 lowercase hex>, so the route is inside the signed content and a signature made for one route is refused on another (wrong_route); every orgs request carries addon.as_of, Scribase's time of that add-on state in epoch milliseconds, and an orgs request older than the stored state changes nothing and answers stale: true.",
   "base_path": "/api/v1/bridge/scribase",
   "cases": [
     {
@@ -22,7 +22,8 @@
           "caps": {
             "apps": 5,
             "analytics_events_month": 3000000
-          }
+          },
+          "as_of": 1790683140000
         }
       },
       "status": 200,
@@ -60,7 +61,8 @@
           "caps": {
             "apps": 5,
             "analytics_events_month": 3000000
-          }
+          },
+          "as_of": 1790683170000
         }
       },
       "status": 200,
@@ -246,7 +248,8 @@
           "caps": {
             "apps": 5,
             "analytics_events_month": 3000000
-          }
+          },
+          "as_of": 1790683190000
         }
       },
       "status": 200,
@@ -257,6 +260,41 @@
       ],
       "response_match": {
         "created": false,
+        "addon": {
+          "active": false
+        }
+      }
+    },
+    {
+      "name": "a late activation older than the lapse changes nothing",
+      "route": "orgs",
+      "request": {
+        "scribase_org_id": "org_fixture",
+        "name": "Fixture Co",
+        "addon": {
+          "active": true,
+          "slots": [
+            "analytics",
+            "deploy",
+            "ai"
+          ],
+          "renews_at": "2026-10-29T12:00:00Z",
+          "caps": {
+            "apps": 5,
+            "analytics_events_month": 3000000
+          },
+          "as_of": 1790683180000
+        }
+      },
+      "status": 200,
+      "response_keys": [
+        "addon",
+        "created",
+        "org_id",
+        "stale"
+      ],
+      "response_match": {
+        "stale": true,
         "addon": {
           "active": false
         }
@@ -302,10 +340,10 @@
   },
   "signature_vector": {
     "secret": "whsec_Y29udHJhY3QtZml4dHVyZS1zZWNyZXQtMzItYnl0ZXM=",
-    "id": "msg_vector_1",
+    "id": "msg_proof_0123456789abcdef01234567",
     "timestamp": "1790683200",
     "body": "{\"scribase_org_id\":\"org_fixture\",\"slot\":\"deploy\"}",
-    "signature": "v1,2STo0Y/k7q3ba+G8+nDgJbNv/m3d9AefmzC0Hzrbjjw="
+    "signature": "v1,6uDtRSMzCTvrYX+R1jcSoP6UWaxQ3cljO9tF0cIFoS8="
   },
   "insights_answer_keys": [
     "app",
@@ -317,5 +355,13 @@
     "funnel",
     "month_events",
     "visitors"
-  ]
+  ],
+  "id_format": "^msg_(orgs|claims|proof|deploys|sites|insights|ai|ai_usage)_[0-9a-f]{24}$",
+  "wrong_route": {
+    "status": 401,
+    "response_keys": [
+      "error"
+    ],
+    "note": "a request signed with an id for proof, delivered to claims"
+  }
 }

@@ -39,6 +39,12 @@ export interface Entitlement {
   /** Add-on orgs only (migration 0002): the slots the Scribase add-on unlocks. */
   addon_slots?: string[];
   addon_renews_at?: string | null;
+  /**
+   * Add-on orgs only (migration 0004): the Scribase time (epoch ms) of the
+   * add-on state this row mirrors. A bridge sync older than this is ignored,
+   * so a late delivery can never flip the entitlement back (P-Y1).
+   */
+  addon_as_of?: number | null;
 }
 
 /** A Railyard org created by the Scribase bridge, bound to one Scribase org (migration 0002). */

@@ -26,6 +26,9 @@ function matches(actual: unknown, expected: unknown): boolean {
   return JSON.stringify(actual) === JSON.stringify(expected);
 }
 
+/** A route-bound id in the contract's id_format (P-Y1). */
+const rid = (route: string, k: number) => `msg_${route}_${k.toString(16).padStart(24, "0")}`;
+
 async function send(repo: MemoryRepo, route: string, payload: unknown, id: string, secret = SECRET) {
   const body = JSON.stringify(payload);
   const ts = String(Math.floor(NOW.getTime() / 1000));
@@ -36,7 +39,9 @@ test("every contract case answers with its status and keys, in order", async () 
   const repo = new MemoryRepo(() => NOW);
   let i = 0;
   for (const c of contract.cases) {
-    const r = await send(repo, c.route, c.request, `contract-${++i}`);
+    const id = rid(c.route, ++i);
+    assert.match(id, new RegExp(contract.id_format));
+    const r = await send(repo, c.route, c.request, id);
     assert.equal(r.status, c.status, c.name);
     assert.deepEqual(Object.keys(r.body).sort(), c.response_keys, c.name);
     if (c.response_match) assert.ok(matches(r.body, c.response_match), `${c.name}: ${JSON.stringify(r.body)}`);
@@ -51,15 +56,19 @@ test("every contract case answers with its status and keys, in order", async () 
 test("an unsigned or wrongly signed request and a replayed id are refused as the contract says", async () => {
   const repo = new MemoryRepo(() => NOW);
   const other = `whsec_${Buffer.from("not-the-contract-secret-32-bytes").toString("base64")}`;
-  const bad = await send(repo, "orgs", contract.cases[0].request, "u-1", other);
+  const bad = await send(repo, "orgs", contract.cases[0].request, rid("orgs", 901), other);
   assert.equal(bad.status, contract.unsigned.status);
   assert.deepEqual(Object.keys(bad.body), contract.unsigned.response_keys);
-  await send(repo, "orgs", contract.cases[0].request, "r-1");
-  const again = await send(repo, "orgs", contract.cases[0].request, "r-1");
+  await send(repo, "orgs", contract.cases[0].request, rid("orgs", 902));
+  const again = await send(repo, "orgs", contract.cases[0].request, rid("orgs", 902));
   assert.equal(again.status, contract.replayed_id.status);
+  const crossed = await send(repo, "claims", { scribase_org_id: "org_fixture", slot: "deploy" }, rid("proof", 903));
+  assert.equal(crossed.status, contract.wrong_route.status);
+  assert.deepEqual(Object.keys(crossed.body), contract.wrong_route.response_keys);
 });
 
 test("the signature vector both sides test against", async () => {
   const v = contract.signature_vector;
   assert.equal(await sign(v.secret, v.id, v.timestamp, v.body), v.signature);
+  assert.match(v.id, new RegExp(contract.id_format));
 });

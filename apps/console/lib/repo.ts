@@ -10,6 +10,12 @@ export interface Repo {
   getOrg(orgId: string): Promise<Org | null>;
   getEntitlement(orgId: string): Promise<Entitlement | null>;
   saveEntitlement(ent: Entitlement): Promise<Entitlement>;
+  /**
+   * Saves an add-on entitlement only if no newer Scribase state is stored
+   * (`addon_as_of` greater than `asOf`); `null` when it was stale. `asOf`
+   * null saves unconditionally (the legacy bridge sender).
+   */
+  saveAddonEntitlement(ent: Entitlement, asOf: number | null): Promise<Entitlement | null>;
   /** Inserts the event; false when its webhook id was already recorded (a replay). */
   recordBillingEvent(ev: BillingEvent): Promise<boolean>;
   releaseBillingEvent(webhookId: string): Promise<void>;
@@ -100,6 +106,13 @@ export class MemoryRepo implements Repo {
   async saveEntitlement(ent: Entitlement) {
     this.ents.set(ent.org_id, clone(ent));
     return clone(ent);
+  }
+  async saveAddonEntitlement(ent: Entitlement, asOf: number | null) {
+    const stored = this.ents.get(ent.org_id)?.addon_as_of ?? null;
+    if (asOf !== null && stored !== null && stored > asOf) return null;
+    const next = { ...clone(ent), addon_as_of: asOf ?? stored };
+    this.ents.set(ent.org_id, next);
+    return clone(next);
   }
   async recordBillingEvent(ev: BillingEvent) {
     if (this.events.some((e) => e.webhook_id === ev.webhook_id)) return false;

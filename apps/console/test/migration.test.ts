@@ -12,6 +12,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATION = join(ROOT, "db/migrations/0001_railyard_console.sql");
 const BRIDGE = join(ROOT, "db/migrations/0002_scribase_bridge.sql");
 const AI = join(ROOT, "db/migrations/0003_ai_gateway.sql");
+const ORDER = join(ROOT, "db/migrations/0004_bridge_order.sql");
 const have = spawnSync("pg_ctl", ["--version"]).status === 0 && spawnSync("initdb", ["--version"]).status === 0;
 
 test("0001 applies twice on a scratch cluster; RLS on; anon has no access", { skip: have ? false : "pg_ctl/initdb not installed" }, () => {
@@ -88,4 +89,27 @@ test("0003 (AI gateway) applies twice; usage adds atomically; secrets are not re
   assert.equal(anon, "0");
   const exec = psql(["-c", "select has_function_privilege('anon', 'railyard.ai_add_usage(uuid, date, bigint)', 'execute')"]).trim();
   assert.equal(exec, "f");
+});
+
+test("0004 (bridge order, P-Y1) applies twice; the guarded update never moves an entitlement back", { skip: have ? false : "pg_ctl/initdb not installed" }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "ry-pg-"));
+  const port = String(53000 + Math.floor(Math.random() * 1900));
+  after(() => {
+    spawnSync("pg_ctl", ["-D", join(dir, "data"), "-m", "immediate", "stop"], { stdio: "ignore" });
+    rmSync(dir, { recursive: true, force: true });
+  });
+  execFileSync("initdb", ["-D", join(dir, "data"), "-U", "postgres", "-A", "trust", "--no-sync"], { stdio: "ignore" });
+  execFileSync("pg_ctl", ["-D", join(dir, "data"), "-o", `-p ${port} -k ${dir} -c listen_addresses=''`, "-w", "start"], { stdio: "ignore" });
+  const psql = (args: string[]) => execFileSync("psql", ["-h", dir, "-p", port, "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-qAt", ...args], { encoding: "utf8" });
+  psql(["-c", "create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;"]);
+  for (const f of [MIGRATION, BRIDGE, AI, ORDER, MIGRATION, BRIDGE, AI, ORDER]) psql(["-f", f]);
+  const org = psql(["-c", "insert into railyard.orgs (name, owner_user_id) values ('Acme', gen_random_uuid()) returning id"]).trim();
+  psql(["-c", `insert into railyard.entitlements (org_id, plan, status, addon_as_of) values ('${org}', 'addon', 'inactive', 2000)`]);
+  // The statement PostgrestRepo.saveAddonEntitlement sends (PostgREST or=(addon_as_of.is.null,addon_as_of.lte.N)).
+  const guarded = (status: string, asOf: number) =>
+    psql(["-c", `update railyard.entitlements set status = '${status}', addon_as_of = ${asOf} where org_id = '${org}' and (addon_as_of is null or addon_as_of <= ${asOf}) returning status`]).trim();
+  assert.equal(guarded("active", 1500), "", "an older state changes nothing");
+  assert.equal(psql(["-c", `select status from railyard.entitlements where org_id = '${org}'`]).trim(), "inactive");
+  assert.equal(guarded("active", 2500), "active");
+  assert.throws(() => psql(["-c", `update railyard.entitlements set addon_as_of = -1 where org_id = '${org}'`]), /entitlements_addon_as_of_check/);
 });

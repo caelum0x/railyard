@@ -63,3 +63,41 @@ test("AI usage goes through the atomic rpc; traces list only the given keys", as
   await repo.listAiTraces(["a", "b"], 500);
   assert.equal(calls[1].url, "https://p/rest/v1/ai_traces?key_id=in.(a,b)&order=at.desc&limit=200");
 });
+
+test("P-Y1: an add-on sync is one guarded PATCH; a stale one reads the row and writes nothing", async () => {
+  const ent = { org_id: "o1", plan: "addon", status: "active", addon_slots: ["deploy"] } as never;
+  const calls: { url: string; init: RequestInit }[] = [];
+  let stored: number | null = 5_000;
+  const fetchImpl = (async (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    if (init.method === "PATCH") {
+      const asOf = Number(/addon_as_of\.lte\.(\d+)/.exec(url)?.[1]);
+      if (stored !== null && stored > asOf) return new Response("[]", { status: 200 });
+      stored = asOf;
+      return new Response(JSON.stringify([{ org_id: "o1", addon_as_of: asOf }]), { status: 200 });
+    }
+    return new Response(JSON.stringify([{ org_id: "o1", addon_as_of: stored }]), { status: 200 });
+  }) as typeof fetch;
+  const repo = new PostgrestRepo({ url: "https://p", serviceRoleKey: "k", fetchImpl });
+  assert.equal(await repo.saveAddonEntitlement(ent, 4_000), null);
+  assert.equal(calls[0].url, "https://p/rest/v1/entitlements?org_id=eq.o1&or=(addon_as_of.is.null,addon_as_of.lte.4000)");
+  assert.equal(calls[1].init.method, "GET", "stale: only a read follows");
+  assert.equal(calls.length, 2);
+  const saved = await repo.saveAddonEntitlement(ent, 6_000);
+  assert.equal(saved?.addon_as_of, 6_000);
+  assert.equal(JSON.parse(String(calls[2].init.body)).addon_as_of, 6_000);
+  await assert.rejects(repo.saveAddonEntitlement(ent, 1.5), /whole number/);
+});
+
+test("P-Y1: the first add-on sync for an org inserts the row", async () => {
+  const calls: string[] = [];
+  const fetchImpl = (async (url: string, init: RequestInit) => {
+    calls.push(`${init.method} ${url.split("?")[0]}`);
+    if (init.method === "POST") return new Response(JSON.stringify([{ org_id: "o2", addon_as_of: 7 }]), { status: 201 });
+    return new Response("[]", { status: 200 });
+  }) as typeof fetch;
+  const repo = new PostgrestRepo({ url: "https://p", serviceRoleKey: "k", fetchImpl });
+  const saved = await repo.saveAddonEntitlement({ org_id: "o2" } as never, 7);
+  assert.equal(saved?.addon_as_of, 7);
+  assert.deepEqual(calls, ["PATCH https://p/rest/v1/entitlements", "GET https://p/rest/v1/entitlements", "POST https://p/rest/v1/entitlements"]);
+});

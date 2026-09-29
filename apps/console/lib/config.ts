@@ -32,6 +32,12 @@ export interface Config {
   products: { cardCheck: string; month: string; year: string };
   /** Standard Webhooks secret shared with Scribase control-api (PY1.0); null keeps the bridge off. */
   scribaseBridgeSecret: string | null;
+  /**
+   * P-Y1 transition only: also accept bridge calls from a Scribase build that
+   * does not bind the route into the signed id and sends no `addon.as_of`.
+   * Off unless RAILYARD_BRIDGE_ACCEPT_LEGACY=1.
+   */
+  bridgeAcceptLegacy: boolean;
   /** Insights tenant API (PY1.3); null keeps analytics proofs and pages off. */
   insightsApi: { url: string; token: string } | null;
   /** The AI gateway (PY1.4): Relay's tenant key and the sealing key; null keeps the gateway off (503). */
@@ -70,6 +76,7 @@ export function readConfig(env: Env = process.env): Config {
       year: need(env, "DODO_PRODUCT_ID_YEAR"),
     },
     scribaseBridgeSecret: env.RAILYARD_SCRIBASE_BRIDGE_SECRET?.trim() || null,
+    bridgeAcceptLegacy: env.RAILYARD_BRIDGE_ACCEPT_LEGACY === "1",
     insightsApi:
       env.INSIGHTS_API_URL?.trim() && env.INSIGHTS_API_TOKEN?.trim()
         ? { url: env.INSIGHTS_API_URL.trim().replace(/\/$/, ""), token: env.INSIGHTS_API_TOKEN.trim() }
