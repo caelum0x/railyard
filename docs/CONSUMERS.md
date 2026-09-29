@@ -177,8 +177,11 @@ reads `RAILYARD_LIVE` at deploy.
 | Rally | `rally.email.sent`, `rally.lead.revealed`, `rally.verification`, `rally.passthrough.domain`, `rally.passthrough.mailbox` | Rally's own counts only | PR1.5 posts each event |
 
 Every event is `{ transaction_id: "<product>:<meter>:<source id>",
-external_customer_id, code, timestamp, properties }`; a repeated
-`transaction_id` is a no-op. The nightly `tools/reconcile-portfolio`
+external_customer_id, external_subscription_id, code, timestamp, properties }`;
+a repeated `transaction_id` is a no-op. Rago's `POST /events` requires
+`external_subscription_id`, so each product customer gets one mirror
+subscription `<product>-portfolio-<external_customer_id>` on the product's $0
+portfolio plan (the dispatch named only `external_customer_id`; both are sent). The nightly `tools/reconcile-portfolio`
 compares each product's own counts with Rago's totals and must show a
 difference of 0. Mint keeps a ledger entry per paid event mirrored from Dodo
 webhooks and never initiates a payout of third-party funds.

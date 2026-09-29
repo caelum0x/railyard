@@ -49,6 +49,8 @@ test("sample events: idempotency key shape, known code, and the aggregated prope
       assert.ok(m, `${e.code} is a seed metric`);
       if (m.field_name) assert.equal(typeof e.properties[m.field_name], "number", `${e.code}.${m.field_name}`);
       assert.ok(Number.isInteger(e.timestamp) && e.external_customer_id);
+      assert.match(e.external_subscription_id, new RegExp(contract.external_subscription_id.pattern), "Rago requires a subscription id");
+      assert.equal(e.external_subscription_id, `${product}-portfolio-${e.external_customer_id}`);
     }
     assert.deepEqual(p.sample_events.map((e: any) => e.code).sort(), [...p.meters].sort(), "one sample per meter");
   }
