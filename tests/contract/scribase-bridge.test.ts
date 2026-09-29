@@ -58,3 +58,8 @@ test("an unsigned or wrongly signed request and a replayed id are refused as the
   const again = await send(repo, "orgs", contract.cases[0].request, "r-1");
   assert.equal(again.status, contract.replayed_id.status);
 });
+
+test("the signature vector both sides test against", async () => {
+  const v = contract.signature_vector;
+  assert.equal(await sign(v.secret, v.id, v.timestamp, v.body), v.signature);
+});
