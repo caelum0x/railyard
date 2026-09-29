@@ -232,6 +232,106 @@
       ]
     },
     {
+      "name": "the add-on lists flags",
+      "route": "orgs",
+      "request": {
+        "scribase_org_id": "org_fixture",
+        "name": "Fixture Co",
+        "addon": {
+          "active": true,
+          "slots": [
+            "analytics",
+            "deploy",
+            "ai",
+            "flags"
+          ],
+          "renews_at": "2026-10-29T12:00:00Z",
+          "caps": {
+            "apps": 5,
+            "analytics_events_month": 3000000
+          },
+          "as_of": 1790683175000
+        }
+      },
+      "status": 200,
+      "response_keys": [
+        "addon",
+        "created",
+        "org_id"
+      ],
+      "response_match": {
+        "addon": {
+          "slots": [
+            "ai",
+            "analytics",
+            "deploy",
+            "flags"
+          ]
+        }
+      }
+    },
+    {
+      "name": "flags for a project environment (created on first use)",
+      "route": "flags",
+      "request": {
+        "scribase_org_id": "org_fixture",
+        "app": "shop",
+        "env": "production"
+      },
+      "status": 200,
+      "response_keys": [
+        "app",
+        "client_key",
+        "created",
+        "env",
+        "first_read_at",
+        "flags",
+        "flags_url"
+      ],
+      "response_match": {
+        "app": "shop",
+        "env": "production",
+        "created": true,
+        "flags": []
+      }
+    },
+    {
+      "name": "a flag change for a branch that starts from production",
+      "route": "flags",
+      "request": {
+        "scribase_org_id": "org_fixture",
+        "app": "shop",
+        "env": "feature-x",
+        "copy_from": "production",
+        "set": {
+          "key": "new_checkout",
+          "enabled": true,
+          "value": "blue"
+        }
+      },
+      "status": 200,
+      "response_keys": [
+        "app",
+        "client_key",
+        "created",
+        "env",
+        "first_read_at",
+        "flags",
+        "flags_url"
+      ],
+      "response_match": {
+        "env": "feature-x",
+        "created": true
+      },
+      "flags_match": [
+        {
+          "key": "new_checkout",
+          "enabled": true,
+          "value": "blue"
+        }
+      ]
+    },
+    {
       "name": "lapsed add-on",
       "route": "orgs",
       "request": {
@@ -311,6 +411,19 @@
       "response_keys": [
         "error"
       ]
+    },
+    {
+      "name": "flags after the add-on lapsed",
+      "route": "flags",
+      "request": {
+        "scribase_org_id": "org_fixture",
+        "app": "shop",
+        "env": "production"
+      },
+      "status": 402,
+      "response_keys": [
+        "error"
+      ]
     }
   ],
   "unsigned": {
@@ -356,12 +469,28 @@
     "month_events",
     "visitors"
   ],
-  "id_format": "^msg_(orgs|claims|proof|deploys|sites|insights|ai|ai_usage)_[0-9a-f]{24}$",
+  "id_format": "^msg_(orgs|claims|proof|deploys|sites|insights|ai|ai_usage|flags)_[0-9a-f]{24}$",
   "wrong_route": {
     "status": 401,
     "response_keys": [
       "error"
     ],
     "note": "a request signed with an id for proof, delivered to claims"
-  }
+  },
+  "flags_answer_keys": [
+    "app",
+    "client_key",
+    "created",
+    "env",
+    "first_read_at",
+    "flags",
+    "flags_url"
+  ],
+  "flags_item_keys": [
+    "description",
+    "enabled",
+    "key",
+    "updated_at",
+    "value"
+  ]
 }

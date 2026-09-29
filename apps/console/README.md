@@ -41,6 +41,8 @@ Usage, Billing), one primary action on each, a pause switch and one-click cancel
 | `RAILYARD_DODO_LIVE` | var | Owner only: `1` allows the live host |
 | `RAILYARD_CONSOLE_URL`, `RAILYARD_INSIGHTS_URL` | var | Public URLs |
 | `INSIGHTS_API_URL` | var | Insights tenant API base (Wave P PY1.3); empty keeps the Insights page on "No data yet" |
+| `FLAGS_API_URL` | var | Railyard Flags (Wave P PY2.1): base URL of the flags service on box 2 (through the tunnel). With `FLAGS_ADMIN_TOKEN` set, new flag environments are made there; without them, flags live in the console's own tables (migration 0005), the fallback. |
+| `FLAGS_ADMIN_TOKEN` | secret | The flags service's instance admin token (`Token ...` auth). Only this console holds it; apps read flags with their public flags key. |
 | `INSIGHTS_API_TOKEN` | secret | Bearer token of the Insights tenant API |
 | `SITES` | KV binding | The edge collector's site entries; written when an app is added and on every plan, add-on or pause change |
 | `RELAY_URL` | var | Relay's OpenAI-compatible base for the AI gateway (Wave P PY1.4) |

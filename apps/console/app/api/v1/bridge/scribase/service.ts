@@ -31,6 +31,7 @@ import type { Repo } from "../../../../../lib/repo.ts";
 import { verify, type WebhookHeaders } from "../../../../../lib/standard-webhooks.ts";
 import { createApprovedDevice } from "../../../../../lib/tokens.ts";
 import { emptyEntitlement, type Entitlement } from "../../../../../lib/types.ts";
+import { ensureEnv, firstRead, FlagsError, listFlags, setFlag, type FlagsDeps } from "../../../../../lib/flags/service.ts";
 
 export const CLAIM_TTL_SECONDS = 120;
 
@@ -47,7 +48,7 @@ export const BRIDGE_SLOTS = {
   deploy: { pkg: "PY1.2", landed: true, proof: "deploy" },
   analytics: { pkg: "PY1.3", landed: true, proof: "first_event" },
   ai: { pkg: "PY1.4", landed: true, proof: "gateway_key" },
-  flags: { pkg: "PY2.1", landed: false, proof: "flag_flip" },
+  flags: { pkg: "PY2.1", landed: true, proof: "first_flag_read" },
   uptime: { pkg: "PY2.2", landed: false, proof: "check_result" },
   billing: { pkg: "PY2.3", landed: false, proof: "test_purchase" },
   consent: { pkg: "PY2.5", landed: false, proof: "consent_record" },
@@ -65,6 +66,8 @@ export interface BridgeDeps {
   insights?: InsightsClient | null;
   /** Public base of the edge collector and page tag. */
   insightsUrl?: string;
+  /** Railyard Flags (PY2.1); absent in tests that do not need them. */
+  flags?: FlagsDeps;
   /** P-Y1 transition: accept unbound ids and orgs syncs without `addon.as_of` (RAILYARD_BRIDGE_ACCEPT_LEGACY=1). */
   acceptLegacy?: boolean;
 }
@@ -239,6 +242,7 @@ export async function slotProof(
   slot: BridgeSlot,
   landed: Partial<Record<BridgeSlot, boolean>> = {},
   insights: InsightsClient | null = null,
+  flags: FlagsDeps | null = null,
 ): Promise<SlotState> {
   const isLanded = landed[slot] ?? BRIDGE_SLOTS[slot].landed;
   if (!isLanded) {
@@ -263,6 +267,12 @@ export async function slotProof(
       ? { slot, state: "live", live: true, proof: { kind: "first_event", id: first.app_id, at: first.at }, next: null }
       : { slot, state: "no_proof_yet", live: true, proof: null, next: "Waiting for the first event from the app." };
   }
+  if (slot === "flags") {
+    const read = flags ? await firstRead(flags.store, orgId) : null;
+    return read
+      ? { slot, state: "live", live: true, proof: read, next: null }
+      : { slot, state: "no_proof_yet", live: true, proof: null, next: "Read a flag from the app (or run the add command again) to see the first read here." };
+  }
   return { slot, state: "no_proof_yet", live: true, proof: null, next: null };
 }
 
@@ -275,7 +285,7 @@ async function proofFor(deps: BridgeDeps, body: Record<string, unknown>): Promis
   if (!BRIDGE_SLOTS[s].landed) return { status: 200, body: { ...(await slotProof(deps.repo, "", s)) } };
   const bound = await deps.repo.findScribaseBinding(scribaseOrgId);
   if (!bound) return { status: 200, body: { slot: s, state: "not_entitled", live: false, proof: null, next: "Turn on the add-on first." } };
-  return { status: 200, body: { ...(await slotProof(deps.repo, bound.org_id, s, {}, deps.insights ?? null)) } };
+  return { status: 200, body: { ...(await slotProof(deps.repo, bound.org_id, s, {}, deps.insights ?? null, deps.flags ?? null)) } };
 }
 
 async function deploysFor(deps: BridgeDeps, body: Record<string, unknown>): Promise<BridgeResult> {
@@ -394,7 +404,45 @@ async function aiUsageFor(deps: BridgeDeps, body: Record<string, unknown>): Prom
   return { status: 200, body: { keys: rows, providers, traces } };
 }
 
-export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights" | "ai" | "ai_usage";
+/**
+ * The flags of one Scribase project environment or branch (PY2.1):
+ * `{scribase_org_id, app, env, copy_from?, set?}`. Creates the environment on
+ * first use (a branch starts with `copy_from`'s flags), applies `set` when
+ * given, and answers the public client key, the read URL and the flags.
+ */
+async function flagsFor(deps: BridgeDeps, body: Record<string, unknown>): Promise<BridgeResult> {
+  const scribaseOrgId = parseOrgRef(body);
+  if (!scribaseOrgId) return fail(400, "scribase_org_id is required");
+  const app = typeof body.app === "string" ? normaliseAppName(body.app) : "";
+  if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(app)) return fail(400, "app must be a project name (letters, numbers, dashes)");
+  if (typeof body.env !== "string") return fail(400, "env is required");
+  const copyFrom = typeof body.copy_from === "string" ? body.copy_from : null;
+  const now = deps.now();
+  const who = await entitledOrg(deps.repo, scribaseOrgId, "flags", now);
+  if ("status" in who) return who;
+  if (!deps.flags) return fail(503, "Flags are being set up on this deployment. Nothing was changed.");
+  try {
+    const { env, created } = await ensureEnv(deps.flags, { orgId: who.orgId, orgName: scribaseOrgId, app, env: body.env, copyFrom }, now);
+    if (body.set !== undefined) await setFlag(deps.flags, env, body.set, `scribase:${scribaseOrgId}`, now);
+    return {
+      status: 200,
+      body: {
+        app: env.app,
+        env: env.env,
+        created,
+        client_key: env.client_key,
+        flags_url: `${deps.consoleUrl}/api/v1/flags/client`,
+        flags: await listFlags(deps.flags, env),
+        first_read_at: env.first_read_at,
+      },
+    };
+  } catch (e) {
+    if (e instanceof FlagsError) return fail(e.status, e.message);
+    throw e;
+  }
+}
+
+export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights" | "ai" | "ai_usage" | "flags";
 
 /**
  * The route a signed message id names (P-Y1). Scribase sends
@@ -440,5 +488,7 @@ export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers
       return aiFor(deps, b);
     case "ai_usage":
       return aiUsageFor(deps, b);
+    case "flags":
+      return flagsFor(deps, b);
   }
 }

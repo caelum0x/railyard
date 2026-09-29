@@ -1,0 +1,25 @@
+{
+  "name": "@railyard/openfeature",
+  "version": "0.1.0",
+  "description": "Railyard Flags for web, Next.js and Expo apps: a small polling client and OpenFeature providers (client and server). No dependencies.",
+  "type": "module",
+  "main": "src/index.mjs",
+  "types": "src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.mjs"
+    }
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "UNLICENSED"
+}

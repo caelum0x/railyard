@@ -7,6 +7,10 @@ import { PostgrestRepo } from "./postgrest-repo.ts";
 import type { Repo } from "./repo.ts";
 import { insightsClient, type InsightsClient } from "./insights.ts";
 import { kvSites, type SitesStore } from "./sites.ts";
+import { PostgrestFlagsStore } from "./flags/store.ts";
+import { TableFlagsBackend } from "./flags/table-backend.ts";
+import { FlagsmithBackend } from "./flags/flagsmith-backend.ts";
+import type { FlagsDeps } from "./flags/service.ts";
 
 export interface Deps {
   cfg: Config;
@@ -14,6 +18,14 @@ export interface Deps {
   dodo: Dodo;
   sites: SitesStore;
   insights: InsightsClient | null;
+  flags: FlagsDeps;
+}
+
+function flagsDeps(cfg: Config): FlagsDeps {
+  const store = new PostgrestFlagsStore({ url: cfg.scribaseUrl, serviceRoleKey: cfg.scribaseServiceRoleKey });
+  const table = new TableFlagsBackend(store);
+  const flagsmith = cfg.flags ? new FlagsmithBackend({ apiUrl: cfg.flags.apiUrl, adminToken: cfg.flags.adminToken }) : null;
+  return { store, backend: flagsmith ?? table, backends: flagsmith ? { table, flagsmith } : { table } };
 }
 
 let cached: Deps | null = null;
@@ -27,6 +39,7 @@ export function deps(): Deps {
     dodo: new Dodo({ base: cfg.dodoBase, apiKey: cfg.dodoApiKey, allowLive: cfg.dodoAllowLive }),
     sites: kvSites(),
     insights: cfg.insightsApi ? insightsClient({ apiUrl: cfg.insightsApi.url, token: cfg.insightsApi.token }) : null,
+    flags: flagsDeps(cfg),
   };
   return cached;
 }

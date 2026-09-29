@@ -22,6 +22,7 @@ import {
   handleBridge,
   ownerIdFor,
   slotProof,
+  type BridgeRoute,
 } from "./service.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -34,7 +35,7 @@ const rid = (route: string, k: number | string) => `msg_${route}_${String(k).rep
 
 async function call(
   repo: MemoryRepo,
-  route: "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights" | "ai" | "ai_usage",
+  route: BridgeRoute,
   payload: unknown,
   opts: { at?: Date; secret?: string; id?: string; extra?: Partial<Parameters<typeof handleBridge>[0]> } = {},
 ) {
@@ -366,4 +367,85 @@ test("P-Y1: as_of is required (outside the transition flag) and may not sit in t
   assert.equal((await call(repo, "orgs", { ...base, addon: { ...addon(), as_of: "yesterday" } })).status, 400);
   assert.equal((await call(repo, "orgs", { ...base, addon: addon(true, undefined, T0.getTime() + 3_600_000) })).status, 400);
   assert.equal((await call(repo, "orgs", { ...base, addon: noAsOf }, { extra: { acceptLegacy: true } })).status, 200);
+});
+
+// ---- Flags (PY2.1) --------------------------------------------------------------
+import { MemoryFlagsStore } from "../../../../../lib/flags/store.ts";
+import { TableFlagsBackend } from "../../../../../lib/flags/table-backend.ts";
+import type { FlagsDeps } from "../../../../../lib/flags/service.ts";
+import { clientFlags, consoleSetFlag } from "../../../../../lib/flags/http.ts";
+
+function flagsDeps(): FlagsDeps {
+  const store = new MemoryFlagsStore();
+  const backend = new TableFlagsBackend(store);
+  return { store, backend, backends: { table: backend } };
+}
+
+test("flags: a Scribase environment gets flags; the app reads them with its public key; a flip shows on the next read", async () => {
+  const repo = new MemoryRepo(() => T0);
+  const flags = flagsDeps();
+  await call(repo, "orgs", { scribase_org_id: "org_f", name: "F", addon: addon(true, ["flags"]) });
+  const first = await call(repo, "flags", { scribase_org_id: "org_f", app: "shop", env: "production" }, { extra: { flags } });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.created, true);
+  const key = first.body.client_key as string;
+  await call(repo, "flags", { scribase_org_id: "org_f", app: "shop", env: "production", set: { key: "new_checkout", enabled: false } }, { extra: { flags } });
+  const read = async () => (await (await clientFlags(flags, new Request(`https://c/api/v1/flags/client?key=${key}`), T0)).json()) as { flags: Record<string, { enabled: boolean }> };
+  assert.equal((await read()).flags.new_checkout.enabled, false);
+  await call(repo, "flags", { scribase_org_id: "org_f", app: "shop", env: "production", set: { key: "new_checkout", enabled: true } }, { extra: { flags } });
+  assert.equal((await read()).flags.new_checkout.enabled, true);
+  // The proof is the first read by the app.
+  const proof = await call(repo, "proof", { scribase_org_id: "org_f", slot: "flags" }, { extra: { flags } });
+  assert.equal(proof.body.state, "live");
+  assert.deepEqual(proof.body.proof, { kind: "first_flag_read", id: "shop/production", at: T0.toISOString() });
+});
+
+test("flags: the read answer is CORS-open, cacheable only when keyed by URL, and a bad key is a plain 401", async () => {
+  const flags = flagsDeps();
+  const repo = new MemoryRepo(() => T0);
+  await call(repo, "orgs", { scribase_org_id: "org_c", name: "C", addon: addon(true, ["flags"]) });
+  const key = (await call(repo, "flags", { scribase_org_id: "org_c", app: "shop", env: "production" }, { extra: { flags } })).body.client_key as string;
+  const byUrl = await clientFlags(flags, new Request(`https://c/x?key=${key}`), T0);
+  assert.equal(byUrl.headers.get("access-control-allow-origin"), "*");
+  assert.equal(byUrl.headers.get("cache-control"), "public, max-age=15, s-maxage=15");
+  const byHeader = await clientFlags(flags, new Request("https://c/x", { headers: { "x-flags-key": key } }), T0);
+  assert.equal(byHeader.status, 200);
+  assert.equal(byHeader.headers.get("cache-control"), "no-store");
+  const bad = await clientFlags(flags, new Request("https://c/x?key=nope"), T0);
+  assert.equal(bad.status, 401);
+  assert.equal((await clientFlags(flags, new Request("https://c/x", { method: "OPTIONS" }), T0)).status, 204);
+});
+
+test("flags: outside the add-on is 402, before the flags service exists is 503, and one org never reaches another's", async () => {
+  const repo = new MemoryRepo(() => T0);
+  const flags = flagsDeps();
+  await call(repo, "orgs", { scribase_org_id: "org_x", name: "X", addon: addon(true, ["deploy"]) });
+  assert.equal((await call(repo, "flags", { scribase_org_id: "org_x", app: "shop", env: "production" }, { extra: { flags } })).status, 402);
+  await call(repo, "orgs", { scribase_org_id: "org_y", name: "Y", addon: addon(true, ["flags"]) });
+  assert.equal((await call(repo, "flags", { scribase_org_id: "org_y", app: "shop", env: "production" })).status, 503);
+  await call(repo, "orgs", { scribase_org_id: "org_z", name: "Z", addon: addon(true, ["flags"]) });
+  const y = await call(repo, "flags", { scribase_org_id: "org_y", app: "shop", env: "production", set: { key: "only_y", enabled: true } }, { extra: { flags } });
+  const z = await call(repo, "flags", { scribase_org_id: "org_z", app: "shop", env: "production" }, { extra: { flags } });
+  assert.notEqual(y.body.client_key, z.body.client_key);
+  assert.deepEqual(z.body.flags, [], "org_z's environment of the same app name holds none of org_y's flags");
+  assert.equal((await call(repo, "flags", { scribase_org_id: "org_y", app: "shop", env: "production", set: { key: "Bad Key", enabled: true } }, { extra: { flags } })).status, 400);
+  assert.equal((await call(repo, "flags", { scribase_org_id: "org_y", app: "!!!", env: "production" }, { extra: { flags } })).status, 400);
+});
+
+test("flags: the console writes only its own org's environments, for apps it has", async () => {
+  const repo = new MemoryRepo(() => T0);
+  const flags = flagsDeps();
+  const org = await repo.createOrgForUser({ userId: "u1", email: "a@example.com", name: "A" });
+  await repo.saveEntitlement({ ...(await import("../../../../../lib/types.ts")).emptyEntitlement(org.id, T0), plan: "railyard", status: "active", apps_limit: 3 });
+  await addApp(repo, org.id, "shop", T0);
+  const session = { org: org.id, uid: "u1" };
+  assert.equal((await consoleSetFlag(flags, repo, null, {}, T0)).status, 401);
+  assert.equal((await consoleSetFlag(flags, repo, session, { app: "nope", env: "production", flag: { key: "a", enabled: true } }, T0)).status, 404);
+  const ok = await consoleSetFlag(flags, repo, session, { app: "shop", env: "production", flag: { key: "banner", enabled: true, value: "hi" } }, T0);
+  assert.equal(ok.status, 200);
+  assert.deepEqual((ok.body.flags as { key: string }[]).map((f) => f.key), ["banner"]);
+  assert.equal((await consoleSetFlag(flags, repo, session, { app: "shop", env: "production", flag: { key: "x", enabled: "on" } }, T0)).status, 400);
+  const other = { org: "someone-else", uid: "u2" };
+  assert.equal((await consoleSetFlag(flags, repo, other, { app: "shop", env: "production", flag: { key: "banner", enabled: false } }, T0)).status, 404);
+  assert.equal((await flags.store.listEnvs(org.id)).length, 1);
 });

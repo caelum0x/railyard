@@ -13,6 +13,9 @@ import { MemoryRepo } from "../../apps/console/lib/repo.ts";
 import { sign } from "../../apps/console/lib/standard-webhooks.ts";
 import { pollDevice } from "../../apps/console/lib/tokens.ts";
 import { handleBridge } from "../../apps/console/app/api/v1/bridge/scribase/service.ts";
+import { MemoryFlagsStore } from "../../apps/console/lib/flags/store.ts";
+import { TableFlagsBackend } from "../../apps/console/lib/flags/table-backend.ts";
+import type { FlagsDeps } from "../../apps/console/lib/flags/service.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const contract = JSON.parse(readFileSync(join(HERE, "fixtures/scribase-bridge/contract.json"), "utf8"));
@@ -29,19 +32,26 @@ function matches(actual: unknown, expected: unknown): boolean {
 /** A route-bound id in the contract's id_format (P-Y1). */
 const rid = (route: string, k: number) => `msg_${route}_${k.toString(16).padStart(24, "0")}`;
 
-async function send(repo: MemoryRepo, route: string, payload: unknown, id: string, secret = SECRET) {
+function flagsDeps(): FlagsDeps {
+  const store = new MemoryFlagsStore();
+  const backend = new TableFlagsBackend(store);
+  return { store, backend, backends: { table: backend } };
+}
+
+async function send(repo: MemoryRepo, route: string, payload: unknown, id: string, secret = SECRET, flags: FlagsDeps = flagsDeps()) {
   const body = JSON.stringify(payload);
   const ts = String(Math.floor(NOW.getTime() / 1000));
-  return handleBridge({ repo, secret: SECRET, consoleUrl: "https://railyard.example", now: () => NOW }, route as never, { id, timestamp: ts, signature: await sign(secret, id, ts, body) }, body);
+  return handleBridge({ repo, secret: SECRET, consoleUrl: "https://railyard.example", now: () => NOW, flags }, route as never, { id, timestamp: ts, signature: await sign(secret, id, ts, body) }, body);
 }
 
 test("every contract case answers with its status and keys, in order", async () => {
   const repo = new MemoryRepo(() => NOW);
+  const flags = flagsDeps();
   let i = 0;
   for (const c of contract.cases) {
     const id = rid(c.route, ++i);
     assert.match(id, new RegExp(contract.id_format));
-    const r = await send(repo, c.route, c.request, id);
+    const r = await send(repo, c.route, c.request, id, SECRET, flags);
     assert.equal(r.status, c.status, c.name);
     assert.deepEqual(Object.keys(r.body).sort(), c.response_keys, c.name);
     if (c.response_match) assert.ok(matches(r.body, c.response_match), `${c.name}: ${JSON.stringify(r.body)}`);
@@ -50,6 +60,12 @@ test("every contract case answers with its status and keys, in order", async () 
       assert.equal(t.status, 200, "the claim is exchanged once by the Scribase CLI");
     }
     if (c.route === "proof") assert.ok(contract.slot_state.states.includes(r.body.state), c.name);
+    if (c.route === "flags" && r.status === 200) {
+      const items = r.body.flags as Record<string, unknown>[];
+      for (const f of items) assert.deepEqual(Object.keys(f).sort(), contract.flags_item_keys, c.name);
+      if (c.flags_match) assert.ok(matches(items.map((f) => ({ key: f.key, enabled: f.enabled, value: f.value })), c.flags_match), c.name);
+      assert.match(r.body.client_key as string, /^ry_flags_/);
+    }
   }
 });
 

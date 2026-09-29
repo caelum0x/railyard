@@ -13,6 +13,7 @@ const MIGRATION = join(ROOT, "db/migrations/0001_railyard_console.sql");
 const BRIDGE = join(ROOT, "db/migrations/0002_scribase_bridge.sql");
 const AI = join(ROOT, "db/migrations/0003_ai_gateway.sql");
 const ORDER = join(ROOT, "db/migrations/0004_bridge_order.sql");
+const FLAGS = join(ROOT, "db/migrations/0005_flags.sql");
 const have = spawnSync("pg_ctl", ["--version"]).status === 0 && spawnSync("initdb", ["--version"]).status === 0;
 
 test("0001 applies twice on a scratch cluster; RLS on; anon has no access", { skip: have ? false : "pg_ctl/initdb not installed" }, () => {
@@ -112,4 +113,34 @@ test("0004 (bridge order, P-Y1) applies twice; the guarded update never moves an
   assert.equal(psql(["-c", `select status from railyard.entitlements where org_id = '${org}'`]).trim(), "inactive");
   assert.equal(guarded("active", 2500), "active");
   assert.throws(() => psql(["-c", `update railyard.entitlements set addon_as_of = -1 where org_id = '${org}'`]), /entitlements_addon_as_of_check/);
+});
+
+test("0005 (flags, PY2.1) applies twice; one env per org/app/env; keys and flag names checked; anon has no access", { skip: have ? false : "pg_ctl/initdb not installed" }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "ry-pg-"));
+  const port = String(51000 + Math.floor(Math.random() * 1900));
+  after(() => {
+    spawnSync("pg_ctl", ["-D", join(dir, "data"), "-m", "immediate", "stop"], { stdio: "ignore" });
+    rmSync(dir, { recursive: true, force: true });
+  });
+  execFileSync("initdb", ["-D", join(dir, "data"), "-U", "postgres", "-A", "trust", "--no-sync"], { stdio: "ignore" });
+  execFileSync("pg_ctl", ["-D", join(dir, "data"), "-o", `-p ${port} -k ${dir} -c listen_addresses=''`, "-w", "start"], { stdio: "ignore" });
+  const psql = (args: string[]) => execFileSync("psql", ["-h", dir, "-p", port, "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-qAt", ...args], { encoding: "utf8" });
+  psql(["-c", "create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;"]);
+  for (const f of [MIGRATION, BRIDGE, AI, ORDER, FLAGS, MIGRATION, BRIDGE, AI, ORDER, FLAGS]) psql(["-f", f]);
+  const org = psql(["-c", "insert into railyard.orgs (name, owner_user_id) values ('Acme', gen_random_uuid()) returning id"]).trim();
+  const key = `ry_flags_${"a".repeat(32)}`;
+  const env = psql(["-c", `insert into railyard.flag_envs (org_id, app, env, client_key) values ('${org}', 'shop', 'production', '${key}') returning id`]).trim();
+  assert.throws(() => psql(["-c", `insert into railyard.flag_envs (org_id, app, env, client_key) values ('${org}', 'shop', 'production', 'ry_flags_${"b".repeat(32)}')`]), /duplicate key/);
+  assert.throws(() => psql(["-c", `insert into railyard.flag_envs (org_id, app, env, client_key) values ('${org}', 'shop', 'feature-x', 'not-a-key')`]), /check constraint/);
+  psql(["-c", `insert into railyard.flags (env_id, key, enabled, value) values ('${env}', 'new_checkout', true, 'blue')`]);
+  assert.throws(() => psql(["-c", `insert into railyard.flags (env_id, key, enabled) values ('${env}', 'Bad Key', true)`]), /check constraint/);
+  // A first read is recorded once (the guarded update the store sends).
+  assert.equal(psql(["-c", `update railyard.flag_envs set first_read_at = now() where id = '${env}' and first_read_at is null returning 1`]).trim(), "1");
+  assert.equal(psql(["-c", `update railyard.flag_envs set first_read_at = now() where id = '${env}' and first_read_at is null returning 1`]).trim(), "");
+  psql(["-c", `delete from railyard.orgs where id = '${org}'`]);
+  assert.equal(psql(["-c", "select count(*) from railyard.flags"]).trim(), "0", "flags go with their org");
+  const anon = psql(["-c", "select count(*) from information_schema.role_table_grants where table_schema = 'railyard' and grantee in ('anon', 'authenticated')"]).trim();
+  assert.equal(anon, "0");
+  const noRls = psql(["-c", "select count(*) from pg_tables where schemaname = 'railyard' and not rowsecurity"]).trim();
+  assert.equal(noRls, "0");
 });

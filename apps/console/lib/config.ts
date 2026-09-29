@@ -40,6 +40,8 @@ export interface Config {
   bridgeAcceptLegacy: boolean;
   /** Insights tenant API (PY1.3); null keeps analytics proofs and pages off. */
   insightsApi: { url: string; token: string } | null;
+  /** Railyard Flags backend (PY2.1): the Flagsmith server; null uses Railyard's own tables. */
+  flags: { apiUrl: string; adminToken: string } | null;
   /** The AI gateway (PY1.4): Relay's tenant key and the sealing key; null keeps the gateway off (503). */
   aiGateway: { relayUrl: string; relayKey: string; credentialsKey: string } | null;
 }
@@ -80,6 +82,10 @@ export function readConfig(env: Env = process.env): Config {
     insightsApi:
       env.INSIGHTS_API_URL?.trim() && env.INSIGHTS_API_TOKEN?.trim()
         ? { url: env.INSIGHTS_API_URL.trim().replace(/\/$/, ""), token: env.INSIGHTS_API_TOKEN.trim() }
+        : null,
+    flags:
+      env.FLAGS_API_URL?.trim() && env.FLAGS_ADMIN_TOKEN?.trim()
+        ? { apiUrl: env.FLAGS_API_URL.trim().replace(/\/$/, ""), adminToken: env.FLAGS_ADMIN_TOKEN.trim() }
         : null,
     aiGateway:
       env.RELAY_URL?.trim() && env.RELAY_TENANT_KEY?.trim() && env.RAILYARD_CREDENTIALS_KEY?.trim()

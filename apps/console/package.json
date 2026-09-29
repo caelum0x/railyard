@@ -10,7 +10,7 @@
     "cf:build": "opennextjs-cloudflare build",
     "cf:deploy": "opennextjs-cloudflare deploy",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/*.test.ts app/api/v1/deploys/*.test.ts app/api/v1/bridge/scribase/*.test.ts lib/ai/*.test.ts",
+    "test": "node --test test/*.test.ts app/api/v1/deploys/*.test.ts app/api/v1/bridge/scribase/*.test.ts lib/ai/*.test.ts lib/flags/*.test.ts",
     "test:bundle": "node --test test/bundle-secrets.test.ts"
   },
   "dependencies": {
