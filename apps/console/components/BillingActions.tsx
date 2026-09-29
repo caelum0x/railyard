@@ -8,6 +8,8 @@ export function BillingActions(props: {
   trialDaysLeft: number | null;
   interval: "month" | "year";
   paused: boolean;
+  hasCard?: boolean;
+  trialUsed?: boolean;
   credit: string;
   monthPrice: string;
   yearPrice: string;
@@ -26,11 +28,25 @@ export function BillingActions(props: {
       </button>
     </form>
   );
+  if (props.state === "cancelled" && props.hasCard) {
+    return (
+      <>
+        <h2>Cancelled</h2>
+        <p className="muted">Your card is on file. Subscribe to turn Railyard back on.</p>
+        <p className="muted">Credit on your account: {props.credit}</p>
+        {subscribeForm}
+      </>
+    );
+  }
   if (props.state === "no_card" || props.state === "cancelled") {
     return (
       <>
         <h2>Start with a $1 card check</h2>
-        <p className="muted">The dollar is credited back to your account, then you get the full plan for 14 days.</p>
+        <p className="muted">
+          {props.trialUsed
+            ? "The dollar is credited back to your account, then you can subscribe. The free trial was already used."
+            : "The dollar is credited back to your account, then you get the full plan for 14 days."}
+        </p>
         <form method="post" action="/api/billing/checkout">
           <input type="hidden" name="kind" value="card_check" />
           <button className="primary" type="submit">Add a card</button>

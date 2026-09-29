@@ -33,34 +33,45 @@ export function applyLadder(ent: Entitlement, ev: LadderEvent): { ent: Entitleme
       if (ent.card_check_payment_id === ev.paymentId) return { ent, effects: [] };
       const customerId = ev.customerId ?? ent.dodo_customer_id;
       const subscribed = ent.plan === "railyard";
-      const next = {
+      // One trial per org, ever. trial_ends_at is set by every trial (and kept
+      // after a refund, a cancel or a subscription), so a later card check
+      // verifies the card and credits the dollar but never restarts a trial.
+      const startsTrial = !subscribed && ent.trial_ends_at === null;
+      const next: Entitlement = {
         ...base,
         dodo_customer_id: customerId,
         card_verified_at: at,
         card_check_payment_id: ev.paymentId,
         credit_cents: ent.credit_cents + PLAN.cardCheckCents,
-        plan: subscribed ? ent.plan : ("trial" as const),
-        status: subscribed ? ent.status : ("trialing" as const),
-        trial_ends_at: subscribed ? ent.trial_ends_at : new Date(ev.at.getTime() + PLAN.trialDays * DAY_MS).toISOString(),
+        plan: startsTrial ? "trial" : ent.plan,
+        status: startsTrial ? "trialing" : ent.status,
+        trial_ends_at: startsTrial ? new Date(ev.at.getTime() + PLAN.trialDays * DAY_MS).toISOString() : ent.trial_ends_at,
       };
       const effects: Effect[] = customerId
         ? [{ kind: "wallet_credit", customerId, cents: PLAN.cardCheckCents, idempotencyKey: `railyard-card-check-credit:${ev.paymentId}`, reason: "Railyard card check, credited back" }]
         : [];
-      return { ent: withLimits(next, true), effects };
+      return { ent: startsTrial ? withLimits(next, true) : next, effects };
     }
     case "card_check_refunded": {
-      if (ent.card_check_payment_id !== ev.paymentId) return { ent, effects: [] };
+      // The caller only sends this for a card-check payment of this org that
+      // was not refunded before. Its dollar credit is always taken back; the
+      // card and the trial are only removed when it is the current card check.
+      const effects: Effect[] = ent.dodo_customer_id
+        ? [{ kind: "wallet_debit", customerId: ent.dodo_customer_id, cents: PLAN.cardCheckCents, idempotencyKey: `railyard-card-check-debit:${ev.paymentId}`, reason: "Railyard card check refunded" }]
+        : [];
+      if (ent.card_check_payment_id !== ev.paymentId) {
+        return { ent: { ...base, credit_cents: ent.credit_cents - PLAN.cardCheckCents }, effects };
+      }
       const next: Entitlement = {
         ...base,
         credit_cents: ent.credit_cents - PLAN.cardCheckCents,
         card_verified_at: null,
         card_check_payment_id: null,
       };
-      const effects: Effect[] = ent.dodo_customer_id
-        ? [{ kind: "wallet_debit", customerId: ent.dodo_customer_id, cents: PLAN.cardCheckCents, idempotencyKey: `railyard-card-check-debit:${ev.paymentId}`, reason: "Railyard card check refunded" }]
-        : [];
       if (ent.plan === "trial") {
-        return { ent: withLimits({ ...next, plan: "none", status: "inactive", trial_ends_at: null, paused: false }, false), effects };
+        // The trial counts as used (trial_ends_at stays set), so paying the
+        // card check again cannot start a second one.
+        return { ent: withLimits({ ...next, plan: "none", status: "inactive", trial_ends_at: at, paused: false }, false), effects };
       }
       return { ent: next, effects };
     }
@@ -74,6 +85,8 @@ export function applyLadder(ent: Entitlement, ev: LadderEvent): { ent: Entitleme
             interval: ev.interval,
             subscription_id: ev.subscriptionId,
             dodo_customer_id: ev.customerId ?? ent.dodo_customer_id,
+            // A paid plan uses up the trial: no free trial after it ends.
+            trial_ends_at: ent.trial_ends_at ?? at,
             paused: false,
             cancel_at_period_end: false,
           },
@@ -115,6 +128,8 @@ export function access(ent: Entitlement | null, now: Date): Access {
     return { state: "trial", canAddApps: true, ...limits, trialDaysLeft: left };
   }
   if (ent.status === "cancelled") return { state: "cancelled", canAddApps: false, appsLimit: 0, eventsLimit: 0, trialDaysLeft: null };
+  // A card on file after the one trial was used: the next step is the plan, not another trial.
+  if (ent.card_verified_at && ent.trial_ends_at) return { state: "trial_ended", canAddApps: false, appsLimit: 0, eventsLimit: 0, trialDaysLeft: 0 };
   return { state: "no_card", canAddApps: false, appsLimit: 0, eventsLimit: 0, trialDaysLeft: null };
 }
 

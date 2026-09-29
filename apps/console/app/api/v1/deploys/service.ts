@@ -1,13 +1,14 @@
 // Deploy records for `railyard deploy` and `railyard rollback` (RYP-D4).
 // A token only ever reads and writes its own org's deploys.
 
-import { addApp, AppError } from "../../../../lib/apps.ts";
+import { addApp, AppError, normaliseAppName } from "../../../../lib/apps.ts";
 import { access } from "../../../../lib/ladder.ts";
 import type { Repo } from "../../../../lib/repo.ts";
 import type { Deploy } from "../../../../lib/types.ts";
 
 const FRAMEWORKS = ["nextjs", "vite", "astro", "static"] as const;
 const STATUSES = ["running", "succeeded", "failed"] as const;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface DeployInput {
   app: string;
@@ -43,7 +44,9 @@ export function parseDeployInput(body: unknown): DeployInput | string {
 export async function recordDeploy(repo: Repo, orgId: string, input: DeployInput, now: Date): Promise<{ status: number; body: Record<string, unknown> }> {
   const a = access(await repo.getEntitlement(orgId), now);
   if (a.state === "paused") return { status: 402, body: { error: "Railyard is paused. Resume it on the Billing screen." } };
-  let app = await repo.findAppByName(orgId, input.app);
+  // The CLI sends the folder name when --app is not given ("My Shop"); apps are
+  // stored under the normalised name ("my-shop"), so look up that one.
+  let app = await repo.findAppByName(orgId, normaliseAppName(input.app));
   if (!app) {
     try {
       app = await addApp(repo, orgId, input.app, now);
@@ -52,7 +55,7 @@ export async function recordDeploy(repo: Repo, orgId: string, input: DeployInput
       throw e;
     }
   }
-  if (input.rollback_of && !(await repo.getDeploy(orgId, input.rollback_of))) return { status: 404, body: { error: "rollback target not found" } };
+  if (input.rollback_of && (!UUID.test(input.rollback_of) || !(await repo.getDeploy(orgId, input.rollback_of)))) return { status: 404, body: { error: "rollback target not found" } };
   const d = await repo.createDeploy({
     org_id: orgId,
     app_id: app.id,
@@ -70,7 +73,8 @@ export async function recordDeploy(repo: Repo, orgId: string, input: DeployInput
 
 export async function listDeploys(repo: Repo, orgId: string, appName: string | null, branch: string | null) {
   const apps = await repo.listApps(orgId);
-  const app = appName ? apps.find((a) => a.name === appName) : null;
+  const wanted = appName ? normaliseAppName(appName) : null;
+  const app = wanted ? apps.find((a) => a.name === wanted) : null;
   if (appName && !app) return { status: 200, body: { deploys: [] } };
   const names = new Map(apps.map((a) => [a.id, a.name]));
   const rows = (await repo.listDeploys(orgId, app?.id)).filter((d) => !branch || d.branch === branch);

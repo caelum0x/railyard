@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { addApp, AppError, installSnippet } from "../lib/apps.ts";
-import { cancel, setPaused, startCheckout } from "../lib/billing.ts";
+import { BillingError, cancel, setPaused, startCheckout } from "../lib/billing.ts";
 import { Dodo } from "../lib/dodo.ts";
 import { access } from "../lib/ladder.ts";
 import { MemoryRepo } from "../lib/repo.ts";
@@ -131,4 +131,35 @@ test("subscription, paused switch and one-click cancel", async () => {
 
 test("the live payment host is refused unless the owner switches it on", () => {
   assert.throws(() => new Dodo({ base: "https://live.dodopayments.com", apiKey: "k", allowLive: false }), /test mode/);
+});
+
+test("no second charge: a subscribed org cannot open another plan checkout, a card on file cannot pay the card check again", async () => {
+  const now = new Date("2026-09-29T12:00:00Z");
+  const repo = new MemoryRepo(() => now);
+  const dodoFake = fakeDodo();
+  const dodo = new Dodo({ base: "https://test.dodopayments.com", apiKey: "k", allowLive: false, fetchImpl: dodoFake.fetchImpl });
+  const { org } = await signIn(repo, now);
+  const deps = { repo, dodo, webhookSecret: WEBHOOK_SECRET, sessionSecret: SESSION_SECRET, brandId: null, now: () => now };
+  await startCheckout({ repo, dodo, cfg }, { orgId: org.id, email: "f@example.com" }, "card_check");
+  const paid = await signedWebhook("payment.succeeded", { payment_id: "pay_x", customer: { customer_id: "cus_x" }, metadata: dodoFake.calls[0].body.metadata }, now);
+  await handleDodoWebhook(deps, paid.headers, paid.body);
+  await assert.rejects(startCheckout({ repo, dodo, cfg }, { orgId: org.id, email: "f@example.com" }, "card_check"), (e: BillingError) => e.code === "card_on_file");
+
+  await startCheckout({ repo, dodo, cfg }, { orgId: org.id, email: "f@example.com" }, "plan", "month");
+  const planMeta = dodoFake.calls.filter((c) => c.url.endsWith("/checkouts")).at(-1)!.body.metadata;
+  const active = await signedWebhook("subscription.active", { subscription_id: "sub_x", customer: { customer_id: "cus_x" }, metadata: planMeta }, now);
+  await handleDodoWebhook(deps, active.headers, active.body);
+  const before = dodoFake.calls.length;
+  for (const interval of ["month", "year"] as const) {
+    await assert.rejects(startCheckout({ repo, dodo, cfg }, { orgId: org.id, email: "f@example.com" }, "plan", interval), (e: BillingError) => e.code === "already_subscribed");
+  }
+  await cancel({ repo, dodo }, org.id, now);
+  await assert.rejects(startCheckout({ repo, dodo, cfg }, { orgId: org.id, email: "f@example.com" }, "plan", "year"), (e: BillingError) => e.code === "already_subscribed", "cancelling still bills until the period ends");
+  assert.equal(dodoFake.calls.filter((c) => c.url.endsWith("/checkouts")).length, 2);
+  assert.ok(dodoFake.calls.length >= before);
+
+  const ended = await signedWebhook("subscription.cancelled", { subscription_id: "sub_x", metadata: planMeta }, now);
+  await handleDodoWebhook(deps, ended.headers, ended.body);
+  const url = await startCheckout({ repo, dodo, cfg }, { orgId: org.id, email: "f@example.com" }, "plan", "month");
+  assert.match(url, /^https:\/\/test\.checkout\.dodopayments\.com\//, "after it ends, subscribing again works");
 });

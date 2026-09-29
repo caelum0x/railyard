@@ -11,12 +11,25 @@ import type { Interval } from "./plans.ts";
 
 export type CheckoutKind = "card_check" | "plan";
 
+export class BillingError extends Error {
+  code: "already_subscribed" | "card_on_file";
+  constructor(code: "already_subscribed" | "card_on_file", message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
 export async function startCheckout(
   deps: { repo: Repo; dodo: Pick<Dodo, "createCheckout">; cfg: Pick<Config, "consoleUrl" | "sessionSecret" | "products"> },
   who: { orgId: string; email: string },
   kind: CheckoutKind,
   interval: Interval = "month",
 ): Promise<string> {
+  // Never open a second charge for something the org already has: a second
+  // subscription would bill twice, a second card check could restart a trial.
+  const ent = await deps.repo.getEntitlement(who.orgId);
+  if (kind === "plan" && ent?.plan === "railyard" && ent.subscription_id) throw new BillingError("already_subscribed", "This org already has the Railyard plan.");
+  if (kind === "card_check" && ent?.card_verified_at) throw new BillingError("card_on_file", "A card is already on file.");
   const requestId = randomToken(12);
   const productId = kind === "card_check" ? deps.cfg.products.cardCheck : interval === "year" ? deps.cfg.products.year : deps.cfg.products.month;
   const metadata: Record<string, string> = {

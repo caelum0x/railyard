@@ -51,3 +51,15 @@ test("input is validated", () => {
   assert.equal(input({ commit_sha: "not a sha" }), "invalid commit");
   assert.equal(parseDeployInput(null), "invalid body");
 });
+
+test("a folder name like 'My Shop' records every deploy under the one app my-shop", async () => {
+  const repo = new MemoryRepo(() => now);
+  const org = await orgWithTrial(repo, "d");
+  for (let i = 0; i < 2; i += 1) {
+    const r = await recordDeploy(repo, org.id, input({ app: "My Shop" }) as never, now);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+  }
+  assert.deepEqual((await repo.listApps(org.id)).map((a) => a.name), ["my-shop"]);
+  assert.equal((await listDeploys(repo, org.id, "My Shop", null)).body.deploys.length, 2);
+  assert.equal((await recordDeploy(repo, org.id, input({ rollback_of: "not-a-uuid" }) as never, now)).status, 404);
+});

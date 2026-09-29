@@ -1,4 +1,4 @@
-import { startCheckout, type CheckoutKind } from "../../../../lib/billing.ts";
+import { BillingError, startCheckout, type CheckoutKind } from "../../../../lib/billing.ts";
 import { sessionFromRequest } from "../../../../lib/current.ts";
 import { deps } from "../../../../lib/deps.ts";
 import { sameOrigin } from "../../../../lib/http.ts";
@@ -15,6 +15,7 @@ export async function POST(req: Request) {
     const url = await startCheckout(d, { orgId: s.org, email: s.email }, kind, interval);
     return new Response(null, { status: 303, headers: { location: url } });
   } catch (err) {
+    if (err instanceof BillingError) return new Response(null, { status: 303, headers: { location: `${d.cfg.consoleUrl}/billing?error=already` } });
     console.error(`checkout failed for org ${s.org}: ${(err as Error).message}`);
     return new Response(null, { status: 303, headers: { location: `${d.cfg.consoleUrl}/billing?error=checkout` } });
   }

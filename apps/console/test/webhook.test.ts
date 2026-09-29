@@ -88,3 +88,32 @@ test("malformed bodies are 400", async () => {
   const res = await handleDodoWebhook(deps, { id: "m", timestamp: ts, signature: await sign(WEBHOOK_SECRET, "m", ts, body) }, body);
   assert.equal(res.status, 400);
 });
+
+test("two refund events for one card check take the dollar back once", async () => {
+  const { repo, org, deps, wallet, metadata } = await setup();
+  const paid = await signedWebhook("payment.succeeded", { payment_id: "p5", customer: { customer_id: "cus_5" }, metadata }, now);
+  await handleDodoWebhook(deps, paid.headers, paid.body);
+  const r1 = await signedWebhook("refund.succeeded", { refund_id: "ref_a", payment_id: "p5" }, now);
+  const r2 = await signedWebhook("refund.succeeded", { refund_id: "ref_b", payment_id: "p5" }, now);
+  assert.equal((await handleDodoWebhook(deps, r1.headers, r1.body)).body.applied, true);
+  assert.equal((await handleDodoWebhook(deps, r2.headers, r2.body)).body.applied, false);
+  assert.equal((await repo.getEntitlement(org.id))?.credit_cents, 0);
+  assert.equal(wallet.length, 2, "one credit, one debit");
+});
+
+test("an old subscription ending never cancels the current one", async () => {
+  const { repo, org, deps } = await setup();
+  const planMeta = { service: "railyard", org_id: org.id, kind: "plan", request_id: "r2", sig: await signMetadata(SESSION_SECRET, org.id, "plan", "r2"), interval: "month" };
+  const active = await signedWebhook("subscription.active", { subscription_id: "sub_new", customer: { customer_id: "cus_6" }, metadata: planMeta }, now);
+  await handleDodoWebhook(deps, active.headers, active.body);
+  for (const type of ["subscription.expired", "subscription.cancelled", "subscription.paused", "subscription.renewed"]) {
+    const old = await signedWebhook(type, { subscription_id: "sub_old", metadata: planMeta }, now);
+    const res = await handleDodoWebhook(deps, old.headers, old.body);
+    assert.equal(res.body.applied, false, type);
+  }
+  const ent = await repo.getEntitlement(org.id);
+  assert.deepEqual([ent?.plan, ent?.status, ent?.subscription_id, ent?.paused], ["railyard", "active", "sub_new", false]);
+  const ended = await signedWebhook("subscription.cancelled", { subscription_id: "sub_new", metadata: planMeta }, now);
+  assert.equal((await handleDodoWebhook(deps, ended.headers, ended.body)).body.applied, true);
+  assert.equal((await repo.getEntitlement(org.id))?.plan, "none");
+});

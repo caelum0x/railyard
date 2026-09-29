@@ -102,8 +102,18 @@ export async function handleDodoWebhook(
     if (paid?.org_id) {
       orgId = paid.org_id;
       kind = "card_check_refund";
-      ladder = { kind: "card_check_refunded", paymentId, at: now };
+      // A second refund event for the same payment (a partial refund, or a new
+      // message id) must not take the dollar back twice.
+      const refundedBefore = await deps.repo.findBillingEventByPayment(paymentId, "card_check_refund");
+      ladder = refundedBefore ? null : { kind: "card_check_refunded", paymentId, at: now };
     }
+  }
+  const current = orgId ? ((await deps.repo.getEntitlement(orgId)) ?? emptyEntitlement(orgId, now)) : null;
+  // Events of a subscription that is not the org's current one (an old one
+  // expiring after a new one started) never change the current plan.
+  const eventSub = str(data.subscription_id);
+  if (ladder && current && type.startsWith("subscription.") && type !== "subscription.active" && current.subscription_id && eventSub && eventSub !== current.subscription_id) {
+    ladder = null;
   }
 
   const record: BillingEvent = {
@@ -119,8 +129,7 @@ export async function handleDodoWebhook(
   if (!fresh) return { status: 200, body: { received: true, replayed: true } };
   if (!orgId || !ladder) return { status: 200, body: { received: true, applied: false, reason: record.outcome } };
 
-  const current = (await deps.repo.getEntitlement(orgId)) ?? emptyEntitlement(orgId, now);
-  const { ent, effects } = applyLadder(current, ladder);
+  const { ent, effects } = applyLadder(current ?? emptyEntitlement(orgId, now), ladder);
   try {
     for (const e of effects) {
       await deps.dodo.wallet(e.customerId, { type: e.kind === "wallet_credit" ? "credit" : "debit", cents: e.cents, idempotencyKey: e.idempotencyKey, reason: e.reason });
