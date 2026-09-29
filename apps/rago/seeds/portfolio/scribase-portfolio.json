@@ -1,0 +1,100 @@
+{
+  "consumer": "scribase",
+  "description": "Scribase portfolio add-on and messaging meters (Wave P 5.3). Scribase's Dodo billing is the charge of record; this is a $0 usage mirror.",
+  "currency": "USD",
+  "billable_metrics": [
+    {
+      "name": "Scribase add-on slot active",
+      "code": "scribase.addon.slot_active",
+      "description": "One event per organization, slot and UTC day the slot was on.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "Scribase AI gateway tokens (BYOK)",
+      "code": "scribase.ai.tokens",
+      "description": "Tokens per call through the BYOK gateway; the customer's provider bills them.",
+      "aggregation_type": "sum_agg",
+      "recurring": false,
+      "field_name": "tokens"
+    },
+    {
+      "name": "Scribase analytics events",
+      "code": "scribase.analytics.events",
+      "description": "Events counted at the edge (stored or over the cap).",
+      "aggregation_type": "sum_agg",
+      "recurring": false,
+      "field_name": "events"
+    },
+    {
+      "name": "Scribase push notifications sent",
+      "code": "scribase.push.sent",
+      "description": "One event per push delivered to Expo.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "Scribase email sent",
+      "code": "scribase.email.sent",
+      "description": "One event per email accepted by the sender.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    }
+  ],
+  "plans": [
+    {
+      "name": "Scribase portfolio usage mirror",
+      "code": "scribase_portfolio_mirror",
+      "interval": "monthly",
+      "description": "Zero-priced mirror: records usage for reconciliation, never invoices.",
+      "amount_cents": 0,
+      "amount_currency": "USD",
+      "pay_in_advance": false,
+      "bill_charges_monthly": true,
+      "charges": [
+        {
+          "billable_metric_code": "scribase.addon.slot_active",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "scribase.ai.tokens",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "scribase.analytics.events",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "scribase.push.sent",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "scribase.email.sent",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        }
+      ]
+    }
+  ],
+  "transaction_id": "<product>:<meter>:<source id> (a repeated transaction_id is a no-op)",
+  "external_customer_id": "the product's own organization id"
+}

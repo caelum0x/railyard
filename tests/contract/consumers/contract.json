@@ -1,0 +1,200 @@
+{
+  "contract": "railyard-consumers",
+  "version": 1,
+  "package": "Wave P PY1.5 (dispatch 5.3)",
+  "env": [
+    "RELAY_URL",
+    "RELAY_KEY",
+    "RAGO_URL",
+    "RAGO_API_KEY",
+    "MINT_URL",
+    "MINT_API_KEY",
+    "RAILYARD_LIVE"
+  ],
+  "secret_env": [
+    "RELAY_KEY",
+    "RAGO_API_KEY",
+    "MINT_API_KEY"
+  ],
+  "switch": {
+    "name": "RAILYARD_LIVE",
+    "values": [
+      "0",
+      "1"
+    ],
+    "default": "0",
+    "meaning": "1 sends usage to Rago and payment mirrors to Mint; 0 keeps the product's own counts only"
+  },
+  "transaction_id_pattern": "^(scribase|menivor|rally):[a-z0-9_.]+:[A-Za-z0-9_:.-]{1,200}$",
+  "products": {
+    "scribase": {
+      "seed": "apps/rago/seeds/portfolio/scribase-portfolio.json",
+      "meters": [
+        "scribase.addon.slot_active",
+        "scribase.ai.tokens",
+        "scribase.analytics.events",
+        "scribase.push.sent",
+        "scribase.email.sent"
+      ],
+      "sample_events": [
+        {
+          "transaction_id": "scribase:scribase.addon.slot_active:src_0001",
+          "external_customer_id": "scribase_org_0001",
+          "code": "scribase.addon.slot_active",
+          "timestamp": 1790683200,
+          "properties": {}
+        },
+        {
+          "transaction_id": "scribase:scribase.ai.tokens:src_0001",
+          "external_customer_id": "scribase_org_0001",
+          "code": "scribase.ai.tokens",
+          "timestamp": 1790683200,
+          "properties": {
+            "tokens": 20
+          }
+        },
+        {
+          "transaction_id": "scribase:scribase.analytics.events:src_0001",
+          "external_customer_id": "scribase_org_0001",
+          "code": "scribase.analytics.events",
+          "timestamp": 1790683200,
+          "properties": {
+            "events": 50
+          }
+        },
+        {
+          "transaction_id": "scribase:scribase.push.sent:src_0001",
+          "external_customer_id": "scribase_org_0001",
+          "code": "scribase.push.sent",
+          "timestamp": 1790683200,
+          "properties": {}
+        },
+        {
+          "transaction_id": "scribase:scribase.email.sent:src_0001",
+          "external_customer_id": "scribase_org_0001",
+          "code": "scribase.email.sent",
+          "timestamp": 1790683200,
+          "properties": {}
+        }
+      ]
+    },
+    "menivor": {
+      "seed": "apps/rago/seeds/portfolio/menivor-portfolio.json",
+      "meters": [
+        "menivor.reel.rendered",
+        "menivor.preset.render",
+        "menivor.lora.train",
+        "menivor.ott.gb_stored",
+        "menivor.ott.minutes_delivered",
+        "menivor.ott.encode_minutes",
+        "menivor.ai.minutes"
+      ],
+      "sample_events": [
+        {
+          "transaction_id": "menivor:menivor.reel.rendered:src_0001",
+          "external_customer_id": "menivor_org_0001",
+          "code": "menivor.reel.rendered",
+          "timestamp": 1790683200,
+          "properties": {}
+        },
+        {
+          "transaction_id": "menivor:menivor.preset.render:src_0001",
+          "external_customer_id": "menivor_org_0001",
+          "code": "menivor.preset.render",
+          "timestamp": 1790683200,
+          "properties": {}
+        },
+        {
+          "transaction_id": "menivor:menivor.lora.train:src_0001",
+          "external_customer_id": "menivor_org_0001",
+          "code": "menivor.lora.train",
+          "timestamp": 1790683200,
+          "properties": {}
+        },
+        {
+          "transaction_id": "menivor:menivor.ott.gb_stored:src_0001",
+          "external_customer_id": "menivor_org_0001",
+          "code": "menivor.ott.gb_stored",
+          "timestamp": 1790683200,
+          "properties": {
+            "gb": 1.5
+          }
+        },
+        {
+          "transaction_id": "menivor:menivor.ott.minutes_delivered:src_0001",
+          "external_customer_id": "menivor_org_0001",
+          "code": "menivor.ott.minutes_delivered",
+          "timestamp": 1790683200,
+          "properties": {
+            "minutes": 12
+          }
+        },
+        {
+          "transaction_id": "menivor:menivor.ott.encode_minutes:src_0001",
+          "external_customer_id": "menivor_org_0001",
+          "code": "menivor.ott.encode_minutes",
+          "timestamp": 1790683200,
+          "properties": {
+            "minutes": 3
+          }
+        },
+        {
+          "transaction_id": "menivor:menivor.ai.minutes:src_0001",
+          "external_customer_id": "menivor_org_0001",
+          "code": "menivor.ai.minutes",
+          "timestamp": 1790683200,
+          "properties": {
+            "minutes": 1
+          }
+        }
+      ]
+    },
+    "rally": {
+      "seed": "apps/rago/seeds/portfolio/rally-portfolio.json",
+      "meters": [
+        "rally.email.sent",
+        "rally.lead.revealed",
+        "rally.verification",
+        "rally.passthrough.domain",
+        "rally.passthrough.mailbox"
+      ],
+      "sample_events": [
+        {
+          "transaction_id": "rally:rally.email.sent:src_0001",
+          "external_customer_id": "rally_org_0001",
+          "code": "rally.email.sent",
+          "timestamp": 1790683200,
+          "properties": {}
+        },
+        {
+          "transaction_id": "rally:rally.lead.revealed:src_0001",
+          "external_customer_id": "rally_org_0001",
+          "code": "rally.lead.revealed",
+          "timestamp": 1790683200,
+          "properties": {}
+        },
+        {
+          "transaction_id": "rally:rally.verification:src_0001",
+          "external_customer_id": "rally_org_0001",
+          "code": "rally.verification",
+          "timestamp": 1790683200,
+          "properties": {}
+        },
+        {
+          "transaction_id": "rally:rally.passthrough.domain:src_0001",
+          "external_customer_id": "rally_org_0001",
+          "code": "rally.passthrough.domain",
+          "timestamp": 1790683200,
+          "properties": {}
+        },
+        {
+          "transaction_id": "rally:rally.passthrough.mailbox:src_0001",
+          "external_customer_id": "rally_org_0001",
+          "code": "rally.passthrough.mailbox",
+          "timestamp": 1790683200,
+          "properties": {}
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "external_customer_id": "scribase_org_0001",
+    "code": "scribase.push.sent",
+    "month": "2026-09",
+    "value": 120
+  },
+  {
+    "external_customer_id": "scribase_org_0001",
+    "code": "scribase.ai.tokens",
+    "month": "2026-09",
+    "value": 20000
+  },
+  {
+    "external_customer_id": "menivor_org_0001",
+    "code": "menivor.reel.rendered",
+    "month": "2026-09",
+    "value": 7
+  },
+  {
+    "external_customer_id": "rally_org_0001",
+    "code": "rally.email.sent",
+    "month": "2026-09",
+    "value": 480
+  },
+  {
+    "external_customer_id": "scribase_org_0001",
+    "code": "scribase.ai.tokens",
+    "month": "2026-09",
+    "value": 450
+  }
+]

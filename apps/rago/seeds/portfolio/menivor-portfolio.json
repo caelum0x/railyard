@@ -1,0 +1,132 @@
+{
+  "consumer": "menivor",
+  "description": "Menivor meters for the Railyard consumer contract (Wave P 5.3). Menivor's own credit packs are the charge of record; this is a $0 usage mirror.",
+  "currency": "USD",
+  "billable_metrics": [
+    {
+      "name": "Menivor reel rendered",
+      "code": "menivor.reel.rendered",
+      "description": "One event per finished reel.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "Menivor preset render",
+      "code": "menivor.preset.render",
+      "description": "One event per preset render.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "Menivor character training",
+      "code": "menivor.lora.train",
+      "description": "One event per character (LoRA) training run.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "Menivor channel storage (GB)",
+      "code": "menivor.ott.gb_stored",
+      "description": "Daily sample of stored channel GB; peak over the period.",
+      "aggregation_type": "max_agg",
+      "recurring": false,
+      "field_name": "gb"
+    },
+    {
+      "name": "Menivor channel minutes delivered",
+      "code": "menivor.ott.minutes_delivered",
+      "description": "Minutes of video delivered to viewers.",
+      "aggregation_type": "sum_agg",
+      "recurring": false,
+      "field_name": "minutes"
+    },
+    {
+      "name": "Menivor encode minutes",
+      "code": "menivor.ott.encode_minutes",
+      "description": "Minutes of source video encoded.",
+      "aggregation_type": "sum_agg",
+      "recurring": false,
+      "field_name": "minutes"
+    },
+    {
+      "name": "Menivor AI video minutes",
+      "code": "menivor.ai.minutes",
+      "description": "Minutes of AI video generated.",
+      "aggregation_type": "sum_agg",
+      "recurring": false,
+      "field_name": "minutes"
+    }
+  ],
+  "plans": [
+    {
+      "name": "Menivor usage mirror",
+      "code": "menivor_portfolio_mirror",
+      "interval": "monthly",
+      "description": "Zero-priced mirror: records usage for reconciliation, never invoices.",
+      "amount_cents": 0,
+      "amount_currency": "USD",
+      "pay_in_advance": false,
+      "bill_charges_monthly": true,
+      "charges": [
+        {
+          "billable_metric_code": "menivor.reel.rendered",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "menivor.preset.render",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "menivor.lora.train",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "menivor.ott.gb_stored",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "menivor.ott.minutes_delivered",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "menivor.ott.encode_minutes",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "menivor.ai.minutes",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        }
+      ]
+    }
+  ],
+  "transaction_id": "<product>:<meter>:<source id> (a repeated transaction_id is a no-op)",
+  "external_customer_id": "the product's own organization id"
+}

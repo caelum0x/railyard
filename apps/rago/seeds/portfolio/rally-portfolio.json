@@ -1,0 +1,98 @@
+{
+  "consumer": "rally",
+  "description": "Rally meters for the Railyard consumer contract (Wave P 5.3). Rally's own billing is the charge of record; pass-through lines are billed to the customer at cost by Rally. $0 usage mirror here.",
+  "currency": "USD",
+  "billable_metrics": [
+    {
+      "name": "Rally email sent",
+      "code": "rally.email.sent",
+      "description": "One event per email sent from the customer's own mailbox.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "Rally lead revealed",
+      "code": "rally.lead.revealed",
+      "description": "One event per revealed contact.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "Rally email verification",
+      "code": "rally.verification",
+      "description": "One event per verification.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "Rally domain bought for a customer",
+      "code": "rally.passthrough.domain",
+      "description": "One event per domain registration passed through.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "Rally mailbox bought for a customer",
+      "code": "rally.passthrough.mailbox",
+      "description": "One event per mailbox month passed through.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    }
+  ],
+  "plans": [
+    {
+      "name": "Rally usage mirror",
+      "code": "rally_portfolio_mirror",
+      "interval": "monthly",
+      "description": "Zero-priced mirror: records usage for reconciliation, never invoices.",
+      "amount_cents": 0,
+      "amount_currency": "USD",
+      "pay_in_advance": false,
+      "bill_charges_monthly": true,
+      "charges": [
+        {
+          "billable_metric_code": "rally.email.sent",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "rally.lead.revealed",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "rally.verification",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "rally.passthrough.domain",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "rally.passthrough.mailbox",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        }
+      ]
+    }
+  ],
+  "transaction_id": "<product>:<meter>:<source id> (a repeated transaction_id is a no-op)",
+  "external_customer_id": "the product's own organization id"
+}

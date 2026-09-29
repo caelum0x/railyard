@@ -152,3 +152,33 @@ entitlements; they do not need a ledger.
 | OpenJev | (hosted plans via Rago) | Rago (done) | Relay (done) | Mint optional |
 | Apps | RevenueCat | Rago for server AI usage (todo) | Relay (todo) | Mint on-ramp for balance apps |
 | Games | RevenueCat | game-economy + Mint receipts | n/a | Mint via game-economy |
+
+## Wave P switch table (PY1.5, dispatch 5.3)
+
+One contract for Scribase, Menivor and Rally
+(`tests/contract/consumers/contract.json`, tested against the seeds in
+`apps/rago/seeds/portfolio/`). Nothing switches live in code: each product
+reads `RAILYARD_LIVE` at deploy.
+
+| Env (per product) | Kind | Filled by |
+|---|---|---|
+| `RELAY_URL` | var | deploy (box 2 internal URL) |
+| `RELAY_KEY` | secret | `gen-secrets.sh` on the box, from `scripts/relay/provision-product-keys.mjs` |
+| `RAGO_URL` | var | deploy |
+| `RAGO_API_KEY` | secret | `gen-secrets.sh` (one Rago org per product) |
+| `MINT_URL` | var | deploy |
+| `MINT_API_KEY` | secret | `gen-secrets.sh` (a scoped Mint service key) |
+| `RAILYARD_LIVE` | `0` or `1` | the deploy step, per product |
+
+| Product | Meters (Rago `code`) | `RAILYARD_LIVE=0` | `RAILYARD_LIVE=1` |
+|---|---|---|---|
+| Scribase | `scribase.addon.slot_active`, `scribase.ai.tokens`, `scribase.analytics.events`, `scribase.push.sent`, `scribase.email.sent` | counts stay in Scribase (`scribase.usage_*`, add-on rows) | the carve-out metering hook (`CA/adapters/railyard/metering.rs`) posts each event |
+| Menivor | `menivor.reel.rendered`, `menivor.preset.render`, `menivor.lora.train`, `menivor.ott.gb_stored`, `menivor.ott.minutes_delivered`, `menivor.ott.encode_minutes`, `menivor.ai.minutes` | Menivor's own ledger only | PM1.5 posts each event |
+| Rally | `rally.email.sent`, `rally.lead.revealed`, `rally.verification`, `rally.passthrough.domain`, `rally.passthrough.mailbox` | Rally's own counts only | PR1.5 posts each event |
+
+Every event is `{ transaction_id: "<product>:<meter>:<source id>",
+external_customer_id, code, timestamp, properties }`; a repeated
+`transaction_id` is a no-op. The nightly `tools/reconcile-portfolio`
+compares each product's own counts with Rago's totals and must show a
+difference of 0. Mint keeps a ledger entry per paid event mirrored from Dodo
+webhooks and never initiates a payout of third-party funds.
