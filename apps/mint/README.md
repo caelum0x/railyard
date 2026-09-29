@@ -259,3 +259,24 @@ The longer-term custody, anchoring, fee, and multi-currency decisions remain in
 ## Product family
 **ReelForge** (video) · **Relay** (inference gateway, `apps/relay`) · **Mint** (this).
 All inherit ADR-0001 (integer-microdollar money) + ADR-0002 (success-only billing).
+
+## Portfolio mirror (Wave P PY1.5)
+
+Scribase, Menivor and Rally record every paid event their payment provider
+sent them: `POST /v1/mirror/events` `{provider, provider_event_id, kind:
+payment|refund|dispute, amount_micros, currency, customer_ref,
+occurred_at_ms}` with `x-api-key` set to that product's mirror key. A replay of
+the same provider event is answered `200 {duplicate: true}` and changes
+nothing; `GET /v1/mirror/events` lists only the calling product's records.
+Mirror records live beside the ledger (`mint_mirror_events`, migration 0013)
+and the mirror has no handle on it: no balance moves, no funds are held, and
+Mint never starts a payout of anyone's money here.
+
+Each record is delivered to every configured endpoint as a Standard Webhooks
+signed `mirror.recorded` event (the outbox `mint_mirror_deliveries`), every 15
+seconds, retried with backoff from 30 s up to 6 h until a 2xx.
+
+| Env | What |
+|---|---|
+| `MINT_MIRROR_KEYS_JSON` | `[{"product":"scribase","key":"<24+ chars>"}, ...]` (secret) |
+| `MINT_EVENT_WEBHOOKS_JSON` | `[{"name","url":"https://...","secret":"whsec_...","products":["scribase"]}]` (secret) |

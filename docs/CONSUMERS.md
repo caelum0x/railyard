@@ -183,5 +183,8 @@ a repeated `transaction_id` is a no-op. Rago's `POST /events` requires
 subscription `<product>-portfolio-<external_customer_id>` on the product's $0
 portfolio plan (the dispatch named only `external_customer_id`; both are sent). The nightly `tools/reconcile-portfolio`
 compares each product's own counts with Rago's totals and must show a
-difference of 0. Mint keeps a ledger entry per paid event mirrored from Dodo
-webhooks and never initiates a payout of third-party funds.
+difference of 0. Mint keeps one mirror record per paid event (each product
+posts what its Dodo webhook told it to `POST /v1/mirror/events` with its
+`MINT_API_KEY`, which is its mirror key) and delivers it to the configured
+endpoints as a signed `mirror.recorded` webhook; the mirror never touches the
+ledger and never initiates a payout of third-party funds.

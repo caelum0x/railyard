@@ -19,6 +19,7 @@ pub mod error;
 pub mod handlers;
 pub mod jobs;
 pub mod metrics;
+pub mod mirror;
 pub mod payer_registry;
 pub mod router;
 pub mod shadow;

@@ -28,6 +28,7 @@ pub mod event;
 pub mod http;
 pub mod iap;
 pub mod kyc;
+pub mod outbound;
 mod money;
 pub mod provider;
 pub mod registry;

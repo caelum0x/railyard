@@ -15,10 +15,12 @@
 //! - [`migrate`] — [`run_migrations`] (embedded, forward-only).
 
 pub mod migrate;
+pub mod mirror;
 pub mod rebuild;
 pub mod rows;
 pub mod store;
 pub mod tx;
 
 pub use migrate::run_migrations;
+pub use mirror::PgMirror;
 pub use store::{PgStore, PgStoreConfig};

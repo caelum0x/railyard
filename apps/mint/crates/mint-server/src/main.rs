@@ -100,7 +100,23 @@ async fn main() -> anyhow::Result<()> {
         "payment registry loaded"
     );
     let ramp: Arc<dyn Ramp> = resolve_ramp(&payments, production)?;
+    let mirror_transport = transport.clone();
     let (kyc, kyc_onboarding) = load_kyc_gate(production, transport)?;
+    let mirror_keys = match env_nonempty("MINT_MIRROR_KEYS_JSON") {
+        Some(raw) => mint_server::mirror::parse_keys(&raw).map_err(anyhow::Error::msg)?,
+        None => Vec::new(),
+    };
+    let mirror_endpoints = match env_nonempty("MINT_EVENT_WEBHOOKS_JSON") {
+        Some(raw) => mint_server::mirror::parse_endpoints(&raw).map_err(anyhow::Error::msg)?,
+        None => Vec::new(),
+    };
+    let mirror_state = |store: Arc<dyn mint_store::MirrorStore>| mint_server::mirror::MirrorState {
+        store,
+        keys: Arc::new(mirror_keys.clone()),
+        endpoints: Arc::new(mirror_endpoints.clone()),
+        transport: mirror_transport.clone(),
+        now_ms: mint_server::mirror::system_now_ms,
+    };
     let public = PublicConfig::from_env();
     if public.public_url.is_none() && public.checkout_success_url.is_none() {
         tracing::warn!(
@@ -117,6 +133,7 @@ async fn main() -> anyhow::Result<()> {
                 .await
                 .context("connecting to Postgres")?;
             store.run_migrations().await.context("running migrations")?;
+            let mirror = mirror_state(Arc::new(mint_store_postgres::PgMirror::new(store.pool().clone())));
             let state = AppState::new(
                 store,
                 clock,
@@ -134,7 +151,7 @@ async fn main() -> anyhow::Result<()> {
                 Some(k) => state.with_kyc_onboarding(k),
                 None => state,
             };
-            serve(state, bind).await
+            serve(state, bind, mirror).await
         }
         _ => {
             if std::env::var("MINT_ALLOW_INMEMORY").ok().as_deref() != Some("1") {
@@ -146,6 +163,7 @@ async fn main() -> anyhow::Result<()> {
             tracing::warn!("DATABASE_URL unset — using EPHEMERAL in-memory store (dev only)");
             let store =
                 mint_store::InMemoryStore::with_clock_and_signer(clock.clone(), signer.clone());
+            let mirror = mirror_state(Arc::new(mint_store::MemoryMirror::default()));
             let state = AppState::new(
                 store,
                 clock,
@@ -163,7 +181,7 @@ async fn main() -> anyhow::Result<()> {
                 Some(k) => state.with_kyc_onboarding(k),
                 None => state,
             };
-            serve(state, bind).await
+            serve(state, bind, mirror).await
         }
     }
 }
@@ -172,6 +190,7 @@ async fn main() -> anyhow::Result<()> {
 async fn serve<S: LedgerStore + 'static>(
     state: AppState<S>,
     bind: SocketAddr,
+    mirror: mint_server::mirror::MirrorState,
 ) -> anyhow::Result<()> {
     // Mirror the DB-backed AITP payer keys before serving, then keep payouts,
     // hold expiries and the key mirror reconciled in the background.
@@ -180,7 +199,11 @@ async fn serve<S: LedgerStore + 'static>(
         Err(e) => tracing::error!(error = %e, "loading AITP payer keys from the store failed"),
     }
     mint_server::jobs::spawn_background_jobs(state.clone());
-    let app = build_router(state);
+    // The portfolio mirror (Wave P PY1.5): its own routes and product keys, no ledger handle.
+    if std::env::var("MINT_SWEEP_DISABLED").ok().as_deref() != Some("1") {
+        mint_server::mirror::spawn_delivery(mirror.clone());
+    }
+    let app = build_router(state).merge(mint_server::mirror::router(mirror));
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .with_context(|| format!("binding {bind}"))?;
