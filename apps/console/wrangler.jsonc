@@ -3,7 +3,7 @@
 	// Nothing secret lives here. Secrets are set with `wrangler secret put`
 	// by the owner: DODO_API_KEY, DODO_WEBHOOK_SECRET, SCRIBASE_ANON_KEY,
 	// SCRIBASE_SERVICE_ROLE_KEY, RAILYARD_SESSION_SECRET, RAILYARD_SCRIBASE_BRIDGE_SECRET,
-	// INSIGHTS_API_TOKEN.
+	// INSIGHTS_API_TOKEN, RELAY_TENANT_KEY, RAILYARD_CREDENTIALS_KEY.
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "railyard-console",
 	"main": ".open-next/worker.js",
@@ -22,6 +22,8 @@
 		"RAILYARD_CONSOLE_URL": "https://railyard.ereboslab.com",
 		// Insights tenant API (the box's tunnel route to the fork's /api/v1); token is a secret.
 		"INSIGHTS_API_URL": "",
+		// Relay's OpenAI-compatible base for the BYOK AI gateway (PY1.4); the tenant key is a secret.
+		"RELAY_URL": "",
 		"RAILYARD_INSIGHTS_URL": "https://insights.railyard.ereboslab.com",
 		"DODO_API_BASE": "https://test.dodopayments.com"
 	}

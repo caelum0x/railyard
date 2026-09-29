@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATION = join(ROOT, "db/migrations/0001_railyard_console.sql");
 const BRIDGE = join(ROOT, "db/migrations/0002_scribase_bridge.sql");
+const AI = join(ROOT, "db/migrations/0003_ai_gateway.sql");
 const have = spawnSync("pg_ctl", ["--version"]).status === 0 && spawnSync("initdb", ["--version"]).status === 0;
 
 test("0001 applies twice on a scratch cluster; RLS on; anon has no access", { skip: have ? false : "pg_ctl/initdb not installed" }, () => {
@@ -64,4 +65,27 @@ test("0002 (Scribase bridge) applies twice after 0001; add-on plan allowed; bind
   assert.equal(noRls, "0");
   const anon = psql(["-c", "select count(*) from information_schema.role_table_grants where table_schema = 'railyard' and grantee in ('anon', 'authenticated')"]).trim();
   assert.equal(anon, "0");
+});
+
+test("0003 (AI gateway) applies twice; usage adds atomically; secrets are not readable by anon", { skip: have ? false : "pg_ctl/initdb not installed" }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "ry-pg-"));
+  const port = String(59000 + Math.floor(Math.random() * 900));
+  after(() => {
+    spawnSync("pg_ctl", ["-D", join(dir, "data"), "-m", "immediate", "stop"], { stdio: "ignore" });
+    rmSync(dir, { recursive: true, force: true });
+  });
+  execFileSync("initdb", ["-D", join(dir, "data"), "-U", "postgres", "-A", "trust", "--no-sync"], { stdio: "ignore" });
+  execFileSync("pg_ctl", ["-D", join(dir, "data"), "-o", `-p ${port} -k ${dir} -c listen_addresses=''`, "-w", "start"], { stdio: "ignore" });
+  const psql = (args: string[]) => execFileSync("psql", ["-h", dir, "-p", port, "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-qAt", ...args], { encoding: "utf8" });
+  psql(["-c", "create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;"]);
+  for (const f of [MIGRATION, BRIDGE, AI, MIGRATION, BRIDGE, AI]) psql(["-f", f]);
+  const org = psql(["-c", "insert into railyard.orgs (name, owner_user_id) values ('Acme', gen_random_uuid()) returning id"]).trim();
+  const key = psql(["-c", `insert into railyard.ai_keys (org_id, label, key_hash, daily_token_cap, monthly_token_cap) values ('${org}', 'shop', 'h1', 10, 100) returning id`]).trim();
+  psql(["-c", `select railyard.ai_add_usage('${key}', '2026-09-29', 7); select railyard.ai_add_usage('${key}', '2026-09-29', 5);`]);
+  assert.equal(psql(["-c", `select tokens || ',' || requests from railyard.ai_usage where key_id = '${key}'`]).trim(), "12,2");
+  assert.throws(() => psql(["-c", `insert into railyard.ai_credentials (org_id, provider, nonce, ciphertext, key_hint) values ('${org}', 'ours', 'n', 'c', 'h')`]), /check constraint/);
+  const anon = psql(["-c", "select count(*) from information_schema.role_table_grants where table_schema = 'railyard' and grantee in ('anon', 'authenticated')"]).trim();
+  assert.equal(anon, "0");
+  const exec = psql(["-c", "select has_function_privilege('anon', 'railyard.ai_add_usage(uuid, date, bigint)', 'execute')"]).trim();
+  assert.equal(exec, "f");
 });

@@ -114,3 +114,45 @@ export function emptyEntitlement(orgId: string, now: Date): Entitlement {
     updated_at: now.toISOString(),
   };
 }
+
+// AI gateway (Wave P PY1.4, migration 0003). BYOK only.
+export type AiProvider = "openai" | "anthropic" | "groq" | "openrouter";
+
+export interface AiKey {
+  id: string;
+  org_id: string;
+  label: string;
+  key_hash: string;
+  daily_token_cap: number;
+  monthly_token_cap: number;
+  created_at: string;
+  revoked_at: string | null;
+}
+
+export interface AiCredential {
+  org_id: string;
+  provider: AiProvider;
+  nonce: string;
+  ciphertext: string;
+  key_hint: string;
+  updated_at: string;
+}
+
+export interface AiTrace {
+  key_id: string;
+  at: string;
+  model: string;
+  provider: string;
+  status: number;
+  input_tokens: number;
+  output_tokens: number;
+  latency_ms: number;
+}
+
+export interface ConnectToken {
+  token_hash: string;
+  org_id: string;
+  purpose: "ai";
+  expires_at: string;
+  used_at: string | null;
+}

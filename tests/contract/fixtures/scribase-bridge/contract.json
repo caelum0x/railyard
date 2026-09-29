@@ -201,6 +201,35 @@
       }
     },
     {
+      "name": "ai gateway for a project environment (the key goes to the control plane only)",
+      "route": "ai",
+      "request": {
+        "scribase_org_id": "org_fixture",
+        "project": "shop-prod"
+      },
+      "status": 200,
+      "response_keys": [
+        "connect_url",
+        "gateway_url",
+        "key",
+        "providers"
+      ]
+    },
+    {
+      "name": "ai tab usage",
+      "route": "ai_usage",
+      "request": {
+        "scribase_org_id": "org_fixture",
+        "project": "shop-prod"
+      },
+      "status": 200,
+      "response_keys": [
+        "keys",
+        "providers",
+        "traces"
+      ]
+    },
+    {
       "name": "lapsed add-on",
       "route": "orgs",
       "request": {

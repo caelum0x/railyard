@@ -43,6 +43,9 @@ Usage, Billing), one primary action on each, a pause switch and one-click cancel
 | `INSIGHTS_API_URL` | var | Insights tenant API base (Wave P PY1.3); empty keeps the Insights page on "No data yet" |
 | `INSIGHTS_API_TOKEN` | secret | Bearer token of the Insights tenant API |
 | `SITES` | KV binding | The edge collector's site entries; written when an app is added and on every plan, add-on or pause change |
+| `RELAY_URL` | var | Relay's OpenAI-compatible base for the AI gateway (Wave P PY1.4) |
+| `RELAY_TENANT_KEY` | secret | The Relay tenant key from `relay-tenancy.sh tenant-key` (BYOK only; see `apps/relay/config/tenants/README.md`) |
+| `RAILYARD_CREDENTIALS_KEY` | secret | 32 random bytes, base64: seals customers' provider keys |
 | `RAILYARD_SCRIBASE_BRIDGE_SECRET` | secret | Standard Webhooks secret (`whsec_...`) shared with Scribase control-api for the bridge (Wave P PY1.0). Unset keeps the bridge off (503). |
 
 ## Scribase bridge (Wave P PY1.0)
@@ -74,7 +77,7 @@ test starts a throwaway local Postgres.
 
 1. Create the `railyard` brand and the three test-mode products; set the env above.
 2. Apply `db/migrations/0001_railyard_console.sql`, then
-   `db/migrations/0002_scribase_bridge.sql`, to the console's Scribase project
+   `db/migrations/0002_scribase_bridge.sql` and `db/migrations/0003_ai_gateway.sql`, to the console's Scribase project
    and add `railyard` to its exposed schemas.
 3. Enable Google and GitHub sign-in on that project with
    `https://railyard.ereboslab.com/auth/callback` as a redirect URL.

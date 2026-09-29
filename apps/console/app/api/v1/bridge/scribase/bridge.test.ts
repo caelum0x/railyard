@@ -31,7 +31,7 @@ const T0 = new Date("2026-09-29T12:00:00Z");
 let n = 0;
 async function call(
   repo: MemoryRepo,
-  route: "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights",
+  route: "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights" | "ai" | "ai_usage",
   payload: unknown,
   opts: { at?: Date; secret?: string; id?: string; extra?: Partial<Parameters<typeof handleBridge>[0]> } = {},
 ) {
@@ -282,4 +282,34 @@ test("analytics slot (PY1.3): sites gives the project's app its public page-tag 
   await call(repo, "orgs", { scribase_org_id: "org_an", name: "An", addon: addon(false) }, { extra });
   assert.equal(sites.entries.get(`site:${r.body.site_key}`)?.paused, true);
   assert.equal((await repo.listApps(orgId)).length, 1);
+});
+
+test("ai slot (PY1.4): one key per project for the control plane only, a one-time connect link, BYOK proof and usage", async () => {
+  const repo = new MemoryRepo(() => T0);
+  await call(repo, "orgs", { scribase_org_id: "org_ai", name: "AI", addon: addon() });
+  const first = await call(repo, "ai", { scribase_org_id: "org_ai", project: "shop-prod" });
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.match(String(first.body.key), /^ry_ai_/);
+  assert.equal(first.body.gateway_url, "https://railyard.ereboslab.com/api/v1/ai");
+  assert.match(String(first.body.connect_url), /^https:\/\/railyard\.ereboslab\.com\/connect\/ai\?t=ry_ct_/);
+  assert.deepEqual(first.body.providers, []);
+  const again = await call(repo, "ai", { scribase_org_id: "org_ai", project: "shop-prod" });
+  assert.equal(again.body.key, null, "the key is shown once; Scribase keeps it");
+  const rotated = await call(repo, "ai", { scribase_org_id: "org_ai", project: "shop-prod", rotate: true });
+  assert.match(String(rotated.body.key), /^ry_ai_/);
+  const orgId = (await repo.findScribaseBinding("org_ai"))!.org_id;
+  assert.equal((await repo.listAiKeys(orgId)).filter((k) => !k.revoked_at).length, 1, "rotation revokes the old key");
+  const waiting = await call(repo, "proof", { scribase_org_id: "org_ai", slot: "ai" });
+  assert.equal(waiting.body.state, "no_proof_yet");
+  await repo.saveAiCredential({ org_id: orgId, provider: "anthropic", nonce: "n", ciphertext: "c", key_hint: "...1234" });
+  const proof = await call(repo, "proof", { scribase_org_id: "org_ai", slot: "ai" });
+  assert.equal(proof.body.state, "live");
+  assert.equal((proof.body.proof as { id: string }).id, "anthropic");
+  const usage = await call(repo, "ai_usage", { scribase_org_id: "org_ai", project: "shop-prod" });
+  assert.equal(usage.status, 200);
+  assert.deepEqual(Object.keys(usage.body).sort(), ["keys", "providers", "traces"]);
+  assert.ok(!JSON.stringify(usage.body).includes("ry_ai_"), "the tab never sees a key");
+  assert.deepEqual(usage.body.providers, [{ provider: "anthropic", hint: "...1234", updated_at: T0.toISOString() }]);
+  await call(repo, "orgs", { scribase_org_id: "org_noai", name: "N", addon: addon(true, ["deploy"]) });
+  assert.equal((await call(repo, "ai", { scribase_org_id: "org_noai", project: "x" })).status, 402);
 });

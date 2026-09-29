@@ -2,7 +2,7 @@
 // `railyard`, with the project's service role. Server-only.
 
 import type { Repo } from "./repo.ts";
-import type { ApiToken, App, BillingEvent, Deploy, DeviceCode, Entitlement, Org, ScribaseBinding } from "./types.ts";
+import type { AiCredential, AiKey, AiProvider, AiTrace, ApiToken, App, BillingEvent, ConnectToken, Deploy, DeviceCode, Entitlement, Org, ScribaseBinding } from "./types.ts";
 
 type Fetch = typeof fetch;
 
@@ -153,5 +153,55 @@ export class PostgrestRepo implements Repo {
   async recordBridgeMessage(messageId: string) {
     const { status } = await this.req("POST", "bridge_messages", { message_id: messageId }, "return=minimal");
     return status !== 409;
+  }
+  async createAiKey(input: Omit<AiKey, "id" | "created_at" | "revoked_at">) {
+    const { rows } = await this.req<AiKey>("POST", "ai_keys", input, "return=representation");
+    if (!rows[0]) throw new Error("could not create the AI key");
+    return rows[0];
+  }
+  async findAiKeyByHash(hash: string) {
+    return this.one<AiKey>(`ai_keys?key_hash=eq.${encodeURIComponent(hash)}&revoked_at=is.null`);
+  }
+  async listAiKeys(orgId: string) {
+    return (await this.req<AiKey>("GET", `ai_keys?org_id=eq.${encodeURIComponent(orgId)}&order=created_at.asc`)).rows;
+  }
+  async revokeAiKey(orgId: string, keyId: string, at: string) {
+    await this.req("PATCH", `ai_keys?org_id=eq.${encodeURIComponent(orgId)}&id=eq.${encodeURIComponent(keyId)}&revoked_at=is.null`, { revoked_at: at }, "return=minimal");
+  }
+  async saveAiCredential(cred: Omit<AiCredential, "updated_at">) {
+    await this.req("POST", "ai_credentials?on_conflict=org_id,provider", { ...cred, updated_at: new Date().toISOString() }, "resolution=merge-duplicates,return=minimal");
+  }
+  async getAiCredential(orgId: string, provider: AiProvider) {
+    return this.one<AiCredential>(`ai_credentials?org_id=eq.${encodeURIComponent(orgId)}&provider=eq.${encodeURIComponent(provider)}`);
+  }
+  async listAiCredentials(orgId: string) {
+    return (await this.req<AiCredential>("GET", `ai_credentials?org_id=eq.${encodeURIComponent(orgId)}`)).rows;
+  }
+  async addAiUsage(keyId: string, day: string, tokens: number) {
+    await this.req("POST", "rpc/ai_add_usage", { p_key: keyId, p_day: day, p_tokens: Math.max(0, Math.floor(tokens)) });
+  }
+  async aiTokensSince(keyId: string, fromDay: string) {
+    const { rows } = await this.req<{ tokens: number }>("GET", `ai_usage?select=tokens&key_id=eq.${encodeURIComponent(keyId)}&day=gte.${encodeURIComponent(fromDay)}`);
+    return rows.reduce((sum, r) => sum + Number(r.tokens), 0);
+  }
+  async addAiTrace(trace: AiTrace) {
+    await this.req("POST", "ai_traces", trace, "return=minimal");
+  }
+  async listAiTraces(keyIds: string[], limit: number) {
+    if (keyIds.length === 0) return [];
+    const ids = keyIds.map((id) => encodeURIComponent(id)).join(",");
+    return (await this.req<AiTrace>("GET", `ai_traces?key_id=in.(${ids})&order=at.desc&limit=${Math.min(Math.max(1, limit), 200)}`)).rows;
+  }
+  async createConnectToken(token: ConnectToken) {
+    await this.req("POST", "connect_tokens", token, "return=minimal");
+  }
+  async consumeConnectToken(hash: string, at: string) {
+    const { rows } = await this.req<ConnectToken>(
+      "PATCH",
+      `connect_tokens?token_hash=eq.${encodeURIComponent(hash)}&used_at=is.null&expires_at=gt.${encodeURIComponent(at)}`,
+      { used_at: at },
+      "return=representation",
+    );
+    return rows[0] ?? null;
   }
 }

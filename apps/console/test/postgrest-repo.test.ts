@@ -48,3 +48,18 @@ test("Scribase bridge: a replayed bridge message (409) reads as a replay; bindin
   assert.equal(new Headers(calls[0].init.headers).get("prefer"), "resolution=ignore-duplicates,return=minimal");
   assert.equal(calls[1].url, "https://p/rest/v1/scribase_bindings?scribase_org_id=eq.org_a");
 });
+
+test("AI usage goes through the atomic rpc; traces list only the given keys", async () => {
+  const calls: { url: string; init: RequestInit }[] = [];
+  const fetchImpl = (async (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    return new Response("[]", { status: 200 });
+  }) as typeof fetch;
+  const repo = new PostgrestRepo({ url: "https://p", serviceRoleKey: "k", fetchImpl });
+  await repo.addAiUsage("k1", "2026-09-29", 12.7);
+  assert.equal(calls[0].url, "https://p/rest/v1/rpc/ai_add_usage");
+  assert.deepEqual(JSON.parse(String(calls[0].init.body)), { p_key: "k1", p_day: "2026-09-29", p_tokens: 12 });
+  assert.deepEqual(await repo.listAiTraces([], 10), []);
+  await repo.listAiTraces(["a", "b"], 500);
+  assert.equal(calls[1].url, "https://p/rest/v1/ai_traces?key_id=in.(a,b)&order=at.desc&limit=200");
+});

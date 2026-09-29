@@ -26,6 +26,7 @@ import { addApp, AppError, normaliseAppName } from "../../../../../lib/apps.ts";
 import { firstEvent, type InsightsClient } from "../../../../../lib/insights.ts";
 import { capMessage } from "../../../../../lib/caps.ts";
 import { registerSite, syncSites, type SitesStore } from "../../../../../lib/sites.ts";
+import { issueAiKey, issueConnectToken } from "../../../../../lib/ai/provision.ts";
 import type { Repo } from "../../../../../lib/repo.ts";
 import { verify, type WebhookHeaders } from "../../../../../lib/standard-webhooks.ts";
 import { createApprovedDevice } from "../../../../../lib/tokens.ts";
@@ -45,7 +46,7 @@ export type AddonSlot = (typeof ADDON_SLOTS)[number];
 export const BRIDGE_SLOTS = {
   deploy: { pkg: "PY1.2", landed: true, proof: "deploy" },
   analytics: { pkg: "PY1.3", landed: true, proof: "first_event" },
-  ai: { pkg: "PY1.4", landed: false, proof: "gateway_key" },
+  ai: { pkg: "PY1.4", landed: true, proof: "gateway_key" },
   flags: { pkg: "PY2.1", landed: false, proof: "flag_flip" },
   uptime: { pkg: "PY2.2", landed: false, proof: "check_result" },
   billing: { pkg: "PY2.3", landed: false, proof: "test_purchase" },
@@ -230,6 +231,12 @@ export async function slotProof(
       ? { slot, state: "live", live: true, proof: { kind: "deploy", id: last.id, at: last.created_at }, next: null }
       : { slot, state: "no_proof_yet", live: true, proof: null, next: "Deploy from the project folder to see the first deploy here." };
   }
+  if (slot === "ai") {
+    const creds = (await repo.listAiCredentials(orgId)).sort((a, b) => (a.updated_at < b.updated_at ? -1 : 1));
+    return creds[0]
+      ? { slot, state: "live", live: true, proof: { kind: "gateway_key", id: creds[0].provider, at: creds[0].updated_at }, next: null }
+      : { slot, state: "no_proof_yet", live: true, proof: null, next: "Connect your own AI provider on the connect page." };
+  }
   if (slot === "analytics") {
     if (!insights) return { slot, state: "no_proof_yet", live: true, proof: null, next: "Analytics is being set up on this deployment; events are counted meanwhile." };
     const first = firstEvent(await insights.summary(orgId));
@@ -319,7 +326,56 @@ async function insightsFor(deps: BridgeDeps, body: Record<string, unknown>): Pro
   };
 }
 
-export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights";
+/** The AI gateway for one project environment (PY1.4, BYOK only). The key goes to the Scribase control plane only. */
+async function aiFor(deps: BridgeDeps, body: Record<string, unknown>): Promise<BridgeResult> {
+  const scribaseOrgId = parseOrgRef(body);
+  if (!scribaseOrgId) return fail(400, "scribase_org_id is required");
+  const label = typeof body.project === "string" ? normaliseAppName(body.project) : "";
+  if (!label) return fail(400, "project is required");
+  const now = deps.now();
+  const who = await entitledOrg(deps.repo, scribaseOrgId, "ai", now);
+  if ("status" in who) return who;
+  const live = (await deps.repo.listAiKeys(who.orgId)).filter((k) => k.label === label && !k.revoked_at);
+  let key: string | null = null;
+  if (live.length === 0 || body.rotate === true) {
+    for (const k of live) await deps.repo.revokeAiKey(who.orgId, k.id, now.toISOString());
+    key = (await issueAiKey(deps.repo, who.orgId, label)).token;
+  }
+  const connect = await issueConnectToken(deps.repo, who.orgId, now);
+  const providers = (await deps.repo.listAiCredentials(who.orgId)).map((c) => ({ provider: c.provider, hint: c.key_hint }));
+  return {
+    status: 200,
+    body: { key, gateway_url: `${deps.consoleUrl}/api/v1/ai`, connect_url: `${deps.consoleUrl}/connect/ai?t=${connect}`, providers },
+  };
+}
+
+/** The AI tab: keys (no secrets), caps, today's and this month's tokens, recent calls (PY1.4). */
+async function aiUsageFor(deps: BridgeDeps, body: Record<string, unknown>): Promise<BridgeResult> {
+  const scribaseOrgId = parseOrgRef(body);
+  if (!scribaseOrgId) return fail(400, "scribase_org_id is required");
+  const label = typeof body.project === "string" ? normaliseAppName(body.project) : "";
+  const now = deps.now();
+  const who = await entitledOrg(deps.repo, scribaseOrgId, "ai", now);
+  if ("status" in who) return who;
+  const keys = (await deps.repo.listAiKeys(who.orgId)).filter((k) => !k.revoked_at && (!label || k.label === label));
+  const day = now.toISOString().slice(0, 10);
+  const month = `${now.toISOString().slice(0, 7)}-01`;
+  const rows = await Promise.all(
+    keys.map(async (k) => ({
+      id: k.id,
+      label: k.label,
+      daily_token_cap: k.daily_token_cap,
+      monthly_token_cap: k.monthly_token_cap,
+      tokens_today: await deps.repo.aiTokensSince(k.id, day),
+      tokens_month: await deps.repo.aiTokensSince(k.id, month),
+    })),
+  );
+  const traces = await deps.repo.listAiTraces(keys.map((k) => k.id), 50);
+  const providers = (await deps.repo.listAiCredentials(who.orgId)).map((c) => ({ provider: c.provider, hint: c.key_hint, updated_at: c.updated_at }));
+  return { status: 200, body: { keys: rows, providers, traces } };
+}
+
+export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights" | "ai" | "ai_usage";
 
 /** Verify, refuse replays, parse, dispatch. Framework-free so the routes stay three lines. */
 export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers: WebhookHeaders, raw: string): Promise<BridgeResult> {
@@ -349,5 +405,9 @@ export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers
       return siteFor(deps, b);
     case "insights":
       return insightsFor(deps, b);
+    case "ai":
+      return aiFor(deps, b);
+    case "ai_usage":
+      return aiUsageFor(deps, b);
   }
 }

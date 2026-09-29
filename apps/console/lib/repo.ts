@@ -2,7 +2,7 @@
 // this interface: `MemoryRepo` (tests and local dev without a database) and
 // `PostgrestRepo` (the console's Scribase project, schema `railyard`).
 
-import type { ApiToken, App, BillingEvent, Deploy, DeviceCode, Entitlement, Org, ScribaseBinding } from "./types.ts";
+import type { AiCredential, AiKey, AiProvider, AiTrace, ApiToken, App, BillingEvent, ConnectToken, Deploy, DeviceCode, Entitlement, Org, ScribaseBinding } from "./types.ts";
 
 export interface Repo {
   findOrgByUser(userId: string): Promise<Org | null>;
@@ -36,6 +36,23 @@ export interface Repo {
   bindScribaseOrg(scribaseOrgId: string, orgId: string): Promise<ScribaseBinding>;
   /** Records a bridge message id; false when it was seen before (a replay). */
   recordBridgeMessage(messageId: string): Promise<boolean>;
+  // AI gateway (Wave P PY1.4, migration 0003).
+  createAiKey(input: Omit<AiKey, "id" | "created_at" | "revoked_at">): Promise<AiKey>;
+  findAiKeyByHash(hash: string): Promise<AiKey | null>;
+  listAiKeys(orgId: string): Promise<AiKey[]>;
+  revokeAiKey(orgId: string, keyId: string, at: string): Promise<void>;
+  saveAiCredential(cred: Omit<AiCredential, "updated_at">): Promise<void>;
+  getAiCredential(orgId: string, provider: AiProvider): Promise<AiCredential | null>;
+  listAiCredentials(orgId: string): Promise<AiCredential[]>;
+  /** Adds tokens to the key's UTC day and counts one request (atomic). */
+  addAiUsage(keyId: string, day: string, tokens: number): Promise<void>;
+  /** Tokens used by the key from `fromDay` (inclusive) on. */
+  aiTokensSince(keyId: string, fromDay: string): Promise<number>;
+  addAiTrace(trace: AiTrace): Promise<void>;
+  listAiTraces(keyIds: string[], limit: number): Promise<AiTrace[]>;
+  createConnectToken(token: ConnectToken): Promise<void>;
+  /** Marks a live token used; returns it, or null when unknown, used or expired. */
+  consumeConnectToken(hash: string, at: string): Promise<ConnectToken | null>;
 }
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -50,6 +67,11 @@ export class MemoryRepo implements Repo {
   tokens: ApiToken[] = [];
   devices: DeviceCode[] = [];
   bindings: ScribaseBinding[] = [];
+  aiKeys: AiKey[] = [];
+  aiCredentials: AiCredential[] = [];
+  aiUsage: { key_id: string; day: string; tokens: number; requests: number }[] = [];
+  aiTraces: AiTrace[] = [];
+  connectTokens: ConnectToken[] = [];
   bridgeMessages: string[] = [];
   now: () => Date;
 
@@ -173,5 +195,53 @@ export class MemoryRepo implements Repo {
     if (this.bridgeMessages.includes(messageId)) return false;
     this.bridgeMessages = [...this.bridgeMessages, messageId];
     return true;
+  }
+  async createAiKey(input: Omit<AiKey, "id" | "created_at" | "revoked_at">) {
+    const k: AiKey = { ...clone(input), id: crypto.randomUUID(), created_at: this.now().toISOString(), revoked_at: null };
+    this.aiKeys = [...this.aiKeys, k];
+    return clone(k);
+  }
+  async findAiKeyByHash(hash: string) {
+    return clone(this.aiKeys.find((k) => k.key_hash === hash && !k.revoked_at) ?? null);
+  }
+  async listAiKeys(orgId: string) {
+    return clone(this.aiKeys.filter((k) => k.org_id === orgId));
+  }
+  async revokeAiKey(orgId: string, keyId: string, at: string) {
+    this.aiKeys = this.aiKeys.map((k) => (k.org_id === orgId && k.id === keyId && !k.revoked_at ? { ...k, revoked_at: at } : k));
+  }
+  async saveAiCredential(cred: Omit<AiCredential, "updated_at">) {
+    const row: AiCredential = { ...clone(cred), updated_at: this.now().toISOString() };
+    this.aiCredentials = [...this.aiCredentials.filter((c) => !(c.org_id === cred.org_id && c.provider === cred.provider)), row];
+  }
+  async getAiCredential(orgId: string, provider: AiProvider) {
+    return clone(this.aiCredentials.find((c) => c.org_id === orgId && c.provider === provider) ?? null);
+  }
+  async listAiCredentials(orgId: string) {
+    return clone(this.aiCredentials.filter((c) => c.org_id === orgId));
+  }
+  async addAiUsage(keyId: string, day: string, tokens: number) {
+    const cur = this.aiUsage.find((u) => u.key_id === keyId && u.day === day);
+    const next = { key_id: keyId, day, tokens: (cur?.tokens ?? 0) + Math.max(0, tokens), requests: (cur?.requests ?? 0) + 1 };
+    this.aiUsage = [...this.aiUsage.filter((u) => u !== cur), next];
+  }
+  async aiTokensSince(keyId: string, fromDay: string) {
+    return this.aiUsage.filter((u) => u.key_id === keyId && u.day >= fromDay).reduce((sum, u) => sum + u.tokens, 0);
+  }
+  async addAiTrace(trace: AiTrace) {
+    this.aiTraces = [...this.aiTraces, clone(trace)];
+  }
+  async listAiTraces(keyIds: string[], limit: number) {
+    return clone(this.aiTraces.filter((t) => keyIds.includes(t.key_id)).sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, limit));
+  }
+  async createConnectToken(token: ConnectToken) {
+    this.connectTokens = [...this.connectTokens, clone(token)];
+  }
+  async consumeConnectToken(hash: string, at: string) {
+    const t = this.connectTokens.find((x) => x.token_hash === hash && !x.used_at && x.expires_at > at);
+    if (!t) return null;
+    const used = { ...t, used_at: at };
+    this.connectTokens = this.connectTokens.map((x) => (x === t ? used : x));
+    return clone(used);
   }
 }

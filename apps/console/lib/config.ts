@@ -10,6 +10,8 @@ export const SECRET_ENV = [
   "RAILYARD_SESSION_SECRET",
   "RAILYARD_SCRIBASE_BRIDGE_SECRET",
   "INSIGHTS_API_TOKEN",
+  "RELAY_TENANT_KEY",
+  "RAILYARD_CREDENTIALS_KEY",
 ] as const;
 
 export const DODO_TEST_BASE = "https://test.dodopayments.com";
@@ -32,6 +34,8 @@ export interface Config {
   scribaseBridgeSecret: string | null;
   /** Insights tenant API (PY1.3); null keeps analytics proofs and pages off. */
   insightsApi: { url: string; token: string } | null;
+  /** The AI gateway (PY1.4): Relay's tenant key and the sealing key; null keeps the gateway off (503). */
+  aiGateway: { relayUrl: string; relayKey: string; credentialsKey: string } | null;
 }
 
 type Env = Record<string, string | undefined>;
@@ -69,6 +73,10 @@ export function readConfig(env: Env = process.env): Config {
     insightsApi:
       env.INSIGHTS_API_URL?.trim() && env.INSIGHTS_API_TOKEN?.trim()
         ? { url: env.INSIGHTS_API_URL.trim().replace(/\/$/, ""), token: env.INSIGHTS_API_TOKEN.trim() }
+        : null,
+    aiGateway:
+      env.RELAY_URL?.trim() && env.RELAY_TENANT_KEY?.trim() && env.RAILYARD_CREDENTIALS_KEY?.trim()
+        ? { relayUrl: env.RELAY_URL.trim(), relayKey: env.RELAY_TENANT_KEY.trim(), credentialsKey: env.RAILYARD_CREDENTIALS_KEY.trim() }
         : null,
   };
 }
