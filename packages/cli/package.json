@@ -1,0 +1,11 @@
+{
+  "name": "railyard",
+  "version": "0.1.0",
+  "description": "Deploy Next.js, Vite, Astro or static sites to your own Cloudflare account from one command, with branch previews and rollback.",
+  "type": "module",
+  "bin": { "railyard": "bin/railyard.mjs" },
+  "files": ["bin", "src", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "license": "UNLICENSED"
+}

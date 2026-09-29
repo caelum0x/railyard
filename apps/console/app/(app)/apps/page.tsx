@@ -7,7 +7,8 @@ import { access } from "../../../lib/ladder.ts";
 export default async function AppsPage() {
   const { repo, cfg } = deps();
   const s = (await currentSession())!;
-  const [apps, ent] = await Promise.all([repo.listApps(s.org), repo.getEntitlement(s.org)]);
+  const [apps, ent, deploys] = await Promise.all([repo.listApps(s.org), repo.getEntitlement(s.org), repo.listDeploys(s.org)]);
+  const names = new Map(apps.map((x) => [x.id, x.name]));
   const a = access(ent, new Date());
   return (
     <>
@@ -33,6 +34,21 @@ export default async function AppsPage() {
                 </li>
               );
             })}
+          </ul>
+        </section>
+      ) : null}
+      {deploys.length ? (
+        <section className="card">
+          <h2>Recent deploys</h2>
+          <ul className="list">
+            {deploys.slice(0, 20).map((d) => (
+              <li key={d.id}>
+                <span>
+                  <strong>{names.get(d.app_id)}</strong> <span className="muted">{d.branch}</span>
+                </span>
+                {d.status === "succeeded" ? <a href={d.url}>{d.url.replace(/^https:\/\//, "")}</a> : <span className="error">{d.status}</span>}
+              </li>
+            ))}
           </ul>
         </section>
       ) : null}
