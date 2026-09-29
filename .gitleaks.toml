@@ -1,0 +1,13 @@
+# gitleaks config for railyard (loaded automatically from the repo root).
+# Default rules plus one allowlist: the fake AWS key in the vendored copy
+# denylist is a "hit" example the copy lint must catch (Y-0, same entry as
+# infra-box/secrets/gitleaks.toml).
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "fake AWS key fixture in the vendored copy denylist (a 'hit' example the lint must catch)"
+condition = "AND"
+paths = ['''(^|/)copy-denylist\.json$''']
+regexTarget = "secret"
+regexes = ['''^AKIAABCDEFGHIJKLMNOP$''']

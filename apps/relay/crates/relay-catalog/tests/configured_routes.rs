@@ -163,3 +163,35 @@ async fn named_routes_bill_the_catalog_list_price_whichever_leg_serves() {
         );
     }
 }
+
+/// H10 (Wave D hand-off): a compatibility alias that runs on another model is
+/// priced at that model's cost times 1.25, never below cost. The cost is the
+/// list price of the route's FIRST leg (the leg that serves while its key is
+/// valid), taken from the built-in billing table.
+#[tokio::test]
+async fn groq_compat_aliases_sell_at_cost_times_1_25_never_below_cost() {
+    let config = config();
+    let catalog = deployed_catalog().await;
+    for route in ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"] {
+        let (provider, model) = legs(&config, route)[0].clone();
+        let leg_id = format!("{provider}/{model}");
+        let cost = relay_billing::BUILTIN_PRICES
+            .iter()
+            .find(|(id, _, _)| *id == leg_id)
+            .expect("first-leg cost in BUILTIN_PRICES");
+        let selector = format!("tensorzero::model_name::{route}");
+        let quote = catalog.quote(&selector, 1_000_000, 1_000_000).await.unwrap();
+        assert!(
+            quote.pricing.input_micro_usd_per_million >= cost.1
+                && quote.pricing.output_micro_usd_per_million >= cost.2,
+            "{route} sells below the cost of {leg_id}"
+        );
+    }
+    // The 8B alias runs GPT-OSS 20B on Groq ($0.075 / $0.30): cost x 1.25.
+    let quote = catalog
+        .quote("tensorzero::model_name::llama-3.1-8b-instant", 1_000_000, 1_000_000)
+        .await
+        .unwrap();
+    assert_eq!(quote.pricing.input_micro_usd_per_million, 75_000 * 5 / 4);
+    assert_eq!(quote.pricing.output_micro_usd_per_million, 300_000 * 5 / 4);
+}

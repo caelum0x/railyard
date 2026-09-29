@@ -1,0 +1,1962 @@
+{
+  "name": "copy-denylist",
+  "version": "2026-09-29.2",
+  "owner": "P-A3 (shared lane)",
+  "rulesDoc": "gtm/policy/CLAIMS-RULES.md",
+  "howToUse": "Vendor this file verbatim into each repo's copy-lint test. Matching semantics are defined in CLAIMS-RULES.md section 4. Do not edit the vendored copy; change the source here, bump version, and re-vendor.",
+  "products": [
+    "scribase",
+    "menivor",
+    "rally",
+    "railyard"
+  ],
+  "surfaces": {
+    "marketing": "Public web pages: landing, pricing, use-case, blog, changelog, OG/meta text, llms.txt.",
+    "app-ui": "Signed-in product UI text (console, dashboard, emails the product sends to its own users).",
+    "outbound": "Campaign JSON, cold email templates, launch posts, ad scripts, video voiceover scripts.",
+    "docs": "Public docs, CLI output, README shown on package registries.",
+    "api-public": "JSON returned by unauthenticated or customer-facing API endpoints (status, plans, launch).",
+    "legal": "Terms, privacy, DPA, subprocessors, security and licence pages."
+  },
+  "regexDialect": "Portable subset valid in JavaScript (new RegExp), Python re and Rust regex: no lookaround, no backreferences, no named groups, no \\p{} classes, no inline flags. Case-insensitivity comes from caseSensitive=false, never from the pattern. Word boundaries are written into each pattern with \\b; there is no implicit boundary.",
+  "defaults": {
+    "caseSensitive": false,
+    "severity": "error",
+    "sourceEscape": false
+  },
+  "rules": [
+    {
+      "id": "competitor-scribase",
+      "category": "competitor",
+      "products": [
+        "scribase"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:supabase|firebase|appwrite|nhost|pocketbase|planetscale|xata|aws amplify)\\b"
+      },
+      "exceptTokens": [
+        "@supabase/supabase-js",
+        "@supabase/ssr",
+        "@supabase/auth-helpers",
+        "supabase-js",
+        "supabase-py",
+        "supabase_flutter",
+        "supabase-swift",
+        "supabase-kt",
+        "works with supabase-js",
+        "works with the supabase client libraries",
+        "works with supabase client libraries",
+        "compatible with the supabase client libraries",
+        "compatible with supabase client libraries"
+      ],
+      "reason": "No competitor names in public copy. Client library package names are allowed because compatibility is a verifiable fact, and the install command must be exact. Owner exception 2026-09-28 (CLAIMS-RULES section 7): factual compatibility phrases that name the client libraries are allowed; the bare name in any other phrase still hits.",
+      "fix": "Say what the product does (\"Postgres with auth, storage, realtime and APIs\") or name the client library by its package name only.",
+      "examples": {
+        "hit": [
+          "A faster Supabase alternative",
+          "Migrate from Firebase in minutes"
+        ],
+        "miss": [
+          "npm i @supabase/supabase-js",
+          "Works with your existing supabase-js code",
+          "Works with the Supabase client libraries"
+        ]
+      }
+    },
+    {
+      "id": "competitor-scribase-case",
+      "category": "competitor",
+      "products": [
+        "scribase"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:Neon|Convex)\\b",
+        "caseSensitive": true
+      },
+      "reason": "Competitor names that are also ordinary English words; matched case-sensitively to avoid false hits on \"neon\" or \"convex\" as adjectives. Owner exception 2026-09-28 (CLAIMS-RULES section 7): the factual phrases \"runs on Neon\" and \"works with Neon\" are allowed; the name in any other phrase still hits.",
+      "fix": "Remove the name. Describe the capability instead.",
+      "examples": {
+        "hit": [
+          "Cheaper than Neon",
+          "Like Convex, but Postgres",
+          "Runs on Neon, unlike Convex"
+        ],
+        "miss": [
+          "a neon accent colour",
+          "a convex hull",
+          "Runs on Neon or on our Postgres"
+        ]
+      },
+      "exceptTokens": [
+        "runs on neon",
+        "run on neon",
+        "running on neon",
+        "works with neon"
+      ]
+    },
+    {
+      "id": "scribase-compat-no-partnership",
+      "category": "competitor",
+      "products": [
+        "scribase"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:partner(?:ed|s|ship)? (?:of|with)|in partnership with|endorsed by|certified by|approved by|backed by|sponsored by|official) (?:the )?(?:supabase|neon)\\b|\\b(?:supabase|neon)[ -](?:partner|partners|partnership|certified|approved|endorsed|official|verified)\\b"
+      },
+      "reason": "Owner exception 2026-09-28 (CLAIMS-RULES section 7) allows factual compatibility statements only. Wording that implies a partnership, endorsement or certification by Supabase or Neon is not allowed, because none exists.",
+      "fix": "Keep the factual phrase only: \"works with supabase-js\" or \"runs on Neon\".",
+      "examples": {
+        "hit": [
+          "An official Neon partner",
+          "Supabase-certified backend",
+          "Built in partnership with Neon"
+        ],
+        "miss": [
+          "Works with supabase-js",
+          "Runs on Neon or on our Postgres",
+          "Partner with us"
+        ]
+      }
+    },
+    {
+      "id": "scribase-compat-no-comparison",
+      "category": "competitor",
+      "products": [
+        "scribase"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:than|vs\\.?|versus|alternative to|replacement for|instead of|unlike|compared (?:to|with)|switch from|migrate from|move from) (?:the )?(?:supabase|neon)\\b"
+      },
+      "reason": "Owner exception 2026-09-28 (CLAIMS-RULES section 7) allows compatibility statements, not comparisons. This rule also catches comparisons that mention a client library package name, which the competitor rule's except tokens would otherwise excuse.",
+      "fix": "State the compatibility fact without a comparison, or describe what Scribase does.",
+      "examples": {
+        "hit": [
+          "Faster than supabase-js alone",
+          "A drop-in replacement for Neon",
+          "Migrate from Supabase today"
+        ],
+        "miss": [
+          "Works with supabase-js",
+          "Runs on Neon or on our Postgres",
+          "Faster branch creation, measured per run"
+        ]
+      }
+    },
+    {
+      "id": "competitor-menivor",
+      "category": "competitor",
+      "products": [
+        "menivor"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:heygen|arcads|creatify|synthesia|captions\\.ai|invideo|opus ?clip|pictory|veed|capcut|makeugc|hedra|d-id|tavus|muvi|uscreen)\\b"
+      },
+      "reason": "No competitor names in public copy.",
+      "fix": "Describe the result the customer gets instead of comparing to a named product.",
+      "examples": {
+        "hit": [
+          "The HeyGen alternative for product demos",
+          "Better than Arcads",
+          "Export to CapCut",
+          "Like Muvi, but for creators"
+        ],
+        "miss": [
+          "Auto captions on every reel",
+          "Clip your best moments"
+        ]
+      }
+    },
+    {
+      "id": "competitor-rally",
+      "category": "competitor",
+      "products": [
+        "rally"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:explee|apollo\\.io|clay\\.com|instantly\\.ai|lemlist|smartlead|reply\\.io|outreach\\.io|salesloft|zoominfo|hunter\\.io|lusha|seamless\\.ai|woodpecker\\.co)\\b"
+      },
+      "reason": "No competitor names or competitor phrasing in public copy.",
+      "fix": "Remove the name. Use Rally's own positioning sentence (PLAN-rally section 1).",
+      "examples": {
+        "hit": [
+          "An Explee alternative",
+          "Cheaper than ZoomInfo",
+          "Import from lemlist"
+        ],
+        "miss": [
+          "Send from your own inbox",
+          "Instantly see who replied"
+        ]
+      }
+    },
+    {
+      "id": "competitor-rally-case",
+      "category": "competitor",
+      "products": [
+        "rally"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:Apollo|Clay)\\b",
+        "caseSensitive": true
+      },
+      "reason": "Competitor brand names that are also common words; matched case-sensitively. Other brands that are ordinary words (Instantly, Outreach) are caught only in their domain form by competitor-rally, to avoid false hits on everyday copy.",
+      "fix": "Remove the brand, or rephrase so the ordinary word is not capitalised.",
+      "examples": {
+        "hit": [
+          "Built for teams leaving Apollo",
+          "Better data than Clay"
+        ],
+        "miss": [
+          "cold outreach that gets replies",
+          "Instantly see who replied",
+          "modelling clay"
+        ]
+      }
+    },
+    {
+      "id": "vendor-names",
+      "category": "vendor",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:elevenlabs|comfyui|reelforge|openai|chatgpt|gpt-4o?|gpt-5|anthropic|groq|openrouter|gemini|kokoro|edge-tts|yt-dlp|contabo|hetzner|creem)\\b"
+      },
+      "reason": "No vendor or model names in public copy: they date the product, invite comparison and can breach vendor brand terms.",
+      "fix": "Describe the capability (\"natural voice\", \"AI draft\") without the supplier.",
+      "examples": {
+        "hit": [
+          "Voices by ElevenLabs",
+          "Powered by OpenAI",
+          "Rendered with ComfyUI"
+        ],
+        "miss": [
+          "Natural voiceover",
+          "AI-written first email"
+        ]
+      }
+    },
+    {
+      "id": "vendor-infra",
+      "category": "vendor",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:oracle cloud|oci|dodo ?payments|dodo|cloudflare r2|r2)\\b"
+      },
+      "allowPaths": [
+        "**/legal/**",
+        "**/subprocessors/**",
+        "**/privacy/**",
+        "**/terms/**",
+        "**/pricing/**",
+        "**/billing/**",
+        "**/checkout/**",
+        "**/plans*",
+        "**/llms*.txt"
+      ],
+      "reason": "Infrastructure and payment suppliers are named only where the law or the payment flow needs them: the subprocessor list, privacy, terms, and the pricing or billing line that says who charges the card.",
+      "fix": "Move the name to the subprocessors page, or keep it only on the pricing or billing line.",
+      "examples": {
+        "hit": [
+          "Hosted on Oracle Cloud",
+          "Your files live in R2"
+        ],
+        "miss": [
+          "Hosted in Frankfurt",
+          "Files stored in the EU",
+          "Region: oci-eu-frankfurt-1"
+        ]
+      },
+      "exceptTokens": [
+        "oci-eu-"
+      ]
+    },
+    {
+      "id": "internal-names",
+      "category": "internal",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:railyard|pg-cow|postgres-cow|vcglass|videogen|otsone|unlock_env|infra-box|box ?1|box ?2)\\b"
+      },
+      "reason": "Internal codenames, repo names and host names are not product copy and leak architecture.",
+      "fix": "Use the product name or a plain description.",
+      "examples": {
+        "hit": [
+          "Served by Railyard",
+          "{\"unlock_env\": \"PRESENTER\"}",
+          "running on box 1"
+        ],
+        "miss": [
+          "Rally",
+          "Menivor",
+          "Scribase"
+        ]
+      }
+    },
+    {
+      "id": "env-var-names",
+      "category": "secret-surface",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "api-public"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b[A-Z][A-Z0-9]*_(?:API_KEY|SECRET|SECRET_KEY|TOKEN|ACCESS_KEY|PASSWORD|PRIVATE_KEY|DSN|WEBHOOK_SECRET)\\b",
+        "caseSensitive": true
+      },
+      "reason": "Users never see or paste keys. Environment variable names in UI or public API output mean a setup step leaked to the customer.",
+      "fix": "Replace with a one-click connect action, or move the detail to staff-only output. Docs may show the variables the CLI writes for the user (docs surface is excluded). A developer console page that shows the customer's own project keys (Scribase) is exempt via allowPaths.",
+      "examples": {
+        "hit": [
+          "Set ELEVENLABS_API_KEY to enable voices",
+          "{\"missing\": \"OPENAI_API_KEY\"}"
+        ],
+        "miss": [
+          "Connect your inbox",
+          "API keys are created for you"
+        ]
+      },
+      "allowPaths": [
+        "**/settings/api*/**",
+        "**/api-keys/**"
+      ]
+    },
+    {
+      "id": "secret-literals",
+      "category": "secret-surface",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public",
+        "legal"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:sk_live_[A-Za-z0-9]{8,}|sk-[A-Za-z0-9_-]{20,}|sk-ant-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|xox[bp]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})",
+        "caseSensitive": true
+      },
+      "reason": "A live secret in any public surface must fail the build.",
+      "fix": "Remove it and rotate the secret the same day. Do not print it in the test output (report only the rule id and location).",
+      "examples": {
+        "hit": [
+          "token: ghp_aaaaaaaaaaaaaaaaaaaaaaaa",
+          "AKIAABCDEFGHIJKLMNOP"
+        ],
+        "miss": [
+          "sk-short",
+          "your key is created for you"
+        ]
+      }
+    },
+    {
+      "id": "paste-your-key",
+      "category": "secret-surface",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:paste|enter|add|provide|bring) your (?:own )?(?:api[ -]?key|secret|token|smtp password|app password)\\b"
+      },
+      "reason": "Integrations are one-click connect. The product never asks users to paste keys.",
+      "fix": "Replace with a Connect button (OAuth or device login).",
+      "examples": {
+        "hit": [
+          "Paste your API key below",
+          "Bring your own API key"
+        ],
+        "miss": [
+          "Connect Gmail",
+          "Sign in with GitHub"
+        ]
+      }
+    },
+    {
+      "id": "guarantee",
+      "category": "unbacked-promise",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:guarantee[ds]?|guaranteeing|risk[- ]free|money[- ]back)\\b"
+      },
+      "allowPaths": [
+        "**/legal/**",
+        "**/terms/**",
+        "**/refund*/**"
+      ],
+      "reason": "We do not offer guarantees. The refund policy lives on the terms page in its exact legal wording.",
+      "fix": "State what happens instead (\"you are not charged for sends that never happened\"), with a link to the terms.",
+      "examples": {
+        "hit": [
+          "Guaranteed replies",
+          "Risk-free trial",
+          "Money back if it fails"
+        ],
+        "miss": [
+          "Cancel any time from Settings"
+        ]
+      }
+    },
+    {
+      "id": "time-promise-24h",
+      "category": "unbacked-promise",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "(?:\\b24 ?(?:h|hrs?|hours?)\\b|\\b24/7\\b|\\bovernight\\b)"
+      },
+      "allowPaths": [
+        "**/legal/**",
+        "**/security/**",
+        "**/status/**"
+      ],
+      "reason": "\"Results in 24 hours\" and round-the-clock claims are not measured. They may return only as a measured value with a copy-source marker (Rally: after managed sending is live and measured). The Scribase security page's honest recovery point (\"up to 24 h\") is allowed there.",
+      "fix": "Show the measured time for this run, or remove the promise.",
+      "examples": {
+        "hit": [
+          "1-3 hot leads in 24h",
+          "Support 24/7",
+          "Results overnight"
+        ],
+        "miss": [
+          "Backups run nightly",
+          "Live in 3.2 s (this run)"
+        ]
+      },
+      "sourceEscape": true
+    },
+    {
+      "id": "start-free",
+      "category": "vague-cta",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:start (?:for )?free|get started free|free forever)\\b"
+      },
+      "reason": "Signup and payment are part of the flow; \"Start free\" hides that. One obvious action per screen, named by what it does.",
+      "fix": "Name the action: \"Get a backend\", \"Make my first video\", \"Find my first customers\". For the no-account CLI path: \"Try it free, no account\".",
+      "examples": {
+        "hit": [
+          "Start free",
+          "Start for free",
+          "Free forever"
+        ],
+        "miss": [
+          "Try it free, no account",
+          "Get a backend"
+        ]
+      }
+    },
+    {
+      "id": "superlatives",
+      "category": "unbacked-promise",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "(?:\\b(?:world'?s (?:first|best|fastest|leading)|number one|best-in-class|industry[- ]leading|trusted by|loved by|as seen (?:on|in)|join (?:thousands|millions|hundreds))\\b|#1\\b)"
+      },
+      "reason": "Superlatives and social proof need a live source we do not have.",
+      "fix": "Remove, or replace with a live count that names its source (sourceEscape rules).",
+      "examples": {
+        "hit": [
+          "The world's fastest backend",
+          "Trusted by growth teams",
+          "Join thousands of founders",
+          "The #1 AI video tool"
+        ],
+        "miss": [
+          "Built for small teams"
+        ]
+      }
+    },
+    {
+      "id": "vague-scale",
+      "category": "unmeasured-number",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:thousands|millions|billions|hundreds) of (?:[a-z-]+ )?(?:users|customers|teams|companies|businesses|developers|creators|brands|leads|contacts|people|videos|founders)\\b"
+      },
+      "reason": "Vague scale claims are numbers without a source.",
+      "fix": "Use a live count rendered from the database with a copy-source marker, or remove.",
+      "examples": {
+        "hit": [
+          "Millions of verified contacts",
+          "Used by thousands of creators"
+        ],
+        "miss": [
+          "Find companies that buy what you sell"
+        ]
+      }
+    },
+    {
+      "id": "number-count-claim",
+      "category": "unmeasured-number",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound"
+      ],
+      "sourceEscape": true,
+      "match": {
+        "type": "regex",
+        "value": "\\b\\d[\\d,.]*\\s?(?:k|m|b|million|billion|thousand)?\\+?\\s+(?:users|customers|teams|companies|businesses|developers|creators|brands|leads|contacts|people|investors|startups|videos|reels|projects|emails|signups|downloads|installs|entities|places)\\b"
+      },
+      "reason": "Every public number names a live source (CLAIMS-RULES rule 1). Literal counts in copy go stale the day they ship. Plan prices and caps on pricing and billing surfaces are exempt here because each repo's plan drift check (S0.1, M0.1, R0.1) proves they come from the plan config.",
+      "fix": "Render the number from the live source at request time and add a copy-source marker naming it (CLAIMS-RULES section 4.4).",
+      "examples": {
+        "hit": [
+          "142K investors",
+          "10,000+ users",
+          "3 million companies"
+        ],
+        "miss": [
+          "up to 25 projects copy-source: config/plans.json",
+          "Find companies that buy what you sell"
+        ]
+      },
+      "allowPaths": [
+        "**/pricing/**",
+        "**/billing/**",
+        "**/plans*"
+      ]
+    },
+    {
+      "id": "number-abbrev",
+      "category": "unmeasured-number",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound",
+        "app-ui"
+      ],
+      "sourceEscape": true,
+      "match": {
+        "type": "regex",
+        "value": "\\b\\d+(?:\\.\\d+)?\\s?[KMB]\\+?(?:\\s|$|[.,;:)])",
+        "caseSensitive": true
+      },
+      "exceptTokens": [
+        "4K",
+        "8K",
+        "2K"
+      ],
+      "reason": "Abbreviated counts (43K, 150M) are the most common fake-number shape. Plan prices and caps on pricing and billing surfaces are exempt here because each repo's plan drift check (S0.1, M0.1, R0.1) proves they come from the plan config.",
+      "fix": "Render from the live source with a copy-source marker, or remove.",
+      "examples": {
+        "hit": [
+          "43K startups",
+          "150M entities",
+          "37K+ funds."
+        ],
+        "miss": [
+          "Export in 4K",
+          "500 MB upload limit",
+          "8 GB RAM"
+        ]
+      },
+      "allowPaths": [
+        "**/pricing/**",
+        "**/billing/**",
+        "**/plans*"
+      ]
+    },
+    {
+      "id": "number-percent-claim",
+      "category": "unmeasured-number",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound"
+      ],
+      "sourceEscape": true,
+      "match": {
+        "type": "regex",
+        "value": "\\b\\d+(?:\\.\\d+)?\\s?%"
+      },
+      "allowPaths": [
+        "**/legal/**",
+        "**/terms/**",
+        "**/affiliate*/**",
+        "**/pricing/**",
+        "**/billing/**",
+        "**/plans*"
+      ],
+      "reason": "Percentages read as outcomes (inbox rate, reply rate, uptime). Each needs a measured, named source. Plan prices and caps on pricing and billing surfaces are exempt here because each repo's plan drift check (S0.1, M0.1, R0.1) proves they come from the plan config.",
+      "fix": "Show the measured value with a copy-source marker, or remove. Commercial terms (an affiliate share) belong on the terms page.",
+      "examples": {
+        "hit": [
+          "97% inbox placement",
+          "99.9% uptime",
+          "Reply rates up 40 %"
+        ],
+        "miss": [
+          "Replies land where you already read mail"
+        ]
+      }
+    },
+    {
+      "id": "number-multiplier-claim",
+      "category": "unmeasured-number",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound"
+      ],
+      "sourceEscape": true,
+      "match": {
+        "type": "regex",
+        "value": "\\b\\d+(?:\\.\\d+)?\\s?x\\s+(?:faster|cheaper|more|better|higher|lower|less|quicker)\\b"
+      },
+      "reason": "Multiplier claims need a published benchmark. Plan prices and caps on pricing and billing surfaces are exempt here because each repo's plan drift check (S0.1, M0.1, R0.1) proves they come from the plan config.",
+      "fix": "Link the benchmark with a copy-source marker, or remove.",
+      "examples": {
+        "hit": [
+          "10x faster than hosted Postgres",
+          "3x more replies"
+        ],
+        "miss": [
+          "Faster first email"
+        ]
+      },
+      "allowPaths": [
+        "**/pricing/**",
+        "**/billing/**",
+        "**/plans*"
+      ]
+    },
+    {
+      "id": "number-time-claim",
+      "category": "unmeasured-number",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound"
+      ],
+      "sourceEscape": true,
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:in|within|under|less than)\\s+\\d+(?:\\.\\d+)?\\s?(?:s|secs?|seconds?|mins?|minutes?|h|hrs?|hours?|days?)\\b"
+      },
+      "reason": "Speed promises must be the measured value for this run or a published measurement. Plan prices and caps on pricing and billing surfaces are exempt here because each repo's plan drift check (S0.1, M0.1, R0.1) proves they come from the plan config.",
+      "fix": "Render the measured time (\"Live in N s\" computed per run) or add a copy-source marker naming the measurement.",
+      "examples": {
+        "hit": [
+          "A backend in 30 seconds",
+          "Your video within 5 minutes"
+        ],
+        "miss": [
+          "A backend from one command"
+        ]
+      },
+      "allowPaths": [
+        "**/pricing/**",
+        "**/billing/**",
+        "**/plans*"
+      ]
+    },
+    {
+      "id": "testimonial-markers",
+      "category": "fake-proof",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound"
+      ],
+      "sourceEscape": true,
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:testimonials?|what (?:our )?customers say|case stud(?:y|ies)|reviews? from)\\b"
+      },
+      "reason": "Testimonials and case studies must be real, attributable and consented. Each one carries a copy-source marker pointing at the signed consent or the live account record.",
+      "fix": "Add the copy-source marker, or remove the section.",
+      "examples": {
+        "hit": [
+          "What our customers say",
+          "Testimonials"
+        ],
+        "miss": [
+          "See a real run"
+        ]
+      }
+    },
+    {
+      "id": "emoji",
+      "category": "emoji",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "match": {
+        "type": "codepoints",
+        "ranges": [
+          [
+            "2600",
+            "26FF"
+          ],
+          [
+            "2700",
+            "27BF"
+          ],
+          [
+            "2B00",
+            "2BFF"
+          ],
+          [
+            "1F000",
+            "1F2FF"
+          ],
+          [
+            "1F300",
+            "1FAFF"
+          ],
+          [
+            "FE0F",
+            "FE0F"
+          ]
+        ]
+      },
+      "reason": "No emoji anywhere in product surfaces. Use the design system's icon set.",
+      "fix": "Replace the glyph with an icon component (lucide / expo vector icons) or plain text.",
+      "examples": {
+        "hit": [
+          "Launch \ud83d\ude80",
+          "Done \u2705",
+          "Hot \ud83d\udd25 leads"
+        ],
+        "miss": [
+          "Launch",
+          "Price \u00a9 2026 \u2192 next"
+        ]
+      }
+    },
+    {
+      "id": "rally-unlaunched-sending",
+      "category": "unlaunched-feature",
+      "products": [
+        "rally"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound"
+      ],
+      "unlessFlags": [
+        "MANAGED_SENDING_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:no email (?:setup|infra(?:structure)?)|inbox that lands|only pay when it works|no sdrs|we send for you|managed (?:sending|pool|domains?)|warmed[- ]up domains?)\\b"
+      },
+      "reason": "Managed sending is not live (Rally Phase 3). These claims return only when the flag is on and measured.",
+      "fix": "Say \"sends from your own inbox\".",
+      "examples": {
+        "hit": [
+          "No email setup",
+          "An inbox that lands",
+          "Only pay when it works"
+        ],
+        "miss": [
+          "Sends from your own inbox"
+        ]
+      }
+    },
+    {
+      "id": "menivor-presenter-locked",
+      "category": "unlaunched-feature",
+      "products": [
+        "menivor"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound"
+      ],
+      "unlessFlags": [
+        "PRESENTER_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:presenters?|lip[- ]?sync(?:ed)?|talking avatars?|ai avatars?|digital twins?|ugc avatars?|green ?screen)\\b"
+      },
+      "reason": "The presenter capability is locked. Copy must not promise it.",
+      "fix": "Describe what renders today (product demos, voiceover, captions).",
+      "examples": {
+        "hit": [
+          "Pick a presenter",
+          "Perfect lip-sync",
+          "AI avatars for your brand"
+        ],
+        "miss": [
+          "Voiceover and captions on every reel"
+        ]
+      }
+    },
+    {
+      "id": "menivor-stale-waitlist",
+      "category": "stale",
+      "products": [
+        "menivor"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:join the waitlist|waitlist|coming soon|early access)\\b"
+      },
+      "reason": "Menivor is public. Waitlist copy is stale.",
+      "fix": "Replace with the single primary action.",
+      "examples": {
+        "hit": [
+          "Join the waitlist",
+          "Coming soon"
+        ],
+        "miss": [
+          "Make my first video"
+        ]
+      }
+    },
+    {
+      "id": "scribase-licence-selfhost",
+      "category": "unlaunched-feature",
+      "products": [
+        "scribase"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs"
+      ],
+      "unlessFlags": [
+        "SCRIBASE_OSS_LIVE"
+      ],
+      "allowPaths": [
+        "**/NOTICE*",
+        "**/LICENSE*",
+        "**/licen[cs]e/**"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:apache(?:-2\\.0| 2\\.0| license)?|self[- ]?host(?:ed|ing)?|open[- ]source)\\b"
+      },
+      "reason": "The open-source and self-host claims come back only after S4.4 and owner decision MD11.",
+      "fix": "Remove the claim. The licence NOTICE is exempt.",
+      "examples": {
+        "hit": [
+          "Apache-2.0 licensed",
+          "Self-host it anywhere",
+          "Fully open source"
+        ],
+        "miss": [
+          "Your data, exportable with pg_dump"
+        ]
+      }
+    },
+    {
+      "id": "scribase-region-choice",
+      "category": "unlaunched-feature",
+      "products": [
+        "scribase"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "docs",
+        "legal"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:select|choose|pick) (?:a|your) region\\b"
+      },
+      "reason": "There is one region. The DPA and UI must not offer a choice we do not have.",
+      "fix": "State the true region label.",
+      "examples": {
+        "hit": [
+          "Choose your region at signup",
+          "select a region"
+        ],
+        "miss": [
+          "Hosted in Frankfurt (oci-eu-frankfurt-1)"
+        ]
+      }
+    },
+    {
+      "id": "scribase-unlimited",
+      "category": "unlaunched-feature",
+      "products": [
+        "scribase"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\bunlimited\\b"
+      },
+      "reason": "Unlimited is not self-serve (S0.4). Nothing may sell or nudge towards it.",
+      "fix": "Remove, or point to support email for a quote.",
+      "examples": {
+        "hit": [
+          "Upgrade to Unlimited",
+          "unlimited projects"
+        ],
+        "miss": [
+          "up to 25 projects"
+        ]
+      }
+    },
+    {
+      "id": "unlimited-generic",
+      "category": "unbacked-promise",
+      "severity": "warn",
+      "products": [
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\bunlimited\\b"
+      },
+      "reason": "Every plan has a cap. \"Unlimited\" is only acceptable if the plan truly has no cap and the fair-use term is on the pricing page.",
+      "fix": "Show the actual cap from the plan config.",
+      "examples": {
+        "hit": [
+          "Unlimited videos"
+        ],
+        "miss": [
+          "30 videos a month"
+        ]
+      }
+    },
+    {
+      "id": "indie-audience",
+      "category": "audience-wording",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\bindie(?:hackers?|s)?\\b"
+      },
+      "exceptTokens": [
+        "indie hackers",
+        "indiehackers.com",
+        "indie.vc"
+      ],
+      "reason": "Owner rule 2026-09-28 (CLAIMS-RULES rule 12): never label the audience \"indie\" (indie developers, indie founders, indie hackers, indie SaaS, #indiehacker). It reads as a bad signal. The site name Indie Hackers (indiehackers.com) is allowed only where it names that site.",
+      "fix": "Name the audience: founders, early-stage founders, small teams, app studios or mobile app developers (\"solo builders\" only if nothing else fits).",
+      "examples": {
+        "hit": [
+          "Built for indie founders",
+          "A backend for indie mobile developers",
+          "Indie SaaS at $1-5K MRR",
+          "#indiehacker #buildinpublic"
+        ],
+        "miss": [
+          "Built for early-stage founders",
+          "Post it on Indie Hackers",
+          "https://www.indiehackers.com/products",
+          "IndieBio and Indiegogo",
+          "indien beschikbaar"
+        ]
+      }
+    },
+    {
+      "id": "menivor-ott-drm",
+      "category": "unlaunched-feature",
+      "products": [
+        "menivor"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "OTT_DRM_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:multi-drm|drm(?:-protected| protected| protection)?|digital rights management|widevine|fairplay|playready)\\b"
+      },
+      "reason": "Menivor has no real DRM (MV0, ADR-0003; owner decision OD-MV6). Tier 1 protection is authenticated HLS keys, which is not DRM. The words come back only for channels where OTT_DRM_LIVE is on (MV20).",
+      "fix": "Say \"protected streaming\", and only where tier 1 protection is on for that channel.",
+      "examples": {
+        "hit": [
+          "DRM-protected streaming for every title",
+          "Widevine and FairPlay out of the box",
+          "Studio-grade digital rights management"
+        ],
+        "miss": [
+          "Protected streaming with signed playback links",
+          "Only signed-in viewers can play your videos"
+        ]
+      }
+    },
+    {
+      "id": "menivor-ott-live",
+      "category": "unlaunched-feature",
+      "products": [
+        "menivor"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "OTT_LIVE_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:live ?stream(?:s|ed|ing)?|live broadcasts?|live events?|live channels?|live tv|(?:stream|broadcast) live)\\b"
+      },
+      "reason": "Live streaming is not built (MV10, Wave F, owner decision OD-MV5). The copy comes back when OTT_LIVE_LIVE is on in production.",
+      "fix": "Describe on-demand video only. \"Goes live\" in the sense of a post being published is fine.",
+      "examples": {
+        "hit": [
+          "Livestream to your audience",
+          "Run live events on your channel",
+          "Broadcast live to every device"
+        ],
+        "miss": [
+          "Views fill in after the post goes live",
+          "Publish on-demand videos to your channel"
+        ]
+      }
+    },
+    {
+      "id": "menivor-ott-comparison",
+      "category": "competitor",
+      "products": [
+        "menivor"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:netflix(?:[- ](?:style|like|for|of))?|your own netflix)\\b"
+      },
+      "reason": "\"Netflix-style\" and \"your own Netflix\" borrow another company's brand and imply a scale and a catalogue we do not have (MV0 hand-off). No flag brings them back.",
+      "fix": "Name what the creator gets: \"your own video channel with a web player and apps\".",
+      "examples": {
+        "hit": [
+          "Launch your own Netflix",
+          "A Netflix-style storefront",
+          "The Netflix for creators"
+        ],
+        "miss": [
+          "Your own video channel with a web player",
+          "A storefront for your videos"
+        ]
+      }
+    },
+    {
+      "id": "rally-cooldown-claim",
+      "category": "unlaunched-feature",
+      "products": [
+        "rally"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "RALLY_COOLDOWN_PROOF_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:cross[- ](?:customer|account) (?:cooldown|protection|fatigue(?: protection)?)|(?:contact|prospect|lead|recipient) (?:cooldown|fatigue protection)|fatigue protection|never (?:emailed|contacted|pitched) by (?:two|another|other|multiple) (?:[a-z]+ )?(?:senders|customers|accounts|teams)|(?:emailed|contacted) (?:only )?once (?:every|per|in) \\d+ days)\\b"
+      },
+      "reason": "The cross-customer cooldown exists in the ledger policy, but the send-path proof test (RP-D0, RU0.2) has not passed on every send path. The claim stays out until RALLY_COOLDOWN_PROOF_LIVE is set, and that flag is set only after the RP-D0 test is green on the deployed commit.",
+      "fix": "Remove the claim until the flag is on. Describe what the customer controls instead: \"stops on reply\", \"sends inside each lead's local hours\".",
+      "examples": {
+        "hit": [
+          "Cross-customer cooldown keeps your leads fresh",
+          "Built-in fatigue protection",
+          "Prospects are never emailed by two Rally customers",
+          "Each contact is emailed once every 45 days at most"
+        ],
+        "miss": [
+          "Sequences stop on reply",
+          "Sends inside each lead's local hours"
+        ]
+      }
+    },
+    {
+      "id": "rally-warmup-placement",
+      "category": "unlaunched-feature",
+      "products": [
+        "rally"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "MANAGED_SENDING_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:warm[- ]?up (?:network|pool)|inbox placement (?:rates?|tests?|scores?|reports?)|placement (?:rates?|tests?|scores?))\\b"
+      },
+      "reason": "The warm-up network and inbox-placement testing are not live (RP-E1, R3.3 placement). Public copy waits for MANAGED_SENDING_LIVE and a measured, live number. \"Pre-warmed\" is not caught here: the optional provider mailbox add-on is shown only when a provider is configured (app/gtm/_data/pricing-content.ts), and the Rally own pool (R3.1) is covered by rally-unlaunched-sending.",
+      "fix": "Say \"sends from your own inbox\". Show a placement number only from a live metrics table with a copy-source marker.",
+      "examples": {
+        "hit": [
+          "Join our warm-up network",
+          "98 inbox placement rate",
+          "Free placement tests on every campaign"
+        ],
+        "miss": [
+          "Sends from your own inbox",
+          "Each mailbox warms up gradually and has a daily cap",
+          "Rally pauses a sender if too many emails bounce"
+        ]
+      }
+    },
+    {
+      "id": "scribase-slot-passkeys",
+      "category": "unlaunched-feature",
+      "products": [
+        "scribase"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "SCRIBASE_CAP_PASSKEYS_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:passkeys?|webauthn|passwordless (?:biometric|face id|touch id))\\b"
+      },
+      "reason": "Passkey sign-in for tenant apps is a Scribase capability slot that is not Live yet (SP-D2). A slot is Live only when its capability record (config/capabilities/<slot>.json, SP-D1) names a passing compat test id; SP-D1's loader then exports SCRIBASE_CAP_PASSKEYS_LIVE=1 for the site build and the lints.",
+      "fix": "Remove the claim, or list the slot under \"Arriving\" through the generated Live/Arriving list (SP-D1) with no promised date.",
+      "examples": {
+        "hit": [
+          "Passkeys for every app",
+          "WebAuthn sign-in built in"
+        ],
+        "miss": [
+          "Email and password sign-in",
+          "Magic links on every project"
+        ]
+      }
+    },
+    {
+      "id": "scribase-slot-mfa",
+      "category": "unlaunched-feature",
+      "products": [
+        "scribase"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "SCRIBASE_CAP_MFA_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:mfa|multi[- ]factor|two[- ]factor|2fa|totp|authenticator app)\\b"
+      },
+      "reason": "Multi-factor sign-in for tenant apps is a Scribase capability slot that is not Live yet (SP-D2). A slot is Live only when its capability record (config/capabilities/<slot>.json, SP-D1) names a passing compat test id; SP-D1's loader then exports SCRIBASE_CAP_MFA_LIVE=1 for the site build and the lints.",
+      "fix": "Remove the claim, or list the slot under \"Arriving\" through the generated Live/Arriving list (SP-D1) with no promised date.",
+      "examples": {
+        "hit": [
+          "MFA for your users",
+          "Two-factor sign-in with an authenticator app"
+        ],
+        "miss": [
+          "Email and password sign-in",
+          "Row level security on every table"
+        ]
+      }
+    },
+    {
+      "id": "scribase-slot-saml",
+      "category": "unlaunched-feature",
+      "products": [
+        "scribase"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "SCRIBASE_CAP_SAML_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:saml(?: 2\\.0)?|sso|single sign-on) (?:for|in|inside) (?:your|every|each) (?:apps?|users|customers|end users|tenants)\\b"
+      },
+      "reason": "SAML single sign-on for tenant apps is a Scribase capability slot that is not Live yet (SP-D2, owner decision OD-12). A slot is Live only when its capability record (config/capabilities/<slot>.json, SP-D1) names a passing compat test id; SP-D1's loader then exports SCRIBASE_CAP_SAML_LIVE=1 for the site build and the lints. Console sign-in with SAML or OIDC for your own team is live today and is not caught; only tenant-app wording is.",
+      "fix": "Remove the claim, or list the slot under \"Arriving\" through the generated Live/Arriving list (SP-D1) with no promised date.",
+      "examples": {
+        "hit": [
+          "SAML SSO for your customers",
+          "Enterprise SSO in every app",
+          "Single sign-on for your end users"
+        ],
+        "miss": [
+          "SSO for your team in the console",
+          "Open Single sign-on in the console",
+          "SSO \u2014 SAML 2.0 and OIDC"
+        ]
+      }
+    },
+    {
+      "id": "scribase-slot-errors",
+      "category": "unlaunched-feature",
+      "products": [
+        "scribase"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "SCRIBASE_CAP_ERRORS_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:error tracking|crash reporting|error monitoring|exception tracking)\\b"
+      },
+      "reason": "Per-project error tracking is a Scribase capability slot that is not Live yet (SP-D6). A slot is Live only when its capability record (config/capabilities/<slot>.json, SP-D1) names a passing compat test id; SP-D1's loader then exports SCRIBASE_CAP_ERRORS_LIVE=1 for the site build and the lints.",
+      "fix": "Remove the claim, or list the slot under \"Arriving\" through the generated Live/Arriving list (SP-D1) with no promised date.",
+      "examples": {
+        "hit": [
+          "Error tracking for every project",
+          "Built-in crash reporting"
+        ],
+        "miss": [
+          "Logs for every request",
+          "Verified restore on every plan"
+        ]
+      }
+    },
+    {
+      "id": "scribase-slot-s3",
+      "category": "unlaunched-feature",
+      "products": [
+        "scribase"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "SCRIBASE_CAP_STORAGE_S3_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\bs3[- ](?:compatible|protocol|api)\\b"
+      },
+      "reason": "The S3 protocol on project storage is a Scribase capability slot that is not Live yet (SU0.1, SP-E11). A slot is Live only when its capability record (config/capabilities/<slot>.json, SP-D1) names a passing compat test id; SP-D1's loader then exports SCRIBASE_CAP_STORAGE_S3_LIVE=1 for the site build and the lints.",
+      "fix": "Remove the claim, or list the slot under \"Arriving\" through the generated Live/Arriving list (SP-D1) with no promised date.",
+      "examples": {
+        "hit": [
+          "S3-compatible storage for every project",
+          "Use the S3 API with your bucket"
+        ],
+        "miss": [
+          "File storage with signed URLs",
+          "Upload files from the client library"
+        ]
+      }
+    },
+    {
+      "id": "scribase-slot-push",
+      "category": "unlaunched-feature",
+      "products": [
+        "scribase"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "SCRIBASE_CAP_PUSH_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:push notifications?|push tokens?)\\b"
+      },
+      "reason": "Push notifications for mobile apps is a Scribase capability slot that is not Live yet (SP-E1). A slot is Live only when its capability record (config/capabilities/<slot>.json, SP-D1) names a passing compat test id; SP-D1's loader then exports SCRIBASE_CAP_PUSH_LIVE=1 for the site build and the lints.",
+      "fix": "Remove the claim, or list the slot under \"Arriving\" through the generated Live/Arriving list (SP-D1) with no promised date.",
+      "examples": {
+        "hit": [
+          "Push notifications for your app",
+          "Store push tokens per user"
+        ],
+        "miss": [
+          "Realtime updates in the client",
+          "Email a user from a function"
+        ]
+      }
+    },
+    {
+      "id": "pre-warmed",
+      "category": "unlaunched-feature",
+      "products": [
+        "scribase",
+        "menivor",
+        "rally",
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "MANAGED_SENDING_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\bpre[- ]?warm(?:ed|ing)?\\b"
+      },
+      "reason": "H9 (Wave D hand-off, 2026-09-29.2): \"pre-warmed\" mailboxes or domains describe managed sending, which is not live. The Rally provider mailbox add-on copy follows MANAGED_SENDING_LIVE like the rest of managed sending. No other product has anything pre-warmed to claim.",
+      "fix": "Say \"sends from your own inbox\". Describe the add-on only when MANAGED_SENDING_LIVE is on in production.",
+      "examples": {
+        "hit": [
+          "Send from pre-warmed mailboxes",
+          "Prewarmed domains from day one",
+          "Pre-warming included"
+        ],
+        "miss": [
+          "Each mailbox warms up gradually and has a daily cap",
+          "Sends from your own inbox"
+        ]
+      }
+    },
+    {
+      "id": "competitor-railyard",
+      "category": "competitor",
+      "products": [
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:vercel|netlify|heroku|render\\.com|fly\\.io|railway\\.app|coolify|dokploy|posthog|mixpanel|amplitude|google analytics|plausible|fathom analytics|launchdarkly|statsig|sentry|datadog|new relic|bugsnag|logrocket|fullstory|helicone|portkey)\\b"
+      },
+      "reason": "No competitor names in Railyard copy (rule 2). Railyard sells deploys, product analytics, flags, gateway, metering and error tracking; the names here are the tools a buyer pays for today.",
+      "fix": "Say what Railyard does (\"deploys to your own Cloudflare account\", \"see who uses it\") without naming another product.",
+      "examples": {
+        "hit": [
+          "A cheaper Vercel",
+          "PostHog alternative for Expo apps",
+          "Move off LaunchDarkly"
+        ],
+        "miss": [
+          "Deploys to your own Cloudflare account",
+          "See who uses it, from your coding agent"
+        ]
+      }
+    },
+    {
+      "id": "railyard-engine-names",
+      "category": "vendor",
+      "products": [
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:umami|flagsmith|glitchtip|gatus|opennext|open-next|opennextjs|tensorzero|lago|rago|victoriametrics|victorialogs|vmalert|bifrost|litellm|rrweb|uptime kuma)\\b"
+      },
+      "reason": "Lane plan A2: the engines behind Railyard modules are never named in the product (design rule). Licence notices live on the legal surface, which this rule does not cover.",
+      "fix": "Use the module name: Ship, Insights, Flags, Gateway, Meter or Watch.",
+      "examples": {
+        "hit": [
+          "Powered by Umami",
+          "Flags run on Flagsmith",
+          "Built with OpenNext"
+        ],
+        "miss": [
+          "Railyard Insights",
+          "Railyard Flags",
+          "Ship builds your Next.js app for Cloudflare"
+        ]
+      }
+    },
+    {
+      "id": "railyard-internal-names",
+      "category": "internal",
+      "products": [
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:pg-cow|postgres-cow|vcglass|videogen|otsone|unlock_env|infra-box|box ?1|box ?2|contabo|hetzner|oracle cloud|creem)\\b"
+      },
+      "reason": "Rule 3: no host, repo or supplier names in Railyard public copy. Cloudflare is named because Ship deploys into the customer's own Cloudflare account.",
+      "fix": "Name the module or the customer's own account, never our hosts or repos.",
+      "examples": {
+        "hit": [
+          "Insights runs on box 2",
+          "Hosted at Hetzner"
+        ],
+        "miss": [
+          "Insights keeps 7 days of logs",
+          "Deploys to your own Cloudflare account"
+        ]
+      }
+    },
+    {
+      "id": "railyard-we-host-nothing",
+      "category": "unbacked-promise",
+      "products": [
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:we(?: will|'ll)? host (?:your|the|it|apps?|sites?|websites?)|hosted (?:on|by) (?:railyard|us|our (?:servers|infrastructure|cloud))|on our servers|managed hosting|free hosting|web hosting|hosting plans?|(?:unlimited|included) bandwidth|bandwidth included|(?:ssh|root|server) access)\\b"
+      },
+      "reason": "Lane plan A3, Dodo prohibited row 23: Railyard hosts nothing. Ship deploys into the customer's own Cloudflare account and bills for the tooling, never for compute, bandwidth or server access (ADR RY-0002).",
+      "fix": "Say \"deploys to your own Cloudflare account\". Price the tooling (apps, previews, history), not hosting.",
+      "examples": {
+        "hit": [
+          "We host your app",
+          "Free hosting for every project",
+          "Unlimited bandwidth",
+          "SSH access to your server"
+        ],
+        "miss": [
+          "Deploys to your own Cloudflare account. We host nothing.",
+          "Each branch gets its own preview URL"
+        ]
+      }
+    },
+    {
+      "id": "railyard-token-resale",
+      "category": "unbacked-promise",
+      "products": [
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:buy (?:ai |llm |model )?(?:tokens|credits)|resell(?:ing)? (?:ai|llm|model|tokens)|cheaper (?:tokens|llm calls|ai calls|model calls)|tokens at cost|no (?:provider|model) (?:account|key) needed|without (?:a|your own) (?:provider|model) (?:account|key))\\b"
+      },
+      "reason": "Lane plan A3, Dodo prohibited row 21: the customer Gateway is BYOK only (ADR RY-0003). Railyard charges for gateway features, never for tokens.",
+      "fix": "Say \"your provider bills you directly; Railyard adds caps, fallback and traces\".",
+      "examples": {
+        "hit": [
+          "Buy tokens for every model",
+          "Cheaper tokens than going direct",
+          "No provider account needed"
+        ],
+        "miss": [
+          "Your provider bills you directly",
+          "Caps, fallback and a trace for every call"
+        ]
+      }
+    },
+    {
+      "id": "railyard-customer-funds",
+      "category": "unbacked-promise",
+      "products": [
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:we (?:collect|hold|receive|forward) (?:your |the )?(?:revenue|payments|funds|money)|(?:railyard|we) pays? you out|payouts? (?:from|by|through) railyard|merchant of record for (?:you|your))\\b"
+      },
+      "reason": "Lane plan A3, Dodo prohibited row 30: Meter charges in the customer's own payment account. Railyard never receives or forwards the customer's revenue.",
+      "fix": "Say \"charges go to your own payment account\".",
+      "examples": {
+        "hit": [
+          "We collect payments for you",
+          "Payouts from Railyard every week"
+        ],
+        "miss": [
+          "Charges go to your own payment account",
+          "Meter counts usage for your users"
+        ]
+      }
+    },
+    {
+      "id": "railyard-slot-flags",
+      "category": "unlaunched-feature",
+      "products": [
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "RAILYARD_FLAGS_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:feature flags?|remote config(?:uration)?|percentage rollouts?|a/b tests?|experiments)\\b"
+      },
+      "reason": "Railyard Flags is not live (RYP-E2). The copy comes back with RAILYARD_FLAGS_LIVE, set only when the flags stack passes its tenant-isolation test in production.",
+      "fix": "Say \"Flags: arriving\" or leave it out.",
+      "examples": {
+        "hit": [
+          "Feature flags for every app",
+          "Percentage rollouts in one click"
+        ],
+        "miss": [
+          "Flags: arriving",
+          "Turn a module on in the console"
+        ]
+      }
+    },
+    {
+      "id": "railyard-slot-watch",
+      "category": "unlaunched-feature",
+      "products": [
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "RAILYARD_WATCH_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:error tracking|crash reporting|uptime (?:checks?|monitoring)|status pages?|log search)\\b"
+      },
+      "reason": "Railyard Watch is not live for customers (RYP-E4). The copy comes back with RAILYARD_WATCH_LIVE.",
+      "fix": "Leave it out until Watch is live.",
+      "examples": {
+        "hit": [
+          "Error tracking for 3 apps",
+          "A public status page per app"
+        ],
+        "miss": [
+          "Deploy history with rollback"
+        ]
+      }
+    },
+    {
+      "id": "railyard-slot-replay",
+      "category": "unlaunched-feature",
+      "products": [
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "RAILYARD_REPLAY_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:session replays?|user profiles|cohorts?|web vitals|heatmaps?)\\b"
+      },
+      "reason": "Replay, profiles, cohorts and web vitals are Wave F and G items. The copy comes back with RAILYARD_REPLAY_LIVE.",
+      "fix": "Leave it out until the module is live.",
+      "examples": {
+        "hit": [
+          "Session replay for every visit",
+          "Cohorts and user profiles"
+        ],
+        "miss": [
+          "Page views and custom events"
+        ]
+      }
+    },
+    {
+      "id": "railyard-slot-insights",
+      "category": "unlaunched-feature",
+      "products": [
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound"
+      ],
+      "unlessFlags": [
+        "RAILYARD_INSIGHTS_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:funnels?|retention|journeys|goals|utm attribution|product analytics)\\b"
+      },
+      "reason": "The Insights dashboard (RYP-D2, RYP-E1) is not live; only the collector is built. Public copy about funnels and retention waits for RAILYARD_INSIGHTS_LIVE. The signed-in console and docs may say \"no data yet\".",
+      "fix": "Say \"see who uses it\" only once Insights is live; until then leave it out of marketing.",
+      "examples": {
+        "hit": [
+          "Funnels and retention out of the box",
+          "Product analytics for Expo apps"
+        ],
+        "miss": [
+          "Deploy from your coding agent"
+        ]
+      }
+    },
+    {
+      "id": "railyard-slot-ship-on-push",
+      "category": "unlaunched-feature",
+      "products": [
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "app-ui",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "RAILYARD_SHIP_ON_PUSH_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:deploys? on (?:every )?(?:git )?push|push to deploy|git push to deploy|preview (?:links? )?(?:in|as) (?:a )?(?:pr|pull request) comments?)\\b"
+      },
+      "reason": "Ship on push (RYP-E3) is not built. Today deploys run from the CLI on the user's machine. The copy comes back with RAILYARD_SHIP_ON_PUSH_LIVE.",
+      "fix": "Say \"one command: npx railyard deploy\".",
+      "examples": {
+        "hit": [
+          "Deploys on every push",
+          "Preview links in PR comments"
+        ],
+        "miss": [
+          "One command: npx railyard deploy"
+        ]
+      }
+    },
+    {
+      "id": "railyard-slot-team",
+      "category": "unlaunched-feature",
+      "products": [
+        "railyard"
+      ],
+      "surfaces": [
+        "marketing",
+        "outbound",
+        "docs",
+        "api-public"
+      ],
+      "unlessFlags": [
+        "RAILYARD_TEAM_PLAN_LIVE"
+      ],
+      "match": {
+        "type": "regex",
+        "value": "\\b(?:team plan|seats?|invite (?:your )?team(?:mates)?)\\b"
+      },
+      "reason": "The Team plan is in-app only from Wave F. The copy comes back with RAILYARD_TEAM_PLAN_LIVE.",
+      "fix": "Show the one plan from the plan config.",
+      "examples": {
+        "hit": [
+          "Team plan with 5 seats",
+          "Invite your teammates"
+        ],
+        "miss": [
+          "One plan, billed monthly or yearly"
+        ]
+      }
+    }
+  ]
+}

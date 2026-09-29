@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": "relay-default-catalog-2026-09-29-claude-routes",
+  "revision": "relay-default-catalog-2026-09-29-alias-floor",
   "generated_at_ms": 1790380800000,
   "models": [
     {
@@ -266,8 +266,8 @@
         "batch": false
       },
       "pricing": {
-        "input_micro_usd_per_million": 50000,
-        "output_micro_usd_per_million": 80000,
+        "input_micro_usd_per_million": 93750,
+        "output_micro_usd_per_million": 375000,
         "source": "operator_override"
       },
       "context_window_tokens": 131072,
