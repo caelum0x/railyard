@@ -117,6 +117,32 @@ async fn main() -> anyhow::Result<()> {
         transport: mirror_transport.clone(),
         now_ms: mint_server::mirror::system_now_ms,
     };
+    // Seller-own payments (Wave P PY2.3): product keys, the sealing key and,
+    // only with all three Connect values (OD-9), Stripe Connect.
+    let seller_products = match env_nonempty("MINT_SELLER_PRODUCTS_JSON") {
+        Some(raw) => mint_server::seller::parse_products(&raw).map_err(anyhow::Error::msg)?,
+        None => Vec::new(),
+    };
+    let seller_seal = match env_nonempty("MINT_SELLER_SEAL_KEY") {
+        Some(raw) => Some(Arc::new(mint_payments::seller::seal::SealKey::from_base64(&raw).map_err(anyhow::Error::msg)?)),
+        None => None,
+    };
+    let seller_stripe = mint_server::seller::stripe_from_env(
+        env_nonempty("MINT_STRIPE_CONNECT_CLIENT_ID"),
+        env_nonempty("MINT_STRIPE_PLATFORM_SECRET_KEY"),
+        env_nonempty("MINT_STRIPE_CONNECT_WEBHOOK_SECRET"),
+    );
+    let seller_public = env_nonempty("MINT_PUBLIC_URL").unwrap_or_default();
+    let seller_transport = mirror_transport.clone();
+    let seller_state = |store: Arc<dyn mint_store::SellerStore>| mint_server::seller::SellerState {
+        store,
+        products: Arc::new(seller_products.clone()),
+        seal: seller_seal.clone(),
+        transport: seller_transport.clone(),
+        public_url: seller_public.clone(),
+        stripe: seller_stripe.clone(),
+        now_ms: mint_server::mirror::system_now_ms,
+    };
     let public = PublicConfig::from_env();
     if public.public_url.is_none() && public.checkout_success_url.is_none() {
         tracing::warn!(
@@ -134,6 +160,7 @@ async fn main() -> anyhow::Result<()> {
                 .context("connecting to Postgres")?;
             store.run_migrations().await.context("running migrations")?;
             let mirror = mirror_state(Arc::new(mint_store_postgres::PgMirror::new(store.pool().clone())));
+            let sellers = seller_state(Arc::new(mint_store_postgres::PgSeller::new(store.pool().clone())));
             let state = AppState::new(
                 store,
                 clock,
@@ -151,7 +178,7 @@ async fn main() -> anyhow::Result<()> {
                 Some(k) => state.with_kyc_onboarding(k),
                 None => state,
             };
-            serve(state, bind, mirror).await
+            serve(state, bind, mirror, sellers).await
         }
         _ => {
             if std::env::var("MINT_ALLOW_INMEMORY").ok().as_deref() != Some("1") {
@@ -164,6 +191,7 @@ async fn main() -> anyhow::Result<()> {
             let store =
                 mint_store::InMemoryStore::with_clock_and_signer(clock.clone(), signer.clone());
             let mirror = mirror_state(Arc::new(mint_store::MemoryMirror::default()));
+            let sellers = seller_state(Arc::new(mint_store::MemorySellerStore::default()));
             let state = AppState::new(
                 store,
                 clock,
@@ -181,7 +209,7 @@ async fn main() -> anyhow::Result<()> {
                 Some(k) => state.with_kyc_onboarding(k),
                 None => state,
             };
-            serve(state, bind, mirror).await
+            serve(state, bind, mirror, sellers).await
         }
     }
 }
@@ -191,6 +219,7 @@ async fn serve<S: LedgerStore + 'static>(
     state: AppState<S>,
     bind: SocketAddr,
     mirror: mint_server::mirror::MirrorState,
+    sellers: mint_server::seller::SellerState,
 ) -> anyhow::Result<()> {
     // Mirror the DB-backed AITP payer keys before serving, then keep payouts,
     // hold expiries and the key mirror reconciled in the background.
@@ -202,8 +231,12 @@ async fn serve<S: LedgerStore + 'static>(
     // The portfolio mirror (Wave P PY1.5): its own routes and product keys, no ledger handle.
     if std::env::var("MINT_SWEEP_DISABLED").ok().as_deref() != Some("1") {
         mint_server::mirror::spawn_delivery(mirror.clone());
+        // Seller-own payments (Wave P PY2.3): entitlement events to the calling products.
+        mint_server::seller::spawn_delivery(sellers.clone());
     }
-    let app = build_router(state).merge(mint_server::mirror::router(mirror));
+    let app = build_router(state)
+        .merge(mint_server::mirror::router(mirror))
+        .merge(mint_server::seller::router(sellers));
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .with_context(|| format!("binding {bind}"))?;

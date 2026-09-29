@@ -280,3 +280,7 @@ seconds, retried with backoff from 30 s up to 6 h until a 2xx.
 |---|---|
 | `MINT_MIRROR_KEYS_JSON` | `[{"product":"scribase","key":"<24+ chars>"}, ...]` (secret) |
 | `MINT_EVENT_WEBHOOKS_JSON` | `[{"name","url":"https://...","secret":"whsec_...","products":["scribase"]}]` (secret) |
+| `MINT_SELLER_PRODUCTS_JSON` | Seller-own payments (Wave P PY2.3): `[{"product":"scribase","key":"<24+ chars>","webhook_url":"https://...","webhook_secret":"whsec_..."}]`, one entry per calling product (secret) |
+| `MINT_SELLER_SEAL_KEY` | base64 of 32 random bytes; seals each seller's payment key at rest (secret). Unset: seller payments answer 503 |
+| `MINT_PUBLIC_URL` | Mint's public base, for connect links and the webhook address a seller pastes in their Dodo dashboard |
+| `MINT_STRIPE_CONNECT_CLIENT_ID`, `MINT_STRIPE_PLATFORM_SECRET_KEY`, `MINT_STRIPE_CONNECT_WEBHOOK_SECRET` | Stripe Connect for sellers, only once owner decision OD-9 allows it; all three or it stays off (secrets) |

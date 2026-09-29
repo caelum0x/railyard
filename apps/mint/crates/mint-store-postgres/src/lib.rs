@@ -16,6 +16,7 @@
 
 pub mod migrate;
 pub mod mirror;
+pub mod seller;
 pub mod rebuild;
 pub mod rows;
 pub mod store;
@@ -23,4 +24,5 @@ pub mod tx;
 
 pub use migrate::run_migrations;
 pub use mirror::PgMirror;
+pub use seller::PgSeller;
 pub use store::{PgStore, PgStoreConfig};

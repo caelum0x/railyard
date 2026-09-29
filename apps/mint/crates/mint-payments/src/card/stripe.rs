@@ -359,7 +359,7 @@ pub fn verify_webhook<H: Headers>(
 }
 
 /// Parse a `Stripe-Signature` header into `(t, v1)`.
-fn parse_stripe_sig(header: &str) -> Option<(&str, &str)> {
+pub(crate) fn parse_stripe_sig(header: &str) -> Option<(&str, &str)> {
     let mut t = None;
     let mut v1 = None;
     for part in header.split(',') {
@@ -375,7 +375,7 @@ fn parse_stripe_sig(header: &str) -> Option<(&str, &str)> {
 
 /// Minimal `application/x-www-form-urlencoded` encoder (percent-encodes the
 /// value bytes that Stripe forms care about).
-fn form_urlencode(pairs: &[(&str, &str)]) -> String {
+pub(crate) fn form_urlencode(pairs: &[(&str, &str)]) -> String {
     let mut out = String::new();
     for (i, (k, v)) in pairs.iter().enumerate() {
         if i > 0 {

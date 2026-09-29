@@ -32,6 +32,7 @@ pub mod outbound;
 mod money;
 pub mod provider;
 pub mod registry;
+pub mod seller;
 pub mod verify;
 
 pub use card::CheckoutUrls;

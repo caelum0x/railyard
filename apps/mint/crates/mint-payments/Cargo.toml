@@ -27,6 +27,8 @@ base64 = { workspace = true }
 subtle = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+# Seller credentials sealed at rest (Wave P PY2.3). Already in Cargo.lock via rustls.
+ring = "0.17"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
