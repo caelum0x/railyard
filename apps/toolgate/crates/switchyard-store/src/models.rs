@@ -208,7 +208,8 @@ pub struct SpendFilter {
     pub project_id: String,
     pub since: Option<DateTime<Utc>>,
     pub key_public_id: Option<String>,
-    pub target: Option<String>,
+    /// Calls whose target or tool id is any of these.
+    pub targets: Option<Vec<String>>,
     pub side_effect: Option<String>,
     /// Count calls instead of summing cost.
     pub count_calls: bool,

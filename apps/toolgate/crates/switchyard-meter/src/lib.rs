@@ -14,7 +14,7 @@ pub mod mint;
 pub mod outbox;
 pub mod rago;
 
-pub use caps::{CapGuard, Caps};
+pub use caps::{CapGuard, CapScope, Caps};
 pub use mint::{MintBalance, MintClient, MintError, MintHold, MintReceipt, MintTransport};
 pub use outbox::OutboxWorker;
 pub use rago::{RagoClient, RagoError, RagoTransport};

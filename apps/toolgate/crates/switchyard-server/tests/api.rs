@@ -21,7 +21,7 @@ use switchyard_testkit::FakeReply;
 async fn health_llms_openapi_and_auth_required() {
     let h = harness().await;
     assert_eq!(send(&h.app, "GET", "/healthz", None, None, &[]).await.status, 200);
-    assert_eq!(send(&h.app, "GET", "/readyz", None, None, &[]).await.body["tools"].as_u64().unwrap() >= 25, true);
+    assert!(send(&h.app, "GET", "/readyz", None, None, &[]).await.body["tools"].as_u64().unwrap() >= 25);
     let llms = send(&h.app, "GET", "/llms.txt", None, None, &[]).await;
     assert!(llms.text.contains("rally.email.verify") && llms.text.contains("/mcp"));
     let oa = send(&h.app, "GET", "/openapi.json", None, None, &[]).await;
@@ -161,6 +161,68 @@ async fn project_caps_stop_calls_with_429_naming_the_cap() {
 }
 
 #[tokio::test]
+async fn tool_caps_cover_capability_and_tool_id_aliases() {
+    let h = harness().await;
+    // Cap keyed by the concrete tool; calling through the capability must hit it.
+    let r = send(&h.app, "PATCH", "/v1/project", Some(&h.key), Some(json!({"tool_daily_caps": {"rally.email.send": 500}})), &[]).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let r = call(&h, "email.send", json!({"from": "a@acme.com", "to": ["1@x.io", "2@x.io"]})).await;
+    assert_eq!((r.status.as_u16(), r.body["error"]["details"]["cap"].as_str()), (429, Some("tool_daily")), "{}", r.text);
+    // Cap keyed by the capability; calling the concrete tool must hit it.
+    let r = send(&h.app, "PATCH", "/v1/project", Some(&h.key), Some(json!({"tool_daily_caps": {"email.send": 500}})), &[]).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let r = call(&h, "rally.email.send", json!({"from": "a@acme.com", "to": ["1@x.io", "2@x.io"]})).await;
+    assert_eq!((r.status.as_u16(), r.body["error"]["details"]["cap"].as_str()), (429, Some("tool_daily")), "{}", r.text);
+    assert_eq!(h.mint.holds().len(), 0, "capped calls never reach Mint");
+    assert_eq!(h.http.total_requests(), 0);
+}
+
+#[tokio::test]
+async fn batch_enforces_send_limit_and_tool_caps_per_call() {
+    let h = harness().await;
+    let r = send(&h.app, "PATCH", "/v1/project", Some(&h.key), Some(json!({"daily_send_limit": 1})), &[]).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let one = json!({"tool": "rally.email.send", "input": {"from": "a@acme.com", "to": "1@x.io", "subject": "s", "text": "t"}});
+    let r = send(&h.app, "POST", "/v1/tools/batch", Some(&h.key), Some(json!({"calls": [one.clone(), one.clone(), one]})), &[]).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let data = r.body["data"].as_array().unwrap();
+    assert_eq!(data[0]["ok"], true, "{}", r.text);
+    for d in &data[1..] {
+        assert_eq!(d["error"]["details"]["cap"], "daily_sends", "{}", r.text);
+    }
+    let sends = h.http.requests().iter().filter(|q| q.url.contains("/api/rally/v1/send")).count();
+    assert_eq!(sends, 1, "a batch cannot exceed the daily send limit");
+    assert_eq!(r.body["meta"]["cost_micros"], 400, "only the delivered send is billed");
+}
+
+#[tokio::test]
+async fn upstream_echo_of_injected_secrets_is_redacted() {
+    let h = harness().await;
+    let key = h.key.clone();
+    h.http.route_fn("rally.test", "/api/rally/v1/search", Duration::ZERO, move |_| {
+        FakeReply::Json(400, json!({"error": format!("bad token platform-rally-token (caller {key})")}))
+    });
+    let r = call(&h, "rally.leads.search", json!({"kind": "companies", "filters": {}, "limit": 2})).await;
+    assert_eq!(r.status, 422, "{}", r.text);
+    assert!(r.text.contains("[redacted]"), "{}", r.text);
+    assert!(!r.text.contains("platform-rally-token") && !r.text.contains(&h.key), "secret leaked: {}", r.text);
+    let calls = send(&h.app, "GET", "/v1/usage/calls", Some(&h.key), None, &[]).await;
+    assert!(!calls.text.contains("platform-rally-token") && !calls.text.contains(&h.key), "secret in audit log: {}", calls.text);
+}
+
+#[tokio::test]
+async fn blocked_caller_urls_do_not_open_the_shared_breaker() {
+    let h = harness().await;
+    h.http.route("169.254.169.254", "/", FakeReply::Fail(EgressError::BlockedAddress("169.254.169.254".into())));
+    for _ in 0..5 {
+        let r = call(&h, "web.read", json!({"url": "https://169.254.169.254/latest/meta-data/"})).await;
+        assert_eq!(r.body["error"]["code"], "provider_rejected_input", "{}", r.text);
+    }
+    let r = call(&h, "web.read", json!({"url": "https://example.com/post"})).await;
+    assert_eq!(r.status, 200, "one caller's bad URLs must not take web.read down for everyone: {}", r.text);
+}
+
+#[tokio::test]
 async fn schema_errors_are_422_with_pointers_and_spend_nothing() {
     let h = harness().await;
     let r = call(&h, "weather.forecast", json!({"lat": 500, "lon": "x", "extra": 1})).await;
@@ -192,6 +254,34 @@ async fn idempotent_replay_is_free_and_changed_body_conflicts() {
     let conflict = send(&h.app, "POST", "/v1/tools/rally.email.send/call", Some(&h.key), Some(changed), &hdr).await;
     assert_eq!(conflict.status, 409);
     assert_eq!(h.mint.available(REVENUE), 400);
+}
+
+#[tokio::test]
+async fn concurrent_requests_with_one_idempotency_key_send_once() {
+    let h = harness().await;
+    let sends = h.http.route_fn("rally.test", "/api/rally/v1/send", Duration::from_millis(300), |_| {
+        FakeReply::Json(200, json!({"ok": true, "data": {"id": "msg_1", "accepted": 1}}))
+    });
+    let body = json!({"input": {"from": "a@acme.com", "to": "b@x.io", "subject": "s", "text": "t"}});
+    let mut tasks = Vec::new();
+    for _ in 0..5 {
+        let (app, key, body) = (h.app.clone(), h.key.clone(), body.clone());
+        tasks.push(tokio::spawn(async move {
+            send(&app, "POST", "/v1/tools/rally.email.send/call", Some(&key), Some(body), &[("idempotency-key", "race-1")]).await
+        }));
+    }
+    let mut codes = Vec::new();
+    for t in tasks {
+        let r = t.await.unwrap();
+        codes.push(r.status.as_u16());
+    }
+    assert_eq!(sends.load(std::sync::atomic::Ordering::SeqCst), 1, "one key, one upstream send: {codes:?}");
+    assert_eq!(codes.iter().filter(|c| **c == 200).count(), 1, "{codes:?}");
+    assert!(codes.iter().all(|c| *c == 200 || *c == 409), "{codes:?}");
+    // After it finishes, a retry replays the stored result at zero cost.
+    let r = send(&h.app, "POST", "/v1/tools/rally.email.send/call", Some(&h.key), Some(body), &[("idempotency-key", "race-1")]).await;
+    assert_eq!((r.status.as_u16(), r.body["meta"]["cache"].as_str()), (200, Some("replay")), "{}", r.text);
+    assert_eq!(sends.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

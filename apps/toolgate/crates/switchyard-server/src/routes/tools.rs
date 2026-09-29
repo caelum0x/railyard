@@ -181,7 +181,6 @@ pub async fn batch(State(st): State<AppState>, headers: HeaderMap, body: Bytes) 
     }
     let stats = std::collections::HashMap::new();
     let mut total = 0i64;
-    let mut any_send = false;
     for (i, c) in body.calls.iter().enumerate() {
         st.catalog.validate_input(&c.tool, &c.input).map_err(|errs| {
             let e = ApiError::validation(errs);
@@ -189,10 +188,12 @@ pub async fn batch(State(st): State<AppState>, headers: HeaderMap, body: Bytes) 
         })?;
         let plan = crate::routing::plan(&st, &p, &c.tool, &c.input, c.options.provider.as_deref(), &stats).await?;
         total += plan.hold_amount().max(if plan.candidates.iter().any(|x| x.metered) { c.options.max_cost_micros.unwrap_or(0) } else { 0 });
-        any_send |= plan.side_effect() == SideEffect::Send;
     }
     let batch_id = new_id("batch");
-    let _guard = st.caps.check_and_reserve(st.store.as_ref(), &p.project, &p.key, "batch", any_send, total, Utc::now()).await?;
+    // Money caps for the whole batch up front; per-tool caps and the send
+    // limit are enforced per call inside the pipeline.
+    let scope = switchyard_meter::CapScope { money: true, tools: Vec::new(), sends: 0 };
+    let _guard = st.caps.check_scope(st.store.as_ref(), &p.project, &p.key, &scope, total, Utc::now()).await?;
     let hold_id = if total > 0 { Some(pipeline::place_hold(&st, &p, total, &batch_id).await?) } else { None };
     let bh = Arc::new(BatchHold { hold_id: hold_id.clone(), spent: std::sync::Mutex::new(0) });
     let idem = idem_key(&headers);

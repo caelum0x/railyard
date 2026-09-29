@@ -43,6 +43,19 @@ pub fn start_of_month(now: DateTime<Utc>) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0).single().unwrap_or(now)
 }
 
+/// Which caps a check covers.
+#[derive(Debug, Clone, Default)]
+pub struct CapScope {
+    /// Project monthly/daily and per-key money caps.
+    pub money: bool,
+    /// `(cap name, ids whose calls count toward it)`: a capability cap covers
+    /// the capability id and every tool that serves it, so calling a tool by
+    /// its concrete id or through its capability hits the same cap.
+    pub tools: Vec<(String, Vec<String>)>,
+    /// Number of sends this check stands for (0 for reads and writes).
+    pub sends: i64,
+}
+
 struct Check {
     name: &'static str,
     reserve_key: String,
@@ -62,6 +75,9 @@ impl Caps {
 
     /// Check every cap for a call quoted at `quote` micros and reserve it.
     /// `send` calls also count against the project's daily send limit.
+    /// `target` is the only name checked for a per-tool cap; prefer
+    /// [`Caps::check_scope`], which also covers capability/tool aliases.
+    #[allow(clippy::too_many_arguments)]
     pub async fn check_and_reserve(
         self: &Arc<Self>,
         store: &dyn Store,
@@ -72,42 +88,60 @@ impl Caps {
         quote: i64,
         now: DateTime<Utc>,
     ) -> Result<CapGuard, ApiError> {
+        let scope = CapScope { money: true, tools: vec![(target.to_string(), vec![target.to_string()])], sends: i64::from(is_send) };
+        self.check_scope(store, project, key, &scope, quote, now).await
+    }
+
+    /// Check the caps named by `scope` for a call (or batch) quoted at `quote`.
+    pub async fn check_scope(
+        self: &Arc<Self>,
+        store: &dyn Store,
+        project: &Project,
+        key: &ApiKey,
+        scope: &CapScope,
+        quote: i64,
+        now: DateTime<Utc>,
+    ) -> Result<CapGuard, ApiError> {
         let day = start_of_day(now);
         let month = start_of_month(now);
         let base = SpendFilter { project_id: project.id.clone(), ..Default::default() };
         let mut checks = Vec::new();
-        if let Some(limit) = project.monthly_cap_micros {
-            checks.push(Check { name: "project_monthly", reserve_key: format!("m:{}", project.id), limit, filter: SpendFilter { since: Some(month), ..base.clone() }, amount: quote });
+        if scope.money {
+            if let Some(limit) = project.monthly_cap_micros {
+                checks.push(Check { name: "project_monthly", reserve_key: format!("m:{}", project.id), limit, filter: SpendFilter { since: Some(month), ..base.clone() }, amount: quote });
+            }
+            if let Some(limit) = project.daily_cap_micros {
+                checks.push(Check { name: "project_daily", reserve_key: format!("d:{}", project.id), limit, filter: SpendFilter { since: Some(day), ..base.clone() }, amount: quote });
+            }
+            if let Some(limit) = key.per_key_daily_cap_micros {
+                checks.push(Check {
+                    name: "key_daily",
+                    reserve_key: format!("k:{}", key.public_id),
+                    limit,
+                    filter: SpendFilter { since: Some(day), key_public_id: Some(key.public_id.clone()), ..base.clone() },
+                    amount: quote,
+                });
+            }
         }
-        if let Some(limit) = project.daily_cap_micros {
-            checks.push(Check { name: "project_daily", reserve_key: format!("d:{}", project.id), limit, filter: SpendFilter { since: Some(day), ..base.clone() }, amount: quote });
+        for (name, covers) in &scope.tools {
+            if let Some(limit) = project.tool_daily_caps.get(name) {
+                checks.push(Check {
+                    name: "tool_daily",
+                    reserve_key: format!("t:{}:{name}", project.id),
+                    limit: *limit,
+                    filter: SpendFilter { since: Some(day), targets: Some(covers.clone()), ..base.clone() },
+                    amount: quote,
+                });
+            }
         }
-        if let Some(limit) = key.per_key_daily_cap_micros {
-            checks.push(Check {
-                name: "key_daily",
-                reserve_key: format!("k:{}", key.public_id),
-                limit,
-                filter: SpendFilter { since: Some(day), key_public_id: Some(key.public_id.clone()), ..base.clone() },
-                amount: quote,
-            });
-        }
-        if let Some(limit) = project.tool_daily_caps.get(target) {
-            checks.push(Check {
-                name: "tool_daily",
-                reserve_key: format!("t:{}:{target}", project.id),
-                limit: *limit,
-                filter: SpendFilter { since: Some(day), target: Some(target.to_string()), ..base.clone() },
-                amount: quote,
-            });
-        }
-        if is_send {
+        if scope.sends > 0 {
             if let Some(limit) = project.daily_send_limit {
                 checks.push(Check {
                     name: "daily_sends",
                     reserve_key: format!("s:{}", project.id),
                     limit,
                     filter: SpendFilter { since: Some(day), side_effect: Some("send".into()), count_calls: true, ..base.clone() },
-                    amount: 1,
+                    amount: scope.sends,
                 });
             }
         }

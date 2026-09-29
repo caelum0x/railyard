@@ -44,6 +44,8 @@ pub struct Inner {
     pub caps: Arc<Caps>,
     pub cache: ResponseCache,
     pub flights: SingleFlight<Shared>,
+    /// `(project, Idempotency-Key)` pairs currently executing.
+    pub idem_inflight: IdemInflight,
     pub flow: FlowControl,
     pub adapter_config: Arc<BTreeMap<String, String>>,
     pub started: Instant,
@@ -91,6 +93,7 @@ impl AppState {
             rago: d.rago,
             caps: Caps::new(),
             flights: SingleFlight::default(),
+            idem_inflight: IdemInflight::default(),
             flow,
             adapter_config,
             started: Instant::now(),
@@ -199,5 +202,36 @@ impl FlowControl {
         v.sort_unstable();
         let at = |q: f64| v[((v.len() as f64 - 1.0) * q).round() as usize];
         Some((at(0.5), at(0.95)))
+    }
+}
+
+/// In-process claim on an Idempotency-Key while its first request runs, so
+/// two concurrent requests with the same key cannot both reach the upstream
+/// (e.g. send the same email twice). The stored response covers every later
+/// retry; this covers the window before it is written.
+#[derive(Default)]
+pub struct IdemInflight(std::sync::Mutex<std::collections::HashSet<String>>);
+
+pub struct IdemClaim<'a> {
+    set: &'a IdemInflight,
+    key: String,
+}
+
+impl IdemInflight {
+    pub fn claim(&self, project_id: &str, key: &str) -> Option<IdemClaim<'_>> {
+        let k = format!("{project_id}\u{1f}{key}");
+        let fresh = self.0.lock().expect("idempotency claims poisoned").insert(k.clone());
+        // Build the claim only after the lock is released: its Drop re-locks.
+        if fresh {
+            Some(IdemClaim { set: self, key: k })
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for IdemClaim<'_> {
+    fn drop(&mut self) {
+        self.set.0.lock().expect("idempotency claims poisoned").remove(&self.key);
     }
 }

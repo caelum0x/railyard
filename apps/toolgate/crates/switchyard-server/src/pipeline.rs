@@ -13,7 +13,7 @@ use switchyard_auth::scopes;
 use switchyard_cache::CachedResponse;
 use switchyard_core::hash::request_hash;
 use switchyard_core::{new_id, AdapterError, ApiError, CallCtx, ErrorClass, ProviderKind, SideEffect};
-use switchyard_meter::MintError;
+use switchyard_meter::{CapScope, MintError};
 use switchyard_store::{IdempotencyRow, NewCall, OutboxItem};
 
 use crate::principal::{Principal, Via};
@@ -108,10 +108,14 @@ pub async fn call(st: &AppState, p: &Principal, target: &str, input: Value, opts
     let req_hash = request_hash(target, &input);
 
     // Idempotent replay.
+    let mut _claim = None;
     if let Some(k) = &idem {
         if k.len() > 200 {
             return Err(ApiError::bad_request("Idempotency-Key is too long (max 200)"));
         }
+        _claim = Some(st.idem_inflight.claim(&p.project.id, k).ok_or_else(|| {
+            ApiError::new(409, "idempotency_in_progress", "A request with this Idempotency-Key is still running; retry after it finishes to get its stored result.")
+        })?);
         if let Some(prev) = st.store.get_idempotency(&p.project.id, k, now).await.map_err(|e| ApiError::internal(e.to_string()))? {
             if prev.request_hash != req_hash {
                 return Err(ApiError::idempotency_conflict());
@@ -358,6 +362,48 @@ pub fn rago_event(p: &Principal, call_id: &str, tool: &str, provider: &str, cost
     ))
 }
 
+/// Replace any injected secret (stored credential or the caller's own key)
+/// that appears in `text`. Short values are skipped to avoid mangling text.
+fn redact_secrets(text: &str, ctx: &CallCtx) -> String {
+    use secrecy::ExposeSecret;
+    let mut out = text.to_string();
+    let secrets = ctx.credential.iter().map(|c| c.expose()).chain(ctx.caller_key.iter().map(|k| k.expose_secret()));
+    for secret in secrets {
+        if secret.len() >= 8 && out.contains(secret) {
+            out = out.replace(secret, "[redacted]");
+        }
+    }
+    out
+}
+
+/// The per-tool caps that apply to this plan. A cap may be keyed by a tool id
+/// or by a capability id; either way it covers calls made through the
+/// capability and through any concrete tool that serves it.
+fn tool_cap_scope(st: &AppState, p: &Principal, plan: &Plan) -> Vec<(String, Vec<String>)> {
+    let caps = &p.project.tool_daily_caps;
+    if caps.is_empty() {
+        return Vec::new();
+    }
+    let mut names: Vec<String> = vec![plan.target.clone()];
+    for c in &plan.candidates {
+        names.push(c.tool.id.clone());
+        names.push(c.tool.capability.clone());
+    }
+    names.sort();
+    names.dedup();
+    names
+        .into_iter()
+        .filter(|n| caps.contains_key(n))
+        .map(|n| {
+            let mut covers = vec![n.clone()];
+            if st.catalog.capability(&n).is_some() {
+                covers.extend(st.catalog.tools_for_capability(&n).into_iter().map(|t| t.id.clone()));
+            }
+            (n, covers)
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn execute(
     st: &AppState,
@@ -376,10 +422,10 @@ async fn execute(
     let side = plan.side_effect();
 
     // Caps and hold (a batch already did both for all of its calls).
-    let _guard = match &mode {
-        HoldMode::Own => Some(st.caps.check_and_reserve(st.store.as_ref(), &p.project, &p.key, &plan.target, side == SideEffect::Send, hold_amount, Utc::now()).await?),
-        HoldMode::Batch(_) => None,
-    };
+    // A batch reserved the money caps for all of its calls; per-tool caps and
+    // the send limit are still checked call by call.
+    let scope = CapScope { money: matches!(mode, HoldMode::Own), tools: tool_cap_scope(st, p, plan), sends: i64::from(side == SideEffect::Send) };
+    let _guard = st.caps.check_scope(st.store.as_ref(), &p.project, &p.key, &scope, hold_amount, Utc::now()).await?;
     let hold_id = match &mode {
         HoldMode::Own if hold_amount > 0 => Some(place_hold(st, p, hold_amount, &call_id).await?),
         HoldMode::Own => None,
@@ -411,7 +457,12 @@ async fn execute(
             idempotency_key: idem.clone(),
         };
         let t0 = Instant::now();
-        let res = c.adapter.call(&ctx, &c.tool.id, input.clone()).await;
+        // An upstream may echo the injected credential back in an error body;
+        // scrub it before the text reaches the caller, the audit log or logs.
+        let res = c.adapter.call(&ctx, &c.tool.id, input.clone()).await.map_err(|mut e| {
+            e.message = redact_secrets(&e.message, &ctx);
+            e
+        });
         let ms = t0.elapsed().as_millis() as i64;
         let ok = res.is_ok();
         st.flow.record(&c.tool.provider, &c.tool.id, ok || matches!(&res, Err(e) if e.class == ErrorClass::InputRejected), ms as u32);

@@ -150,7 +150,7 @@ async fn exercise(s: &dyn Store) {
     let base = SpendFilter { project_id: "prj_1".into(), ..Default::default() };
     assert_eq!(s.spend_since(base.clone()).await.unwrap(), 350);
     assert_eq!(s.spend_since(SpendFilter { key_public_id: Some("abcdefghijkl".into()), ..base.clone() }).await.unwrap(), 100);
-    assert_eq!(s.spend_since(SpendFilter { target: Some("rally.email.send".into()), ..base.clone() }).await.unwrap(), 250);
+    assert_eq!(s.spend_since(SpendFilter { targets: Some(vec!["rally.email.send".into()]), ..base.clone() }).await.unwrap(), 250);
     assert_eq!(s.spend_since(SpendFilter { side_effect: Some("send".into()), count_calls: true, ..base.clone() }).await.unwrap(), 1);
     assert_eq!(s.spend_since(SpendFilter { since: Some(now + Duration::hours(1)), ..base }).await.unwrap(), 0);
 

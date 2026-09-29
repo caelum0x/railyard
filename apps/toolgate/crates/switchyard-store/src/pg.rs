@@ -657,13 +657,13 @@ impl Store for PgStore {
             "SELECT ({agg})::bigint AS v FROM calls WHERE project_id=$1
                AND ($2::timestamptz IS NULL OR created_at >= $2)
                AND ($3::text IS NULL OR key_public_id = $3)
-               AND ($4::text IS NULL OR target = $4 OR tool_id = $4)
+               AND ($4::text[] IS NULL OR target = ANY($4) OR tool_id = ANY($4))
                AND ($5::text IS NULL OR side_effect = $5)"
         ))
         .bind(&f.project_id)
         .bind(f.since)
         .bind(&f.key_public_id)
-        .bind(&f.target)
+        .bind(&f.targets)
         .bind(&f.side_effect)
         .fetch_one(&self.pool)
         .await?;

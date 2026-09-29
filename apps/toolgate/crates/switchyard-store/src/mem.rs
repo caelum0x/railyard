@@ -59,7 +59,7 @@ fn nf(what: &str) -> StoreError {
 fn matches(c: &NewCall, f: &SpendFilter) -> bool {
     f.since.map(|s| c.created_at >= s).unwrap_or(true)
         && f.key_public_id.as_ref().map(|k| &c.key_public_id == k).unwrap_or(true)
-        && f.target.as_ref().map(|t| &c.target == t || c.tool_id.as_ref() == Some(t)).unwrap_or(true)
+        && f.targets.as_ref().map(|ts| ts.iter().any(|t| &c.target == t || c.tool_id.as_ref() == Some(t))).unwrap_or(true)
         && f.side_effect.as_ref().map(|s| &c.side_effect == s).unwrap_or(true)
 }
 
