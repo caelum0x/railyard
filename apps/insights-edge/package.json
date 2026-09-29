@@ -1,0 +1,17 @@
+{
+  "name": "@railyard/insights-edge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Railyard Insights edge collector (Cloudflare Worker, RYP-D3).",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test test/*.test.mjs",
+    "load": "node test/load.mjs"
+  },
+  "devDependencies": {
+    "miniflare": "5.20260923.0-alpha",
+    "wrangler": "4.139.0"
+  }
+}

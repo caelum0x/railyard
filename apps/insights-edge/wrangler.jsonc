@@ -1,0 +1,19 @@
+{
+	// Railyard Insights edge collector (RYP-D3), our Cloudflare account.
+	// Secrets (owner, `wrangler secret put`): VISITOR_SALT_SECRET, INGEST_TOKEN, RAGO_API_KEY.
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "railyard-insights-edge",
+	"main": "src/index.mjs",
+	"compatibility_date": "2026-09-20",
+	"workers_dev": false,
+	"routes": [{ "pattern": "insights.railyard.ereboslab.com", "custom_domain": true }],
+	"durable_objects": { "bindings": [{ "name": "ORG_COLLECTOR", "class_name": "OrgCollector" }] },
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["OrgCollector"] }],
+	// The owner creates the namespace (`wrangler kv namespace create SITES`) and puts its id here.
+	"kv_namespaces": [{ "binding": "SITES", "id": "REPLACE_WITH_SITES_NAMESPACE_ID" }],
+	"vars": {
+		// Empty until RYP-D2 is deployed at the Wave E gate: events are counted and capped but not forwarded.
+		"INGEST_URL": "",
+		"RAGO_URL": ""
+	}
+}

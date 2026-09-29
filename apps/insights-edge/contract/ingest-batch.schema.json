@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://railyard.dev/schemas/insights/ingest-batch.v1.json",
+  "title": "Insights ingest batch v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["org_id", "sent_at", "batches"],
+  "properties": {
+    "org_id": { "type": "string", "minLength": 1 },
+    "sent_at": { "type": "string", "format": "date-time" },
+    "batches": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["site_key", "app_id", "events"],
+        "properties": {
+          "site_key": { "type": "string" },
+          "app_id": { "type": "string" },
+          "events": {
+            "type": "array",
+            "maxItems": 10000,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "url", "visitor", "ts"],
+              "properties": {
+                "type": { "enum": ["event", "identify"] },
+                "name": { "type": ["string", "null"], "maxLength": 50 },
+                "url": { "type": "string", "maxLength": 1000 },
+                "hostname": { "type": ["string", "null"], "maxLength": 100 },
+                "referrer": { "type": ["string", "null"], "maxLength": 1000 },
+                "title": { "type": ["string", "null"], "maxLength": 500 },
+                "language": { "type": ["string", "null"], "maxLength": 35 },
+                "screen": { "type": ["string", "null"], "maxLength": 11 },
+                "data": { "type": ["object", "null"], "maxProperties": 20 },
+                "visitor": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+                "country": { "type": ["string", "null"], "maxLength": 2 },
+                "ts": { "type": "string", "format": "date-time" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
