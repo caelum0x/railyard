@@ -1,0 +1,37 @@
+{
+  "contract": "portfolio-grants",
+  "version": 1,
+  "package": "Wave P PY2.4 (dispatch contract 5.4)",
+  "note": "Scribase issues one partner token per grant and add-on month (Ed25519, the Wave E 5.1 partner-token keys and JWKS) with two extra claims, grant and grant_period. The partner verifies the token, then debits the grant in the portfolio Rago org with one event per use; a debit beyond the balance is refused with the plain message below and the upgrade path. Menivor PM1.5 and Rally PR3.1 test against this file.",
+  "grants": [
+    {
+      "grant": "addon-monthly-reel",
+      "aud": "menivor",
+      "cap": "launch-video",
+      "meter": "portfolio.grant.launch_reel",
+      "allowance_plan_key": "menivor_launch_reel",
+      "allowance": 1
+    },
+    {
+      "grant": "addon-mail",
+      "aud": "rally",
+      "cap": "mail",
+      "meter": "portfolio.grant.mail",
+      "allowance_plan_key": "rally_mail",
+      "allowance": 500
+    }
+  ],
+  "token_claims": ["aud", "cap", "exp", "grant", "grant_period", "iat", "iss", "jti", "org", "sub"],
+  "grant_period_pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+  "transaction_id_pattern": "^(menivor|rally):grant:[A-Za-z0-9_-]{1,128}:\\d{4}-(0[1-9]|1[0-2]):[1-9]\\d{0,6}$",
+  "external_subscription_id": "portfolio-grants-<org>",
+  "sample_debits": [
+    { "transaction_id": "menivor:grant:org_fixture:2026-09:1", "external_customer_id": "org_fixture", "external_subscription_id": "portfolio-grants-org_fixture", "code": "portfolio.grant.launch_reel", "timestamp": 1790683200, "properties": {} },
+    { "transaction_id": "rally:grant:org_fixture:2026-09:1", "external_customer_id": "org_fixture", "external_subscription_id": "portfolio-grants-org_fixture", "code": "portfolio.grant.mail", "timestamp": 1790683200, "properties": {} }
+  ],
+  "refusal": {
+    "status": 402,
+    "message": "This month's included {what} is used up. It renews on {renews}. For more now, upgrade in Scribase under Billing, Add-ons.",
+    "upgrade_path": "/orgs/{org}/billing/addons"
+  }
+}

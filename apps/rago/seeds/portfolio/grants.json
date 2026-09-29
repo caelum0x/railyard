@@ -1,0 +1,56 @@
+{
+  "consumer": "portfolio-grants",
+  "description": "Portfolio add-on grants (Wave P PY2.4, contract 5.4): each add-on month includes one Menivor launch reel and a Rally mail allowance. Rago holds the monthly balance; the partner debits it with transaction_id <aud>:grant:<org>:<YYYY-MM>:<n> and refuses a debit beyond it. Allowances come from Scribase config/plans.json addons.portfolio.grants (menivor_launch_reel 1, rally_mail 500).",
+  "currency": "USD",
+  "billable_metrics": [
+    {
+      "name": "Add-on launch reel used",
+      "code": "portfolio.grant.launch_reel",
+      "description": "One event per launch reel Menivor renders against the monthly grant.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    },
+    {
+      "name": "Add-on mail sent",
+      "code": "portfolio.grant.mail",
+      "description": "One event per email Rally sends against the monthly mail allowance.",
+      "aggregation_type": "count_agg",
+      "recurring": false
+    }
+  ],
+  "plans": [
+    {
+      "name": "Portfolio add-on grants",
+      "code": "portfolio-addon-grants",
+      "interval": "monthly",
+      "amount_cents": 0,
+      "amount_currency": "USD",
+      "pay_in_advance": false,
+      "description": "A $0 plan: the add-on itself is billed by Scribase through Dodo. Package charges at 0.0 with the monthly grant as free units, so Rago's current usage shows the balance.",
+      "charges": [
+        {
+          "billable_metric_code": "portfolio.grant.launch_reel",
+          "charge_model": "package",
+          "invoiceable": false,
+          "properties": {
+            "amount": "0.0",
+            "free_units": 1,
+            "package_size": 1
+          }
+        },
+        {
+          "billable_metric_code": "portfolio.grant.mail",
+          "charge_model": "package",
+          "invoiceable": false,
+          "properties": {
+            "amount": "0.0",
+            "free_units": 500,
+            "package_size": 1
+          }
+        }
+      ]
+    }
+  ],
+  "external_customer_id": "the Scribase organization id",
+  "external_subscription_id": "portfolio-grants-<organization id>"
+}
