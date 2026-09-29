@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { MemoryRepo } from "../../../apps/console/lib/repo.ts";
 import { applyLadder } from "../../../apps/console/lib/ladder.ts";
 import { emptyEntitlement } from "../../../apps/console/lib/types.ts";
-import { approveDevice, orgForBearer, pollDevice, startDevice } from "../../../apps/console/lib/tokens.ts";
+import { approveDevice, createApprovedDevice, orgForBearer, pollDevice, startDevice } from "../../../apps/console/lib/tokens.ts";
 import { listDeploys, parseDeployInput, recordDeploy } from "../../../apps/console/app/api/v1/deploys/service.ts";
 
 export async function startConsole() {
@@ -49,5 +49,7 @@ export async function startConsole() {
     send(404, { error: "not found" });
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  return { url: `http://127.0.0.1:${server.address().port}`, repo, org, seen, close: () => new Promise((r) => server.close(r)) };
+  // A one-time claim, as the Scribase bridge issues it (PY1.0).
+  const claim = () => createApprovedDevice(repo, org.id, "u1", 120, new Date());
+  return { url: `http://127.0.0.1:${server.address().port}`, repo, org, seen, claim, close: () => new Promise((r) => server.close(r)) };
 }

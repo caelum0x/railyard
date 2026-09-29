@@ -2,6 +2,7 @@
 // key or token: sign-in is the device flow, Cloudflare is wrangler's login.
 
 import { deploy, listDeploys, login, rollback } from "./commands.mjs";
+import { linkScribase } from "./scribase/link.mjs";
 
 const HELP = `railyard: ship it from your coding agent
 
@@ -10,7 +11,10 @@ const HELP = `railyard: ship it from your coding agent
                                       build and deploy to your own Cloudflare account
   railyard rollback [--app NAME] [--branch B]
                                       go back to the previous version
-  railyard deploys [--app NAME]       list recent deploys`;
+  railyard deploys [--app NAME]       list recent deploys
+
+  In a Scribase project folder, deploy uses the project's URL and anon key
+  from its env file; secrets in that file are left out.`;
 
 const FLAGS = new Set(["--app", "--branch", "--dir"]);
 
@@ -38,7 +42,9 @@ export async function main(argv, ctx) {
     ctx.err(p.error);
     return 2;
   }
-  const commands = { login: () => login(ctx), deploy: () => deploy(ctx, p.opts), rollback: () => rollback(ctx, p.opts), deploys: () => listDeploys(ctx, p.opts) };
+  const commands = { login: () => login(ctx), deploy: () => deploy(ctx, p.opts), rollback: () => rollback(ctx, p.opts), deploys: () => listDeploys(ctx, p.opts),
+    // Run by the Scribase CLI (the deploy slot), which pipes a one-time claim on stdin.
+    "link-scribase": async () => (Object.keys(p.opts).length ? 2 : linkScribase(ctx, ctx.readStdin ? await ctx.readStdin() : "")) };
   const fn = commands[p.command];
   if (!fn) {
     ctx.err(`Unknown command ${p.command}. Run railyard --help.`);

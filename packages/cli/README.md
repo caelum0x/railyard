@@ -36,6 +36,16 @@ npx railyard deploy    # builds and deploys the folder you are in
 Your Railyard sign-in is saved in `~/.config/railyard/credentials.json`, readable
 only by you. There is no option that takes a key or a token.
 
+## In a Scribase project
+
+Run `railyard deploy` in a folder where Scribase wrote the app's env file. The
+project's URL and anon key (both public, they ship in the app) are set for the
+build and on the Worker, so nothing is pasted and neither is printed; only
+their names are shown. Anything secret in the same file, such as the service
+role key, is left out and named. A git branch with its own Scribase branch
+settings (`.scribase/branches/<branch>.env`) deploys its preview against that
+branch.
+
 ## Where it runs
 
 Deploys go to your own Cloudflare account. Railyard hosts nothing; it keeps the

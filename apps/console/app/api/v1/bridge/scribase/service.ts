@@ -11,6 +11,8 @@
 //        to its own CLI, which exchanges it once at /api/v1/device/token and
 //        writes the token to the Railyard CLI's credentials file (mode 600).
 //        The token is never in a response to Scribase, a terminal or a chat.
+//   POST /api/v1/bridge/scribase/deploys {scribase_org_id, app?, branch?}
+//        The org's deploys (newest first) for the Scribase Deploy tab (PY1.2).
 //   POST /api/v1/bridge/scribase/proof   {scribase_org_id, slot}
 //        {slot, state, live, proof:{kind,id,at}, next}: the real thing that
 //        happened for this slot, or "arriving" while its package has not landed.
@@ -19,6 +21,7 @@
 
 import { sha256Hex } from "../../../../../lib/crypto.ts";
 import { access } from "../../../../../lib/ladder.ts";
+import { listDeploys } from "../../deploys/service.ts";
 import type { Repo } from "../../../../../lib/repo.ts";
 import { verify, type WebhookHeaders } from "../../../../../lib/standard-webhooks.ts";
 import { createApprovedDevice } from "../../../../../lib/tokens.ts";
@@ -36,7 +39,7 @@ export type AddonSlot = (typeof ADDON_SLOTS)[number];
  * slot (SP-D6); the add-on only lifts its caps, so it is not served here.
  */
 export const BRIDGE_SLOTS = {
-  deploy: { pkg: "PY1.2", landed: false, proof: "deploy" },
+  deploy: { pkg: "PY1.2", landed: true, proof: "deploy" },
   analytics: { pkg: "PY1.3", landed: false, proof: "first_event" },
   ai: { pkg: "PY1.4", landed: false, proof: "gateway_key" },
   flags: { pkg: "PY2.1", landed: false, proof: "flag_flip" },
@@ -224,7 +227,17 @@ async function proofFor(deps: BridgeDeps, body: Record<string, unknown>): Promis
   return { status: 200, body: { ...(await slotProof(deps.repo, bound.org_id, s)) } };
 }
 
-export type BridgeRoute = "orgs" | "claims" | "proof";
+async function deploysFor(deps: BridgeDeps, body: Record<string, unknown>): Promise<BridgeResult> {
+  const scribaseOrgId = parseOrgRef(body);
+  if (!scribaseOrgId) return fail(400, "scribase_org_id is required");
+  const str = (k: string, max: number) => (typeof body[k] === "string" && (body[k] as string).length <= max ? (body[k] as string) : null);
+  const bound = await deps.repo.findScribaseBinding(scribaseOrgId);
+  if (!bound) return { status: 200, body: { deploys: [] } };
+  const r = await listDeploys(deps.repo, bound.org_id, str("app", 60), str("branch", 200));
+  return { status: r.status, body: r.body };
+}
+
+export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys";
 
 /** Verify, refuse replays, parse, dispatch. Framework-free so the routes stay three lines. */
 export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers: WebhookHeaders, raw: string): Promise<BridgeResult> {
@@ -248,5 +261,7 @@ export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers
       return issueClaim(deps, b);
     case "proof":
       return proofFor(deps, b);
+    case "deploys":
+      return deploysFor(deps, b);
   }
 }

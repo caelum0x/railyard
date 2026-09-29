@@ -134,6 +134,38 @@
       }
     },
     {
+      "name": "deploys for the Scribase Deploy tab",
+      "route": "deploys",
+      "request": {
+        "scribase_org_id": "org_fixture"
+      },
+      "status": 200,
+      "response_keys": [
+        "deploys"
+      ]
+    },
+    {
+      "name": "deploy proof before the first deploy",
+      "route": "proof",
+      "request": {
+        "scribase_org_id": "org_fixture",
+        "slot": "deploy"
+      },
+      "status": 200,
+      "response_keys": [
+        "live",
+        "next",
+        "proof",
+        "slot",
+        "state"
+      ],
+      "response_match": {
+        "slot": "deploy",
+        "state": "no_proof_yet",
+        "live": true
+      }
+    },
+    {
       "name": "lapsed add-on",
       "route": "orgs",
       "request": {

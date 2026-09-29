@@ -7,6 +7,7 @@ import { consoleApi } from "./console-api.mjs";
 import { loadCredentials, redact, saveCredentials } from "./credentials.mjs";
 import { detect, workerName } from "./detect.mjs";
 import { COMPAT_DATE, git, parseDeployOutput, run, tool } from "./run.mjs";
+import { projectEnv, wranglerVars } from "./scribase/env.mjs";
 
 export const DEFAULT_CONSOLE = "https://railyard.ereboslab.com";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -63,7 +64,10 @@ export async function deploy(ctx, opts) {
   const branch = opts.branch || git(dir, ["rev-parse", "--abbrev-ref", "HEAD"]) || "main";
   const commit = git(dir, ["rev-parse", "HEAD"]);
   const name = workerName(app, branch);
-  const secrets = [creds.token];
+  // A Scribase project folder: its public URL and anon key go into the build
+  // and the Worker; secrets in the same file are left out (PY1.2).
+  const sb = projectEnv(dir, branch);
+  const secrets = [creds.token, ...Object.entries(sb.values).filter(([k]) => /KEY/.test(k)).map(([, v]) => v)];
   const echo = (s) => ctx.out(redact(s, secrets).replace(/\n$/, ""));
   const started = ctx.now();
   const api = consoleApi({ console: creds.console, token: creds.token, fetchImpl: ctx.fetchImpl });
@@ -73,16 +77,19 @@ export async function deploy(ctx, opts) {
     return 1;
   }
   ctx.out(`Deploying ${found.framework} app ${app} (branch ${branch}) as ${name}`);
+  if (sb.found) ctx.out(`Using the Scribase ${sb.branch ? "branch" : "project"} settings: ${sb.names.join(", ")}`);
+  if (sb.refused.length) ctx.out(`Left out as secrets: ${sb.refused.join(", ")}`);
   let result = { code: 1, stdout: "", stderr: "" };
   const w = tool(ctx.env, "wrangler");
-  const buildEnv = { ...ctx.env };
+  const buildEnv = { ...ctx.env, ...sb.values };
+  const vars = wranglerVars(sb.values);
   if (found.framework === "nextjs") {
     const o = tool(ctx.env, "opennext");
     const b = await run(o[0], [...o.slice(1), "build"], { cwd: dir, env: buildEnv, echo });
     if (b.code === 0) {
       result = await run(
         w[0],
-        [...w.slice(1), "deploy", join(".open-next", "worker.js"), "--name", name, "--assets", join(".open-next", "assets"), "--compatibility-date", COMPAT_DATE, "--compatibility-flags", "nodejs_compat"],
+        [...w.slice(1), "deploy", join(".open-next", "worker.js"), "--name", name, "--assets", join(".open-next", "assets"), "--compatibility-date", COMPAT_DATE, "--compatibility-flags", "nodejs_compat", ...vars],
         { cwd: dir, env: buildEnv, echo },
       );
     } else result = b;
@@ -96,7 +103,7 @@ export async function deploy(ctx, opts) {
         ctx.err(`The build did not produce ${assets}/. Check your build script.`);
         return 1;
       }
-      result = await run(w[0], [...w.slice(1), "deploy", "--name", name, "--assets", assets, "--compatibility-date", COMPAT_DATE], { cwd: dir, env: buildEnv, echo });
+      result = await run(w[0], [...w.slice(1), "deploy", "--name", name, "--assets", assets, "--compatibility-date", COMPAT_DATE, ...vars], { cwd: dir, env: buildEnv, echo });
     }
   }
   const { url, versionId } = parseDeployOutput(result.stdout + result.stderr);

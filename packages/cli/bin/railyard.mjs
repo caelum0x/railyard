@@ -8,5 +8,10 @@ const code = await main(process.argv.slice(2), {
   err: (s) => process.stderr.write(`${s}\n`),
   now: () => Date.now(),
   fetchImpl: fetch,
+  readStdin: async () => {
+    let text = "";
+    for await (const chunk of process.stdin) text += chunk;
+    return text;
+  },
 });
 process.exit(code);

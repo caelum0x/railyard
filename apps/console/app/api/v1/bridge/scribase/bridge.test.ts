@@ -27,7 +27,7 @@ const SECRET = `whsec_${Buffer.from("scribase-bridge-test-secret-0032").toString
 const T0 = new Date("2026-09-29T12:00:00Z");
 
 let n = 0;
-async function call(repo: MemoryRepo, route: "orgs" | "claims" | "proof", payload: unknown, opts: { at?: Date; secret?: string; id?: string } = {}) {
+async function call(repo: MemoryRepo, route: "orgs" | "claims" | "proof" | "deploys", payload: unknown, opts: { at?: Date; secret?: string; id?: string } = {}) {
   const at = opts.at ?? T0;
   const body = JSON.stringify(payload);
   const id = opts.id ?? `msg_${++n}`;
@@ -205,9 +205,31 @@ test("no bridge handler writes a key or token to stdout, stderr or a log (grep t
     }
   };
   walk(HERE);
-  assert.ok(files.length >= 4, "service and three routes");
+  assert.ok(files.length >= 5, "service and four routes");
   for (const f of files) {
     const src = readFileSync(f, "utf8");
     assert.doesNotMatch(src, /console\.(log|info|warn|error|debug)|process\.(stdout|stderr)/, f);
   }
+});
+
+test("deploy slot (PY1.2): proof is the latest successful deploy, and the Scribase tab lists only this org's deploys", async () => {
+  const repo = new MemoryRepo(() => T0);
+  const a = (await call(repo, "orgs", { scribase_org_id: "org_da", name: "A", addon: addon() })).body.org_id as string;
+  const b = (await call(repo, "orgs", { scribase_org_id: "org_db", name: "B", addon: addon() })).body.org_id as string;
+  const none = await call(repo, "proof", { scribase_org_id: "org_da", slot: "deploy" });
+  assert.equal(none.body.state, "no_proof_yet");
+  assert.equal(none.body.live, true);
+  await addApp(repo, a, "shop", T0);
+  await addApp(repo, b, "shop", T0);
+  const d = await recordDeploy(repo, a, parseDeployInput({ app: "shop", branch: "feat/pay", framework: "vite", status: "succeeded", url: "https://shop-feat-pay.acct.workers.dev" }) as never, T0);
+  await recordDeploy(repo, b, parseDeployInput({ app: "shop", branch: "main", framework: "vite", status: "succeeded", url: "https://shop.other.workers.dev" }) as never, T0);
+  const proof = await call(repo, "proof", { scribase_org_id: "org_da", slot: "deploy" });
+  assert.equal(proof.body.state, "live");
+  assert.deepEqual(proof.body.proof, { kind: "deploy", id: (d.body.deploy as { id: string }).id, at: T0.toISOString() });
+  const list = await call(repo, "deploys", { scribase_org_id: "org_da" });
+  assert.equal(list.status, 200);
+  const deploys = list.body.deploys as { url: string; branch: string }[];
+  assert.deepEqual(deploys.map((x) => x.url), ["https://shop-feat-pay.acct.workers.dev"]);
+  assert.equal(((await call(repo, "deploys", { scribase_org_id: "org_da", branch: "main" })).body.deploys as unknown[]).length, 0);
+  assert.deepEqual((await call(repo, "deploys", { scribase_org_id: "org_unknown" })).body, { deploys: [] });
 });
