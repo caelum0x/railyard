@@ -126,6 +126,10 @@ async fn connect_dodo(app: &Router, fake: &Fake) -> String {
     let (status, html) = send(app, "GET", &format!("/mint/connect/{token}"), None, "text/html", Vec::new(), &[]).await;
     assert_eq!(status, StatusCode::OK);
     assert!(!html.split("<details").next().unwrap().contains("type=\"password\""), "no key field on the default screen");
+    assert!(
+        html.contains(&format!("https://mint.example/mint/webhooks/seller/scribase/{SELLER}/dodo")),
+        "the webhook address is shown before its secret is asked for"
+    );
     fake.answer("https://test.dodopayments.com/products?", 200, json!({"items": []}));
     let form = format!("api_key=seller_dodo_key_123&webhook_secret={}&mode=test", SELLER_HOOK.replace('=', "%3D"));
     let (status, html) = send(app, "POST", &format!("/mint/connect/{token}"), None, "application/x-www-form-urlencoded", form.into_bytes(), &[]).await;
