@@ -69,7 +69,7 @@ Throwaway local run: `SWITCHYARD_STORE=memory SWITCHYARD_ADMIN_TOKEN=dev switchy
 | `SWITCHYARD_SCRIBASE_API_URL`, `SWITCHYARD_SCRIBASE_LOGIN_URL` | Human sign-in for consent and device pages |
 | `SWITCHYARD_JWT_SEED` | Ed25519 seed for access tokens (32 bytes, base64) |
 | `SWITCHYARD_ADMIN_TOKEN` | Operator token for `/admin` and `/admin/api/*` |
-| `SWITCHYARD_RELAY_URL`, `SWITCHYARD_SCRIBASE_URL`, `SWITCHYARD_RALLY_URL`, `SWITCHYARD_MENIVOR_URL`, `SWITCHYARD_SEARXNG_URL`, `SWITCHYARD_SCRIBASE_PROJECT_DOMAIN` | Product and self-hosted base URLs (their hosts join the egress allowlist) |
+| `SWITCHYARD_RELAY_URL`, `SWITCHYARD_SCRIBASE_URL`, `SWITCHYARD_RALLY_URL`, `SWITCHYARD_MENIVOR_URL`, `SWITCHYARD_SEARXNG_URL`, `SWITCHYARD_SCRIBASE_PROJECT_DOMAIN` | Product and self-hosted base URLs (their hosts join the egress allowlist). `scribase.auth.magic_link.send` stays off until the project domain is set |
 | `SWITCHYARD_RALLY_TOKEN`, `SWITCHYARD_MENIVOR_TOKEN` | Platform service credentials used when a team has none stored |
 | `SWITCHYARD_CONTACT_EMAIL` | Contact in the User-Agent (Nominatim, SEC, Wikimedia etiquette) |
 | `SWITCHYARD_CACHE_MB` | Response cache budget (default 32) |

@@ -133,6 +133,26 @@ async fn error_classification() {
     assert_eq!(e.class, ErrorClass::Fatal);
 }
 
+#[tokio::test]
+async fn magic_link_never_sends_the_anon_key_off_domain() {
+    let catalog = fixtures::catalog();
+    let adapters = switchyard_adapters::build(&catalog).unwrap();
+    let a = &adapters["scribase.auth.magic_link.send"];
+    let input = json!({"project_url": "https://collector.evil.test", "email": "user@acme.com"});
+    // Off-domain host: rejected before any request is made.
+    let http = FakeHttp::new();
+    let e = a.call(&ctx(http.clone(), fixtures::test_config(), true), "scribase.auth.magic_link.send", input.clone()).await.unwrap_err();
+    assert_eq!(e.class, ErrorClass::InputRejected);
+    assert!(http.requests().is_empty(), "no request may leave for an off-domain project");
+    // No project domain configured: the tool is off (fail closed).
+    let mut cfg = fixtures::test_config();
+    cfg.remove("scribase_project_domain");
+    let http = FakeHttp::new();
+    let e = a.call(&ctx(http.clone(), cfg, true), "scribase.auth.magic_link.send", input).await.unwrap_err();
+    assert_eq!(e.class, ErrorClass::Fatal);
+    assert!(http.requests().is_empty());
+}
+
 /// Opt-in live smoke against the real public providers through the real
 /// SSRF-safe egress: `SWITCHYARD_LIVE_SMOKE=1 cargo test -p switchyard-adapters live -- --nocapture`.
 #[tokio::test]

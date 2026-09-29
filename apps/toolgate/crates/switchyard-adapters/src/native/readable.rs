@@ -175,9 +175,13 @@ pub async fn read(ctx: &CallCtx, input: &Value) -> Result<AdapterOutput, Adapter
     // private, loopback and metadata addresses and enforces https.
     req.extra_hosts = vec![host_of(url)?];
     req.max_body_bytes = 5 * 1024 * 1024;
-    let resp = send(ctx, req).await?;
+    // The page is the caller's choice, not a provider: a blocked, unreachable
+    // or failing page is an input problem. Classifying it as a provider
+    // failure would let a few bad URLs open the shared circuit breaker and
+    // take web.read down for every caller.
+    let resp = send(ctx, req).await.map_err(|e| AdapterError::rejected(format!("could not fetch {url}: {}", e.message)))?;
     if !(200..300).contains(&resp.status) {
-        return Err(AdapterError::from_status(resp.status, "", false));
+        return Err(AdapterError::rejected(format!("{url} answered HTTP {}", resp.status)).with_status(resp.status));
     }
     let ctype = resp.header("content-type").unwrap_or("text/html").to_ascii_lowercase();
     let text = resp.text();

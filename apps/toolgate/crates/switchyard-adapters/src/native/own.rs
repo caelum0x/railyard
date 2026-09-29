@@ -63,11 +63,11 @@ pub async fn scribase_branch(ctx: &CallCtx, input: &Value) -> Result<AdapterOutp
 pub async fn scribase_magic_link(ctx: &CallCtx, input: &Value) -> Result<AdapterOutput, AdapterError> {
     let project_url = str_field(input, "project_url")?.trim_end_matches('/');
     let host = host_of(project_url)?;
-    // Only project hosts under our Scribase domain, when one is configured.
-    if let Some(domain) = ctx.config("scribase_project_domain") {
-        if !(host == domain || host.ends_with(&format!(".{domain}"))) {
-            return Err(AdapterError::rejected(format!("project_url must be under {domain}")));
-        }
+    // Only project hosts under our Scribase domain. Without one configured the
+    // tool is off: the stored anon key must never go to a caller-chosen host.
+    let domain = ctx.config("scribase_project_domain").ok_or_else(|| AdapterError::fatal("magic links are disabled: SWITCHYARD_SCRIBASE_PROJECT_DOMAIN is not set"))?;
+    if !(host == domain || host.ends_with(&format!(".{domain}"))) {
+        return Err(AdapterError::rejected(format!("project_url must be under {domain}")));
     }
     let anon = ctx.credential.as_ref().ok_or_else(|| AdapterError::fatal("store the project's anon key as a `scribase` credential"))?;
     let mut url = url::Url::parse(&format!("{project_url}/auth/v1/magiclink")).map_err(|e| AdapterError::rejected(e.to_string()))?;

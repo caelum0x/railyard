@@ -25,6 +25,7 @@ pub fn test_config() -> BTreeMap<String, String> {
     [
         ("relay_url", "https://relay.test"),
         ("scribase_url", "https://scribase.test"),
+        ("scribase_project_domain", "scribase.test"),
         ("rally_url", "https://rally.test"),
         ("menivor_url", "https://menivor.test"),
         ("searxng_url", "https://searx.test"),
