@@ -210,7 +210,7 @@ export async function slotProof(repo: Repo, orgId: string, slot: BridgeSlot, lan
     const last = (await repo.listDeploys(orgId)).find((d) => d.status === "succeeded");
     return last
       ? { slot, state: "live", live: true, proof: { kind: "deploy", id: last.id, at: last.created_at }, next: null }
-      : { slot, state: "no_proof_yet", live: true, proof: null, next: "Run `scribase deploy` in the project folder to see the first deploy here." };
+      : { slot, state: "no_proof_yet", live: true, proof: null, next: "Deploy from the project folder to see the first deploy here." };
   }
   return { slot, state: "no_proof_yet", live: true, proof: null, next: null };
 }
