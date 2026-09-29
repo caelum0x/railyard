@@ -1,0 +1,17 @@
+{
+  "name": "railyard",
+  "version": "0.1.0",
+  "description": "Deploy to your own Cloudflare account, list and roll back deploys, and read visitor numbers from your coding agent.",
+  "author": {
+    "name": "Railyard"
+  },
+  "mcpServers": {
+    "railyard": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "railyard-mcp"
+      ]
+    }
+  }
+}
