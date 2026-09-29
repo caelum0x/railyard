@@ -16,6 +16,8 @@ import { handleBridge } from "../../apps/console/app/api/v1/bridge/scribase/serv
 import { MemoryFlagsStore } from "../../apps/console/lib/flags/store.ts";
 import { TableFlagsBackend } from "../../apps/console/lib/flags/table-backend.ts";
 import type { FlagsDeps } from "../../apps/console/lib/flags/service.ts";
+import { MemoryWatchStore } from "../../apps/console/lib/watch/store.ts";
+import type { WatchDeps } from "../../apps/console/lib/watch/service.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const contract = JSON.parse(readFileSync(join(HERE, "fixtures/scribase-bridge/contract.json"), "utf8"));
@@ -38,20 +40,25 @@ function flagsDeps(): FlagsDeps {
   return { store, backend, backends: { table: backend } };
 }
 
-async function send(repo: MemoryRepo, route: string, payload: unknown, id: string, secret = SECRET, flags: FlagsDeps = flagsDeps()) {
+function watchDeps(repo: MemoryRepo): WatchDeps {
+  return { store: new MemoryWatchStore(), repo, mailer: { send: async () => true }, consoleUrl: "https://railyard.example", agentToken: null, live: true };
+}
+
+async function send(repo: MemoryRepo, route: string, payload: unknown, id: string, secret = SECRET, flags: FlagsDeps = flagsDeps(), watch: WatchDeps = watchDeps(repo)) {
   const body = JSON.stringify(payload);
   const ts = String(Math.floor(NOW.getTime() / 1000));
-  return handleBridge({ repo, secret: SECRET, consoleUrl: "https://railyard.example", now: () => NOW, flags }, route as never, { id, timestamp: ts, signature: await sign(secret, id, ts, body) }, body);
+  return handleBridge({ repo, secret: SECRET, consoleUrl: "https://railyard.example", now: () => NOW, flags, watch }, route as never, { id, timestamp: ts, signature: await sign(secret, id, ts, body) }, body);
 }
 
 test("every contract case answers with its status and keys, in order", async () => {
   const repo = new MemoryRepo(() => NOW);
   const flags = flagsDeps();
+  const watch = watchDeps(repo);
   let i = 0;
   for (const c of contract.cases) {
     const id = rid(c.route, ++i);
     assert.match(id, new RegExp(contract.id_format));
-    const r = await send(repo, c.route, c.request, id, SECRET, flags);
+    const r = await send(repo, c.route, c.request, id, SECRET, flags, watch);
     assert.equal(r.status, c.status, c.name);
     assert.deepEqual(Object.keys(r.body).sort(), c.response_keys, c.name);
     if (c.response_match) assert.ok(matches(r.body, c.response_match), `${c.name}: ${JSON.stringify(r.body)}`);
@@ -65,6 +72,9 @@ test("every contract case answers with its status and keys, in order", async () 
       for (const f of items) assert.deepEqual(Object.keys(f).sort(), contract.flags_item_keys, c.name);
       if (c.flags_match) assert.ok(matches(items.map((f) => ({ key: f.key, enabled: f.enabled, value: f.value })), c.flags_match), c.name);
       assert.match(r.body.client_key as string, /^ry_flags_/);
+    }
+    if (c.route === "uptime" && r.status === 200) {
+      for (const k of r.body.checks as Record<string, unknown>[]) assert.deepEqual(Object.keys(k).sort(), contract.uptime_check_keys, c.name);
     }
   }
 });

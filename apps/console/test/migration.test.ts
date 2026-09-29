@@ -14,6 +14,7 @@ const BRIDGE = join(ROOT, "db/migrations/0002_scribase_bridge.sql");
 const AI = join(ROOT, "db/migrations/0003_ai_gateway.sql");
 const ORDER = join(ROOT, "db/migrations/0004_bridge_order.sql");
 const FLAGS = join(ROOT, "db/migrations/0005_flags.sql");
+const WATCH = join(ROOT, "db/migrations/0006_watch.sql");
 const have = spawnSync("pg_ctl", ["--version"]).status === 0 && spawnSync("initdb", ["--version"]).status === 0;
 
 test("0001 applies twice on a scratch cluster; RLS on; anon has no access", { skip: have ? false : "pg_ctl/initdb not installed" }, () => {
@@ -143,4 +144,29 @@ test("0005 (flags, PY2.1) applies twice; one env per org/app/env; keys and flag 
   assert.equal(anon, "0");
   const noRls = psql(["-c", "select count(*) from pg_tables where schemaname = 'railyard' and not rowsecurity"]).trim();
   assert.equal(noRls, "0");
+});
+
+test("0006 (watch, PY2.2) applies twice; https only; one status page per slug; history capped; anon has no access", { skip: have ? false : "pg_ctl/initdb not installed" }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "ry-pg-"));
+  const port = String(49000 + Math.floor(Math.random() * 1900));
+  after(() => {
+    spawnSync("pg_ctl", ["-D", join(dir, "data"), "-m", "immediate", "stop"], { stdio: "ignore" });
+    rmSync(dir, { recursive: true, force: true });
+  });
+  execFileSync("initdb", ["-D", join(dir, "data"), "-U", "postgres", "-A", "trust", "--no-sync"], { stdio: "ignore" });
+  execFileSync("pg_ctl", ["-D", join(dir, "data"), "-o", `-p ${port} -k ${dir} -c listen_addresses=''`, "-w", "start"], { stdio: "ignore" });
+  const psql = (args: string[]) => execFileSync("psql", ["-h", dir, "-p", port, "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-qAt", ...args], { encoding: "utf8" });
+  psql(["-c", "create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;"]);
+  for (const f of [MIGRATION, BRIDGE, AI, ORDER, FLAGS, WATCH, MIGRATION, BRIDGE, AI, ORDER, FLAGS, WATCH]) psql(["-f", f]);
+  const org = psql(["-c", "insert into railyard.orgs (name, owner_user_id) values ('Acme', gen_random_uuid()) returning id"]).trim();
+  const id = psql(["-c", `insert into railyard.watch_checks (org_id, app, name, url, slug) values ('${org}', 'shop', 'Shop', 'https://shop.example.com/', 'shop-abc123') returning id`]).trim();
+  assert.throws(() => psql(["-c", `insert into railyard.watch_checks (org_id, app, name, url, slug) values ('${org}', 'blog', 'Blog', 'http://blog.example.com/', 'blog-abc123')`]), /check constraint/);
+  assert.throws(() => psql(["-c", `insert into railyard.watch_checks (org_id, app, name, url, slug) values ('${org}', 'blog', 'Blog', 'https://blog.example.com/', 'shop-abc123')`]), /duplicate key/);
+  psql(["-c", `insert into railyard.watch_status (check_id, state, history) values ('${id}', 'up', '[{"at":"2026-09-29T12:00:00Z","ok":true,"ms":80}]')`]);
+  assert.throws(() => psql(["-c", `update railyard.watch_status set state = 'red' where check_id = '${id}'`]), /check constraint/);
+  const big = JSON.stringify(Array.from({ length: 91 }, () => ({ ok: true })));
+  assert.throws(() => psql(["-c", `update railyard.watch_status set history = '${big}' where check_id = '${id}'`]), /check constraint/);
+  psql(["-c", `delete from railyard.orgs where id = '${org}'`]);
+  assert.equal(psql(["-c", "select count(*) from railyard.watch_status"]).trim(), "0");
+  assert.equal(psql(["-c", "select count(*) from information_schema.role_table_grants where table_schema = 'railyard' and grantee in ('anon', 'authenticated')"]).trim(), "0");
 });

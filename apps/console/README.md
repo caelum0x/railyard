@@ -43,6 +43,10 @@ Usage, Billing), one primary action on each, a pause switch and one-click cancel
 | `INSIGHTS_API_URL` | var | Insights tenant API base (Wave P PY1.3); empty keeps the Insights page on "No data yet" |
 | `FLAGS_API_URL` | var | Railyard Flags (Wave P PY2.1): base URL of the flags service on box 2 (through the tunnel). With `FLAGS_ADMIN_TOKEN` set, new flag environments are made there; without them, flags live in the console's own tables (migration 0005), the fallback. |
 | `FLAGS_ADMIN_TOKEN` | secret | The flags service's instance admin token (`Token ...` auth). Only this console holds it; apps read flags with their public flags key. |
+| `RAILYARD_WATCH_LIVE` | var | Railyard Watch (Wave P PY2.2). `1` turns on uptime checks, the Watch screen, the public status pages and the alert email. Unset (the default): no check runs and nothing about Watch is shown (denylist rule `railyard-slot-watch`). Set it only after the customer checks stack on box 1 passes its drill. |
+| `WATCH_AGENT_TOKEN` | secret | Bearer token of the box 1 checks agent (`stacks/gatus-customers/agent.sh`), at least 32 characters; the same value sits in `/etc/products/watch-agent.token` on box 1. Unset keeps the agent API off (503). |
+| `RALLY_TX_URL` | var | Rally Send transactional endpoint (https) for Watch alert email, product `railyard`. |
+| `RALLY_TX_KEY` | secret | Rally Send key minted for product `railyard`. Without it, alerts are logged, not sent. |
 | `INSIGHTS_API_TOKEN` | secret | Bearer token of the Insights tenant API |
 | `SITES` | KV binding | The edge collector's site entries; written when an app is added and on every plan, add-on or pause change |
 | `RELAY_URL` | var | Relay's OpenAI-compatible base for the AI gateway (Wave P PY1.4) |

@@ -32,6 +32,7 @@ import { verify, type WebhookHeaders } from "../../../../../lib/standard-webhook
 import { createApprovedDevice } from "../../../../../lib/tokens.ts";
 import { emptyEntitlement, type Entitlement } from "../../../../../lib/types.ts";
 import { ensureEnv, firstRead, FlagsError, listFlags, setFlag, type FlagsDeps } from "../../../../../lib/flags/service.ts";
+import { createCheck, listWithState, WatchError, type WatchDeps } from "../../../../../lib/watch/service.ts";
 
 export const CLAIM_TTL_SECONDS = 120;
 
@@ -49,7 +50,7 @@ export const BRIDGE_SLOTS = {
   analytics: { pkg: "PY1.3", landed: true, proof: "first_event" },
   ai: { pkg: "PY1.4", landed: true, proof: "gateway_key" },
   flags: { pkg: "PY2.1", landed: true, proof: "first_flag_read" },
-  uptime: { pkg: "PY2.2", landed: false, proof: "check_result" },
+  uptime: { pkg: "PY2.2", landed: true, proof: "check_result" },
   billing: { pkg: "PY2.3", landed: false, proof: "test_purchase" },
   consent: { pkg: "PY2.5", landed: false, proof: "consent_record" },
 } as const;
@@ -68,6 +69,8 @@ export interface BridgeDeps {
   insightsUrl?: string;
   /** Railyard Flags (PY2.1); absent in tests that do not need them. */
   flags?: FlagsDeps;
+  /** Railyard Watch (PY2.2); absent in tests that do not need it. */
+  watch?: WatchDeps;
   /** P-Y1 transition: accept unbound ids and orgs syncs without `addon.as_of` (RAILYARD_BRIDGE_ACCEPT_LEGACY=1). */
   acceptLegacy?: boolean;
 }
@@ -243,6 +246,7 @@ export async function slotProof(
   landed: Partial<Record<BridgeSlot, boolean>> = {},
   insights: InsightsClient | null = null,
   flags: FlagsDeps | null = null,
+  watch: WatchDeps | null = null,
 ): Promise<SlotState> {
   const isLanded = landed[slot] ?? BRIDGE_SLOTS[slot].landed;
   if (!isLanded) {
@@ -273,6 +277,14 @@ export async function slotProof(
       ? { slot, state: "live", live: true, proof: read, next: null }
       : { slot, state: "no_proof_yet", live: true, proof: null, next: "Read a flag from the app (or run the add command again) to see the first read here." };
   }
+  if (slot === "uptime") {
+    if (!watch?.live) return { slot, state: "arriving", live: false, proof: null, next: "This slot is arriving (PY2.2); nothing was changed." };
+    const checks = await listWithState(watch, orgId);
+    const first = checks.filter((c) => c.first_result_at).sort((a, b) => (a.first_result_at! < b.first_result_at! ? -1 : 1))[0];
+    return first
+      ? { slot, state: "live", live: true, proof: { kind: "check_result", id: first.id, at: first.first_result_at! }, next: null }
+      : { slot, state: "no_proof_yet", live: true, proof: null, next: checks.length ? "The first result arrives within two minutes." : "Add your app's address to check." };
+  }
   return { slot, state: "no_proof_yet", live: true, proof: null, next: null };
 }
 
@@ -285,7 +297,7 @@ async function proofFor(deps: BridgeDeps, body: Record<string, unknown>): Promis
   if (!BRIDGE_SLOTS[s].landed) return { status: 200, body: { ...(await slotProof(deps.repo, "", s)) } };
   const bound = await deps.repo.findScribaseBinding(scribaseOrgId);
   if (!bound) return { status: 200, body: { slot: s, state: "not_entitled", live: false, proof: null, next: "Turn on the add-on first." } };
-  return { status: 200, body: { ...(await slotProof(deps.repo, bound.org_id, s, {}, deps.insights ?? null, deps.flags ?? null)) } };
+  return { status: 200, body: { ...(await slotProof(deps.repo, bound.org_id, s, {}, deps.insights ?? null, deps.flags ?? null, deps.watch ?? null)) } };
 }
 
 async function deploysFor(deps: BridgeDeps, body: Record<string, unknown>): Promise<BridgeResult> {
@@ -442,7 +454,42 @@ async function flagsFor(deps: BridgeDeps, body: Record<string, unknown>): Promis
   }
 }
 
-export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights" | "ai" | "ai_usage" | "flags";
+/**
+ * Uptime for one Scribase project (PY2.2): `{scribase_org_id, app, url?,
+ * name?, owner_email?}`. With a URL (or, without one, the app's latest live
+ * deploy) it adds a check; it always answers the app's checks with their
+ * state and public status page.
+ */
+async function uptimeFor(deps: BridgeDeps, body: Record<string, unknown>): Promise<BridgeResult> {
+  const scribaseOrgId = parseOrgRef(body);
+  if (!scribaseOrgId) return fail(400, "scribase_org_id is required");
+  const app = typeof body.app === "string" ? normaliseAppName(body.app) : "";
+  if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(app)) return fail(400, "app must be a project name (letters, numbers, dashes)");
+  const now = deps.now();
+  const who = await entitledOrg(deps.repo, scribaseOrgId, "uptime", now);
+  if ("status" in who) return who;
+  if (!deps.watch || !deps.watch.live) return fail(503, "This slot is arriving (PY2.2). Nothing was changed.");
+  const ownerEmail = typeof body.owner_email === "string" && body.owner_email.length <= 254 ? body.owner_email : null;
+  let url = typeof body.url === "string" && body.url.trim() ? body.url.trim() : null;
+  if (!url) {
+    const railyardApp = await deps.repo.findAppByName(who.orgId, app);
+    const live = railyardApp ? (await deps.repo.listDeploys(who.orgId, railyardApp.id)).find((d) => d.status === "succeeded") : undefined;
+    url = live?.url ?? null;
+  }
+  try {
+    const before = (await deps.watch.store.listChecks(who.orgId)).length;
+    if (url) await createCheck(deps.watch, { orgId: who.orgId, app, name: body.name, url, ownerEmail });
+    const checks = await listWithState(deps.watch, who.orgId, app);
+    if (checks.length === 0) return fail(400, "Give the https address of your app to check, or deploy it first.");
+    const created = (await deps.watch.store.listChecks(who.orgId)).length > before;
+    return { status: 200, body: { app, created, checks } };
+  } catch (e) {
+    if (e instanceof WatchError) return fail(e.status, e.message);
+    throw e;
+  }
+}
+
+export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights" | "ai" | "ai_usage" | "flags" | "uptime";
 
 /**
  * The route a signed message id names (P-Y1). Scribase sends
@@ -490,5 +537,7 @@ export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers
       return aiUsageFor(deps, b);
     case "flags":
       return flagsFor(deps, b);
+    case "uptime":
+      return uptimeFor(deps, b);
   }
 }

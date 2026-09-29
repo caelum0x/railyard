@@ -10,12 +10,14 @@ const LINKS = [
   { href: "/billing", label: "Billing" },
 ];
 
-export function Nav() {
+/** `watch` adds the Watch screen once RAILYARD_WATCH_LIVE is on (PY2.2). */
+export function Nav({ watch = false }: { watch?: boolean }) {
   const path = usePathname();
+  const links = watch ? [...LINKS.slice(0, 3), { href: "/watch", label: "Watch" }, ...LINKS.slice(3)] : LINKS;
   return (
     <nav className="nav" aria-label="Main">
       <div className="brand">Railyard</div>
-      {LINKS.map((l) => (
+      {links.map((l) => (
         <a key={l.href} href={l.href} aria-current={path?.startsWith(l.href) ? "page" : undefined}>
           {l.label}
         </a>

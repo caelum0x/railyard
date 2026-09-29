@@ -40,6 +40,16 @@ export interface Config {
   bridgeAcceptLegacy: boolean;
   /** Insights tenant API (PY1.3); null keeps analytics proofs and pages off. */
   insightsApi: { url: string; token: string } | null;
+  /**
+   * Railyard Watch is shown and run only with RAILYARD_WATCH_LIVE=1 (denylist
+   * rule railyard-slot-watch): set at deploy once the customer checks stack
+   * passes its drill. Off: no checks run, no page, no email.
+   */
+  watchLive: boolean;
+  /** Railyard Watch (PY2.2): the box 1 agent's bearer token; null keeps the agent API off. */
+  watchAgentToken: string | null;
+  /** Rally Send for alert email (Wave E contract 5.2); null logs alerts instead. */
+  rallySend: { url: string; key: string } | null;
   /** Railyard Flags backend (PY2.1): the Flagsmith server; null uses Railyard's own tables. */
   flags: { apiUrl: string; adminToken: string } | null;
   /** The AI gateway (PY1.4): Relay's tenant key and the sealing key; null keeps the gateway off (503). */
@@ -82,6 +92,12 @@ export function readConfig(env: Env = process.env): Config {
     insightsApi:
       env.INSIGHTS_API_URL?.trim() && env.INSIGHTS_API_TOKEN?.trim()
         ? { url: env.INSIGHTS_API_URL.trim().replace(/\/$/, ""), token: env.INSIGHTS_API_TOKEN.trim() }
+        : null,
+    watchLive: env.RAILYARD_WATCH_LIVE === "1",
+    watchAgentToken: env.WATCH_AGENT_TOKEN?.trim() && env.WATCH_AGENT_TOKEN.trim().length >= 32 ? env.WATCH_AGENT_TOKEN.trim() : null,
+    rallySend:
+      env.RALLY_TX_URL?.trim().startsWith("https://") && env.RALLY_TX_KEY?.trim()
+        ? { url: env.RALLY_TX_URL.trim(), key: env.RALLY_TX_KEY.trim() }
         : null,
     flags:
       env.FLAGS_API_URL?.trim() && env.FLAGS_ADMIN_TOKEN?.trim()

@@ -449,3 +449,93 @@ test("flags: the console writes only its own org's environments, for apps it has
   assert.equal((await consoleSetFlag(flags, repo, other, { app: "shop", env: "production", flag: { key: "banner", enabled: false } }, T0)).status, 404);
   assert.equal((await flags.store.listEnvs(org.id)).length, 1);
 });
+
+// ---- Uptime (PY2.2) -------------------------------------------------------------
+import { MemoryWatchStore } from "../../../../../lib/watch/store.ts";
+import { recordResults, type WatchDeps } from "../../../../../lib/watch/service.ts";
+import { agentList, agentResults, consoleWatch } from "../../../../../lib/watch/http.ts";
+
+function watchDeps(repo: MemoryRepo): WatchDeps & { sent: string[] } {
+  const sent: string[] = [];
+  return { store: new MemoryWatchStore(), repo, mailer: { send: async (m) => (sent.push(`${m.to}|${m.subject}`), true) }, consoleUrl: "https://railyard.example", agentToken: "agent-token-0123456789abcdef-0123", live: true, sent };
+}
+
+test("uptime: a check for the project's address, its status page, the first result is the proof, red emails the owner", async () => {
+  const repo = new MemoryRepo(() => T0);
+  const watch = watchDeps(repo);
+  await call(repo, "orgs", { scribase_org_id: "org_u", name: "U", addon: addon(true, ["uptime"]) });
+  const r = await call(repo, "uptime", { scribase_org_id: "org_u", app: "shop", url: "https://shop.example.com", owner_email: "owner@example.com" }, { extra: { watch } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.created, true);
+  const check = (r.body.checks as { id: string; status_url: string; state: string }[])[0];
+  assert.match(check.status_url, /^https:\/\/railyard\.example\/status\/shop-/);
+  assert.equal(check.state, "waiting");
+  let proof = await call(repo, "proof", { scribase_org_id: "org_u", slot: "uptime" }, { extra: { watch } });
+  assert.equal(proof.body.state, "no_proof_yet");
+  const at = (m: number) => new Date(T0.getTime() + m * 60_000).toISOString();
+  await recordResults(watch, { results: [{ id: check.id, ok: true, at: at(1), ms: 80 }, { id: check.id, ok: false, at: at(2), ms: 1 }, { id: check.id, ok: false, at: at(3), ms: 1 }] }, new Date(at(3)));
+  proof = await call(repo, "proof", { scribase_org_id: "org_u", slot: "uptime" }, { extra: { watch } });
+  assert.deepEqual(proof.body.proof, { kind: "check_result", id: check.id, at: at(1) });
+  assert.deepEqual(watch.sent, ["owner@example.com|shop is down"]);
+  const again = await call(repo, "uptime", { scribase_org_id: "org_u", app: "shop" }, { extra: { watch } });
+  assert.equal(again.body.created, false);
+  assert.equal((again.body.checks as { state: string }[])[0].state, "down");
+});
+
+test("uptime: without a URL the app's latest live deploy is checked; with neither it asks for the address", async () => {
+  const repo = new MemoryRepo(() => T0);
+  const watch = watchDeps(repo);
+  const orgId = (await call(repo, "orgs", { scribase_org_id: "org_d", name: "D", addon: addon(true, ["uptime", "deploy"]) })).body.org_id as string;
+  assert.equal((await call(repo, "uptime", { scribase_org_id: "org_d", app: "shop" }, { extra: { watch } })).status, 400);
+  await addApp(repo, orgId, "shop", T0);
+  await recordDeploy(repo, orgId, parseDeployInput({ app: "shop", branch: "main", framework: "vite", status: "succeeded", url: "https://shop.acct.workers.dev" }) as never, T0);
+  const r = await call(repo, "uptime", { scribase_org_id: "org_d", app: "shop" }, { extra: { watch } });
+  assert.equal(r.status, 200);
+  assert.equal((r.body.checks as { url: string }[])[0].url, "https://shop.acct.workers.dev/");
+});
+
+test("uptime: 402 outside the add-on, 503 before Watch exists, 400 for a private address", async () => {
+  const repo = new MemoryRepo(() => T0);
+  const watch = watchDeps(repo);
+  await call(repo, "orgs", { scribase_org_id: "org_n", name: "N", addon: addon(true, ["deploy"]) });
+  assert.equal((await call(repo, "uptime", { scribase_org_id: "org_n", app: "shop", url: "https://shop.example.com" }, { extra: { watch } })).status, 402);
+  await call(repo, "orgs", { scribase_org_id: "org_m", name: "M", addon: addon(true, ["uptime"]) });
+  assert.equal((await call(repo, "uptime", { scribase_org_id: "org_m", app: "shop", url: "https://shop.example.com" })).status, 503);
+  assert.equal((await call(repo, "uptime", { scribase_org_id: "org_m", app: "shop", url: "https://10.0.0.5" }, { extra: { watch } })).status, 400);
+  // RAILYARD_WATCH_LIVE off: the slot is arriving, nothing is created.
+  const off = { ...watch, live: false };
+  assert.equal((await call(repo, "uptime", { scribase_org_id: "org_m", app: "shop", url: "https://shop.example.com" }, { extra: { watch: off } })).status, 503);
+  assert.equal((await call(repo, "proof", { scribase_org_id: "org_m", slot: "uptime" }, { extra: { watch: off } })).body.state, "arriving");
+});
+
+test("uptime agent API: bearer token only; the list has ids and URLs; results flow in", async () => {
+  const repo = new MemoryRepo(() => T0);
+  const watch = watchDeps(repo);
+  await call(repo, "orgs", { scribase_org_id: "org_a2", name: "A", addon: addon(true, ["uptime"]) });
+  const id = ((await call(repo, "uptime", { scribase_org_id: "org_a2", app: "shop", name: "Shop", url: "https://shop.example.com" }, { extra: { watch } })).body.checks as { id: string }[])[0].id;
+  const auth = { authorization: `Bearer ${watch.agentToken}` };
+  assert.equal((await agentList(watch, new Request("https://c/x"), T0)).status, 401);
+  const list = (await (await agentList(watch, new Request("https://c/x", { headers: auth }), T0)).json()) as { checks: Record<string, unknown>[] };
+  assert.deepEqual(list.checks, [{ id, url: "https://shop.example.com/", interval_s: 60 }]);
+  assert.ok(!JSON.stringify(list).includes("Shop"), "no customer text reaches the checker");
+  const post = await agentResults(watch, new Request("https://c/x", { method: "POST", headers: auth, body: JSON.stringify({ results: [{ id, ok: true, at: T0.toISOString(), ms: 50 }] }) }), T0);
+  assert.equal(((await post.json()) as { accepted: number }).accepted, 1);
+  assert.equal((await agentResults({ ...watch, agentToken: null }, new Request("https://c/x", { method: "POST" }), T0)).status, 503);
+});
+
+test("uptime console: only the org's own apps and checks", async () => {
+  const repo = new MemoryRepo(() => T0);
+  const watch = watchDeps(repo);
+  const org = await repo.createOrgForUser({ userId: "w1", email: "w@example.com", name: "W" });
+  await repo.saveEntitlement({ ...(await import("../../../../../lib/types.ts")).emptyEntitlement(org.id, T0), plan: "railyard", status: "active", apps_limit: 3 });
+  await addApp(repo, org.id, "shop", T0);
+  const s = { org: org.id, email: "w@example.com" };
+  assert.equal((await consoleWatch(watch, repo, null, {})).status, 401);
+  assert.equal((await consoleWatch(watch, repo, s, { app: "nope", url: "https://x.example.com" })).status, 404);
+  const ok = await consoleWatch(watch, repo, s, { app: "shop", url: "https://shop.example.com" });
+  assert.equal(ok.status, 200);
+  const id = (ok.body.checks as { id: string }[])[0].id;
+  assert.equal((await watch.store.getCheck(id))?.owner_email, "w@example.com");
+  assert.equal((await consoleWatch(watch, repo, { org: "other", email: "o@example.com" }, { id, paused: true })).status, 404);
+  assert.equal((await consoleWatch(watch, repo, s, { id, paused: true })).status, 200);
+});

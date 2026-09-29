@@ -243,7 +243,8 @@
             "analytics",
             "deploy",
             "ai",
-            "flags"
+            "flags",
+            "uptime"
           ],
           "renews_at": "2026-10-29T12:00:00Z",
           "caps": {
@@ -265,7 +266,8 @@
             "ai",
             "analytics",
             "deploy",
-            "flags"
+            "flags",
+            "uptime"
           ]
         }
       }
@@ -330,6 +332,27 @@
           "value": "blue"
         }
       ]
+    },
+    {
+      "name": "uptime check for a project's address",
+      "route": "uptime",
+      "request": {
+        "scribase_org_id": "org_fixture",
+        "app": "shop",
+        "url": "https://shop.example.com",
+        "name": "Shop",
+        "owner_email": "owner@example.com"
+      },
+      "status": 200,
+      "response_keys": [
+        "app",
+        "checks",
+        "created"
+      ],
+      "response_match": {
+        "app": "shop",
+        "created": true
+      }
     },
     {
       "name": "lapsed add-on",
@@ -424,6 +447,18 @@
       "response_keys": [
         "error"
       ]
+    },
+    {
+      "name": "uptime after the add-on lapsed",
+      "route": "uptime",
+      "request": {
+        "scribase_org_id": "org_fixture",
+        "app": "shop"
+      },
+      "status": 402,
+      "response_keys": [
+        "error"
+      ]
     }
   ],
   "unsigned": {
@@ -469,7 +504,7 @@
     "month_events",
     "visitors"
   ],
-  "id_format": "^msg_(orgs|claims|proof|deploys|sites|insights|ai|ai_usage|flags)_[0-9a-f]{24}$",
+  "id_format": "^msg_(orgs|claims|proof|deploys|sites|insights|ai|ai_usage|flags|uptime)_[0-9a-f]{24}$",
   "wrong_route": {
     "status": 401,
     "response_keys": [
@@ -492,5 +527,16 @@
     "key",
     "updated_at",
     "value"
+  ],
+  "uptime_check_keys": [
+    "app",
+    "first_result_at",
+    "id",
+    "last_checked_at",
+    "name",
+    "paused",
+    "state",
+    "status_url",
+    "url"
   ]
 }
