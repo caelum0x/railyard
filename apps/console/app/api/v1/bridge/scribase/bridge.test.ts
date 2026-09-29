@@ -539,3 +539,20 @@ test("uptime console: only the org's own apps and checks", async () => {
   assert.equal((await consoleWatch(watch, repo, { org: "other", email: "o@example.com" }, { id, paused: true })).status, 404);
   assert.equal((await consoleWatch(watch, repo, s, { id, paused: true })).status, 200);
 });
+
+test("flags: a URL-keyed read is served from the edge cache for 15 s; a header-keyed read never is", async () => {
+  const flags = flagsDeps();
+  const repo = new MemoryRepo(() => T0);
+  await call(repo, "orgs", { scribase_org_id: "org_ec", name: "EC", addon: addon(true, ["flags"]) });
+  const key = (await call(repo, "flags", { scribase_org_id: "org_ec", app: "shop", env: "production", set: { key: "a", enabled: true } }, { extra: { flags } })).body.client_key as string;
+  const store = new Map<string, Response>();
+  const cache = { match: async (r: Request) => store.get(r.url)?.clone(), put: async (r: Request, res: Response) => void store.set(r.url, res) };
+  const first = await clientFlags(flags, new Request(`https://c/x?key=${key}`), T0, cache);
+  assert.equal(((await first.json()) as { flags: Record<string, { enabled: boolean }> }).flags.a.enabled, true);
+  assert.equal(store.size, 1);
+  await call(repo, "flags", { scribase_org_id: "org_ec", app: "shop", env: "production", set: { key: "a", enabled: false } }, { extra: { flags } });
+  const cached = await clientFlags(flags, new Request(`https://c/x?key=${key}`), T0, cache);
+  assert.equal(((await cached.json()) as { flags: Record<string, { enabled: boolean }> }).flags.a.enabled, true, "served from the cache");
+  await clientFlags(flags, new Request("https://c/x", { headers: { "x-flags-key": key } }), T0, cache);
+  assert.equal(store.size, 1, "header-keyed reads are not cached");
+});

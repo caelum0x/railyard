@@ -14,21 +14,35 @@ export const CORS: Record<string, string> = {
 const reply = (body: unknown, status: number, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 
+/** The slice of the Workers Cache API the read endpoint uses. */
+export interface EdgeCache {
+  match(request: Request): Promise<Response | undefined>;
+  put(request: Request, response: Response): Promise<void>;
+}
+
 /**
  * GET /api/v1/flags/client?key=ry_flags_... (or header x-flags-key): the
- * environment's flags for an app. Public, CORS open, cached briefly so a flip
- * reaches every app within 60 s while polling stays cheap.
+ * environment's flags for an app. Public, CORS open. A URL-keyed answer is
+ * kept 15 s in the edge cache (the Workers Cache API when `cache` is given),
+ * so a flip reaches every app within 60 s while polling stays cheap.
  */
-export async function clientFlags(deps: FlagsDeps, req: Request, now: Date): Promise<Response> {
+export async function clientFlags(deps: FlagsDeps, req: Request, now: Date, cache?: EdgeCache | null): Promise<Response> {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   const url = new URL(req.url);
   const fromQuery = url.searchParams.get("key");
+  const cacheKey = fromQuery && cache ? new Request(url.toString(), { method: "GET" }) : null;
+  if (cacheKey && cache) {
+    const hit = await cache.match(cacheKey).catch(() => undefined);
+    if (hit) return hit;
+  }
   const key = fromQuery ?? req.headers.get("x-flags-key");
   try {
     const body = await evaluate(deps, key, now);
     // Only a query-keyed URL may sit in a shared cache (the key is the cache key).
-    const cache = fromQuery ? `public, max-age=${EVAL_MAX_AGE_SECONDS}, s-maxage=${EVAL_MAX_AGE_SECONDS}` : "no-store";
-    return reply(body, 200, { ...CORS, "cache-control": cache });
+    const control = fromQuery ? `public, max-age=${EVAL_MAX_AGE_SECONDS}, s-maxage=${EVAL_MAX_AGE_SECONDS}` : "no-store";
+    const res = reply(body, 200, { ...CORS, "cache-control": control });
+    if (cacheKey && cache) await cache.put(cacheKey, res.clone()).catch(() => undefined);
+    return res;
   } catch (e) {
     if (e instanceof FlagsError) return reply({ error: e.message }, e.status, { ...CORS, "cache-control": "no-store" });
     console.error(`flags client read failed: ${(e as Error).message}`);
