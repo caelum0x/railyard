@@ -185,6 +185,22 @@
       }
     },
     {
+      "name": "analytics tab before Insights is configured",
+      "route": "insights",
+      "request": {
+        "scribase_org_id": "org_fixture",
+        "app": "shop-prod"
+      },
+      "status": 200,
+      "response_keys": [
+        "available",
+        "next"
+      ],
+      "response_match": {
+        "available": false
+      }
+    },
+    {
       "name": "lapsed add-on",
       "route": "orgs",
       "request": {
@@ -261,5 +277,16 @@
     "timestamp": "1790683200",
     "body": "{\"scribase_org_id\":\"org_fixture\",\"slot\":\"deploy\"}",
     "signature": "v1,2STo0Y/k7q3ba+G8+nDgJbNv/m3d9AefmzC0Hzrbjjw="
-  }
+  },
+  "insights_answer_keys": [
+    "app",
+    "available",
+    "cap_note",
+    "events",
+    "events_limit",
+    "first_event_at",
+    "funnel",
+    "month_events",
+    "visitors"
+  ]
 }

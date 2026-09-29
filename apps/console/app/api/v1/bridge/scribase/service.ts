@@ -24,6 +24,7 @@ import { access } from "../../../../../lib/ladder.ts";
 import { listDeploys } from "../../deploys/service.ts";
 import { addApp, AppError, normaliseAppName } from "../../../../../lib/apps.ts";
 import { firstEvent, type InsightsClient } from "../../../../../lib/insights.ts";
+import { capMessage } from "../../../../../lib/caps.ts";
 import { registerSite, syncSites, type SitesStore } from "../../../../../lib/sites.ts";
 import type { Repo } from "../../../../../lib/repo.ts";
 import { verify, type WebhookHeaders } from "../../../../../lib/standard-webhooks.ts";
@@ -287,7 +288,38 @@ async function siteFor(deps: BridgeDeps, body: Record<string, unknown>): Promise
   };
 }
 
-export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys" | "sites";
+/** The Scribase Analytics tab: one project's numbers and the cap note (PY1.3). */
+async function insightsFor(deps: BridgeDeps, body: Record<string, unknown>): Promise<BridgeResult> {
+  const scribaseOrgId = parseOrgRef(body);
+  if (!scribaseOrgId) return fail(400, "scribase_org_id is required");
+  const name = typeof body.app === "string" ? normaliseAppName(body.app) : "";
+  if (!name) return fail(400, "app is required");
+  const now = deps.now();
+  const who = await entitledOrg(deps.repo, scribaseOrgId, "analytics", now);
+  if ("status" in who) return who;
+  const app = await deps.repo.findAppByName(who.orgId, name);
+  if (!app) return { status: 200, body: { available: false, next: "Turn on analytics for this project first." } };
+  if (!deps.insights) return { status: 200, body: { available: false, next: "Analytics is being set up on this deployment; events are counted meanwhile." } };
+  const summary = await deps.insights.summary(who.orgId, { app: app.id, days: 7 });
+  const row = summary.apps.find((a) => a.app_id === app.id);
+  const limit = access(await deps.repo.getEntitlement(who.orgId), now).eventsLimit;
+  return {
+    status: 200,
+    body: {
+      available: true,
+      app: app.name,
+      first_event_at: row?.first_event_at ?? null,
+      visitors: row?.visitors ?? 0,
+      events: row?.events ?? 0,
+      month_events: row?.month_events ?? 0,
+      events_limit: limit,
+      funnel: summary.funnel.steps,
+      cap_note: capMessage(row?.month_events ?? 0, limit, now),
+    },
+  };
+}
+
+export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights";
 
 /** Verify, refuse replays, parse, dispatch. Framework-free so the routes stay three lines. */
 export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers: WebhookHeaders, raw: string): Promise<BridgeResult> {
@@ -315,5 +347,7 @@ export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers
       return deploysFor(deps, b);
     case "sites":
       return siteFor(deps, b);
+    case "insights":
+      return insightsFor(deps, b);
   }
 }

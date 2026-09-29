@@ -31,7 +31,7 @@ const T0 = new Date("2026-09-29T12:00:00Z");
 let n = 0;
 async function call(
   repo: MemoryRepo,
-  route: "orgs" | "claims" | "proof" | "deploys" | "sites",
+  route: "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights",
   payload: unknown,
   opts: { at?: Date; secret?: string; id?: string; extra?: Partial<Parameters<typeof handleBridge>[0]> } = {},
 ) {
@@ -268,6 +268,12 @@ test("analytics slot (PY1.3): sites gives the project's app its public page-tag 
   first = "2026-09-29T12:00:30.000Z";
   const after = await call(repo, "proof", { scribase_org_id: "org_an", slot: "analytics" }, { extra });
   assert.deepEqual(after.body.proof, { kind: "first_event", id: r.body.app_id, at: first });
+  const tab = await call(repo, "insights", { scribase_org_id: "org_an", app: "shop-prod" }, { extra });
+  assert.equal(tab.body.available, true);
+  assert.equal(tab.body.first_event_at, first);
+  assert.equal(tab.body.events_limit, 3_000_000);
+  assert.equal(tab.body.cap_note, null);
+  assert.equal((await call(repo, "insights", { scribase_org_id: "org_an", app: "other" }, { extra })).body.available, false);
   // Without the analytics slot in the add-on, no app and no entry.
   await call(repo, "orgs", { scribase_org_id: "org_noan", name: "N", addon: addon(true, ["deploy"]) }, { extra });
   assert.equal((await call(repo, "sites", { scribase_org_id: "org_noan", app: "shop" }, { extra })).status, 402);
