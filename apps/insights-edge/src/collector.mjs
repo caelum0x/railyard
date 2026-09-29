@@ -9,6 +9,9 @@ import { capDecision } from "./caps.ts";
 
 export const FLUSH_MS = 2000;
 export const MAX_BUFFER_PER_SITE = 10_000;
+/** Client event ids remembered per site (a retried delivery is stored once). */
+export const SEEN_TTL_MS = 24 * 3600 * 1000;
+export const MAX_SEEN_PER_SITE = 20_000;
 
 const monthKey = (ms) => new Date(ms).toISOString().slice(0, 7);
 
@@ -21,6 +24,8 @@ export class OrgCollector {
     this.counts = new Map(); // `${siteKey}|${month}` -> number
     this.minutes = new Map(); // minute -> { events, stored, capped, dropped }
     this.dirty = new Set();
+    this.seen = new Map(); // siteKey -> Map(event id -> expiry ms)
+    this.seenDirty = new Set();
     // Usage bucket for Rago: one minute (RAGO_BUCKET_MS exists for tests only).
     this.bucketMs = Number(env.RAGO_BUCKET_MS ?? 60_000);
   }
@@ -52,7 +57,9 @@ export class OrgCollector {
       this.orgId = body.orgId;
       await this.state.storage.put("orgId", body.orgId);
     }
-    const { site, events } = body;
+    const { site } = body;
+    const events = await this.fresh(site.key, body.events, now);
+    const duplicates = body.events.length - events.length;
     const month = monthKey(now);
     const used = await this.count(site.key, month);
     const decision = capDecision(used, site.events_limit ?? 0, events.length);
@@ -75,7 +82,24 @@ export class OrgCollector {
       m.stored += stored.length;
     }
     await this.schedule();
-    return Response.json({ stored: stored.length, capped });
+    return Response.json({ stored: stored.length, capped, duplicates });
+  }
+
+  /** Drops events whose client id was seen in the last 24 h; remembers the new ones (bounded). */
+  async fresh(siteKey, events, now) {
+    if (!events.some((e) => e.id)) return events;
+    if (!this.seen.has(siteKey)) this.seen.set(siteKey, new Map((await this.state.storage.get(`seen:${siteKey}`)) ?? []));
+    const seen = this.seen.get(siteKey);
+    for (const [id, until] of seen) if (until <= now) seen.delete(id);
+    const out = [];
+    for (const e of events) {
+      if (e.id && seen.has(e.id)) continue;
+      if (e.id) seen.set(e.id, now + SEEN_TTL_MS);
+      out.push(e);
+    }
+    while (seen.size > MAX_SEEN_PER_SITE) seen.delete(seen.keys().next().value);
+    this.seenDirty.add(siteKey);
+    return out;
   }
 
   async schedule() {
@@ -91,6 +115,8 @@ export class OrgCollector {
     await this.flushIngest(now);
     for (const k of this.dirty) await this.state.storage.put(`count:${k}`, this.counts.get(k));
     this.dirty.clear();
+    for (const k of this.seenDirty) await this.state.storage.put(`seen:${k}`, [...(this.seen.get(k) ?? new Map())]);
+    this.seenDirty.clear();
     await this.flushRago(now);
     const pending = [...this.buffers.values()].some((b) => b.events.length) || this.minutes.size > 0;
     if (pending) {

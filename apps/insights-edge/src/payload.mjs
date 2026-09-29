@@ -34,10 +34,14 @@ export function parseOne(item) {
   if (!siteKey || !/^[A-Za-z0-9_-]{8,80}$/.test(siteKey)) return { error: "missing site key" };
   const url = str(p.url, 1000);
   if (!url) return { error: "missing url" };
+  // An optional client event id (the Expo clients' offline queue, PY2.5): a
+  // retried delivery of the same id is stored once.
+  const id = typeof p.id === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(p.id) ? p.id : null;
   return {
     siteKey,
     event: {
       type,
+      ...(id ? { id } : {}),
       name: str(p.name, 50),
       url,
       hostname: str(p.hostname, 100),

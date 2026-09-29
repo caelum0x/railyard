@@ -81,3 +81,40 @@ test("1,000 events/s for 60 s: all answered, all forwarded once, <= 1 ingest req
     globalThis.fetch = realFetch;
   }
 });
+
+test("PY2.5: a retried delivery with the same client event ids is stored once; ids expire after a day", async () => {
+  let now = Date.parse("2026-09-29T12:00:00Z");
+  const realFetch = globalThis.fetch;
+  const forwarded = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes("/v1/ingest/batch")) forwarded.push(...JSON.parse(init.body).batches.flatMap((b) => b.events));
+    return new Response("{}");
+  };
+  try {
+    const state = fakeState();
+    const col = new OrgCollector(state, { INGEST_URL: "https://ingest.test" });
+    col.now = () => now;
+    const site = { key: "ry_site_dedupe000000", app_id: "app-d", events_limit: 100000 };
+    const batch = Array.from({ length: 5 }, (_, i) => ({ type: "event", id: `evt_${String(i).padStart(8, "0")}`, url: `/p${i}` }));
+    const first = await (await col.fetch(new Request("https://do", { method: "POST", body: JSON.stringify({ orgId: "org-d", site, events: batch }) }))).json();
+    const again = await (await col.fetch(new Request("https://do", { method: "POST", body: JSON.stringify({ orgId: "org-d", site, events: [...batch, { type: "event", id: "evt_00000009", url: "/new" }] }) }))).json();
+    assert.deepEqual([first.stored, first.duplicates], [5, 0]);
+    assert.deepEqual([again.stored, again.duplicates], [1, 5]);
+    now += FLUSH_MS;
+    await col.alarm();
+    assert.equal(forwarded.length, 6, "every event forwarded exactly once");
+    // A fresh collector (evicted object) remembers the ids from storage.
+    const col2 = new OrgCollector(state, { INGEST_URL: "https://ingest.test" });
+    col2.now = () => now;
+    const third = await (await col2.fetch(new Request("https://do", { method: "POST", body: JSON.stringify({ orgId: "org-d", site, events: batch }) }))).json();
+    assert.equal(third.duplicates, 5);
+    now += 25 * 3600 * 1000;
+    const later = await (await col2.fetch(new Request("https://do", { method: "POST", body: JSON.stringify({ orgId: "org-d", site, events: batch.slice(0, 1) }) }))).json();
+    assert.equal(later.stored, 1, "an id older than a day counts again");
+    // Events without ids are never dropped.
+    const plain = await (await col2.fetch(new Request("https://do", { method: "POST", body: JSON.stringify({ orgId: "org-d", site, events: [{ type: "event", url: "/a" }, { type: "event", url: "/a" }] }) }))).json();
+    assert.equal(plain.stored, 2);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
