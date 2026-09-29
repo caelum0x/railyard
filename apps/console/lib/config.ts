@@ -9,6 +9,7 @@ export const SECRET_ENV = [
   "SCRIBASE_ANON_KEY",
   "RAILYARD_SESSION_SECRET",
   "RAILYARD_SCRIBASE_BRIDGE_SECRET",
+  "INSIGHTS_API_TOKEN",
 ] as const;
 
 export const DODO_TEST_BASE = "https://test.dodopayments.com";
@@ -29,6 +30,8 @@ export interface Config {
   products: { cardCheck: string; month: string; year: string };
   /** Standard Webhooks secret shared with Scribase control-api (PY1.0); null keeps the bridge off. */
   scribaseBridgeSecret: string | null;
+  /** Insights tenant API (PY1.3); null keeps analytics proofs and pages off. */
+  insightsApi: { url: string; token: string } | null;
 }
 
 type Env = Record<string, string | undefined>;
@@ -63,5 +66,9 @@ export function readConfig(env: Env = process.env): Config {
       year: need(env, "DODO_PRODUCT_ID_YEAR"),
     },
     scribaseBridgeSecret: env.RAILYARD_SCRIBASE_BRIDGE_SECRET?.trim() || null,
+    insightsApi:
+      env.INSIGHTS_API_URL?.trim() && env.INSIGHTS_API_TOKEN?.trim()
+        ? { url: env.INSIGHTS_API_URL.trim().replace(/\/$/, ""), token: env.INSIGHTS_API_TOKEN.trim() }
+        : null,
   };
 }

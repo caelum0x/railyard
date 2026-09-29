@@ -5,6 +5,8 @@
 // minute it reports the org's usage to Rago as an `insights_events` event
 // (a $0 shadow meter). It never receives an IP address.
 
+import { capDecision } from "./caps.ts";
+
 export const FLUSH_MS = 2000;
 export const MAX_BUFFER_PER_SITE = 10_000;
 
@@ -53,9 +55,9 @@ export class OrgCollector {
     const { site, events } = body;
     const month = monthKey(now);
     const used = await this.count(site.key, month);
-    const room = Math.max(0, (site.events_limit ?? 0) - used);
-    const stored = events.slice(0, room);
-    const capped = events.length - stored.length;
+    const decision = capDecision(used, site.events_limit ?? 0, events.length);
+    const stored = events.slice(0, decision.stored);
+    const capped = decision.capped;
     this.counts.set(`${site.key}|${month}`, used + events.length);
     this.dirty.add(`${site.key}|${month}`);
     const m = this.minute(now);

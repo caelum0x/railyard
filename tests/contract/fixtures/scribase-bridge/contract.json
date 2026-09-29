@@ -166,6 +166,25 @@
       }
     },
     {
+      "name": "analytics site for a project environment",
+      "route": "sites",
+      "request": {
+        "scribase_org_id": "org_fixture",
+        "app": "shop-prod"
+      },
+      "status": 200,
+      "response_keys": [
+        "app",
+        "app_id",
+        "collector_url",
+        "script_url",
+        "site_key"
+      ],
+      "response_match": {
+        "app": "shop-prod"
+      }
+    },
+    {
       "name": "lapsed add-on",
       "route": "orgs",
       "request": {

@@ -6,12 +6,12 @@ import { listDeploys, parseDeployInput, recordDeploy } from "./service.ts";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
-  const { repo } = deps();
+  const { repo, sites } = deps();
   const who = await orgForBearer(repo, req.headers.get("authorization"));
   if (!who) return json({ error: "unauthorized" }, 401);
   const input = parseDeployInput(await req.json().catch(() => null));
   if (typeof input === "string") return json({ error: input }, 400);
-  const r = await recordDeploy(repo, who.orgId, input, new Date());
+  const r = await recordDeploy(repo, who.orgId, input, new Date(), sites);
   return json(r.body, r.status);
 }
 

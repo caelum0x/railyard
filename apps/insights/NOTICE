@@ -1,0 +1,17 @@
+Railyard Insights
+
+This directory is a fork of Umami (https://github.com/umami-software/umami),
+version v3.4.0, commit ec0ff50388c264ed8ce46f00967e92f7e71476ae, vendored with
+`git clone --depth 1` on 2026-09-29. Umami is Copyright (c) 2020 Umami Software,
+Inc. and is distributed under the MIT License; the full licence text is in the
+LICENSE file next to this NOTICE and is kept unchanged.
+
+Changes made by Railyard (all additive):
+- src/railyard/**: batch ingest from the Railyard edge collector (no IP address
+  is ever received or stored), per-organization tenant summaries, and the
+  API-only switch;
+- src/app/api/v1/**: the ingest and tenant summary routes;
+- src/proxy.ts: with INSIGHTS_API_ONLY=1 only /v1/*, /api/v1/* and the
+  heartbeat are served, so the upstream dashboard is never public;
+- prisma/migrations/90_railyard_ingest_receipts: de-duplication of retried
+  collector batches.

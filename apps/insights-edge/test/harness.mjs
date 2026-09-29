@@ -4,6 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripTypeScriptTypes } from "node:module";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -17,10 +18,11 @@ export async function startCollector({ bindings = {}, sites = {} } = {}) {
       {
         name: "insights-edge",
         // Every module listed, entry first (the converter does not follow imports).
-        modules: ["index.mjs", ...readdirSync(join(ROOT, "src")).filter((f) => f.endsWith(".mjs") && f !== "index.mjs")].map((f) => ({
+        modules: ["index.mjs", ...readdirSync(join(ROOT, "src")).filter((f) => (f.endsWith(".mjs") || f.endsWith(".ts")) && f !== "index.mjs")].map((f) => ({
           type: "ESModule",
           path: join(ROOT, "src", f),
-          contents: readFileSync(join(ROOT, "src", f), "utf8"),
+          // workerd runs JavaScript: TypeScript modules (caps.ts) have their types stripped, as wrangler's bundle does.
+          contents: f.endsWith(".ts") ? stripTypeScriptTypes(readFileSync(join(ROOT, "src", f), "utf8")) : readFileSync(join(ROOT, "src", f), "utf8"),
         })),
         modulesRoot: ROOT,
         compatibilityDate: "2026-09-20",

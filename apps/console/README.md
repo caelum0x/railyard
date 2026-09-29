@@ -40,6 +40,9 @@ Usage, Billing), one primary action on each, a pause switch and one-click cancel
 | `DODO_API_BASE` | var | Defaults to the test host |
 | `RAILYARD_DODO_LIVE` | var | Owner only: `1` allows the live host |
 | `RAILYARD_CONSOLE_URL`, `RAILYARD_INSIGHTS_URL` | var | Public URLs |
+| `INSIGHTS_API_URL` | var | Insights tenant API base (Wave P PY1.3); empty keeps the Insights page on "No data yet" |
+| `INSIGHTS_API_TOKEN` | secret | Bearer token of the Insights tenant API |
+| `SITES` | KV binding | The edge collector's site entries; written when an app is added and on every plan, add-on or pause change |
 | `RAILYARD_SCRIBASE_BRIDGE_SECRET` | secret | Standard Webhooks secret (`whsec_...`) shared with Scribase control-api for the bridge (Wave P PY1.0). Unset keeps the bridge off (503). |
 
 ## Scribase bridge (Wave P PY1.0)

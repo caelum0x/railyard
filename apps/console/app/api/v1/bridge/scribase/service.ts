@@ -22,6 +22,9 @@
 import { sha256Hex } from "../../../../../lib/crypto.ts";
 import { access } from "../../../../../lib/ladder.ts";
 import { listDeploys } from "../../deploys/service.ts";
+import { addApp, AppError, normaliseAppName } from "../../../../../lib/apps.ts";
+import { firstEvent, type InsightsClient } from "../../../../../lib/insights.ts";
+import { registerSite, syncSites, type SitesStore } from "../../../../../lib/sites.ts";
 import type { Repo } from "../../../../../lib/repo.ts";
 import { verify, type WebhookHeaders } from "../../../../../lib/standard-webhooks.ts";
 import { createApprovedDevice } from "../../../../../lib/tokens.ts";
@@ -40,7 +43,7 @@ export type AddonSlot = (typeof ADDON_SLOTS)[number];
  */
 export const BRIDGE_SLOTS = {
   deploy: { pkg: "PY1.2", landed: true, proof: "deploy" },
-  analytics: { pkg: "PY1.3", landed: false, proof: "first_event" },
+  analytics: { pkg: "PY1.3", landed: true, proof: "first_event" },
   ai: { pkg: "PY1.4", landed: false, proof: "gateway_key" },
   flags: { pkg: "PY2.1", landed: false, proof: "flag_flip" },
   uptime: { pkg: "PY2.2", landed: false, proof: "check_result" },
@@ -54,6 +57,12 @@ export interface BridgeDeps {
   secret: string;
   consoleUrl: string;
   now: () => Date;
+  /** Site entries for the edge collector (PY1.3); absent in tests that do not need them. */
+  sites?: SitesStore;
+  /** Insights tenant API for the analytics proof (PY1.3). */
+  insights?: InsightsClient | null;
+  /** Public base of the edge collector and page tag. */
+  insightsUrl?: string;
 }
 
 export interface BridgeResult {
@@ -152,7 +161,7 @@ function withAddon(ent: Entitlement, addon: AddonState, now: Date): Entitlement 
 }
 
 /** Creates or finds the bound org and mirrors the add-on into its entitlement. */
-export async function syncOrg(repo: Repo, input: SyncInput, now: Date): Promise<BridgeResult> {
+export async function syncOrg(repo: Repo, input: SyncInput, now: Date, sites?: SitesStore): Promise<BridgeResult> {
   const bound = await repo.findScribaseBinding(input.scribase_org_id);
   let orgId = bound?.org_id ?? null;
   const created = !orgId;
@@ -168,6 +177,8 @@ export async function syncOrg(repo: Repo, input: SyncInput, now: Date): Promise<
   }
   const current = (await repo.getEntitlement(orgId)) ?? emptyEntitlement(orgId, now);
   const ent = await repo.saveEntitlement(withAddon(current, input.addon, now));
+  // Caps and pauses reach the edge collector with the next site-entry read.
+  if (sites) await syncSites(sites, repo, orgId, now);
   return {
     status: 200,
     body: { org_id: orgId, created, addon: { active: ent.status === "active", slots: ent.addon_slots ?? [] } },
@@ -201,7 +212,13 @@ export async function issueClaim(deps: BridgeDeps, body: Record<string, unknown>
 }
 
 /** The proof for one slot of one org. `landed` overrides the table in tests of a later package. */
-export async function slotProof(repo: Repo, orgId: string, slot: BridgeSlot, landed: Partial<Record<BridgeSlot, boolean>> = {}): Promise<SlotState> {
+export async function slotProof(
+  repo: Repo,
+  orgId: string,
+  slot: BridgeSlot,
+  landed: Partial<Record<BridgeSlot, boolean>> = {},
+  insights: InsightsClient | null = null,
+): Promise<SlotState> {
   const isLanded = landed[slot] ?? BRIDGE_SLOTS[slot].landed;
   if (!isLanded) {
     return { slot, state: "arriving", live: false, proof: null, next: `This slot is arriving (${BRIDGE_SLOTS[slot].pkg}); nothing was changed.` };
@@ -211,6 +228,13 @@ export async function slotProof(repo: Repo, orgId: string, slot: BridgeSlot, lan
     return last
       ? { slot, state: "live", live: true, proof: { kind: "deploy", id: last.id, at: last.created_at }, next: null }
       : { slot, state: "no_proof_yet", live: true, proof: null, next: "Deploy from the project folder to see the first deploy here." };
+  }
+  if (slot === "analytics") {
+    if (!insights) return { slot, state: "no_proof_yet", live: true, proof: null, next: "Analytics is being set up on this deployment; events are counted meanwhile." };
+    const first = firstEvent(await insights.summary(orgId));
+    return first
+      ? { slot, state: "live", live: true, proof: { kind: "first_event", id: first.app_id, at: first.at }, next: null }
+      : { slot, state: "no_proof_yet", live: true, proof: null, next: "Waiting for the first event from the app." };
   }
   return { slot, state: "no_proof_yet", live: true, proof: null, next: null };
 }
@@ -224,7 +248,7 @@ async function proofFor(deps: BridgeDeps, body: Record<string, unknown>): Promis
   if (!BRIDGE_SLOTS[s].landed) return { status: 200, body: { ...(await slotProof(deps.repo, "", s)) } };
   const bound = await deps.repo.findScribaseBinding(scribaseOrgId);
   if (!bound) return { status: 200, body: { slot: s, state: "not_entitled", live: false, proof: null, next: "Turn on the add-on first." } };
-  return { status: 200, body: { ...(await slotProof(deps.repo, bound.org_id, s)) } };
+  return { status: 200, body: { ...(await slotProof(deps.repo, bound.org_id, s, {}, deps.insights ?? null)) } };
 }
 
 async function deploysFor(deps: BridgeDeps, body: Record<string, unknown>): Promise<BridgeResult> {
@@ -237,7 +261,33 @@ async function deploysFor(deps: BridgeDeps, body: Record<string, unknown>): Prom
   return { status: r.status, body: r.body };
 }
 
-export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys";
+/** The app for one Scribase project environment, and its public page-tag settings (PY1.3). */
+async function siteFor(deps: BridgeDeps, body: Record<string, unknown>): Promise<BridgeResult> {
+  const scribaseOrgId = parseOrgRef(body);
+  if (!scribaseOrgId) return fail(400, "scribase_org_id is required");
+  const name = typeof body.app === "string" ? normaliseAppName(body.app) : "";
+  if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(name)) return fail(400, "app must be a project name (letters, numbers, dashes)");
+  const now = deps.now();
+  const who = await entitledOrg(deps.repo, scribaseOrgId, "analytics", now);
+  if ("status" in who) return who;
+  let app = await deps.repo.findAppByName(who.orgId, name);
+  if (!app) {
+    try {
+      app = await addApp(deps.repo, who.orgId, name, now);
+    } catch (e) {
+      if (e instanceof AppError) return fail(e.code === "no_plan" ? 402 : 409, e.message);
+      throw e;
+    }
+  }
+  if (deps.sites) await registerSite(deps.sites, deps.repo, app, now);
+  const base = (deps.insightsUrl ?? "").replace(/\/$/, "");
+  return {
+    status: 200,
+    body: { app_id: app.id, app: app.name, site_key: app.site_key, script_url: base ? `${base}/s.js` : null, collector_url: base || null },
+  };
+}
+
+export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys" | "sites";
 
 /** Verify, refuse replays, parse, dispatch. Framework-free so the routes stay three lines. */
 export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers: WebhookHeaders, raw: string): Promise<BridgeResult> {
@@ -255,7 +305,7 @@ export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers
   switch (route) {
     case "orgs": {
       const input = parseSync(b);
-      return typeof input === "string" ? fail(400, input) : syncOrg(deps.repo, input, now);
+      return typeof input === "string" ? fail(400, input) : syncOrg(deps.repo, input, now, deps.sites);
     }
     case "claims":
       return issueClaim(deps, b);
@@ -263,5 +313,7 @@ export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers
       return proofFor(deps, b);
     case "deploys":
       return deploysFor(deps, b);
+    case "sites":
+      return siteFor(deps, b);
   }
 }

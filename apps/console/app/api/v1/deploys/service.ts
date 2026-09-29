@@ -5,6 +5,7 @@ import { addApp, AppError, normaliseAppName, pausedMessage } from "../../../../l
 import { access } from "../../../../lib/ladder.ts";
 import type { Repo } from "../../../../lib/repo.ts";
 import type { Deploy } from "../../../../lib/types.ts";
+import { registerSite, type SitesStore } from "../../../../lib/sites.ts";
 
 const FRAMEWORKS = ["nextjs", "vite", "astro", "static"] as const;
 const STATUSES = ["running", "succeeded", "failed"] as const;
@@ -41,7 +42,7 @@ export function parseDeployInput(body: unknown): DeployInput | string {
   return { app, url, commit_sha: commit, branch, framework, version_id: s("version_id", 64), duration_ms: duration, status, rollback_of: s("rollback_of", 64) };
 }
 
-export async function recordDeploy(repo: Repo, orgId: string, input: DeployInput, now: Date): Promise<{ status: number; body: Record<string, unknown> }> {
+export async function recordDeploy(repo: Repo, orgId: string, input: DeployInput, now: Date, sites?: SitesStore): Promise<{ status: number; body: Record<string, unknown> }> {
   const a = access(await repo.getEntitlement(orgId), now);
   const paused = pausedMessage(a);
   if (paused) return { status: 402, body: { error: paused } };
@@ -51,6 +52,8 @@ export async function recordDeploy(repo: Repo, orgId: string, input: DeployInput
   if (!app) {
     try {
       app = await addApp(repo, orgId, input.app, now);
+      // A site entry failure never loses the deploy record; the next org sync repairs it.
+      if (sites) await registerSite(sites, repo, app, now).catch((e: Error) => console.error(`site entry for app ${app?.id} failed: ${e.message}`));
     } catch (e) {
       if (e instanceof AppError) return { status: e.code === "no_plan" ? 402 : 409, body: { error: e.message } };
       throw e;

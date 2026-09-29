@@ -75,7 +75,7 @@ test("Add app: list -> form -> snippet in 2 clicks, every state renders and pass
 });
 
 test("console source copy passes the vendored denylist (app-ui)", () => {
-  const files = ["app/page.tsx", "app/(app)/apps/page.tsx", "app/(app)/usage/page.tsx", "app/(app)/billing/page.tsx", "app/device/page.tsx", "components/BillingActions.tsx", "components/AddApp.tsx", "components/Nav.tsx", "lib/apps.ts"];
+  const files = ["app/page.tsx", "app/(app)/apps/page.tsx", "app/(app)/usage/page.tsx", "app/(app)/insights/page.tsx", "lib/insights-view.ts", "app/(app)/billing/page.tsx", "app/device/page.tsx", "components/BillingActions.tsx", "components/AddApp.tsx", "components/Nav.tsx", "lib/apps.ts"];
   const units = files.flatMap((f) => {
     const src = readFileSync(join(ROOT, f), "utf8");
     const strings = [...src.matchAll(/>([^<>{}]+)</g), ...src.matchAll(/"([^"\n]{3,})"/g), ...src.matchAll(/`([^`\n]{3,})`/g)].map((m) => m[1]);

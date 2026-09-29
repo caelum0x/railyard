@@ -2,7 +2,8 @@
 	// Railyard console on Cloudflare Workers (OpenNext adapter), our account.
 	// Nothing secret lives here. Secrets are set with `wrangler secret put`
 	// by the owner: DODO_API_KEY, DODO_WEBHOOK_SECRET, SCRIBASE_ANON_KEY,
-	// SCRIBASE_SERVICE_ROLE_KEY, RAILYARD_SESSION_SECRET.
+	// SCRIBASE_SERVICE_ROLE_KEY, RAILYARD_SESSION_SECRET, RAILYARD_SCRIBASE_BRIDGE_SECRET,
+	// INSIGHTS_API_TOKEN.
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "railyard-console",
 	"main": ".open-next/worker.js",
@@ -14,8 +15,13 @@
 	"observability": { "enabled": true, "head_sampling_rate": 1 },
 	// Until the Railyard domain and Dodo brand exist (owner items 11 and 18).
 	"routes": [{ "pattern": "railyard.ereboslab.com", "custom_domain": true }],
+	// The collector's site entries (RYP-E1, PY1.3): the same namespace the edge
+	// collector reads. The owner puts its id here (`wrangler kv namespace create SITES`).
+	"kv_namespaces": [{ "binding": "SITES", "id": "REPLACE_WITH_SITES_NAMESPACE_ID" }],
 	"vars": {
 		"RAILYARD_CONSOLE_URL": "https://railyard.ereboslab.com",
+		// Insights tenant API (the box's tunnel route to the fork's /api/v1); token is a secret.
+		"INSIGHTS_API_URL": "",
 		"RAILYARD_INSIGHTS_URL": "https://insights.railyard.ereboslab.com",
 		"DODO_API_BASE": "https://test.dodopayments.com"
 	}

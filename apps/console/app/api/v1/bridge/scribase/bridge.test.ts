@@ -12,6 +12,8 @@ import { MemoryRepo } from "../../../../../lib/repo.ts";
 import { sign } from "../../../../../lib/standard-webhooks.ts";
 import { pollDevice } from "../../../../../lib/tokens.ts";
 import { addApp } from "../../../../../lib/apps.ts";
+import { MemorySites } from "../../../../../lib/sites.ts";
+import type { InsightsClient } from "../../../../../lib/insights.ts";
 import { access } from "../../../../../lib/ladder.ts";
 import { recordDeploy, parseDeployInput } from "../../deploys/service.ts";
 import {
@@ -27,14 +29,19 @@ const SECRET = `whsec_${Buffer.from("scribase-bridge-test-secret-0032").toString
 const T0 = new Date("2026-09-29T12:00:00Z");
 
 let n = 0;
-async function call(repo: MemoryRepo, route: "orgs" | "claims" | "proof" | "deploys", payload: unknown, opts: { at?: Date; secret?: string; id?: string } = {}) {
+async function call(
+  repo: MemoryRepo,
+  route: "orgs" | "claims" | "proof" | "deploys" | "sites",
+  payload: unknown,
+  opts: { at?: Date; secret?: string; id?: string; extra?: Partial<Parameters<typeof handleBridge>[0]> } = {},
+) {
   const at = opts.at ?? T0;
   const body = JSON.stringify(payload);
   const id = opts.id ?? `msg_${++n}`;
   const ts = String(Math.floor(at.getTime() / 1000));
   const signature = await sign(opts.secret ?? SECRET, id, ts, body);
   return handleBridge(
-    { repo, secret: SECRET, consoleUrl: "https://railyard.ereboslab.com", now: () => at },
+    { repo, secret: SECRET, consoleUrl: "https://railyard.ereboslab.com", now: () => at, ...opts.extra },
     route,
     { id, timestamp: ts, signature },
     body,
@@ -232,4 +239,41 @@ test("deploy slot (PY1.2): proof is the latest successful deploy, and the Scriba
   assert.deepEqual(deploys.map((x) => x.url), ["https://shop-feat-pay.acct.workers.dev"]);
   assert.equal(((await call(repo, "deploys", { scribase_org_id: "org_da", branch: "main" })).body.deploys as unknown[]).length, 0);
   assert.deepEqual((await call(repo, "deploys", { scribase_org_id: "org_unknown" })).body, { deploys: [] });
+});
+
+test("analytics slot (PY1.3): sites gives the project's app its public page-tag settings and writes the collector entry; the proof is the first event", async () => {
+  const repo = new MemoryRepo(() => T0);
+  const sites = new MemorySites();
+  let first: string | null = null;
+  const insights: InsightsClient = {
+    summary: async (orgId) => ({
+      org_id: orgId,
+      since: T0.toISOString(),
+      apps: (await repo.listApps(orgId)).map((a) => ({ app_id: a.id, first_event_at: first, events: first ? 1 : 0, visitors: first ? 1 : 0 })),
+      funnel: { steps: [{ name: "visit", sessions: 0 }, { name: "signup", sessions: 0 }, { name: "first_action", sessions: 0 }] },
+    }),
+  };
+  const extra = { sites, insights, insightsUrl: "https://insights.example/" };
+  const orgId = (await call(repo, "orgs", { scribase_org_id: "org_an", name: "An", addon: addon() }, { extra })).body.org_id as string;
+  const r = await call(repo, "sites", { scribase_org_id: "org_an", app: "Shop Prod" }, { extra });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.app, "shop-prod");
+  assert.match(String(r.body.site_key), /^ry_site_/);
+  assert.equal(r.body.script_url, "https://insights.example/s.js");
+  assert.deepEqual(sites.entries.get(`site:${r.body.site_key}`), { org_id: orgId, app_id: r.body.app_id, events_limit: 3_000_000, paused: false });
+  const again = await call(repo, "sites", { scribase_org_id: "org_an", app: "shop-prod" }, { extra });
+  assert.equal(again.body.app_id, r.body.app_id, "the same project keeps its app");
+  const before = await call(repo, "proof", { scribase_org_id: "org_an", slot: "analytics" }, { extra });
+  assert.equal(before.body.state, "no_proof_yet");
+  first = "2026-09-29T12:00:30.000Z";
+  const after = await call(repo, "proof", { scribase_org_id: "org_an", slot: "analytics" }, { extra });
+  assert.deepEqual(after.body.proof, { kind: "first_event", id: r.body.app_id, at: first });
+  // Without the analytics slot in the add-on, no app and no entry.
+  await call(repo, "orgs", { scribase_org_id: "org_noan", name: "N", addon: addon(true, ["deploy"]) }, { extra });
+  assert.equal((await call(repo, "sites", { scribase_org_id: "org_noan", app: "shop" }, { extra })).status, 402);
+  assert.equal((await call(repo, "sites", { scribase_org_id: "org_an", app: "!!" }, { extra })).status, 400);
+  // A lapsed add-on rewrites the entries as paused; data is kept.
+  await call(repo, "orgs", { scribase_org_id: "org_an", name: "An", addon: addon(false) }, { extra });
+  assert.equal(sites.entries.get(`site:${r.body.site_key}`)?.paused, true);
+  assert.equal((await repo.listApps(orgId)).length, 1);
 });
