@@ -45,7 +45,7 @@ test('the collector body is validated; nothing IP-shaped is accepted or produced
 });
 
 function fakeStore() {
-  const s = { receipts: new Set(), websites: new Map(), sessions: new Map(), events: [] };
+  const s = { receipts: new Set(), websites: new Map(), sessions: new Map(), events: [], identities: [] };
   return {
     s,
     deps: {
@@ -61,6 +61,7 @@ function fakeStore() {
       },
       createSession: async (r) => void s.sessions.set(r.id, r),
       saveEvent: async (r) => void s.events.push(r),
+      identify: async (r) => void s.identities.push(r),
       id,
     },
   };
@@ -69,9 +70,9 @@ function fakeStore() {
 test('a retried batch is stored once; an app id owned by another org is refused', async () => {
   const f = fakeStore();
   const first = await ingest(f.deps, parseIngest(body()));
-  assert.deepEqual(first, { status: 200, body: { stored: 2, duplicate_batches: 0 } });
+  assert.deepEqual(first, { status: 200, body: { stored: 2, identified: 0, duplicate_batches: 0 } });
   const retry = await ingest(f.deps, parseIngest(body()));
-  assert.deepEqual(retry.body, { stored: 0, duplicate_batches: 1 });
+  assert.deepEqual(retry.body, { stored: 0, identified: 0, duplicate_batches: 1 });
   assert.equal(f.s.events.length, 2);
   assert.equal(f.s.sessions.size, 1);
   const stolen = await ingest(f.deps, parseIngest(body({ org_id: ORG_B, sent_at: '2026-09-29T12:00:04.000Z' })));
@@ -115,5 +116,23 @@ test('no fork addition or NOTICE-less file names the upstream product in text a 
   for (const f of files) {
     const strings = [...readFileSync(f, 'utf8').matchAll(/(['"`])((?:(?!\1)[^\\\n])+)\1/g)].map((m) => m[2]);
     for (const s of strings) assert.doesNotMatch(s, /umami/i, `${f}: ${s}`);
+  }
+});
+
+test('identify (PY3.2): links the session to the user and merges traits; a signed-in event links without traits', async () => {
+  const f = fakeStore();
+  const b = body({ batches: [{ site_key: 'ry_site_abcdefgh12', app_id: APP_A, events: [
+    ev(),
+    ev({ type: 'identify', user: 'user_42', data: { plan: 'pro', seats: 3 } }),
+    ev({ name: 'created_project', user: 'user_42' }),
+  ] }] });
+  const r = await ingest(f.deps, parseIngest(b));
+  assert.deepEqual(r.body, { stored: 2, identified: 1, duplicate_batches: 0 });
+  assert.equal(f.s.events.length, 2, 'an identify is not an event row');
+  assert.deepEqual(f.s.identities.map((x) => [x.distinctId, x.traits]), [['user_42', { plan: 'pro', seats: 3 }], ['user_42', {}]]);
+  assert.equal(f.s.identities[0].sessionId, f.s.events[0].sessionId);
+  // An identify needs a user id; user ids are short and plain.
+  for (const bad of [ev({ type: 'identify' }), ev({ user: 'a b' }), ev({ user: 'x'.repeat(51) }), ev({ type: 'alias' })]) {
+    assert.equal(parseIngest(body({ batches: [{ site_key: 'ry_site_abcdefgh12', app_id: APP_A, events: [bad] }] })), 'an event is malformed');
   }
 });

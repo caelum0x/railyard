@@ -30,3 +30,42 @@ test("payload keeps listed fields only, clamps lengths", () => {
   assert.equal(p.event.title.length, 500);
   assert.equal(parseOne({ type: "hack", payload: {} }).error, "invalid type");
 });
+
+test("PY3.2: identify carries the app's user id and traits; events may carry it; bad ids are refused", () => {
+  const i = parseOne({ type: "identify", payload: { website: "ry_site_abcdefgh", url: "/", user: "user_42", data: { plan: "pro" } } });
+  assert.equal(i.event.type, "identify");
+  assert.equal(i.event.user, "user_42");
+  assert.deepEqual(i.event.data, { plan: "pro" });
+  assert.equal(parseOne({ type: "event", payload: { website: "ry_site_abcdefgh", url: "/", name: "x", user: "u@example.com" } }).event.user, "u@example.com");
+  assert.equal(parseOne({ type: "identify", payload: { website: "ry_site_abcdefgh", url: "/" } }).error, "identify needs user");
+  for (const bad of ["has space", "x".repeat(51), 42, "<script>"]) {
+    assert.equal(parseOne({ type: "event", payload: { website: "ry_site_abcdefgh", url: "/", user: bad } }).error, "invalid user");
+  }
+});
+
+test("PY3.2: the page tag exposes identify and sends it only for a plain user id", async () => {
+  const { TRACKER_JS } = await import("../src/tracker.mjs");
+  const sent = [];
+  const listeners = {};
+  const win = {};
+  const ctx = {
+    document: { currentScript: { getAttribute: () => "ry_site_abcdefgh", src: "https://c.test/s.js" }, readyState: "loading", referrer: "", title: "T" },
+    location: { pathname: "/", search: "", hostname: "shop.example" },
+    navigator: { doNotTrack: "0", language: "en", sendBeacon: (_u, blob) => (sent.push(blob), true) },
+    screen: { width: 1, height: 1 },
+    history: { pushState() {} },
+    addEventListener: (n, f) => (listeners[n] = f),
+    Blob: class { constructor(parts) { this.text = parts.join(""); } },
+    URL,
+    fetch: () => Promise.resolve(),
+    window: win,
+  };
+  new Function(...Object.keys(ctx), TRACKER_JS)(...Object.values(ctx));
+  win.railyard.identify("bad id");
+  assert.equal(sent.length, 0);
+  win.railyard.identify("user_42", { plan: "pro" });
+  win.railyard.track("created_project");
+  const bodies = sent.map((b) => JSON.parse(b.text));
+  assert.deepEqual(bodies.map((b) => [b.type, b.payload.user, b.payload.name ?? null]), [["identify", "user_42", null], ["event", "user_42", "created_project"]]);
+  assert.deepEqual(bodies[0].payload.data, { plan: "pro" });
+});

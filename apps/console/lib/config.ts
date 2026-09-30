@@ -41,6 +41,12 @@ export interface Config {
    * Off unless RAILYARD_BRIDGE_ACCEPT_LEGACY=1.
    */
   bridgeAcceptLegacy: boolean;
+  /**
+   * Insights depth (PY3.2: profiles, cohorts, retention by property, breakdowns,
+   * export, delete by user) and web vitals (PY3.3) are served only with
+   * RAILYARD_REPLAY_LIVE=1 (denylist rule railyard-slot-replay). Off: 503 "arriving".
+   */
+  replayLive: boolean;
   /** Insights tenant API (PY1.3); null keeps analytics proofs and pages off. */
   insightsApi: { url: string; token: string } | null;
   /**
@@ -107,6 +113,7 @@ export function readConfig(env: Env = process.env): Config {
         ? { url: env.INSIGHTS_API_URL.trim().replace(/\/$/, ""), token: env.INSIGHTS_API_TOKEN.trim() }
         : null,
     watchLive: env.RAILYARD_WATCH_LIVE === "1",
+    replayLive: env.RAILYARD_REPLAY_LIVE === "1",
     watchAgentToken: env.WATCH_AGENT_TOKEN?.trim() && env.WATCH_AGENT_TOKEN.trim().length >= 32 ? env.WATCH_AGENT_TOKEN.trim() : null,
     rallySend:
       env.RALLY_TX_URL?.trim().startsWith("https://") && env.RALLY_TX_KEY?.trim()

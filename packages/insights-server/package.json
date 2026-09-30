@@ -1,0 +1,22 @@
+{
+  "name": "@railyard/insights-server",
+  "version": "0.1.0",
+  "description": "Railyard Insights from your server: track and identify signed-in people, read profiles, cohorts, retention and breakdowns, export CSV or JSON, and delete a person by user id. No dependencies.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  },
+  "license": "UNLICENSED"
+}

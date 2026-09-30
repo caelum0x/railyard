@@ -5,6 +5,9 @@ export const MAX_BATCH = 100;
 export const MAX_BODY_BYTES = 64 * 1024;
 const TYPES = new Set(["event", "identify"]);
 
+/** The app's own user id (PY3.2): short and plain; the same pattern Insights ingest checks. */
+export const USER_ID = /^[A-Za-z0-9@._:+=-]{1,50}$/;
+
 const str = (v, max) => (typeof v === "string" ? v.slice(0, max) : null);
 
 function cleanData(data) {
@@ -37,11 +40,16 @@ export function parseOne(item) {
   // An optional client event id (the Expo clients' offline queue, PY2.5): a
   // retried delivery of the same id is stored once.
   const id = typeof p.id === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(p.id) ? p.id : null;
+  // Identify (PY3.2): `user` names the signed-in person; an identify without one is refused.
+  if (p.user !== undefined && p.user !== null && !(typeof p.user === "string" && USER_ID.test(p.user))) return { error: "invalid user" };
+  const user = typeof p.user === "string" ? p.user : null;
+  if (type === "identify" && !user) return { error: "identify needs user" };
   return {
     siteKey,
     event: {
       type,
       ...(id ? { id } : {}),
+      ...(user ? { user } : {}),
       name: str(p.name, 50),
       url,
       hostname: str(p.hostname, 100),

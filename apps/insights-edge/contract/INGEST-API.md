@@ -1,6 +1,6 @@
 # Insights ingest API contract (edge collector to Insights)
 
-Version 1, 2026-09-29. Written by RYP-D3 (the edge collector, `apps/insights-edge`);
+Version 1, 2026-09-29; version 1.1 (additive, PY3.2), 2026-09-30. Written by RYP-D3 (the edge collector, `apps/insights-edge`);
 implemented later by RYP-D2 (Insights, box 2). The collector is the only caller.
 Machine-readable schema: `ingest-batch.schema.json`.
 
@@ -45,6 +45,11 @@ Machine-readable schema: `ingest-batch.schema.json`.
 
 - `name` null is a page view; a string is a custom event with optional `data`
   (up to 20 string, number or boolean values).
+- Version 1.1: `type` may also be `"identify"`, and any event may carry `user`, the
+  app's own id for a signed-in person (1 to 50 of `A-Z a-z 0-9 @ . _ : + = -`). An
+  identify must carry `user`; its `data` are the person's traits (merged into their
+  profile). Insights links the visitor's session to the user and stores no event row
+  for an identify. A version 1 collector never sends either field.
 - `visitor` is `HMAC(daily_salt, site_key, ip, user_agent)` cut to 128 bits. The
   salt is `HMAC(VISITOR_SALT_SECRET, "railyard-insights-salt:" + UTC date)`, so a
   visitor cannot be linked across days or sites. **No IP address is ever sent**,

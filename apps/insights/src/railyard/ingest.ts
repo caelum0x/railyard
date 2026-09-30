@@ -17,8 +17,12 @@ export const MAX_EVENTS_PER_SITE = 10_000;
 export const EVENT_TYPE_PAGE_VIEW = 1;
 export const EVENT_TYPE_CUSTOM = 2;
 
+/** A user id from `identify` (PY3.2): the app's own id for the person, never an email check. */
+export const USER_ID = /^[A-Za-z0-9@._:+=-]{1,50}$/;
+
 export interface EdgeEvent {
-  type: 'event';
+  /** `identify` (PY3.2) links the visitor's session to `user` and merges `data` into the profile. */
+  type: 'event' | 'identify';
   name: string | null;
   url: string;
   hostname: string | null;
@@ -30,6 +34,8 @@ export interface EdgeEvent {
   visitor: string;
   country: string | null;
   ts: string;
+  /** The app's user id when the person is signed in (PY3.2); null for anonymous visitors. */
+  user: string | null;
 }
 
 export interface EdgeBatch {
@@ -52,7 +58,7 @@ function parseEvent(v: unknown): EdgeEvent | null {
   const url = str(e.url, 2000);
   const visitor = str(e.visitor, 64);
   const ts = str(e.ts, 40);
-  if (e.type !== 'event' || url === null || !visitor || !/^[0-9a-f]{16,64}$/.test(visitor) || !ts || Number.isNaN(Date.parse(ts))) return null;
+  if ((e.type !== 'event' && e.type !== 'identify') || url === null || !visitor || !/^[0-9a-f]{16,64}$/.test(visitor) || !ts || Number.isNaN(Date.parse(ts))) return null;
   let data: EdgeEvent['data'] = null;
   if (e.data && typeof e.data === 'object' && !Array.isArray(e.data)) {
     const entries = Object.entries(e.data as Record<string, unknown>).filter(
@@ -63,8 +69,12 @@ function parseEvent(v: unknown): EdgeEvent | null {
   }
   const name = e.name === null || e.name === undefined ? null : str(e.name, 50);
   if (e.name !== null && e.name !== undefined && name === null) return null;
+  const user = e.user === null || e.user === undefined ? null : typeof e.user === 'string' && USER_ID.test(e.user) ? e.user : undefined;
+  if (user === undefined) return null;
+  if (e.type === 'identify' && user === null) return null;
   return {
-    type: 'event',
+    type: e.type,
+    user,
     name,
     url,
     hostname: str(e.hostname, 100),
@@ -176,23 +186,35 @@ export function toRows(appId: string, e: EdgeEvent, id: (...parts: string[]) => 
   };
 }
 
+/** One identify (or a signed-in event): the session is linked to the user; traits merge into the profile. */
+export interface IdentifyRow {
+  websiteId: string;
+  sessionId: string;
+  distinctId: string;
+  traits: Record<string, string | number | boolean>;
+  at: Date;
+}
+
 export interface IngestDeps {
   /** True the first time (org, sent_at, site_key) is seen. */
   receipt(orgId: string, sentAt: string, siteKey: string): Promise<boolean>;
   ensureWebsite(orgId: string, appId: string, siteKey: string, hostname: string | null): Promise<boolean>;
   createSession(row: SessionRow): Promise<void>;
   saveEvent(row: EventRow): Promise<void>;
+  /** Links a session to a user and merges traits (PY3.2). */
+  identify(row: IdentifyRow): Promise<void>;
   id(...parts: string[]): string;
 }
 
 export interface IngestResult {
   status: number;
-  body: { stored: number; duplicate_batches: number } | { error: string };
+  body: { stored: number; identified: number; duplicate_batches: number } | { error: string };
 }
 
 /** Stores a validated body. Idempotent per (org, sent_at, site). */
 export async function ingest(deps: IngestDeps, body: IngestBody): Promise<IngestResult> {
   let stored = 0;
+  let identified = 0;
   let duplicates = 0;
   for (const batch of body.batches) {
     const host = batch.events.find((e) => e.hostname)?.hostname ?? null;
@@ -210,11 +232,17 @@ export async function ingest(deps: IngestDeps, body: IngestBody): Promise<Ingest
         sessions.add(rows.session.id);
         await deps.createSession(rows.session);
       }
-      await deps.saveEvent(rows.event);
-      stored += 1;
+      if (e.type === 'event') {
+        await deps.saveEvent(rows.event);
+        stored += 1;
+      }
+      if (e.user) {
+        await deps.identify({ websiteId: batch.app_id, sessionId: rows.session.id, distinctId: e.user, traits: e.type === 'identify' ? (e.data ?? {}) : {}, at: rows.event.createdAt });
+        if (e.type === 'identify') identified += 1;
+      }
     }
   }
-  return { status: 200, body: { stored, duplicate_batches: duplicates } };
+  return { status: 200, body: { stored, identified, duplicate_batches: duplicates } };
 }
 
 /** Constant-time bearer check against one or two accepted tokens (rotation). */

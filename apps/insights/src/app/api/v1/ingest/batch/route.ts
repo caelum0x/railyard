@@ -4,6 +4,7 @@ import prisma from '@/lib/prisma';
 import { createSession, saveEvent } from '@/queries/sql';
 import { bearerOk, ingest, parseIngest } from '@/railyard/ingest';
 import { ENSURE_TEAM_SQL, ENSURE_WEBSITE_SQL, RECEIPT_SQL, WEBSITE_OF_ORG_SQL } from '@/railyard/tenancy';
+import { LINK_SESSION_SQL, UPSERT_PROFILE_SQL } from '@/railyard/people';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,6 +34,11 @@ export async function POST(request: Request) {
       },
       saveEvent: async (row) => {
         await saveEvent(row as never);
+      },
+      identify: async (row) => {
+        const at = row.at.toISOString();
+        await prisma.writeRawQuery(LINK_SESSION_SQL, { websiteId: row.websiteId, sessionId: row.sessionId, distinctId: row.distinctId, at });
+        await prisma.writeRawQuery(UPSERT_PROFILE_SQL, { websiteId: row.websiteId, distinctId: row.distinctId, at, traits: JSON.stringify(row.traits) });
       },
       id: (...parts) => uuid(...parts),
     },
