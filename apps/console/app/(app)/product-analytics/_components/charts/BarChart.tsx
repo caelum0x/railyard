@@ -76,7 +76,7 @@ export function BarChart({ labels, parts, caption }: { labels: string[]; parts: 
             </g>
           );
         })}
-        {labelIndexes(labels.length, 8).map((i) => (
+        {labelIndexes(labels.length, 6).map((i) => (
           <text key={i} x={M.left + band * i + band / 2} y={H - 8} textAnchor="middle" fontSize="11" fill={INK.muted}>
             {fmt(labels[i])}
           </text>

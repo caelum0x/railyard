@@ -3,7 +3,7 @@
 // (the eight categorical slots are never cycled).
 import { BarChart } from "./BarChart.tsx";
 import { FunnelChart } from "./FunnelChart.tsx";
-import { compact } from "./geometry.ts";
+import { bucketText, compact } from "./geometry.ts";
 import { LineChart, type LineSeries } from "./LineChart.tsx";
 import { LIFECYCLE, seriesColor } from "./palette.ts";
 import { PathsList } from "./PathsList.tsx";
@@ -62,7 +62,7 @@ export function ResultView({ result, dropOffBase, compactView = false }: { resul
       return (
         <BarChart
           caption="New, returning, resurrecting and dormant people"
-          labels={result.labels}
+          labels={result.labels.map((l) => bucketText(l, result.interval))}
           parts={(["new", "returning", "resurrecting", "dormant"] as const).map((k) => ({ label: k[0].toUpperCase() + k.slice(1), color: LIFECYCLE[k], data: result.statuses[k] }))}
         />
       );
