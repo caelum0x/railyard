@@ -11,7 +11,7 @@ import { buildPaths } from "./paths.ts";
 import { buildRetention } from "./retention.ts";
 import { previousRange, resolveRange, type ResolvedRange } from "./sql.ts";
 import { rolledTo } from "./rollups.ts";
-import { buildAxis, buildTrendRollup, buildTrendSeries, rollupEligible } from "./trends.ts";
+import { buildAxis, buildBreakdownTop, buildTrendRollup, buildTrendSeries, rollupEligible } from "./trends.ts";
 import type {
   ActionDef,
   BuildContext,
@@ -29,6 +29,8 @@ import type {
 import { QueryError } from "./types.ts";
 
 export const QUERY_TIMEOUT_MS = 30_000;
+/** Per insight transaction; the pool runs at most 5, so at most 5 x this at once. */
+export const INSIGHT_WORK_MEM = "32MB";
 
 export interface TrendLine {
   label: string;
@@ -130,7 +132,8 @@ async function trendLines(c: Client, q: TrendsQuery, range: ResolvedRange, ctx: 
   const watermark = q.series.some((s) => rollupEligible({ ...q, interval }, s, range)) ? await rolledTo(c, ctx.projectId) : null;
   for (let si = 0; si < q.series.length; si += 1) {
     const s = q.series[si];
-    const built = watermark && rollupEligible({ ...q, interval }, s, range) ? buildTrendRollup({ ...q, interval }, s, range, ctx, watermark) : buildTrendSeries(q, s, range, ctx);
+    const top = q.breakdown ? (await run(c, buildBreakdownTop(q, s, range, ctx))).map((r) => String(r.bv)) : [];
+    const built = watermark && rollupEligible({ ...q, interval }, s, range) ? buildTrendRollup({ ...q, interval }, s, range, ctx, watermark) : buildTrendSeries(q, s, range, ctx, top);
     const rows = await run(c, built);
     const byKey = new Map<string, TrendLine>();
     for (const r of rows) {
@@ -269,6 +272,8 @@ export interface RunOptions {
 async function withTimeout<T>(db: Db, projectId: string, timeoutMs: number, fn: (c: Client) => Promise<T>): Promise<T> {
   return db.asProject(projectId, async (c) => {
     await c.query(`set local statement_timeout = ${Math.max(1000, Math.floor(timeoutMs))}`);
+    // Sorts and hashes for distinct counts stay in memory (see docs/analytics/CAPACITY.md).
+    await c.query(`set local work_mem = '${INSIGHT_WORK_MEM}'`);
     return fn(c);
   });
 }

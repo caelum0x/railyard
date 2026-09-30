@@ -10,8 +10,16 @@
 //   unordered steps in any order within the window of the first of them;
 //   breakdown the entry event's value (first touch), top values kept;
 //   people    are counted once per breakdown value at their furthest step;
-//             the furthest-reaching attempt (then the earliest) is kept,
+//             the furthest-reaching attempt (then the latest) is kept,
 //             which also gives time to convert between steps.
+// Attempts that can never beat a later one are pruned before the joins
+// (this is what keeps a 3-step funnel over a million events in budget):
+//   ordered/strict  an entry event followed by another entry event of the
+//                   same breakdown value before any step-2 event;
+//   unordered       a step event followed directly by a step event that
+//                   matches the same steps (and breakdown value).
+// The later attempt reaches at least as far with a later deadline, so
+// counts are unchanged; ties go to the latest attempt.
 // Two fixes over the vendored shape: the window is measured from the first
 // step (not the previous one), and a per-person event sequence number keeps
 // one event from filling two steps.
@@ -61,12 +69,14 @@ function core(q: FunnelsQuery, range: ResolvedRange, ctx: BuildContext): Core {
   const se = `se as materialized (
   select ${actor} as pid, e."timestamp" as ts, ${bv} as bv,
          ${flags},
-         row_number() over (partition by ${actor} order by e."timestamp", e.uuid) as seq
+         row_number() over w as seq${order === "unordered" ? "" : `,
+         count(*) filter (where coalesce((${steps[1]}), false)) over w as c2`}
     from pa.events e
     ${PERSON_JOIN}
     ${J.sql()}
    where ${base.join("\n     and ")}
      and ${scope}
+  window w as (partition by ${actor} order by e."timestamp", e.uuid)
 )`;
   const topFrom = order === "unordered" ? `se where ${Array.from({ length: n }, (_, i) => `s${i + 1}`).join(" or ")}` : "se where s1";
   const top = `top as (select bv from (select distinct pid, bv from ${topFrom}) x group by bv order by count(*) desc, bv nulls last limit ${limit})`;
@@ -83,7 +93,18 @@ function core(q: FunnelsQuery, range: ResolvedRange, ctx: BuildContext): Core {
     const sorted = `(select array_agg(x order by x) from unnest(array[${Array.from({ length: n }, (_, i) => `r.f${i + 1}`).join(", ")}]) as x where x is not null)`;
     ctes = `${se},
 ${top},
-anchors as (select pid, ts as t0, seq as q0, ${keep("bv")} from se where ${any}),
+marked as (
+  select pid, ts, seq, bv, ${Array.from({ length: n }, (_, i) => `s${i + 1}`).join(", ")},
+         lead(array[${Array.from({ length: n }, (_, i) => `s${i + 1}`).join(", ")}]) over w as next_sig,
+         lead(bv) over w as next_bv,
+         lead(seq) over w as next_seq
+    from se where ${any}
+  window w as (partition by pid order by seq)
+),
+anchors as (
+  select pid, ts as t0, seq as q0, ${keep("bv")} from marked
+   where next_seq is null or next_sig <> array[${Array.from({ length: n }, (_, i) => `s${i + 1}`).join(", ")}] or next_bv is distinct from bv
+),
 reach as (
   select a.pid, a.bk, a.bv, a.t0, ${doneExpr} as reached, ${firsts}
     from anchors a join se s on s.pid = a.pid and s.seq >= a.q0 and s.ts <= a.t0 + ${win}
@@ -93,10 +114,22 @@ reach as (
 ranked as (select r.*, ${sorted} as ts_sorted from reach r),
 best as (
   select distinct on (pid, bk, bv) pid, bk, bv, reached, t0, ${tcols.map((c, i) => `ts_sorted[${i + 1}] as ${c}`).join(", ")}
-    from ranked order by pid, bk, bv, reached desc, t0
+    from ranked order by pid, bk, bv, reached desc, t0 desc
 )`;
   } else {
-    const levels: string[] = [`l1 as (select pid, ts as t0, seq as q1, ts as t1, ${keep("bv")} from se where s1)`];
+    const levels: string[] = [
+      // c2 counts step-2 events up to each event, so "a step-2 event lies in (this entry, the next entry]" is next_c2 > c2.
+      `entries as (
+  select pid, ts, seq, bv, c2,
+         lead(c2) over (partition by pid, bv order by seq) as next_c2
+    from se where s1
+),
+l1 as (
+  select x.pid, x.ts as t0, x.seq as q1, x.ts as t1, ${keep("x.bv")}
+    from entries x
+   where x.next_c2 is null or x.next_c2 > x.c2
+)`,
+    ];
     for (let k = 2; k <= n; k += 1) {
       const prev = `l${k - 1}`;
       const carry = ["pid", "bk", "bv", "t0", ...Array.from({ length: k - 1 }, (_, i) => `t${i + 1}`), ...Array.from({ length: k - 1 }, (_, i) => `q${i + 1}`)];
@@ -125,7 +158,7 @@ cand as (
     from l1
     ${joins}
 ),
-best as (select distinct on (pid, bk, bv) * from cand order by pid, bk, bv, reached desc, t0)`;
+best as (select distinct on (pid, bk, bv) * from cand order by pid, bk, bv, reached desc, t0 desc)`;
   }
   return { P, proj, n, ctes };
 }

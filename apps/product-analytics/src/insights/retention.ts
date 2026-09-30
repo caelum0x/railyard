@@ -73,11 +73,13 @@ cohort_size as (select cohort, count(*) as people from cohort_items group by coh
 cohort_period as (select cohort, k, count(distinct pid) as people from user_activities where k between 1 and ${nParam}::int - 1 group by cohort, k),
 axis as (
   select generate_series(${firstBucket}, ${bucketExpr(`${to}::timestamptz`, period, tz)}, interval '1 ${period}') as cohort
-)
+),
+returned as (select cohort, jsonb_object_agg(k, people) as j from cohort_period group by cohort)
 select to_char(a.cohort, ${LABEL_FORMAT}) as cohort, row_number() over (order by a.cohort) - 1 as row_index, coalesce(s.people, 0) as size,
-       coalesce((select jsonb_object_agg(cp.k, cp.people) from cohort_period cp where cp.cohort = a.cohort), '{}'::jsonb) as returned
+       coalesce(rt.j, '{}'::jsonb) as returned
   from axis a
   left join cohort_size s on s.cohort = a.cohort
+  left join returned rt on rt.cohort = a.cohort
  order by a.cohort`;
   return { sql, params: P.values };
 }

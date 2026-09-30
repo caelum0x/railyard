@@ -15,6 +15,8 @@ export interface FixtureOptions {
   seed?: number;
   /** Chance a person comes back on a later day (default 0.3). */
   returnRate?: number;
+  /** Stop adding people once this many events are generated. */
+  maxEvents?: number;
 }
 
 export interface FixtureStats {
@@ -105,6 +107,7 @@ export async function loadFixture(client: pg.Client | pg.PoolClient, o: FixtureO
   };
 
   for (let i = 0; i < o.persons; i += 1) {
+    if (o.maxEvents && events + buf.length >= o.maxEvents) break;
     const personId = uuidFrom(r);
     const user = `user_${i}`;
     const mergedAnon = r() < 0.3;

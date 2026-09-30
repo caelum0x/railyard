@@ -37,11 +37,21 @@ export function axisSql(interval: Interval, P: Params, from: string, to: string,
   return `select generate_series(${bucketExpr(`${from}::timestamptz`, interval, tz)}, ${bucketExpr(`${to}::timestamptz`, interval, tz)}, interval '${INTERVAL_SQL[interval]}') as bucket`;
 }
 
-/**
- * One series of a trends query. Rows: (bucket text, bk, bv, value, total)
- * where bk is 0 for a missing value, 1 for a kept value, 2 for "(other)".
- */
-export function buildTrendSeries(q: TrendsQuery, s: Series, range: ResolvedRange, ctx: BuildContext): Built {
+interface SeriesParts {
+  P: Params;
+  J: Joins;
+  tz: string;
+  from: string;
+  to: string;
+  interval: Interval;
+  lookback: string | null;
+  where: string[];
+  actor: string;
+  mv: string;
+  bv: string;
+}
+
+function seriesParts(q: TrendsQuery, s: Series, range: ResolvedRange, ctx: BuildContext): SeriesParts {
   const interval = q.interval ?? "day";
   const math = s.math ?? "total";
   if ((math === "weekly_active" || math === "monthly_active") && interval !== "day") {
@@ -72,40 +82,72 @@ export function buildTrendSeries(q: TrendsQuery, s: Series, range: ResolvedRange
   }
   const mv = PROPERTY_MATH.includes(math) ? numberOf(`e.properties ->> ${P.add(s.math_property)}`) : "null::double precision";
   const bv = q.breakdown ? breakdownValue(q.breakdown, P, J) : "null::text";
-  const limit = P.add(Math.min(MAX_BREAKDOWN_LIMIT, Math.max(1, q.breakdown?.limit ?? DEFAULT_BREAKDOWN_LIMIT)));
-  const ev = `select ${bucketExpr('e."timestamp"', interval, tz)} as bucket, e."timestamp" at time zone ${tz} as lt, ${bv} as bv, ${actor} as pid, ${mv} as mv
+  return { P, J, tz, from, to, interval, lookback, where, actor, mv, bv };
+}
+
+/**
+ * The breakdown values a series keeps: the most frequent present values in
+ * the range (at most the limit). Rows: (bv). Run before buildTrendSeries.
+ */
+export function buildBreakdownTop(q: TrendsQuery, s: Series, range: ResolvedRange, ctx: BuildContext): Built {
+  if (!q.breakdown) throw new QueryError("Pick a property to break down by.");
+  const x = seriesParts(q, s, range, ctx);
+  const inRange = x.lookback ? `and e."timestamp" >= (${bucketExpr(`${x.from}::timestamptz`, x.interval, x.tz)} at time zone ${x.tz})` : "";
+  const limit = x.P.add(Math.min(MAX_BREAKDOWN_LIMIT, Math.max(1, q.breakdown.limit ?? DEFAULT_BREAKDOWN_LIMIT)));
+  const sql = `select bv from (
+  select ${x.bv} as bv
+    from pa.events e
+    ${PERSON_JOIN}
+    ${x.J.sql()}
+   where ${x.where.join("\n     and ")} ${inRange}
+) v where bv is not null group by bv order by count(*) desc, bv limit ${limit}`;
+  return { sql, params: x.P.values };
+}
+
+/**
+ * One series of a trends query. Rows: (bucket text, bk, bv, value, total)
+ * where bk is 0 for a missing breakdown value, 1 for a kept value and 2
+ * for "(other)". `top` is the kept values (buildBreakdownTop); a missing
+ * value always keeps its own "(none)" line.
+ */
+export function buildTrendSeries(q: TrendsQuery, s: Series, range: ResolvedRange, ctx: BuildContext, top: string[] = []): Built {
+  const x = seriesParts(q, s, range, ctx);
+  const { P, tz, from, to, interval, lookback } = x;
+  const math = s.math ?? "total";
+  const topP = q.breakdown ? P.add(top) : "";
+  const bk = q.breakdown ? `case when b.bv is null then 0 when b.bv = any(${topP}::text[]) then 1 else 2 end` : "0";
+  const bvKept = q.breakdown ? `case when b.bv = any(${topP}::text[]) then b.bv end` : "null::text";
+  const ev = `select b.bucket, b.lt, ${bk} as bk, ${bvKept} as bv, b.pid, b.mv from (
+    select ${bucketExpr('e."timestamp"', interval, tz)} as bucket, e."timestamp" at time zone ${tz} as lt, ${x.bv} as bv, ${x.actor} as pid, ${x.mv} as mv
       from pa.events e
       ${PERSON_JOIN}
-      ${J.sql()}
-     where ${where.join("\n       and ")}`;
-  const rolling = lookback !== null;
-  const agg = AGG[rolling ? "dau" : math];
-  const inRange = rolling ? `where ev.lt >= ${bucketExpr(`${from}::timestamptz`, interval, tz)}` : "";
-  const sql = `with axis as (${axisSql(interval, P, from, to, tz)}),
-ev as materialized (${ev}),
-top as (select bv from ev ${inRange} group by bv order by count(*) desc, bv nulls last limit ${limit}),
-kept as (
-  select ev.bucket, ev.lt, ev.pid, ev.mv,
-         case when exists (select 1 from top where top.bv is not distinct from ev.bv) then (case when ev.bv is null then 0 else 1 end) else 2 end as bk,
-         case when exists (select 1 from top where top.bv is not distinct from ev.bv) then ev.bv end as bv
-    from ev
-),
-${
-  rolling
-    ? `agg as (
-  select a.bucket, k.bk, k.bv, ${agg} as v
-    from axis a join kept k on k.lt >= a.bucket - interval '${lookback}' and k.lt < a.bucket + interval '1 day'
-   group by a.bucket, k.bk, k.bv
-),
-tot as (select bk, bv, null::double precision as v, count(*) as n from kept where kept.lt >= (select min(bucket) from axis) group by bk, bv)`
-    : `agg as (select bucket, bk, bv, ${agg} as v from kept group by bucket, bk, bv),
-tot as (select bk, bv, ${agg} as v, count(*) as n from kept group by bk, bv)`
-}
-select to_char(a.bucket, ${LABEL_FORMAT}) as bucket, t.bk, t.bv, coalesce(agg.v, 0) as value, t.v as total
-  from axis a
- cross join tot t
-  left join agg on agg.bucket = a.bucket and agg.bk = t.bk and agg.bv is not distinct from t.bv
+      ${x.J.sql()}
+     where ${x.where.join("\n       and ")}
+  ) b`;
+  const final = (agg: string, tot: string) => `select to_char(a.bucket, ${LABEL_FORMAT}) as bucket, t.bk, t.bv, coalesce(agg.v, 0) as value, t.v as total
+  from (${axisSql(interval, P, from, to, tz)}) a
+ cross join (${tot}) t
+  left join (${agg}) agg on agg.bucket = a.bucket and agg.bk = t.bk and agg.bv is not distinct from t.bv
  order by t.bk = 2, t.n desc, t.bv nulls last, a.bucket`;
+  if (lookback) {
+    const first = bucketExpr(`${from}::timestamptz`, interval, tz);
+    const sql = `with ev as materialized (${ev})
+${final(
+  `select a.bucket, k.bk, k.bv, count(distinct k.pid)::double precision as v
+     from (${axisSql(interval, P, from, to, tz)}) a join ev k on k.lt >= a.bucket - interval '${lookback}' and k.lt < a.bucket + interval '1 day'
+    group by a.bucket, k.bk, k.bv`,
+  `select bk, bv, null::double precision as v, count(*) as n from ev where lt >= ${first} group by bk, bv`,
+)}`;
+    return { sql, params: P.values };
+  }
+  const agg = AGG[math];
+  // One pass: per bucket and in total, with grouping sets.
+  const sql = `with res as materialized (
+  select bucket, bk, bv, ${agg} as v, count(*) as n, grouping(bucket) as whole
+    from (${ev}) k
+   group by grouping sets ((bucket, bk, bv), (bk, bv))
+)
+${final("select bucket, bk, bv, v from res where whole = 0", "select bk, bv, v, n from res where whole = 1")}`;
   return { sql, params: P.values };
 }
 

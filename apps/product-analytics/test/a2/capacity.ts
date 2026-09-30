@@ -18,8 +18,6 @@ const target = Number(process.argv[2] ?? 1_000_000);
 const runs = Number(process.argv[3] ?? 20);
 const NOW = new Date("2026-09-30T00:00:00Z");
 const DAYS = 90;
-// The generator yields about 44 events per person over 90 days (measured on small runs).
-const PER_PERSON = 44;
 
 const cluster = scratchPg();
 const out: Record<string, unknown> = { target_events: target, days: DAYS, runs, postgres: "", machine: `${process.platform} ${process.arch}` };
@@ -30,7 +28,7 @@ try {
   out.postgres = (await owner.query("show server_version")).rows[0].server_version;
   const projectId = randomUUID();
   const t0 = Date.now();
-  const stats = await loadFixture(owner, { projectId, persons: Math.round(target / PER_PERSON), days: DAYS, end: NOW, seed: 2026 });
+  const stats = await loadFixture(owner, { projectId, persons: 10_000_000, maxEvents: target, days: DAYS, end: NOW, seed: 2026 });
   out.load_seconds = (Date.now() - t0) / 1000;
   out.events = stats.events;
   out.persons = stats.persons;
