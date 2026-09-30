@@ -81,7 +81,7 @@ before(async () => {
 
 test("decompress, mask and count: recorder events come back plain, with every typed value masked", () => {
   const t0 = Date.now();
-  const events = pageEvents(t0, { compressed: true }).map((e) => maskEvent(decompressEvent(e)));
+  const events = pageEvents(t0, { compressed: true }).map((e) => maskEvent(decompressEvent(e))).filter((e): e is RrwebEvent => e !== null);
   const text = JSON.stringify(events);
   assert.doesNotMatch(text, new RegExp(SECRET_TEXT));
   assert.doesNotMatch(text, /"cv"/);
@@ -93,6 +93,63 @@ test("decompress, mask and count: recorder events come back plain, with every ty
   assert.throws(() => decompressEvent({ type: 2, timestamp: 1, data: "not gzip", cv: "2024-10" }), /not valid gzip/);
   assert.throws(() => extractSnapshots([{ event: "$snapshot", properties: { $snapshot_data: [], $session_id: "../../etc" } }]), /session id/);
   assert.deepEqual(extractSnapshots([{ event: "$pageview", properties: {} }]), []);
+});
+
+test("whatever the app's own recorder settings, network bodies and headers, console logs and mobile input values are not kept", () => {
+  const t0 = Date.now();
+  // The browser SDK's local config (session_recording.recordBody / recordHeaders,
+  // enable_recording_console_log) wins over the project's config, so the
+  // service strips these itself.
+  const network = {
+    type: 6,
+    timestamp: t0,
+    data: {
+      plugin: "rrweb/network@1",
+      payload: {
+        requests: [
+          {
+            name: "https://shop.example/api/login", method: "POST", status: 200, initiatorType: "fetch", duration: 12,
+            requestHeaders: { authorization: `Bearer ${SECRET_TEXT}` },
+            requestBody: JSON.stringify({ email: "a@b.example", password: SECRET_TEXT }),
+            responseHeaders: { "set-cookie": SECRET_TEXT },
+            responseBody: JSON.stringify({ token: SECRET_TEXT }),
+          },
+        ],
+      },
+    },
+  };
+  const consoleLog = { type: 6, timestamp: t0 + 1, data: { plugin: "rrweb/console@1", payload: { level: "log", trace: [], payload: [`"password ${SECRET_TEXT}"`] } } };
+  const mobileFull = {
+    type: 2,
+    timestamp: t0 + 2,
+    data: {
+      initialOffset: { top: 0, left: 0 },
+      wireframes: [
+        {
+          id: 1, type: "div", x: 0, y: 0, width: 400, height: 800,
+          childWireframes: [
+            { id: 2, type: "input", inputType: "password", value: SECRET_TEXT, x: 0, y: 0, width: 100, height: 20 },
+            { id: 3, type: "input", inputType: "button", value: "Sign in", x: 0, y: 30, width: 100, height: 20 },
+            { id: 4, type: "text", text: "Visible heading", x: 0, y: 60, width: 100, height: 20 },
+          ],
+        },
+      ],
+    },
+  };
+  const mobileMutation = {
+    type: 3,
+    timestamp: t0 + 3,
+    data: { source: 0, adds: [{ parentId: 1, wireframe: { id: 5, type: "input", inputType: "text_area", value: SECRET_TEXT } }], updates: [{ wireframe: { id: 2, type: "input", inputType: "text", value: SECRET_TEXT } }] },
+  };
+  const batches = extractSnapshots(snapshotPayload("tok", "d1", "s-mask", [network, consoleLog, mobileFull, mobileMutation] as RrwebEvent[]));
+  const text = JSON.stringify(batches);
+  assert.doesNotMatch(text, new RegExp(SECRET_TEXT));
+  assert.doesNotMatch(text, /rrweb\/console@1/, "console logs are dropped");
+  assert.match(text, /shop\.example\/api\/login/, "request timing and addresses are kept");
+  assert.match(text, /"duration":12/);
+  assert.match(text, /Sign in/, "mobile button labels are kept");
+  assert.match(text, /Visible heading/, "mobile page text is kept");
+  assert.equal(batches[0].events.length, 3);
 });
 
 test("recording off: nothing is stored and the app's config says so", { skip: skipNoPg }, async () => {

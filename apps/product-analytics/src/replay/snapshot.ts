@@ -4,6 +4,9 @@
 // is decompressed back to plain rrweb, every input value is masked in the
 // bytes we keep (whatever the page's own settings were), and the index
 // counters (clicks, key presses, URLs, first and last timestamp) are read.
+// Mobile wireframe inputs are masked too; console log events are dropped and
+// network events lose their headers and bodies (the SDK lets the app turn
+// these on locally, over the project config).
 
 import { gunzipSync } from "node:zlib";
 
@@ -19,7 +22,7 @@ export interface SnapshotBatch {
 
 export class SnapshotError extends Error {}
 
-const EventType = { FullSnapshot: 2, IncrementalSnapshot: 3, Meta: 4 } as const;
+const EventType = { FullSnapshot: 2, IncrementalSnapshot: 3, Meta: 4, Plugin: 6 } as const;
 const Source = { Mutation: 0, MouseInteraction: 2, Input: 5, StyleSheetRule: 8 } as const;
 const MouseClick = 2;
 const ElementNode = 2;
@@ -88,18 +91,65 @@ function maskNode(n: unknown): unknown {
   return out;
 }
 
-/** The event with every typed value masked. */
-export function maskEvent(e: RrwebEvent): RrwebEvent {
-  if (e.type === EventType.FullSnapshot && isObj(e.data)) return { ...e, data: { ...e.data, node: maskNode(e.data.node) } };
+/** Mobile SDK wireframes (React Native, iOS, Android): every input's value masked, buttons kept, children included. */
+const KEEP_MOBILE_INPUTS = new Set(["button"]);
+function maskWireframe(w: unknown): unknown {
+  if (!isObj(w)) return w;
+  let out: Obj = w;
+  if (w.type === "input" && "value" in w && !KEEP_MOBILE_INPUTS.has(String(w.inputType ?? "").toLowerCase())) out = { ...out, value: stars(w.value) };
+  if (Array.isArray(w.childWireframes)) out = { ...out, childWireframes: w.childWireframes.map(maskWireframe) };
+  return out;
+}
+const maskWireframes = (v: unknown) => (Array.isArray(v) ? v.map(maskWireframe) : v);
+const maskWireframeRefs = (v: unknown) => (Array.isArray(v) ? v.map((a) => (isObj(a) && "wireframe" in a ? { ...a, wireframe: maskWireframe(a.wireframe) } : a)) : v);
+
+/** Request fields the network plugin can carry that may hold credentials or personal data. */
+const NETWORK_PRIVATE = ["requestHeaders", "requestBody", "responseHeaders", "responseBody"];
+const CONSOLE_PLUGIN = /^rrweb\/console@/;
+const NETWORK_PLUGIN = /^rrweb\/network@/;
+
+/**
+ * Plugin events: console logs are not kept (the project's config turns them
+ * off, but the app's local config wins in the SDK); network requests keep
+ * their timing and address but lose headers and bodies. Returns null to drop.
+ */
+function maskPlugin(e: RrwebEvent): RrwebEvent | null {
+  const d = isObj(e.data) ? e.data : null;
+  const plugin = typeof d?.plugin === "string" ? d.plugin : "";
+  if (CONSOLE_PLUGIN.test(plugin)) return null;
+  if (!NETWORK_PLUGIN.test(plugin) || !d) return e;
+  const payload = isObj(d.payload) ? d.payload : null;
+  const requests = Array.isArray(payload?.requests)
+    ? payload.requests.map((r) => {
+        if (!isObj(r)) return r;
+        const kept: Obj = {};
+        for (const [k, v] of Object.entries(r)) if (!NETWORK_PRIVATE.includes(k)) kept[k] = v;
+        return kept;
+      })
+    : [];
+  return { ...e, data: { ...d, payload: { ...(payload ?? {}), requests } } };
+}
+
+/** The event with every typed value masked, or null when it is not kept at all. */
+export function maskEvent(e: RrwebEvent): RrwebEvent | null {
+  if (e.type === EventType.Plugin) return maskPlugin(e);
+  if (e.type === EventType.FullSnapshot && isObj(e.data)) {
+    const data: Obj = { ...e.data };
+    if ("node" in data) data.node = maskNode(data.node);
+    if ("wireframes" in data) data.wireframes = maskWireframes(data.wireframes);
+    return { ...e, data };
+  }
   if (e.type !== EventType.IncrementalSnapshot || !isObj(e.data)) return e;
   const d = e.data;
   if (d.source === Source.Input && "text" in d) return { ...e, data: { ...d, text: stars(d.text) } };
   if (d.source === Source.Mutation) {
-    const adds = Array.isArray(d.adds) ? d.adds.map((a) => (isObj(a) ? { ...a, node: maskNode(a.node) } : a)) : d.adds;
+    const adds = Array.isArray(d.adds)
+      ? d.adds.map((a) => (isObj(a) ? { ...a, ...("node" in a ? { node: maskNode(a.node) } : {}), ...("wireframe" in a ? { wireframe: maskWireframe(a.wireframe) } : {}) } : a))
+      : d.adds;
     const attributes = Array.isArray(d.attributes)
       ? d.attributes.map((a) => (isObj(a) && isObj(a.attributes) && "value" in a.attributes ? { ...a, attributes: { ...a.attributes, value: stars(a.attributes.value) } } : a))
       : d.attributes;
-    return { ...e, data: { ...d, adds, attributes } };
+    return { ...e, data: { ...d, adds, attributes, ...("updates" in d ? { updates: maskWireframeRefs(d.updates) } : {}) } };
   }
   return e;
 }
@@ -145,7 +195,10 @@ export function extractSnapshots(payload: unknown): SnapshotBatch[] {
     const sessionId = p.$session_id;
     if (typeof sessionId !== "string" || !SESSION_ID.test(sessionId)) throw new SnapshotError("a recording needs a session id");
     const raw = Array.isArray(p.$snapshot_data) ? p.$snapshot_data : [p.$snapshot_data];
-    const events = raw.filter(isEvent).map((e) => maskEvent(decompressEvent(e)));
+    const events = raw
+      .filter(isEvent)
+      .map((e) => maskEvent(decompressEvent(e)))
+      .filter((e): e is RrwebEvent => e !== null);
     if (events.length === 0) continue;
     const token = [p.token, p.$token, item.api_key, item.token, isObj(payload) ? payload.api_key : null].find((t) => typeof t === "string") as string | undefined;
     const distinct = [item.distinct_id, p.distinct_id, p.$distinct_id].find((d) => typeof d === "string" || typeof d === "number");
