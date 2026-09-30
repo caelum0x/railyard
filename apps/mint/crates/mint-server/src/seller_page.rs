@@ -32,7 +32,10 @@ fn shell(title: &str, body: &str) -> String {
 }
 
 /// The connect screen for one token (a 64-character hex id, checked by the caller).
-pub fn connect(token: &str, stripe: bool, error: Option<&str>) -> String {
+/// `webhook_url` is this seller's Dodo webhook address: Dodo makes the webhook
+/// secret only when that endpoint is added, so the address is shown before
+/// the secret is asked for (one pass, no second connect link).
+pub fn connect(token: &str, stripe: bool, error: Option<&str>, webhook_url: Option<&str>) -> String {
     let err = error.map(|e| format!("<p class=\"error\">{}</p>", esc(e))).unwrap_or_default();
     let default = if stripe {
         format!("<p>Your buyers pay your own account directly. Nothing passes through us.</p><p><a class=\"primary\" href=\"/mint/connect/{}/stripe\">Connect with Stripe</a></p>", esc(token))
@@ -41,7 +44,7 @@ pub fn connect(token: &str, stripe: bool, error: Option<&str>) -> String {
     };
     let advanced = format!(
         "<details{open}><summary>Advanced: use your own Dodo Payments account</summary>\
-         <form method=\"post\" action=\"/mint/connect/{t}\">\
+         {hook}<form method=\"post\" action=\"/mint/connect/{t}\">\
          <label for=\"api_key\">API key</label><input id=\"api_key\" name=\"api_key\" type=\"password\" autocomplete=\"off\" required>\
          <label for=\"webhook_secret\">Webhook secret</label><input id=\"webhook_secret\" name=\"webhook_secret\" type=\"password\" autocomplete=\"off\" placeholder=\"whsec_...\" required>\
          <label><input type=\"radio\" name=\"mode\" value=\"test\" checked> Test mode</label>\
@@ -50,6 +53,9 @@ pub fn connect(token: &str, stripe: bool, error: Option<&str>) -> String {
          <p>We keep the key encrypted and use it only to create your products and checkout pages.</p></form></details>",
         open = if error.is_some() { " open" } else { "" },
         t = esc(token),
+        hook = webhook_url
+            .map(|u| format!("<p>First, in your Dodo Payments dashboard add a webhook to <code>{}</code> for payments, refunds, disputes and subscriptions. Then paste that webhook's secret below.</p>", esc(u)))
+            .unwrap_or_default(),
     );
     shell("Connect your payment account", &format!("<h1>Connect your payment account</h1>{err}{default}{advanced}"))
 }
@@ -57,7 +63,7 @@ pub fn connect(token: &str, stripe: bool, error: Option<&str>) -> String {
 /// After a successful connect.
 pub fn connected(provider: &str, webhook_url: Option<&str>, return_url: Option<&str>) -> String {
     let hook = webhook_url
-        .map(|u| format!("<p>Last step: in your {} dashboard, add a webhook to <code>{}</code> for payments, refunds, disputes and subscriptions, using the same webhook secret.</p>", esc(provider), esc(u)))
+        .map(|u| format!("<p>Your webhook address is <code>{}</code>. Keep it in your {} dashboard for payments, refunds, disputes and subscriptions.</p>", esc(u), esc(provider)))
         .unwrap_or_default();
     let back = return_url
         .filter(|u| u.starts_with("https://"))
@@ -78,18 +84,20 @@ mod tests {
     #[test]
     fn the_default_screen_has_no_key_field() {
         for stripe in [true, false] {
-            let page = connect(&"a".repeat(64), stripe, None);
+            let page = connect(&"a".repeat(64), stripe, None, Some("https://m.example/mint/webhooks/seller/scribase/o.p.e/dodo"));
             let default_part = page.split("<details").next().unwrap();
             assert!(!default_part.contains("type=\"password\""), "no key field on the default screen");
             assert!(page.contains("<details>"), "Advanced is closed by default");
             assert_eq!(page.contains("Connect with Stripe"), stripe);
             assert!(!page.contains("<script"));
+            let advanced = page.split("<details").nth(1).unwrap();
+            assert!(advanced.find("/mint/webhooks/seller/scribase/o.p.e/dodo").unwrap() < advanced.find("webhook_secret").unwrap(), "the address comes before the secret is asked for");
         }
     }
 
     #[test]
     fn errors_and_links_are_escaped_and_advanced_opens_on_error() {
-        let page = connect(&"b".repeat(64), true, Some("<bad>"));
+        let page = connect(&"b".repeat(64), true, Some("<bad>"), None);
         assert!(page.contains("&lt;bad&gt;") && page.contains("<details open>"));
         let done = connected("Dodo Payments", Some("https://m.example/x?\"<"), Some("javascript:alert(1)"));
         assert!(done.contains("&quot;&lt;") && !done.contains("javascript:"));

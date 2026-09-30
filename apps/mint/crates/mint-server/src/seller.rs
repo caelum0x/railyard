@@ -409,7 +409,7 @@ fn valid_token(token: &str) -> bool {
 async fn connect_page(State(state): State<SellerState>, Path(token): Path<String>) -> Response {
     let found = if valid_token(&token) { state.store.peek_token(&token_hash(&token), (state.now_ms)()).await.ok().flatten() } else { None };
     match found {
-        Some(_) => page(StatusCode::OK, seller_page::connect(&token, state.stripe.is_some(), None)),
+        Some(t) => page(StatusCode::OK, seller_page::connect(&token, state.stripe.is_some(), None, Some(&dodo_webhook_url(&state, &t.product, &t.seller)))),
         None => page(StatusCode::NOT_FOUND, seller_page::expired()),
     }
 }
@@ -445,6 +445,10 @@ fn clean_secret(value: Option<&String>, min: usize) -> Option<String> {
     ((min..=400).contains(&v.len()) && !v.chars().any(char::is_whitespace)).then(|| v.to_owned())
 }
 
+fn connect_again(state: &SellerState, token: &str, pending: &ConnectToken, error: Option<&str>) -> String {
+    seller_page::connect(token, state.stripe.is_some(), error, Some(&dodo_webhook_url(state, &pending.product, &pending.seller)))
+}
+
 async fn connect_submit(State(state): State<SellerState>, Path(token): Path<String>, body: Bytes) -> Response {
     let now = (state.now_ms)();
     let Some(seal) = state.seal.clone() else {
@@ -459,10 +463,10 @@ async fn connect_submit(State(state): State<SellerState>, Path(token): Path<Stri
     };
     let fields = form_fields(&body);
     let (Some(api_key), Some(webhook_secret)) = (clean_secret(fields.get("api_key"), 10), clean_secret(fields.get("webhook_secret"), 10)) else {
-        return page(StatusCode::BAD_REQUEST, seller_page::connect(&token, state.stripe.is_some(), Some("Paste your API key and your webhook secret.")));
+        return page(StatusCode::BAD_REQUEST, connect_again(&state, &token, &pending, Some("Paste your API key and your webhook secret.")));
     };
     if !webhook_secret.starts_with("whsec_") {
-        return page(StatusCode::BAD_REQUEST, seller_page::connect(&token, state.stripe.is_some(), Some("The webhook secret starts with whsec_.")));
+        return page(StatusCode::BAD_REQUEST, connect_again(&state, &token, &pending, Some("The webhook secret starts with whsec_.")));
     }
     let mode = SellerMode::parse(fields.get("mode").map_or("test", String::as_str)).unwrap_or(SellerMode::Test);
     let account = SellerAccount { provider: SellerProvider::Dodo, mode, secret: api_key.clone(), webhook_secret: Some(webhook_secret.clone()) };
@@ -471,7 +475,7 @@ async fn connect_submit(State(state): State<SellerState>, Path(token): Path<Stri
             SellerError::Refused(_) => "That key was not accepted in this mode. Check test or live and try again.",
             _ => "Your payment account did not answer. Try again in a minute.",
         };
-        return page(StatusCode::UNPROCESSABLE_ENTITY, seller_page::connect(&token, state.stripe.is_some(), Some(msg)));
+        return page(StatusCode::UNPROCESSABLE_ENTITY, connect_again(&state, &token, &pending, Some(msg)));
     }
     let Ok(Some(token_row)) = state.store.take_token(&hash, now).await else {
         return page(StatusCode::NOT_FOUND, seller_page::expired());

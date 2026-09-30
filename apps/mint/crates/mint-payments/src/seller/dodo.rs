@@ -168,9 +168,22 @@ pub async fn verify_event<H: Headers>(
         buyer_ref,
         sku,
         provider_event_id: format!("dodo:{id}"),
-        occurred_at_ms: ts_num * 1000,
+        occurred_at_ms: event_time_ms(&v, ts_num),
         expires_at_ms,
     }))
+}
+
+/// When the event happened: the payload's own `timestamp` (UTC), else the
+/// delivery stamp. A retried delivery is signed with a fresh
+/// `webhook-timestamp`, so using that stamp would let a grant retried after a
+/// refund look newer than the refund and re-grant it downstream.
+fn event_time_ms(payload: &Value, delivery_secs: i64) -> i64 {
+    payload["timestamp"]
+        .as_str()
+        .filter(|t| t.ends_with('Z'))
+        .and_then(parse_rfc3339_ms)
+        .filter(|ms| *ms > 0 && *ms <= (delivery_secs + TOLERANCE_SECS) * 1000)
+        .unwrap_or(delivery_secs * 1000)
 }
 
 /// `2026-10-29T12:00:00Z` (or with fractional seconds / an offset of Z) to epoch ms.
@@ -290,6 +303,22 @@ mod tests {
         assert!(verify_event(&fake, &acct(), key, &h, &raw, NOW).await.is_err());
         let (h, raw) = signed(&json!({"type":"payment.succeeded","data":{"metadata":meta}}), "msg_7");
         assert!(verify_event(&fake, &acct(), key, &h, &raw, NOW + 3_600).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_retried_grant_keeps_its_event_time_so_it_never_looks_newer_than_a_later_refund() {
+        let fake = Fake::default();
+        let key = "scribase:org.shop.production";
+        let meta = json!({"mint_seller": key, "buyer_ref": "user_1", "sku": "pro"});
+        // The first attempt failed; Dodo retries an hour later with a fresh webhook-timestamp.
+        let (h, raw) = signed(&json!({"type":"payment.succeeded","timestamp":"2026-09-29T11:00:00Z","data":{"payment_id":"pay_1","subscription_id":null,"metadata":meta}}), "msg_r");
+        let e = verify_event(&fake, &acct(), key, &h, &raw, NOW).await.unwrap().unwrap();
+        assert_eq!(e.occurred_at_ms, 1_790_679_600_000, "the event's own time, not the retry's");
+        // Without a payload time the delivery stamp is used; a future payload time is not trusted.
+        let (h, raw) = signed(&json!({"type":"payment.succeeded","data":{"payment_id":"pay_1","subscription_id":null,"metadata":meta}}), "msg_s");
+        assert_eq!(verify_event(&fake, &acct(), key, &h, &raw, NOW).await.unwrap().unwrap().occurred_at_ms, NOW * 1000);
+        let (h, raw) = signed(&json!({"type":"payment.succeeded","timestamp":"2027-01-01T00:00:00Z","data":{"payment_id":"pay_1","subscription_id":null,"metadata":meta}}), "msg_t");
+        assert_eq!(verify_event(&fake, &acct(), key, &h, &raw, NOW).await.unwrap().unwrap().occurred_at_ms, NOW * 1000);
     }
 
     #[test]
