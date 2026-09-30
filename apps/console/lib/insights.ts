@@ -8,8 +8,22 @@ export interface InsightsSummary {
   funnel: { steps: { name: "visit" | "signup" | "first_action"; sessions: number }[] };
 }
 
+export type VitalMetric = "lcp" | "inp" | "cls" | "fcp" | "ttfb";
+export type VitalRating = "good" | "needs-improvement" | "poor";
+export type VitalsRow = { app_id: string; samples: number } & Record<VitalMetric, { p75: number | null; rating: VitalRating | null }>;
+
+/** The fork's `/api/v1/tenants/{org}/vitals` answer (PY3.3). */
+export interface InsightsVitals {
+  since: string;
+  apps: VitalsRow[];
+  daily: (VitalsRow & { day: string })[];
+  deploys: { at: string; before: VitalsRow | null; after: VitalsRow | null }[];
+}
+
 export interface InsightsClient {
   summary(orgId: string, opts?: { app?: string; days?: number }): Promise<InsightsSummary>;
+  /** Web vitals p75 (PY3.3); optional so older fakes and deployments still type-check. */
+  vitals?(orgId: string, opts: { app: string; days?: number; marks?: string[] }): Promise<InsightsVitals>;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -37,6 +51,15 @@ export function insightsClient(opts: { apiUrl: string; token: string; fetchImpl?
       if (!res.ok) throw new Error(`Insights answered ${res.status}`);
       const body = await res.json();
       if (!isSummary(body)) throw new Error("Insights answered with an unexpected shape");
+      return body;
+    },
+    async vitals(orgId, { app, days = 7, marks = [] }) {
+      if (!UUID.test(orgId) || !UUID.test(app)) throw new Error("invalid org or app id");
+      const q = new URLSearchParams({ app, days: String(days), ...(marks.length ? { marks: marks.slice(0, 10).join(",") } : {}) });
+      const res = await fetchImpl(`${base}/api/v1/tenants/${orgId}/vitals?${q}`, { headers: { authorization: `Bearer ${opts.token}`, accept: "application/json" } });
+      if (!res.ok) throw new Error(`Insights answered ${res.status}`);
+      const body = (await res.json()) as InsightsVitals;
+      if (!body || !Array.isArray(body.apps) || !Array.isArray(body.daily) || !Array.isArray(body.deploys)) throw new Error("Insights answered with an unexpected shape");
       return body;
     },
   };

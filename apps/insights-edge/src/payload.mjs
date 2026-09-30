@@ -3,7 +3,9 @@
 
 export const MAX_BATCH = 100;
 export const MAX_BODY_BYTES = 64 * 1024;
-const TYPES = new Set(["event", "identify"]);
+const TYPES = new Set(["event", "identify", "performance"]);
+/** Web vitals of one page view (PY3.3), with the upstream collector's ranges. */
+export const VITALS = { lcp: 60000, inp: 60000, cls: 100, fcp: 60000, ttfb: 60000 };
 
 /** The app's own user id (PY3.2): short and plain; the same pattern Insights ingest checks. */
 export const USER_ID = /^[A-Za-z0-9@._:+=-]{1,50}$/;
@@ -44,12 +46,23 @@ export function parseOne(item) {
   if (p.user !== undefined && p.user !== null && !(typeof p.user === "string" && USER_ID.test(p.user))) return { error: "invalid user" };
   const user = typeof p.user === "string" ? p.user : null;
   if (type === "identify" && !user) return { error: "identify needs user" };
+  const vitals = {};
+  if (type === "performance") {
+    for (const [k, max] of Object.entries(VITALS)) {
+      const v = p[k];
+      if (v === undefined || v === null) continue;
+      if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > max) return { error: `invalid ${k}` };
+      vitals[k] = v;
+    }
+    if (!Object.keys(vitals).length) return { error: "performance needs a metric" };
+  }
   return {
     siteKey,
     event: {
       type,
       ...(id ? { id } : {}),
       ...(user ? { user } : {}),
+      ...vitals,
       name: str(p.name, 50),
       url,
       hostname: str(p.hostname, 100),

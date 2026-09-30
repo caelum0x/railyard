@@ -69,3 +69,13 @@ test("PY3.2: the page tag exposes identify and sends it only for a plain user id
   assert.deepEqual(bodies.map((b) => [b.type, b.payload.user, b.payload.name ?? null]), [["identify", "user_42", null], ["event", "user_42", "created_project"]]);
   assert.deepEqual(bodies[0].payload.data, { plan: "pro" });
 });
+
+test("PY3.3: a performance event carries only the five metrics, in range", () => {
+  const ok = parseOne({ type: "performance", payload: { website: "ry_site_abcdefgh", url: "/", lcp: 2100, inp: 180, cls: 0.05, fcp: 900, ttfb: 300, duration: 5000 } });
+  assert.deepEqual([ok.event.lcp, ok.event.inp, ok.event.cls, ok.event.fcp, ok.event.ttfb], [2100, 180, 0.05, 900, 300]);
+  assert.equal(ok.event.duration, undefined);
+  assert.equal(parseOne({ type: "performance", payload: { website: "ry_site_abcdefgh", url: "/" } }).error, "performance needs a metric");
+  assert.equal(parseOne({ type: "performance", payload: { website: "ry_site_abcdefgh", url: "/", lcp: -3 } }).error, "invalid lcp");
+  assert.equal(parseOne({ type: "performance", payload: { website: "ry_site_abcdefgh", url: "/", cls: "0.1" } }).error, "invalid cls");
+  assert.equal(parseOne({ type: "event", payload: { website: "ry_site_abcdefgh", url: "/", lcp: 5 } }).event.lcp, undefined, "metrics ride only on performance events");
+});

@@ -1,0 +1,355 @@
+{
+ "about": "Page loads with their performance entries and the value Chrome's field reporting gives for each metric, worked out by hand from the published metric definitions (web.dev: LCP stops at the first input; CLS is the worst session window, shifts under 1 s apart and a window at most 5 s, excluding shifts after input; INP is the longest interaction after skipping one per 50 interactions; FCP, LCP and TTFB count from activation). The test allows 10%.",
+ "loads": [
+  {
+   "name": "plain load",
+   "entries": [
+    {
+     "entryType": "navigation",
+     "name": "https://shop.example/",
+     "startTime": 0,
+     "duration": 2000,
+     "responseStart": 320,
+     "activationStart": 0
+    },
+    {
+     "entryType": "paint",
+     "name": "first-contentful-paint",
+     "startTime": 900,
+     "duration": 0
+    },
+    {
+     "entryType": "largest-contentful-paint",
+     "name": "",
+     "startTime": 900,
+     "duration": 0
+    },
+    {
+     "entryType": "largest-contentful-paint",
+     "name": "",
+     "startTime": 1800,
+     "duration": 0
+    },
+    {
+     "entryType": "layout-shift",
+     "name": "",
+     "startTime": 1000,
+     "duration": 0,
+     "value": 0.02,
+     "hadRecentInput": false
+    },
+    {
+     "entryType": "layout-shift",
+     "name": "",
+     "startTime": 1500,
+     "duration": 0,
+     "value": 0.03,
+     "hadRecentInput": false
+    },
+    {
+     "entryType": "event",
+     "name": "click",
+     "startTime": 3000,
+     "duration": 64,
+     "interactionId": 1
+    },
+    {
+     "entryType": "event",
+     "name": "keydown",
+     "startTime": 4000,
+     "duration": 120,
+     "interactionId": 2
+    }
+   ],
+   "chrome": {
+    "ttfb": 320,
+    "fcp": 900,
+    "lcp": 1800,
+    "cls": 0.05,
+    "inp": 120
+   }
+  },
+  {
+   "name": "a larger paint after a click is not the LCP",
+   "entries": [
+    {
+     "entryType": "navigation",
+     "name": "https://shop.example/",
+     "startTime": 0,
+     "duration": 2000,
+     "responseStart": 250,
+     "activationStart": 0
+    },
+    {
+     "entryType": "paint",
+     "name": "first-contentful-paint",
+     "startTime": 1000,
+     "duration": 0
+    },
+    {
+     "entryType": "largest-contentful-paint",
+     "name": "",
+     "startTime": 1200,
+     "duration": 0
+    },
+    {
+     "entryType": "event",
+     "name": "click",
+     "startTime": 3000,
+     "duration": 48,
+     "interactionId": 1
+    },
+    {
+     "entryType": "largest-contentful-paint",
+     "name": "",
+     "startTime": 5200,
+     "duration": 0
+    }
+   ],
+   "chrome": {
+    "ttfb": 250,
+    "fcp": 1000,
+    "lcp": 1200,
+    "cls": 0,
+    "inp": 48
+   }
+  },
+  {
+   "name": "two layout-shift windows; a shift right after input does not count",
+   "entries": [
+    {
+     "entryType": "navigation",
+     "name": "https://shop.example/",
+     "startTime": 0,
+     "duration": 2000,
+     "responseStart": 400,
+     "activationStart": 0
+    },
+    {
+     "entryType": "paint",
+     "name": "first-contentful-paint",
+     "startTime": 700,
+     "duration": 0
+    },
+    {
+     "entryType": "largest-contentful-paint",
+     "name": "",
+     "startTime": 700,
+     "duration": 0
+    },
+    {
+     "entryType": "layout-shift",
+     "name": "",
+     "startTime": 500,
+     "duration": 0,
+     "value": 0.1,
+     "hadRecentInput": false
+    },
+    {
+     "entryType": "layout-shift",
+     "name": "",
+     "startTime": 900,
+     "duration": 0,
+     "value": 0.05,
+     "hadRecentInput": false
+    },
+    {
+     "entryType": "layout-shift",
+     "name": "",
+     "startTime": 2500,
+     "duration": 0,
+     "value": 0.3,
+     "hadRecentInput": true
+    },
+    {
+     "entryType": "layout-shift",
+     "name": "",
+     "startTime": 4000,
+     "duration": 0,
+     "value": 0.12,
+     "hadRecentInput": false
+    },
+    {
+     "entryType": "layout-shift",
+     "name": "",
+     "startTime": 4800,
+     "duration": 0,
+     "value": 0.11,
+     "hadRecentInput": false
+    },
+    {
+     "entryType": "layout-shift",
+     "name": "",
+     "startTime": 5600,
+     "duration": 0,
+     "value": 0.02,
+     "hadRecentInput": false
+    }
+   ],
+   "chrome": {
+    "ttfb": 400,
+    "fcp": 700,
+    "lcp": 700,
+    "cls": 0.25
+   }
+  },
+  {
+   "name": "prerendered page: times count from activation",
+   "entries": [
+    {
+     "entryType": "navigation",
+     "name": "https://shop.example/",
+     "startTime": 0,
+     "duration": 2000,
+     "responseStart": 300,
+     "activationStart": 400
+    },
+    {
+     "entryType": "paint",
+     "name": "first-contentful-paint",
+     "startTime": 1100,
+     "duration": 0
+    },
+    {
+     "entryType": "largest-contentful-paint",
+     "name": "",
+     "startTime": 1500,
+     "duration": 0
+    }
+   ],
+   "chrome": {
+    "ttfb": 0,
+    "fcp": 700,
+    "lcp": 1100,
+    "cls": 0
+   }
+  },
+  {
+   "name": "120 interactions: INP skips the two slowest",
+   "interactionCount": 120,
+   "entries": [
+    {
+     "entryType": "navigation",
+     "name": "https://shop.example/",
+     "startTime": 0,
+     "duration": 2000,
+     "responseStart": 200,
+     "activationStart": 0
+    },
+    {
+     "entryType": "paint",
+     "name": "first-contentful-paint",
+     "startTime": 600,
+     "duration": 0
+    },
+    {
+     "entryType": "largest-contentful-paint",
+     "name": "",
+     "startTime": 600,
+     "duration": 0
+    },
+    {
+     "entryType": "event",
+     "name": "click",
+     "startTime": 1000,
+     "duration": 400,
+     "interactionId": 1
+    },
+    {
+     "entryType": "event",
+     "name": "click",
+     "startTime": 2000,
+     "duration": 350,
+     "interactionId": 2
+    },
+    {
+     "entryType": "event",
+     "name": "keydown",
+     "startTime": 3000,
+     "duration": 300,
+     "interactionId": 3
+    },
+    {
+     "entryType": "event",
+     "name": "click",
+     "startTime": 4000,
+     "duration": 280,
+     "interactionId": 4
+    },
+    {
+     "entryType": "event",
+     "name": "pointerdown",
+     "startTime": 5000,
+     "duration": 200,
+     "interactionId": 5
+    }
+   ],
+   "chrome": {
+    "ttfb": 200,
+    "fcp": 600,
+    "lcp": 600,
+    "cls": 0,
+    "inp": 300
+   }
+  },
+  {
+   "name": "one interaction, several events: its longest one counts",
+   "entries": [
+    {
+     "entryType": "navigation",
+     "name": "https://shop.example/",
+     "startTime": 0,
+     "duration": 2000,
+     "responseStart": 500,
+     "activationStart": 0
+    },
+    {
+     "entryType": "paint",
+     "name": "first-contentful-paint",
+     "startTime": 1300,
+     "duration": 0
+    },
+    {
+     "entryType": "largest-contentful-paint",
+     "name": "",
+     "startTime": 1000,
+     "duration": 0
+    },
+    {
+     "entryType": "event",
+     "name": "keydown",
+     "startTime": 2000,
+     "duration": 80,
+     "interactionId": 7
+    },
+    {
+     "entryType": "event",
+     "name": "keyup",
+     "startTime": 2100,
+     "duration": 140,
+     "interactionId": 7
+    },
+    {
+     "entryType": "event",
+     "name": "pointerdown",
+     "startTime": 3000,
+     "duration": 60,
+     "interactionId": 8
+    },
+    {
+     "entryType": "largest-contentful-paint",
+     "name": "",
+     "startTime": 2500,
+     "duration": 0
+    }
+   ],
+   "chrome": {
+    "ttfb": 500,
+    "fcp": 1300,
+    "lcp": 1000,
+    "cls": 0,
+    "inp": 140
+   }
+  }
+ ]
+}

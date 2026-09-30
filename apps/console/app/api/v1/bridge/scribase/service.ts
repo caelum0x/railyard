@@ -24,6 +24,7 @@ import { access } from "../../../../../lib/ladder.ts";
 import { listDeploys } from "../../deploys/service.ts";
 import { addApp, AppError, normaliseAppName } from "../../../../../lib/apps.ts";
 import { firstEvent, type InsightsClient } from "../../../../../lib/insights.ts";
+import { markTimes, vitalsView } from "../../../../../lib/vitals-view.ts";
 import { capMessage } from "../../../../../lib/caps.ts";
 import { registerSite, syncSites, type SitesStore } from "../../../../../lib/sites.ts";
 import { issueAiKey, issueConnectToken } from "../../../../../lib/ai/provision.ts";
@@ -71,6 +72,8 @@ export interface BridgeDeps {
   flags?: FlagsDeps;
   /** Railyard Watch (PY2.2); absent in tests that do not need it. */
   watch?: WatchDeps;
+  /** Page speed with deploy markers in the Analytics tab (PY3.3), only with RAILYARD_REPLAY_LIVE=1. */
+  replayLive?: boolean;
   /** P-Y1 transition: accept unbound ids and orgs syncs without `addon.as_of` (RAILYARD_BRIDGE_ACCEPT_LEGACY=1). */
   acceptLegacy?: boolean;
 }
@@ -351,9 +354,11 @@ async function insightsFor(deps: BridgeDeps, body: Record<string, unknown>): Pro
   const summary = await deps.insights.summary(who.orgId, { app: app.id, days: 7 });
   const row = summary.apps.find((a) => a.app_id === app.id);
   const limit = access(await deps.repo.getEntitlement(who.orgId), now).eventsLimit;
+  const vitals = await vitalsFor(deps, who.orgId, app.id, now);
   return {
     status: 200,
     body: {
+      ...(vitals ? { vitals } : {}),
       available: true,
       app: app.name,
       first_event_at: row?.first_event_at ?? null,
@@ -365,6 +370,18 @@ async function insightsFor(deps: BridgeDeps, body: Record<string, unknown>): Pro
       cap_note: capMessage(row?.month_events ?? 0, limit, now),
     },
   };
+}
+
+/**
+ * Page speed and deploy markers for the Analytics tab (PY3.3). Absent unless
+ * RAILYARD_REPLAY_LIVE is on; a vitals error never hides the rest of the tab.
+ */
+async function vitalsFor(deps: BridgeDeps, orgId: string, appId: string, now: Date) {
+  if (!deps.replayLive || !deps.insights?.vitals) return null;
+  const since = new Date(now.getTime() - 7 * 86_400_000);
+  const marks = markTimes(await deps.repo.listDeploys(orgId, appId), appId, since);
+  const v = await deps.insights.vitals(orgId, { app: appId, days: 7, marks: marks.map((d) => d.created_at) }).catch(() => null);
+  return v ? vitalsView(v, appId, marks) : null;
 }
 
 /** The AI gateway for one project environment (PY1.4, BYOK only). The key goes to the Scribase control plane only. */

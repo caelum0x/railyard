@@ -22,7 +22,7 @@ export const USER_ID = /^[A-Za-z0-9@._:+=-]{1,50}$/;
 
 export interface EdgeEvent {
   /** `identify` (PY3.2) links the visitor's session to `user` and merges `data` into the profile. */
-  type: 'event' | 'identify';
+  type: 'event' | 'identify' | 'performance';
   name: string | null;
   url: string;
   hostname: string | null;
@@ -36,6 +36,31 @@ export interface EdgeEvent {
   ts: string;
   /** The app's user id when the person is signed in (PY3.2); null for anonymous visitors. */
   user: string | null;
+  /** Web vitals of a `performance` event (PY3.3); null elsewhere. */
+  vitals: Vitals | null;
+}
+
+export interface Vitals {
+  lcp?: number;
+  inp?: number;
+  cls?: number;
+  fcp?: number;
+  ttfb?: number;
+}
+
+/** The upstream collector's ranges for each metric. */
+export const VITAL_MAX: Record<keyof Vitals, number> = { lcp: 60000, inp: 60000, cls: 100, fcp: 60000, ttfb: 60000 };
+export const EVENT_TYPE_PERFORMANCE = 5;
+
+function parseVitals(e: Record<string, unknown>): Vitals | null | undefined {
+  const out: Vitals = {};
+  for (const [k, max] of Object.entries(VITAL_MAX) as [keyof Vitals, number][]) {
+    const v = e[k];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > max) return undefined;
+    out[k] = v;
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 export interface EdgeBatch {
@@ -58,7 +83,7 @@ function parseEvent(v: unknown): EdgeEvent | null {
   const url = str(e.url, 2000);
   const visitor = str(e.visitor, 64);
   const ts = str(e.ts, 40);
-  if ((e.type !== 'event' && e.type !== 'identify') || url === null || !visitor || !/^[0-9a-f]{16,64}$/.test(visitor) || !ts || Number.isNaN(Date.parse(ts))) return null;
+  if ((e.type !== 'event' && e.type !== 'identify' && e.type !== 'performance') || url === null || !visitor || !/^[0-9a-f]{16,64}$/.test(visitor) || !ts || Number.isNaN(Date.parse(ts))) return null;
   let data: EdgeEvent['data'] = null;
   if (e.data && typeof e.data === 'object' && !Array.isArray(e.data)) {
     const entries = Object.entries(e.data as Record<string, unknown>).filter(
@@ -72,9 +97,12 @@ function parseEvent(v: unknown): EdgeEvent | null {
   const user = e.user === null || e.user === undefined ? null : typeof e.user === 'string' && USER_ID.test(e.user) ? e.user : undefined;
   if (user === undefined) return null;
   if (e.type === 'identify' && user === null) return null;
+  const vitals = e.type === 'performance' ? parseVitals(e) : null;
+  if (vitals === undefined || (e.type === 'performance' && vitals === null)) return null;
   return {
     type: e.type,
     user,
+    vitals,
     name,
     url,
     hostname: str(e.hostname, 100),
@@ -138,6 +166,11 @@ export interface EventRow {
   country: string | null;
   eventName: string | null;
   eventData: Record<string, string | number | boolean> | null;
+  lcp?: number;
+  inp?: number;
+  cls?: number;
+  fcp?: number;
+  ttfb?: number;
 }
 
 /** Maps one collector event to upstream rows. `id` derives stable UUIDs (upstream's v5 hash). */
@@ -168,7 +201,7 @@ export function toRows(appId: string, e: EdgeEvent, id: (...parts: string[]) => 
       websiteId: appId,
       sessionId,
       visitId: id(sessionId, hour),
-      eventType: e.name ? EVENT_TYPE_CUSTOM : EVENT_TYPE_PAGE_VIEW,
+      eventType: e.type === 'performance' ? EVENT_TYPE_PERFORMANCE : e.name ? EVENT_TYPE_CUSTOM : EVENT_TYPE_PAGE_VIEW,
       createdAt,
       pageTitle: e.title,
       hostname: e.hostname ?? current.hostname,
@@ -180,8 +213,9 @@ export function toRows(appId: string, e: EdgeEvent, id: (...parts: string[]) => 
       screen: e.screen,
       language: e.language,
       country: e.country,
-      eventName: e.name,
-      eventData: e.data,
+      eventName: e.type === 'performance' ? null : e.name,
+      eventData: e.type === 'performance' ? null : e.data,
+      ...(e.vitals ?? {}),
     },
   };
 }
@@ -232,7 +266,7 @@ export async function ingest(deps: IngestDeps, body: IngestBody): Promise<Ingest
         sessions.add(rows.session.id);
         await deps.createSession(rows.session);
       }
-      if (e.type === 'event') {
+      if (e.type === 'event' || e.type === 'performance') {
         await deps.saveEvent(rows.event);
         stored += 1;
       }

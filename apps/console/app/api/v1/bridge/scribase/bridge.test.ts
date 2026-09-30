@@ -556,3 +556,43 @@ test("flags: a URL-keyed read is served from the edge cache for 15 s; a header-k
   await clientFlags(flags, new Request("https://c/x", { headers: { "x-flags-key": key } }), T0, cache);
   assert.equal(store.size, 1, "header-keyed reads are not cached");
 });
+
+test("analytics tab (PY3.3): page speed with a marker for a deploy recorded a moment ago, only with RAILYARD_REPLAY_LIVE", async () => {
+  const repo = new MemoryRepo(() => T0);
+  const asked: string[][] = [];
+  const row = (appId: string, lcp: number) => ({
+    app_id: appId,
+    samples: 30,
+    lcp: { p75: lcp, rating: (lcp <= 2500 ? "good" : "needs-improvement") as "good" | "needs-improvement" },
+    inp: { p75: 100, rating: "good" as const },
+    cls: { p75: 0.01, rating: "good" as const },
+    fcp: { p75: 800, rating: "good" as const },
+    ttfb: { p75: 150, rating: "good" as const },
+  });
+  const insights: InsightsClient = {
+    summary: async (orgId) => ({ org_id: orgId, since: T0.toISOString(), apps: [], funnel: { steps: [{ name: "visit", sessions: 0 }, { name: "signup", sessions: 0 }, { name: "first_action", sessions: 0 }] } }),
+    vitals: async (_org, q) => {
+      asked.push(q.marks ?? []);
+      return { since: T0.toISOString(), apps: [row(q.app, 2000)], daily: [], deploys: (q.marks ?? []).map((at) => ({ at, before: row(q.app, 1500), after: row(q.app, 2400) })) };
+    },
+  };
+  const extra = { insights, replayLive: true };
+  const orgId = (await call(repo, "orgs", { scribase_org_id: "org_vt", name: "V", addon: addon() }, { extra })).body.org_id as string;
+  await call(repo, "sites", { scribase_org_id: "org_vt", app: "shop-prod" }, { extra });
+  const app = (await repo.findAppByName(orgId, "shop-prod"))!;
+  const d = await repo.createDeploy({ org_id: orgId, app_id: app.id, url: "https://shop-prod.acme.workers.dev", commit_sha: null, branch: "main", framework: "vite", version_id: "v1", duration_ms: 1, status: "succeeded", rollback_of: null });
+  const tab = await call(repo, "insights", { scribase_org_id: "org_vt", app: "shop-prod" }, { extra });
+  assert.equal(tab.status, 200, JSON.stringify(tab.body));
+  const vitals = tab.body.vitals as { metrics: { key: string; value: string }[]; deploys: { id: string; at: string; changes: string[] }[] };
+  assert.equal(vitals.metrics[0]!.value, "2000 ms");
+  assert.equal(vitals.deploys[0]!.id, d.id, "the deploy is marked on the next read");
+  assert.equal(asked[0]![0], d.created_at);
+  assert.match(vitals.deploys[0]!.changes[0]!, /1500 ms to 2400 ms, slower/);
+  const off = await call(repo, "insights", { scribase_org_id: "org_vt", app: "shop-prod" }, { extra: { insights, replayLive: false } });
+  assert.equal(off.body.vitals, undefined);
+  assert.equal(off.body.available, true);
+  // A vitals failure never hides the rest of the tab.
+  const broken = await call(repo, "insights", { scribase_org_id: "org_vt", app: "shop-prod" }, { extra: { insights: { ...insights, vitals: async () => { throw new Error("down"); } }, replayLive: true } });
+  assert.equal(broken.body.available, true);
+  assert.equal(broken.body.vitals, undefined);
+});
