@@ -9,8 +9,8 @@
 	"routes": [{ "pattern": "insights.railyard.ereboslab.com", "custom_domain": true }],
 	"durable_objects": { "bindings": [{ "name": "ORG_COLLECTOR", "class_name": "OrgCollector" }] },
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["OrgCollector"] }],
-	// The owner creates the namespace (`wrangler kv namespace create SITES`) and puts its id here.
-	"kv_namespaces": [{ "binding": "SITES", "id": "REPLACE_WITH_SITES_NAMESPACE_ID" }],
+	// Namespace RAILYARD_SITES, created 2026-09-30 (`wrangler kv namespace create RAILYARD_SITES`).
+	"kv_namespaces": [{ "binding": "SITES", "id": "323121abfdc64ff6ab90927620d3dbb2" }],
 	"vars": {
 		// Empty until RYP-D2 is deployed at the Wave E gate: events are counted and capped but not forwarded.
 		"INGEST_URL": "",

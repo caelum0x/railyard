@@ -16,8 +16,8 @@
 	// Until the Railyard domain and Dodo brand exist (owner items 11 and 18).
 	"routes": [{ "pattern": "railyard.ereboslab.com", "custom_domain": true }],
 	// The collector's site entries (RYP-E1, PY1.3): the same namespace the edge
-	// collector reads. The owner puts its id here (`wrangler kv namespace create SITES`).
-	"kv_namespaces": [{ "binding": "SITES", "id": "REPLACE_WITH_SITES_NAMESPACE_ID" }],
+	// collector reads: namespace RAILYARD_SITES, created 2026-09-30.
+	"kv_namespaces": [{ "binding": "SITES", "id": "323121abfdc64ff6ab90927620d3dbb2" }],
 	"vars": {
 		"RAILYARD_CONSOLE_URL": "https://railyard.ereboslab.com",
 		// Insights tenant API (the box's tunnel route to the fork's /api/v1); token is a secret.
