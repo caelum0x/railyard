@@ -83,7 +83,7 @@ kept as (
    where b.ei is not null and n.i <= b.ei and n.i > b.ei - ${d}::int
 )`
           : `kept as (select pid, sid, item, ts, i from numbered where i <= ${d}::int)`;
-  const sql = `with ev as materialized (
+  const sql = `with ev as (
   select ${PERSON} as pid, e."timestamp" as ts, e.uuid, ${def.item} as item
     from pa.events e
     ${PERSON_JOIN}
@@ -91,21 +91,24 @@ kept as (
    where e.project_id = ${proj} and e."timestamp" >= ${from}::timestamptz and e."timestamp" <= ${to}::timestamptz
      and ${def.cond} and ${global}
 ),
-marked as (
-  select pid, ts, uuid, item,
-         case when lag(ts) over w is null or extract(epoch from ts - lag(ts) over w) >= ${gap}::int then 1 else 0 end as brk
+-- One ordering (person, time) for every window below, so Postgres sorts once:
+-- a session starts after a gap; an item equal to the one before is a repeat.
+w1 as (
+  select pid, ts, uuid, item, lag(ts) over w as pts, lag(item) over w as pitem
     from ev window w as (partition by pid order by ts, uuid)
 ),
-sess as (
-  select pid, ts, uuid, item, sum(brk) over (partition by pid order by ts, uuid rows unbounded preceding) as sid from marked
-),
 compact as (
-  select pid, sid, ts, uuid, item from (
-    select s.*, lag(item) over (partition by pid, sid order by ts, uuid) as prev from sess s
-  ) x where prev is distinct from item
+  select pid, ts, uuid, item, (pts is null or extract(epoch from ts - pts) >= ${gap}::int) as brk
+    from w1
+   where pts is null or extract(epoch from ts - pts) >= ${gap}::int or pitem is distinct from item
+),
+counted as (
+  select pid, ts, uuid, item, brk, sum(brk::int) over w as sid, count(*) over w as cum
+    from compact window w as (partition by pid order by ts, uuid)
 ),
 numbered as (
-  select pid, sid, item, ts, row_number() over (partition by pid, sid order by ts, uuid) as i from compact
+  select pid, sid, item, ts, cum - max(case when brk then cum end) over (partition by pid order by ts, uuid rows unbounded preceding) + 1 as i
+    from counted
 ),
 ${trimmed},
 linked as (
@@ -118,9 +121,9 @@ edge as (
     from linked where next_item is not null group by 1, 2, 3
 ),
 drop_off as (select i as step, item, count(*) as ends from linked where next_item is null group by 1, 2)
-select e.source_step::int, e.source, e.target, e.people, e.avg_seconds,
-       coalesce((select x.ends from drop_off x where x.step = e.source_step + 1 and x.item = e.target), 0) as ends
+select e.source_step::int, e.source, e.target, e.people, e.avg_seconds, coalesce(x.ends, 0) as ends
   from edge e
+  left join drop_off x on x.step = e.source_step + 1 and x.item = e.target
  order by e.people desc, e.source_step, e.source, e.target
  limit ${P.add(edges)}`;
   return { sql, params: P.values };

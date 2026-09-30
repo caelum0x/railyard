@@ -20,16 +20,25 @@ const runs = Number(process.argv[3] ?? 20);
 const NOW = new Date("2026-09-30T00:00:00Z");
 const DAYS = 90;
 
-const cluster = scratchPg();
+// PA_CAPACITY_URL reuses a cluster that already holds the fixture (test/a2/perf-cluster.ts).
+const reuse = process.env.PA_CAPACITY_URL ?? null;
+const cluster = reuse ? { url: reuse, stop: () => undefined } : scratchPg();
 const out: Record<string, unknown> = { target_events: target, days: DAYS, runs, postgres: "", machine: `${process.platform} ${process.arch}, ${cpus().length} cores`, load_average_start: loadavg().map((x) => Math.round(x)) };
 try {
   await migrate(cluster.url);
   const owner = new pg.Client({ connectionString: cluster.url });
   await owner.connect();
   out.postgres = (await owner.query("show server_version")).rows[0].server_version;
-  const projectId = randomUUID();
   const t0 = Date.now();
-  const stats = await loadFixture(owner, { projectId, persons: 10_000_000, maxEvents: target, days: DAYS, end: NOW, seed: 2026 });
+  let projectId = randomUUID();
+  let stats = { events: 0, persons: 0 };
+  if (reuse) {
+    const r = await owner.query("select project_id, count(*)::int as n from pa.events group by 1 order by 2 desc limit 1");
+    projectId = r.rows[0].project_id;
+    stats = { events: r.rows[0].n, persons: Number((await owner.query("select count(*) as n from pa.persons where project_id = $1", [projectId])).rows[0].n) };
+  } else {
+    stats = await loadFixture(owner, { projectId, persons: 10_000_000, maxEvents: target, days: DAYS, end: NOW, seed: 2026 });
+  }
   out.load_seconds = (Date.now() - t0) / 1000;
   out.events = stats.events;
   out.persons = stats.persons;
