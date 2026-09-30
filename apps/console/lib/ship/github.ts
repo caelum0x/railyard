@@ -20,7 +20,12 @@ export interface GithubAppConfig {
   slug: string;
   privateKey: string;
   webhookSecret: string;
+  /** The App's own OAuth client (user sign-in): proves the person linking can push to the repository. */
+  clientId?: string;
+  clientSecret?: string;
   apiBase?: string;
+  /** github.com (sign-in pages and the code exchange). */
+  webBase?: string;
   fetchImpl?: Fetch;
 }
 
@@ -46,6 +51,44 @@ export class GithubApp {
     this.cfg = cfg;
     this.api = (cfg.apiBase ?? "https://api.github.com").replace(/\/$/, "");
     this.fetchImpl = cfg.fetchImpl ?? fetch;
+  }
+
+  private get web(): string {
+    return (this.cfg.webBase ?? "https://github.com").replace(/\/$/, "");
+  }
+
+  /** GitHub's sign-in for the App (user authorization). No scope: a GitHub App's user token carries the App's permissions. */
+  userAuthorizeUrl(state: string, redirectUri: string): string {
+    if (!this.cfg.clientId) throw new GithubError("The GitHub App's client id is not configured", 503);
+    const q = new URLSearchParams({ client_id: this.cfg.clientId, redirect_uri: redirectUri, state, allow_signup: "false" });
+    return `${this.web}/login/oauth/authorize?${q}`;
+  }
+
+  /** Trades the sign-in code for the user's token (used once, then dropped; never stored). */
+  async userToken(code: string, redirectUri: string): Promise<string> {
+    if (!this.cfg.clientId || !this.cfg.clientSecret) throw new GithubError("The GitHub App's client is not configured", 503);
+    const res = await this.fetchImpl(`${this.web}/login/oauth/access_token`, {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json", "user-agent": "railyard-console" },
+      body: JSON.stringify({ client_id: this.cfg.clientId, client_secret: this.cfg.clientSecret, code, redirect_uri: redirectUri }),
+    });
+    const body = (await res.json().catch(() => ({}))) as { access_token?: unknown; error?: unknown };
+    if (!res.ok || typeof body.access_token !== "string" || !body.access_token) {
+      throw new GithubError("GitHub did not confirm the sign-in. Run railyard link again.", res.status >= 500 ? 502 : 400);
+    }
+    return body.access_token;
+  }
+
+  /**
+   * What the signed-in user may do on the repository, seen with their own token
+   * (so it is their permission, limited to where the App is installed). Null
+   * when they cannot see it at all.
+   */
+  async userRepoAccess(userToken: string, fullName: string): Promise<{ id: number; full_name: string; push: boolean } | null> {
+    const r = await this.call<{ id: number; full_name: string; permissions?: { admin?: boolean; maintain?: boolean; push?: boolean } }>("GET", `/repos/${fullName}`, userToken, undefined, true);
+    if (!r || !Number.isSafeInteger(r.id)) return null;
+    const p = r.permissions ?? {};
+    return { id: r.id, full_name: r.full_name, push: p.admin === true || p.maintain === true || p.push === true };
   }
 
   installUrl(state: string): string {

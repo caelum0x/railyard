@@ -49,6 +49,7 @@ Usage, Billing), one primary action on each, a pause switch and one-click cancel
 | `RAILYARD_SHIP_ON_PUSH_LIVE` | var | Ship on push (Wave P PY3.1, ADR RY-0004). `1` turns on `railyard link`, the GitHub and Cloudflare browser steps and the `railyard ci` exchange. Unset (the default): every `/api/v1/github/*` route answers 503 "not switched on" (denylist rule `railyard-slot-ship-on-push`). |
 | `GITHUB_APP_ID`, `GITHUB_APP_SLUG` | var | The Railyard GitHub App (owner item Y4, created from `/api/v1/github/manifest`). |
 | `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET` | secret | The App's key (PKCS#1 as GitHub issues it, or PKCS#8) and its webhook secret. Stored by the command the manifest page shows; never displayed. |
+| `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | var, secret | The App's own sign-in client. `railyard link` has the user sign in with the App and checks they can push to the repository before linking it. Stored by the same manifest command; the App's callback URL is `<console>/api/v1/github/user/callback`. Ship on push stays off without them. |
 | `CLOUDFLARE_OAUTH_CLIENT_ID` | var | Our Cloudflare OAuth client (public, domain verified), redirect `<console>/api/v1/github/cloudflare/callback`. |
 | `CLOUDFLARE_OAUTH_CLIENT_SECRET` | secret | Its client secret. |
 | `CLOUDFLARE_OAUTH_SCOPES` | var | Optional: the scope ids configured on that client, space or comma separated. Default: account read, user read, Workers and Workers scripts and routes write, `offline_access`. |

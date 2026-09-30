@@ -59,6 +59,14 @@ Build path A as follows (all in `apps/console/lib/ship/**`, routes under
    authorization code flow **with PKCE (S256)**; the code verifier never appears in a URL.
    The installation id GitHub sends back is not trusted: the App's own view of the
    repository (`GET /repos/{repo}/installation`) decides.
+   Between the two, the user signs in on GitHub with the App (its user authorization;
+   no click after the first time) and the console checks, with that user's own token,
+   that they can push to the repository. The token is used for that one check and never
+   stored. This is required because the App is shared by every Railyard org: an
+   installation on a repository (for example on all of a GitHub organization's
+   repositories) says nothing about which Railyard org may link it, and without the check
+   any org could link a repository it does not control and receive its pushes
+   (verifier finding, Wave P3).
 3. **One pull request**, opened by the App on the branch `railyard/ship-on-push`, adds
    `.github/workflows/railyard.yml`. Nothing is pushed to a default branch; merging the
    pull request is the user's consent to change their repository.

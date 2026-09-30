@@ -2,6 +2,10 @@
 //
 //   railyard link  -> startLink: a 15-minute browser session for (org, app, repo)
 //   browser        -> go: install the GitHub App on the repo (skipped when it already is),
+//                     then sign in on GitHub as the App (githubUserCallback): the person
+//                     linking must be able to push to the repository, because the App is
+//                     shared by every Railyard org and an installation proves nothing
+//                     about who is asking; no click once they authorized the App before,
 //                     then "Connect Cloudflare" (skipped when the org already has a grant),
 //                     then finish: the link row and one pull request adding the workflow
 //   the workflow   -> ciSession: GitHub OIDC token in, short-lived Cloudflare token out
@@ -26,6 +30,8 @@ import type { CloudflareConnection, LinkSession, ShipLink } from "./types.ts";
 import { WORKFLOW_PATH, workflowYaml } from "./workflow.ts";
 
 export const SESSION_TTL_SECONDS = 15 * 60;
+/** Where GitHub sends the user back after signing in with the App (a callback URL of the App). */
+export const GITHUB_USER_CALLBACK_PATH = "/api/v1/github/user/callback";
 export const GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 /** A cached access token is reused while it has at least this long left. */
 const ACCESS_REUSE_SECONDS = 10 * 60;
@@ -91,11 +97,48 @@ async function liveSession(deps: ShipDeps, id: string | null, now: Date): Promis
   return s;
 }
 
+const signInOnGithub = (deps: ShipDeps, id: string) => ({ redirect: deps.github.userAuthorizeUrl(id, `${deps.consoleUrl}${GITHUB_USER_CALLBACK_PATH}`) });
+
 /** The first browser step: where to send the user next. */
 export async function go(deps: ShipDeps, id: string | null, now: Date): Promise<{ redirect: string } | { done: string }> {
   const s = await liveSession(deps, id, now);
   const inst = await deps.github.repoInstallation(s.repo_full_name, now);
   if (!inst) return { redirect: deps.github.installUrl(id as string) };
+  // Installed (maybe by someone else, for all their repositories): GitHub must still say who is linking.
+  return signInOnGithub(deps, id as string);
+}
+
+/**
+ * GitHub's redirect after the user signed in with the App. Only a person who can
+ * push to the repository may link it; their token is used for this one check
+ * and never stored. Without this, any Railyard org could link any repository
+ * the shared App is installed on and receive its pushes.
+ */
+export async function githubUserCallback(deps: ShipDeps, q: URLSearchParams, now: Date): Promise<{ redirect: string } | { done: string }> {
+  const id = q.get("state");
+  const s = await liveSession(deps, id, now);
+  const idHash = await sha256Hex(id as string);
+  if (q.get("error")) {
+    await deps.store.updateSession(idHash, { state: "failed", message: "GitHub sign-in was not granted." });
+    throw new ShipError("GitHub sign-in was not granted, so nothing was linked. Run railyard link again when you are ready.", 400);
+  }
+  const code = q.get("code");
+  if (!code || code.length > 200) throw new ShipError("GitHub sent no code. Run railyard link again.", 400);
+  let access: { id: number; full_name: string; push: boolean } | null;
+  try {
+    const userToken = await deps.github.userToken(code, `${deps.consoleUrl}${GITHUB_USER_CALLBACK_PATH}`);
+    access = await deps.github.userRepoAccess(userToken, s.repo_full_name);
+  } catch (e) {
+    if (e instanceof GithubError) throw new ShipError(e.message, e.status >= 500 ? 502 : 400);
+    throw e;
+  }
+  if (!access || !access.push) {
+    const message = `Your GitHub account cannot push to ${s.repo_full_name}, so it cannot link it. Someone with write access to the repository has to run railyard link.`;
+    await deps.store.updateSession(idHash, { state: "failed", message });
+    throw new ShipError(message, 403);
+  }
+  const inst = await deps.github.repoInstallation(s.repo_full_name, now);
+  if (!inst) throw new ShipError(`The Railyard app is not installed on ${s.repo_full_name}. Open the link again to install it.`, 409);
   return afterGithub(deps, id as string, s, inst, now);
 }
 
@@ -118,7 +161,7 @@ export async function githubSetup(deps: ShipDeps, q: URLSearchParams, now: Date)
   const s = await liveSession(deps, id, now);
   const inst = await deps.github.repoInstallation(s.repo_full_name, now);
   if (!inst) throw new ShipError(`The Railyard app was installed, but not on ${s.repo_full_name}. Add that repository to the installation and open the link again.`, 409);
-  return afterGithub(deps, id as string, s, inst, now);
+  return signInOnGithub(deps, id as string);
 }
 
 /** Cloudflare's redirect after the consent screen. */

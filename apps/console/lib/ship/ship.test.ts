@@ -13,7 +13,7 @@ import { CloudflareOAuth, pkceChallenge } from "./cloudflare.ts";
 import { GithubApp } from "./github.ts";
 import { fromB64url, pkcs1ToPkcs8, signRs256, verifyRs256, type Jwk } from "./jwt.ts";
 import { MemoryShipStore } from "./store.ts";
-import { ciReport, ciSession, cloudflareCallback, githubSetup, go, linkStatus, ShipError, startLink, webhook, type ShipDeps } from "./service.ts";
+import { ciReport, ciSession, cloudflareCallback, githubSetup, githubUserCallback, go, linkStatus, ShipError, startLink, webhook, type ShipDeps } from "./service.ts";
 import { ciSessionH, goH, linkStartH, page, webhookH } from "./http.ts";
 import { WORKFLOW_PATH, workflowYaml } from "./workflow.ts";
 import { manifest, manifestDone } from "./manifest.ts";
@@ -65,6 +65,9 @@ function fakes() {
     comments: [] as { id: number; pr: number; body: string }[],
     calls: [] as string[],
     tokensIssued: 0,
+    /** GitHub user sign-in (the App's user authorization): code -> the user's token and whether they can push to acme/shop. */
+    userCodes: new Map<string, { token: string; push: boolean }>([["gh-user-code", { token: "ghu_owner", push: true }]]),
+    userPush: new Map<string, boolean>(),
   };
   const cf = { codes: new Map<string, string>(), refreshes: 0, refreshToken: "cf-refresh-1", lastForm: null as URLSearchParams | null, rotate: true };
   const reply = (status: number, body?: unknown) => new Response(body === undefined ? "" : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -73,6 +76,16 @@ function fakes() {
     const method = init?.method ?? "GET";
     const auth = new Headers(init?.headers).get("authorization") ?? "";
     const body = init?.body ? String(init.body) : "";
+    if (url.host === "github.com" && url.pathname === "/login/oauth/access_token" && method === "POST") {
+      const b = JSON.parse(body || "{}");
+      if (b.client_id !== "gh-client" || b.client_secret !== "gh-secret") return reply(401, { error: "incorrect_client_credentials" });
+      if (b.redirect_uri !== `${CONSOLE}/api/v1/github/user/callback`) return reply(200, { error: "redirect_uri_mismatch" });
+      const u = gh.userCodes.get(b.code);
+      if (!u) return reply(200, { error: "bad_verification_code" });
+      gh.userCodes.delete(b.code);
+      gh.userPush.set(u.token, u.push);
+      return reply(200, { access_token: u.token, token_type: "bearer" });
+    }
     if (url.host === "api.github.com") {
       gh.calls.push(`${method} ${url.pathname}`);
       const p = url.pathname;
@@ -85,6 +98,13 @@ function fakes() {
         return gh.installedOn.has(FULL) ? reply(200, { id: INST, account: { login: "acme" } }) : reply(404);
       }
       if (p === `/app/installations/${INST}/access_tokens`) return (gh.tokensIssued++, reply(201, { token: `ghs_install_${gh.tokensIssued}` }));
+      if (auth.startsWith("Bearer ghu_")) {
+        const push = gh.userPush.get(auth.slice("Bearer ".length));
+        if (push === undefined) return reply(401);
+        // A user-to-server token sees the repository only where the App is installed.
+        if (p === `/repos/${FULL}` && gh.installedOn.has(FULL)) return reply(200, { id: REPO_ID, full_name: FULL, default_branch: "main", owner: { login: "acme" }, permissions: { admin: false, maintain: false, push, pull: true } });
+        return reply(404);
+      }
       if (!auth.startsWith("Bearer ghs_install_")) return reply(401);
       if (p === `/repos/${FULL}`) return reply(200, { id: REPO_ID, full_name: FULL, default_branch: "main", owner: { login: "acme" } });
       if (p === `/repos/${FULL}/contents/${WORKFLOW_PATH}`) {
@@ -161,7 +181,7 @@ async function setup(opts: { plan?: "addon" | "none"; active?: boolean } = {}) {
   const deps: ShipDeps = {
     store,
     repo,
-    github: new GithubApp({ appId: "12345", slug: "railyard-test", privateKey: APP_PEM, webhookSecret: "whsec-test", fetchImpl: f.fetchImpl }),
+    github: new GithubApp({ appId: "12345", slug: "railyard-test", privateKey: APP_PEM, webhookSecret: "whsec-test", clientId: "gh-client", clientSecret: "gh-secret", fetchImpl: f.fetchImpl }),
     cloudflare: new CloudflareOAuth({ clientId: "cf-client", clientSecret: "cf-secret", redirectUri: `${CONSOLE}/api/v1/github/cloudflare/callback`, scopes: ["workers:write", "offline_access"], authorizeUrl: "https://cf.test/auth", tokenUrl: "https://cf.test/token", apiBase: "https://cfapi.test", fetchImpl: f.fetchImpl }),
     oidcKeys: async () => [oidcJwk],
     consoleUrl: CONSOLE,
@@ -170,13 +190,26 @@ async function setup(opts: { plan?: "addon" | "none"; active?: boolean } = {}) {
   return { ...f, repo, store, deps, org: org.id };
 }
 
-/** Walks the browser half: install the App, grant Cloudflare. Returns the session id and the final message. */
+/** GitHub's redirect back after the user signed in with the App: proves who is linking. */
+async function signInOnGithub(s: Awaited<ReturnType<typeof setup>>, id: string, code = "gh-user-code") {
+  if (!s.gh.userCodes.has(code) && code === "gh-user-code") s.gh.userCodes.set(code, { token: "ghu_owner", push: true });
+  return githubUserCallback(s.deps, new URLSearchParams({ code, state: id }), T0);
+}
+
+/** Walks the browser half: install the App, sign in on GitHub, grant Cloudflare. Returns the session id and the final message. */
 async function linkThrough(s: Awaited<ReturnType<typeof setup>>) {
   const { id } = await startLink(s.deps, s.org, { repo: FULL, app: "Shop" }, T0);
   const first = await go(s.deps, id, T0);
   assert.ok("redirect" in first);
   s.gh.installedOn.add(FULL);
-  const second = await githubSetup(s.deps, new URLSearchParams({ installation_id: String(INST), setup_action: "install", state: id }), T0);
+  const setupStep = await githubSetup(s.deps, new URLSearchParams({ installation_id: String(INST), setup_action: "install", state: id }), T0);
+  assert.ok("redirect" in setupStep);
+  const signIn = new URL(setupStep.redirect);
+  assert.equal(signIn.origin + signIn.pathname, "https://github.com/login/oauth/authorize");
+  assert.equal(signIn.searchParams.get("client_id"), "gh-client");
+  assert.equal(signIn.searchParams.get("state"), id);
+  assert.equal(signIn.searchParams.get("redirect_uri"), `${CONSOLE}/api/v1/github/user/callback`);
+  const second = await signInOnGithub(s, id);
   assert.ok("redirect" in second);
   const auth = new URL(second.redirect);
   const session = [...s.store.sessions.values()][0]!;
@@ -252,7 +285,8 @@ test("link: with the App installed and Cloudflare granted, the link finishes on 
   await linkThrough(s);
   s.gh.files.set(`main:${WORKFLOW_PATH}`, workflowYaml({ consoleUrl: CONSOLE, productionBranch: "main" }));
   const { id } = await startLink(s.deps, s.org, { repo: FULL, app: "shop" }, T0);
-  const r = await go(s.deps, id, T0);
+  assert.ok("redirect" in (await go(s.deps, id, T0)));
+  const r = await signInOnGithub(s, id);
   assert.ok("done" in r && /The workflow is already on main; your next push there goes live\./.test(r.done));
   assert.equal(s.gh.prs.length, 1, "no second pull request");
 });
@@ -271,14 +305,49 @@ test("link: bad input, a paused org, an expired link, a forged install and a ref
   await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ code: "c", state: id }), T0), (e: ShipError) => e.status === 409);
   s.gh.installedOn.add(FULL);
   await githubSetup(s.deps, new URLSearchParams({ state: id }), T0);
+  // Setup alone (no GitHub sign-in yet) does not unlock the Cloudflare step.
+  await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ code: "c", state: id }), T0), (e: ShipError) => e.status === 409);
+  await signInOnGithub(s, id);
   await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ error: "access_denied", state: id }), T0), (e: ShipError) => e.status === 400);
   assert.equal((await linkStatus(s.deps, s.org, id)).state, "failed");
   // A wrong PKCE verifier (a stolen code) is refused by the token endpoint.
   const { id: id2 } = await startLink(s.deps, s.org, { repo: FULL, app: "shop" }, T0);
   const r = await go(s.deps, id2, T0);
   assert.ok("redirect" in r);
+  assert.ok("redirect" in (await signInOnGithub(s, id2)));
   s.cf.codes.set("stolen", await pkceChallenge("a-different-verifier-of-enough-length-xxxxxxxxxxxxxx"));
   await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ code: "stolen", state: id2 }), T0), /invalid_grant/);
+});
+
+test("link: another Railyard org cannot link a repository it cannot push to, even where the shared App is installed", async () => {
+  // The victim installed the Railyard App on acme/shop (for all its repositories, say) but has not linked yet.
+  const s = await setup();
+  s.gh.installedOn.add(FULL);
+  const attacker = await s.repo.createOrgForUser({ userId: "u-evil", email: "evil@example.com", name: "Evil" });
+  await s.repo.saveEntitlement({ ...emptyEntitlement(attacker.id, T0), plan: "addon", status: "active", addon_slots: ["deploy"], apps_limit: 10 });
+  const { id } = await startLink(s.deps, attacker.id, { repo: FULL, app: "loot" }, T0);
+  // Opening the link never skips straight to Cloudflare or the pull request: GitHub must say who this is.
+  const first = await go(s.deps, id, T0);
+  assert.ok("redirect" in first && first.redirect.startsWith("https://github.com/login/oauth/authorize"));
+  assert.equal(s.gh.prs.length, 0);
+  // The Cloudflare step and a replayed setup redirect do not bypass the sign-in.
+  await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ code: "c", state: id }), T0), (e: ShipError) => e.status === 409);
+  assert.ok("redirect" in (await githubSetup(s.deps, new URLSearchParams({ installation_id: String(INST), state: id }), T0)));
+  // The attacker's GitHub account can read the repository but not push to it: refused, nothing linked.
+  s.gh.userCodes.set("evil-code", { token: "ghu_evil", push: false });
+  await assert.rejects(signInOnGithub(s, id, "evil-code"), (e: ShipError) => e.status === 403 && /cannot push to acme\/shop/.test(e.message));
+  assert.equal((await linkStatus(s.deps, attacker.id, id)).state, "failed");
+  assert.equal(s.store.links.length, 0);
+  assert.equal(s.store.installations.size, 0, "the installation is not claimed for the attacker's org");
+  assert.equal(s.gh.prs.length, 0, "no pull request was opened on the victim's repository");
+  // A forged or reused code is refused by GitHub.
+  const { id: id2 } = await startLink(s.deps, attacker.id, { repo: FULL, app: "loot" }, T0);
+  await assert.rejects(signInOnGithub(s, id2, "evil-code"), (e: ShipError) => e.status === 400);
+  await assert.rejects(githubUserCallback(s.deps, new URLSearchParams({ error: "access_denied", state: id2 }), T0), (e: ShipError) => e.status === 400);
+  // The real owner (push access) still links normally afterwards.
+  const own = await linkThrough(s);
+  assert.match(own.done.done, /^Linked acme\/shop to shop\./);
+  assert.equal(s.store.links[0]!.org_id, s.org);
 });
 
 // ------------------------------------------------------------------- ci ----
@@ -354,7 +423,9 @@ test("webhook: signed events only; an uninstall or a removed repository drops it
   assert.deepEqual(await webhook(s.deps, "whsec-test", "installation_repositories", sign(removed), removed), { handled: true, links_removed: 1 });
   await assert.rejects(ciSession(s.deps, `Bearer ${await oidc()}`, T0), (e: ShipError) => e.status === 404);
   const again = await startLink(s.deps, s.org, { repo: FULL, app: "shop" }, T0);
-  assert.ok("done" in (await go(s.deps, again.id, T0)), "relinking needs no click once the App and the grant exist");
+  const relink = await go(s.deps, again.id, T0);
+  assert.ok("redirect" in relink && relink.redirect.startsWith("https://github.com/login/oauth/authorize"), "GitHub confirms who is relinking (no click once authorized)");
+  assert.ok("done" in (await signInOnGithub(s, again.id)), "relinking needs no Cloudflare step once the grant exists");
   const deleted = JSON.stringify({ action: "deleted", installation: { id: INST } });
   assert.deepEqual(await webhook(s.deps, "whsec-test", "installation", sign(deleted), deleted), { handled: true, links_removed: 1 });
   assert.equal(s.store.installations.size, 0);
@@ -379,7 +450,7 @@ test("no token is ever shown: pages, link responses and status carry none; the w
   s.gh.installedOn.add(FULL);
   const { done } = await linkThrough(s);
   const html = await page("Linked", done.done).text();
-  for (const secret of ["cf-access", "cf-refresh", "ghs_install", "ry_", APP_PEM.slice(40, 80)]) assert.ok(!html.includes(secret), secret);
+  for (const secret of ["cf-access", "cf-refresh", "ghs_install", "ghu_", "ry_", APP_PEM.slice(40, 80)]) assert.ok(!html.includes(secret), secret);
   assert.match(html, /<a href="https:\/\/github\.com\/acme\/shop\/pull\/\d+">/);
   const wf = workflowYaml({ consoleUrl: CONSOLE, productionBranch: "main" });
   assert.match(wf, /id-token: write/);
@@ -397,9 +468,12 @@ test("the GitHub App manifest asks only for what ship on push uses; the done pag
   assert.deepEqual(m.default_permissions, { contents: "write", workflows: "write", pull_requests: "write", metadata: "read" });
   assert.equal(m.hook_attributes.url, `${CONSOLE}/api/v1/github/webhook`);
   assert.equal(m.setup_url, `${CONSOLE}/api/v1/github/setup`);
+  assert.deepEqual(m.callback_urls, [`${CONSOLE}/api/v1/github/user/callback`]);
   const done = await manifestDone("abc123def456").text();
   assert.match(done, /app-manifests\/abc123def456\/conversions/);
   assert.match(done, /wrangler secret put GITHUB_APP_PRIVATE_KEY/);
+  assert.match(done, /wrangler secret put GITHUB_APP_CLIENT_ID/);
+  assert.match(done, /wrangler secret put GITHUB_APP_CLIENT_SECRET/);
   assert.equal(manifestDone("<script>").status, 400);
 });
 
@@ -409,6 +483,7 @@ test("config: ship on push stays off until RAILYARD_SHIP_ON_PUSH_LIVE=1 and ever
     SCRIBASE_URL: "https://sb.example", SCRIBASE_ANON_KEY: "a", SCRIBASE_SERVICE_ROLE_KEY: "s", RAILYARD_SESSION_SECRET: "x", DODO_API_KEY: "d", DODO_WEBHOOK_SECRET: "w",
     DODO_PRODUCT_ID_CARD_CHECK: "p1", DODO_PRODUCT_ID_MONTH: "p2", DODO_PRODUCT_ID_YEAR: "p3",
     GITHUB_APP_ID: "12345", GITHUB_APP_SLUG: "railyard", GITHUB_APP_PRIVATE_KEY: "pem", GITHUB_APP_WEBHOOK_SECRET: "wh",
+    GITHUB_APP_CLIENT_ID: "Iv1.abc", GITHUB_APP_CLIENT_SECRET: "ghcs",
     CLOUDFLARE_OAUTH_CLIENT_ID: "cid", CLOUDFLARE_OAUTH_CLIENT_SECRET: "cs", RAILYARD_CREDENTIALS_KEY: CREDS_KEY,
   };
   assert.equal(readConfig(base).ship, null, "flag off");
@@ -416,5 +491,7 @@ test("config: ship on push stays off until RAILYARD_SHIP_ON_PUSH_LIVE=1 and ever
   assert.deepEqual(on.ship?.cloudflare.scopes, ["workers:write", "offline_access"]);
   assert.equal(on.ship?.github.slug, "railyard");
   assert.equal(readConfig({ ...base, RAILYARD_SHIP_ON_PUSH_LIVE: "1", CLOUDFLARE_OAUTH_CLIENT_SECRET: "" }).ship, null, "a missing name keeps it off");
+  assert.equal(readConfig({ ...base, RAILYARD_SHIP_ON_PUSH_LIVE: "1", GITHUB_APP_CLIENT_SECRET: "" }).ship, null, "without the App's sign-in client it stays off");
+  assert.equal(on.ship?.github.clientId, "Iv1.abc");
   assert.throws(() => readConfig({ ...base, RAILYARD_SHIP_ON_PUSH_LIVE: "1", GITHUB_APP_ID: "abc" }));
 });

@@ -14,6 +14,7 @@ export const SECRET_ENV = [
   "RAILYARD_CREDENTIALS_KEY",
   "GITHUB_APP_PRIVATE_KEY",
   "GITHUB_APP_WEBHOOK_SECRET",
+  "GITHUB_APP_CLIENT_SECRET",
   "CLOUDFLARE_OAUTH_CLIENT_SECRET",
 ] as const;
 
@@ -69,7 +70,7 @@ export interface Config {
    * RAILYARD_CREDENTIALS_KEY are set and RAILYARD_SHIP_ON_PUSH_LIVE=1; the routes then answer 503.
    */
   ship: {
-    github: { appId: string; slug: string; privateKey: string; webhookSecret: string };
+    github: { appId: string; slug: string; privateKey: string; webhookSecret: string; clientId: string; clientSecret: string };
     cloudflare: { clientId: string; clientSecret: string; scopes: string[] | null };
     credentialsKey: string;
   } | null;
@@ -137,13 +138,16 @@ function readShip(env: Env): Config["ship"] {
   const slug = v("GITHUB_APP_SLUG");
   const privateKey = v("GITHUB_APP_PRIVATE_KEY");
   const webhookSecret = v("GITHUB_APP_WEBHOOK_SECRET");
+  // The App's sign-in client: the link checks the person can push to the repository.
+  const ghClientId = v("GITHUB_APP_CLIENT_ID");
+  const ghClientSecret = v("GITHUB_APP_CLIENT_SECRET");
   const clientId = v("CLOUDFLARE_OAUTH_CLIENT_ID");
   const clientSecret = v("CLOUDFLARE_OAUTH_CLIENT_SECRET");
   const credentialsKey = v("RAILYARD_CREDENTIALS_KEY");
   // Copy and routes stay "arriving" until the owner switches it on (denylist rule railyard-slot-ship-on-push).
   if (env.RAILYARD_SHIP_ON_PUSH_LIVE !== "1") return null;
-  if (!appId || !slug || !privateKey || !webhookSecret || !clientId || !clientSecret || !credentialsKey) return null;
+  if (!appId || !slug || !privateKey || !webhookSecret || !ghClientId || !ghClientSecret || !clientId || !clientSecret || !credentialsKey) return null;
   if (!/^\d+$/.test(appId) || !/^[a-z0-9][a-z0-9-]{0,33}$/.test(slug)) throw new Error("GITHUB_APP_ID must be a number and GITHUB_APP_SLUG the app's URL name");
   const scopes = v("CLOUDFLARE_OAUTH_SCOPES")?.split(/[\s,]+/).filter(Boolean) ?? null;
-  return { github: { appId, slug, privateKey, webhookSecret }, cloudflare: { clientId, clientSecret, scopes }, credentialsKey };
+  return { github: { appId, slug, privateKey, webhookSecret, clientId: ghClientId, clientSecret: ghClientSecret }, cloudflare: { clientId, clientSecret, scopes }, credentialsKey };
 }

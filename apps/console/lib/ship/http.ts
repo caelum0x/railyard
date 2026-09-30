@@ -6,7 +6,7 @@ import { orgForBearer } from "../tokens.ts";
 import { CloudflareError } from "./cloudflare.ts";
 import { GithubError } from "./github.ts";
 import type { Jwk } from "./jwt.ts";
-import { ciReport, ciSession, cloudflareCallback, githubSetup, go, linkStatus, ShipError, startLink, webhook, type ShipDeps } from "./service.ts";
+import { ciReport, ciSession, cloudflareCallback, githubSetup, githubUserCallback, go, linkStatus, ShipError, startLink, webhook, type ShipDeps } from "./service.ts";
 
 export const NOT_CONFIGURED = "Ship on push is not switched on for this console yet.";
 
@@ -69,6 +69,15 @@ export async function setupH(deps: ShipDeps | null, req: Request, now: Date): Pr
   if (!deps) return page("Not available", NOT_CONFIGURED, 503);
   try {
     return redirectOrPage(await githubSetup(deps, new URL(req.url).searchParams, now));
+  } catch (e) {
+    return failure(e, true);
+  }
+}
+
+export async function githubUserCallbackH(deps: ShipDeps | null, req: Request, now: Date): Promise<Response> {
+  if (!deps) return page("Not available", NOT_CONFIGURED, 503);
+  try {
+    return redirectOrPage(await githubUserCallback(deps, new URL(req.url).searchParams, now));
   } catch (e) {
     return failure(e, true);
   }

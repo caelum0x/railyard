@@ -11,6 +11,9 @@ export interface Manifest {
   url: string;
   hook_attributes: { url: string; active: boolean };
   redirect_url: string;
+  /** Where GitHub returns after the user signs in with the App (the link's "who is this" check). */
+  callback_urls: string[];
+  request_oauth_on_install: boolean;
   setup_url: string;
   setup_on_update: boolean;
   public: boolean;
@@ -25,6 +28,8 @@ export function manifest(consoleUrl: string): Manifest {
     url: c,
     hook_attributes: { url: `${c}/api/v1/github/webhook`, active: true },
     redirect_url: `${c}/api/v1/github/manifest/done`,
+    callback_urls: [`${c}/api/v1/github/user/callback`],
+    request_oauth_on_install: false,
     setup_url: `${c}/api/v1/github/setup`,
     setup_on_update: true,
     public: true,
@@ -59,12 +64,14 @@ export function manifestDone(code: string | null): Response {
     `jq -r .slug /tmp/railyard-app.json | npx wrangler secret put GITHUB_APP_SLUG`,
     `jq -r .pem /tmp/railyard-app.json | npx wrangler secret put GITHUB_APP_PRIVATE_KEY`,
     `jq -r .webhook_secret /tmp/railyard-app.json | npx wrangler secret put GITHUB_APP_WEBHOOK_SECRET`,
+    `jq -r .client_id /tmp/railyard-app.json | npx wrangler secret put GITHUB_APP_CLIENT_ID`,
+    `jq -r .client_secret /tmp/railyard-app.json | npx wrangler secret put GITHUB_APP_CLIENT_SECRET`,
     `rm -f /tmp/railyard-app.json`,
   ].join(" && \\\n  ");
   const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Railyard GitHub App created</title></head>
 <body style="font:16px/1.5 system-ui,sans-serif;max-width:44rem;margin:10vh auto;padding:0 1.5rem">
 <h1 style="font-size:1.25rem">The Railyard GitHub App exists</h1>
-<p>Within the next hour, run this once in <code>railyard/apps/console</code> on your machine. It stores the App's id, key and webhook secret as console secrets without printing them:</p>
+<p>Within the next hour, run this once in <code>railyard/apps/console</code> on your machine. It stores the App's id, key, webhook secret and sign-in client as console secrets without printing them:</p>
 <pre style="white-space:pre-wrap;background:#f1f3f6;padding:1rem">${esc(cmd)}</pre>
 </body></html>`;
   return new Response(body, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" } });
