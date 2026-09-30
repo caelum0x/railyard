@@ -1,0 +1,30 @@
+Railyard product analytics service
+Copyright 2026 Railyard
+
+This service implements the public capture, flags and remote-config wire
+protocol of the PostHog SDKs so their unmodified MIT/Apache-2.0 clients can
+send to it. Parts are ported from open-source projects:
+
+- PostHog (https://github.com/PostHog/posthog), MIT License (Expat), outside
+  the `ee/` directory, commit cbb1e9253027:
+  - nodejs/src/common/persons/person-utils.ts: the illegal distinct-id lists
+    (src/persons/ids.ts);
+  - nodejs/src/common/persons/person-property-utils.ts: the event-to-person
+    and campaign property sets (src/persons/properties.ts);
+  - nodejs/src/ingestion/common/persons/person-merge-service.ts: identify,
+    alias and merge semantics, re-implemented on Postgres
+    (src/persons/service.ts);
+  - person overrides (merges without rewriting events) and group-type
+    numbering semantics (src/persons/overrides.ts, src/groups/groups.ts).
+  Copyright (c) 2020-2026 PostHog Inc. Permission is hereby granted, free of
+  charge, to any person obtaining a copy of this software and associated
+  documentation files, to deal in the Software without restriction, subject
+  to including the copyright notice and permission notice in all copies.
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+Runtime dependencies (unmodified, from npm): hono and @hono/node-server
+(MIT), pg (MIT), fflate (MIT), jose (MIT).
+
+Test-only dependencies (unmodified, from npm): posthog-js (Apache-2.0 AND
+MIT), posthog-node (MIT), posthog-react-native (MIT), @babel/runtime (MIT),
+jsdom (MIT), playwright-core (Apache-2.0), typescript (Apache-2.0).

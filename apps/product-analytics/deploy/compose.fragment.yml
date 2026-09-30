@@ -1,0 +1,32 @@
+# Product analytics service: compose fragment for the box that hosts it.
+# NOT DEPLOYED. The infra lane wraps this (IB/stacks/product-analytics) with
+# the cap from docs/analytics/CAPACITY.md. No image is built here: the
+# service runs its TypeScript directly on Node 22.18+ from a checkout.
+services:
+  product-analytics:
+    image: node:22-alpine
+    working_dir: /srv/product-analytics
+    command: ["sh", "-c", "node scripts/migrate.ts && exec node src/server.ts"]
+    volumes:
+      - ./apps/product-analytics:/srv/product-analytics:ro
+    environment:
+      PORT: "8790"
+      NODE_OPTIONS: "--max-old-space-size=128"
+      DATABASE_URL: ${PRODUCT_ANALYTICS_DATABASE_URL:?set on the box}
+      SITE_DIRECTORY_URL: ${SITE_DIRECTORY_URL:?console project REST base}
+      SITE_DIRECTORY_SERVICE_KEY: ${SITE_DIRECTORY_SERVICE_KEY:?console project service key, read only use}
+      PRODUCT_ANALYTICS_CONSOLE_SECRET: ${PRODUCT_ANALYTICS_CONSOLE_SECRET:?same value as the console}
+      RAILYARD_SCRIBASE_BRIDGE_SECRET: ${RAILYARD_SCRIBASE_BRIDGE_SECRET:-}
+      FLAGS_URL: ${FLAGS_URL:-}
+      RAGO_URL: ${RAGO_URL:-}
+      RAGO_API_KEY: ${RAGO_API_KEY:-}
+      RAILYARD_LIVE: ${RAILYARD_LIVE:-0}
+    ports:
+      - "127.0.0.1:8790:8790"
+    mem_limit: 192m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8790/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
