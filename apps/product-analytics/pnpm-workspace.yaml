@@ -1,0 +1,6 @@
+minimumReleaseAgeExclude:
+  - '@hono/node-server@2.1.3'
+  - '@posthog/types@1.413.0'
+  - hono@4.13.11
+  - posthog-js@1.435.1
+  - posthog-react-native@4.78.2

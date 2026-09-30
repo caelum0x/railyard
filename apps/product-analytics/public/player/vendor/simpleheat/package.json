@@ -1,0 +1,9 @@
+{
+  "name": "simpleheat",
+  "version": "0.4.0",
+  "license": "BSD-2-Clause",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/mourner/simpleheat.git"
+  }
+}

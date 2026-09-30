@@ -6,6 +6,7 @@ const LINKS = [
   { href: "/apps", label: "Apps" },
   { href: "/insights", label: "Insights" },
   { href: "/flags", label: "Flags" },
+  { href: "/product-analytics", label: "Product analytics" },
   { href: "/usage", label: "Usage" },
   { href: "/billing", label: "Billing" },
 ];

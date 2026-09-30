@@ -1,0 +1,38 @@
+Insights (package A2 of docs/analytics/PLAN.md): trends, funnels, retention,
+paths, stickiness, lifecycle, actions, cohorts, dashboards and SQL.
+
+Ported and copied open-source code:
+
+- Umami v3.4.0 (https://github.com/umami-software/umami), MIT License,
+  Copyright (c) 2022 Umami Software, Inc. The Postgres SQL shapes for
+  funnels, retention, journeys and event metrics were copied, unmodified,
+  from this repository's vendored fork (apps/insights/src/queries/sql, read
+  only) into ported/umami/*.ts.upstream with the licence in
+  ported/umami/LICENSE. Our builders (funnels.ts, retention.ts, paths.ts,
+  trends.ts) re-express those shapes per person on the pa.* tables.
+
+- PostHog (https://github.com/PostHog/posthog), MIT License (Expat), outside
+  the ee/ directory, commit cbb1e9253027. Copyright (c) 2020-2026 PostHog
+  Inc. Semantics and test cases of
+  products/product_analytics/backend/hogql_queries/{trends,funnels,retention,
+  paths,stickiness,lifecycle}; the elements-chain selector matching of
+  posthog/models/event/event.py (Selector), posthog/models/property/util.py
+  (build_selector_regex) and posthog/hogql/property.py (steps_to_expr,
+  selector_to_expr, tag_name_to_expr), re-expressed for Postgres in
+  elements.ts and filters.ts.
+
+- node-sql-parser 5.4.0 (https://github.com/taozhi8833998/node-sql-parser),
+  Apache License 2.0. Its Postgres build (build/postgresql.js, unmodified,
+  sha256 64e4a66876d510d233dd109d56a6a0ea937c9e601c64a9870ef89682026479d0)
+  and LICENSE are vendored in vendor/node-sql-parser and loaded by
+  sandbox-parser.ts.
+
+- big-integer 1.6.52 (https://github.com/peterolson/BigInteger.js), The
+  Unlicense (public domain), the one runtime dependency of that build,
+  vendored unmodified in vendor/big-integer.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of the MIT-licensed software and associated documentation files, to deal in
+the Software without restriction, subject to including the copyright notice
+and permission notice in all copies. THE SOFTWARE IS PROVIDED "AS IS",
+WITHOUT WARRANTY OF ANY KIND.

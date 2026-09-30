@@ -1,0 +1,50 @@
+{
+  "name": "@railyard/analytics-js",
+  "version": "0.1.0",
+  "description": "Event analytics for web and Expo apps on Railyard: capture, identify, groups, screens, consent-first privacy defaults.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "types": "./src/index.d.ts",
+  "react-native": "./src/react-native.mjs",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "react-native": "./src/react-native.mjs",
+      "default": "./src/index.mjs"
+    },
+    "./react-native": {
+      "types": "./src/react-native.d.ts",
+      "default": "./src/react-native.mjs"
+    }
+  },
+  "files": [
+    "src",
+    "README.md",
+    "NOTICE",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "posthog-js": "1.435.1",
+    "posthog-react-native": "4.78.2"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-native": ">=0.72"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-native": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@babel/runtime": "7.28.4",
+    "react": "18.3.1"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

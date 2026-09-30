@@ -1,0 +1,38 @@
+{
+  "name": "@railyard/product-analytics",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Railyard product analytics service: event capture, people, groups, privacy jobs and the console API.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.ts",
+    "migrate": "node scripts/migrate.ts",
+    "test": "node --test --test-force-exit --test-concurrency=1 test/a1/*.test.ts",
+    "test:browser": "node --test --test-force-exit test/a1/browser.test.ts",
+    "capacity": "node test/a1/capacity.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.3",
+    "fflate": "0.8.3",
+    "hono": "4.13.11",
+    "jose": "6.2.12",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@babel/runtime": "7.28.4",
+    "@types/node": "22.9.0",
+    "@types/pg": "8.23.1",
+    "jsdom": "30.1.1",
+    "playwright-core": "1.63.0",
+    "posthog-js": "1.435.1",
+    "posthog-node": "5.54.1",
+    "posthog-react-native": "4.78.2",
+    "react": "18.3.1",
+    "typescript": "5.6.3"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "aws4fetch",
+  "version": "1.0.20",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mhart/aws4fetch.git"
+  }
+}
