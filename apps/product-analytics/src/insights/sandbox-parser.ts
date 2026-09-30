@@ -66,6 +66,10 @@ const DENIED_FUNCTIONS = new Set([
   "inet_server_addr",
   "inet_server_port",
   "inet_client_addr",
+  // Build one value of up to 1 GB inside the database from a short query.
+  "repeat",
+  "lpad",
+  "rpad",
 ]);
 
 type Node = Record<string, unknown>;

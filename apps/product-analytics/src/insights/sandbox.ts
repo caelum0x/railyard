@@ -16,6 +16,10 @@ import { checkSql, SqlRejected } from "./sandbox-parser.ts";
 
 export const SQL_TIMEOUT_MS = 10_000;
 export const SQL_MAX_ROWS = 10_000;
+/** Largest answer (sum of the rows' text size) read into the service; the service runs under a 192 MiB cap. */
+export const SQL_MAX_BYTES = 8 * 1024 * 1024;
+/** Marker of the database-side refusal of an answer over SQL_MAX_BYTES. */
+const TOO_LARGE = "pa_answer_too_large";
 export const SANDBOX_ROLE = "pa_sql_login";
 
 export interface SqlResult {
@@ -27,6 +31,7 @@ export interface SqlResult {
 export interface SandboxOptions {
   timeoutMs?: number;
   maxRows?: number;
+  maxBytes?: number;
 }
 
 export class SqlUnavailable extends Error {
@@ -42,8 +47,11 @@ function jsonSafe(v: unknown): unknown {
 }
 
 /** Postgres errors a person can act on, in plain words; anything else is generic. */
-function plain(err: unknown, timeoutMs: number): Error {
+function plain(err: unknown, timeoutMs: number, maxBytes: number): Error {
   const e = err as { code?: string; message?: string };
+  if (e.code === "22P02" && (e.message ?? "").includes(TOO_LARGE)) {
+    return new SqlRejected(`The answer is larger than ${Math.round(maxBytes / 1024 / 1024)} MB. Select fewer columns, add a limit or aggregate, or use an export.`);
+  }
   if (e.code === "57014") return new SqlRejected(`The query took longer than ${Math.round(timeoutMs / 1000)} seconds and was stopped. Narrow the time range or add a limit.`);
   if (e.code === "42501") return new SqlRejected(`Not allowed: ${e.message ?? "permission denied"}.`);
   if (e.code === "25006") return new SqlRejected("Only reading is allowed here: cannot write in a read-only transaction.");
@@ -60,7 +68,7 @@ export class SqlSandbox {
 
   constructor(owner: Db, opts: SandboxOptions = {}) {
     this.owner = owner;
-    this.opts = { timeoutMs: opts.timeoutMs ?? SQL_TIMEOUT_MS, maxRows: opts.maxRows ?? SQL_MAX_ROWS };
+    this.opts = { timeoutMs: opts.timeoutMs ?? SQL_TIMEOUT_MS, maxRows: opts.maxRows ?? SQL_MAX_ROWS, maxBytes: opts.maxBytes ?? SQL_MAX_BYTES };
   }
 
   /** Gives the sandbox login a fresh random password (as the owner) and opens its pool. */
@@ -112,8 +120,15 @@ export class SqlSandbox {
       await client.query("begin transaction read only");
       await client.query(`set local statement_timeout = ${Math.max(100, Math.floor(this.opts.timeoutMs))}`);
       // A bound parameter forces the extended protocol: one statement only.
+      // The running text size of the rows is checked in the database; past
+      // the cap the query fails there (a cast that cannot succeed, not folded
+      // at plan time because it depends on the row), so a huge answer never
+      // reaches the service's memory.
+      const text =
+        `select (w.q).* from (select q, sum(octet_length(q::text)) over (rows between unbounded preceding and current row) as pa_bytes from (${sql}\n) as q) as w` +
+        ` where case when w.pa_bytes > $2 then (w.pa_bytes::text || '${TOO_LARGE}')::int = 0 else true end limit $1`;
       const res = await withDeadline(
-        client.query({ text: `select * from (${sql}\n) as q limit $1`, values: [this.opts.maxRows + 1], rowMode: "array" }),
+        client.query({ text, values: [this.opts.maxRows + 1, this.opts.maxBytes], rowMode: "array" }),
         this.opts.timeoutMs + 2000,
         () => {
           broken = true;
@@ -126,7 +141,7 @@ export class SqlSandbox {
       await client.query("rollback").catch(() => {
         broken = true;
       });
-      throw plain(err, this.opts.timeoutMs);
+      throw plain(err, this.opts.timeoutMs, this.opts.maxBytes);
     } finally {
       client.release(broken);
       if (pid) await this.owner.query("delete from pa.sql_sandbox_sessions where pid = $1", [pid]).catch(() => undefined);

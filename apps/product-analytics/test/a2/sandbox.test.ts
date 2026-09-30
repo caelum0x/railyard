@@ -81,7 +81,7 @@ test("with the parser skipped, the database still refuses everything outside one
     ["select set_config('role', 'postgres', true)", /permission denied|must be/],
     ["select 1; delete from pa.events", /multiple commands|cannot insert|syntax error/],
     // Closing the wrapper by hand still meets the one-statement protocol.
-    ["select 1) as q; delete from pa.events; select * from (select 1", /multiple commands|cannot insert/],
+    ["select 1) as q; delete from pa.events; select * from (select 1", /multiple commands|cannot insert|syntax error/],
     ["with d as (delete from pa_view.events returning 1) select count(*) from d", /read-only|cannot|permission|top level/],
     ["select pa_view.project(), set_config('transaction_read_only', 'off', true)", /read-write|cannot set/],
   ];
@@ -111,6 +111,30 @@ test("long queries stop at the timeout; large answers stop at 10 000 rows", { sk
   assert.equal(big.truncated, true);
   const small = await box.run(f.projectId, "select n from generate_series(1, 3) as n");
   assert.equal(small.truncated, false);
+});
+
+test("an answer larger than the byte cap is refused in the database, before it reaches the service", { skip: skipNoPg }, async () => {
+  // One 40 MB value, or many rows adding up past the cap, would otherwise be
+  // read whole into the service (192 MiB cap) and stop it for every tenant.
+  const before = process.memoryUsage().rss;
+  await assert.rejects(box.runUnchecked(f.projectId, "select repeat(md5(n::text), 1250000) as a from generate_series(1, 1) n"), /larger than/);
+  await assert.rejects(box.runUnchecked(f.projectId, "select repeat(md5(n::text), 32) as a from generate_series(1, 10000) n"), /larger than/);
+  assert.ok(process.memoryUsage().rss - before < 64 * 1024 * 1024, "the service did not read the large answer");
+  // Answers under the cap keep their columns, order and duplicate names.
+  const ok = await box.run(f.projectId, "select n as a, n * 2 as a from generate_series(1, 5) n order by n desc");
+  assert.deepEqual(ok.columns, ["a", "a"]);
+  assert.deepEqual(ok.rows.map((r) => r.map(Number)), [[5, 10], [4, 8], [3, 6], [2, 4], [1, 2]]);
+  const events = await box.run(f.projectId, "select * from pa_view.events order by timestamp limit 3");
+  assert.equal(events.rows.length, 3);
+  assert.ok(events.columns.includes("properties"));
+  // A user's own cast error is still reported as theirs.
+  await assert.rejects(box.run(f.projectId, "select 'abc'::int"), (e: unknown) => e instanceof SqlRejected && /invalid input syntax/.test((e as Error).message) && !/larger than/.test((e as Error).message));
+});
+
+test("the parser refuses functions that build very large values in the database", () => {
+  for (const sql of ["select repeat('x', 1000000000)", "select lpad('', 1000000000, 'x')", "select rpad('', 1000000000, 'x') from pa_view.events"]) {
+    assert.throws(() => checkSql(sql), (e: unknown) => e instanceof SqlRejected && /not allowed/.test((e as Error).message), sql);
+  }
 });
 
 test("CSV download escapes quotes, commas, new lines and formula starts", () => {
