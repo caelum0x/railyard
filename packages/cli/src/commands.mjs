@@ -42,17 +42,23 @@ function needLogin(ctx) {
   return creds;
 }
 
-async function ensureWrangler(ctx, cwd) {
+async function ensureWrangler(ctx, cwd, noLogin = false) {
   const w = tool(ctx.env, "wrangler");
   const who = await run(w[0], [...w.slice(1), "whoami"], { cwd, env: ctx.env });
   if (who.code === 0 && !/not authenticated/i.test(who.stdout + who.stderr)) return true;
+  // In CI there is no browser: a refused token is an error, never a login prompt.
+  if (noLogin) return false;
   ctx.out("Log in to Cloudflare in your browser (wrangler login). Railyard never sees this login.");
   const login = await run(w[0], [...w.slice(1), "login"], { cwd, env: ctx.env, inherit: true });
   return login.code === 0;
 }
 
-export async function deploy(ctx, opts) {
-  const creds = needLogin(ctx);
+/**
+ * `hooks` (used by `railyard ci`, PY3.1): `creds` instead of the saved login, `noLogin`,
+ * `record` instead of the console deploy record, `secrets` to redact as well.
+ */
+export async function deploy(ctx, opts, hooks = {}) {
+  const creds = hooks.creds ?? needLogin(ctx);
   if (!creds) return 1;
   const dir = resolve(opts.dir ?? ctx.cwd);
   const found = detect(dir);
@@ -67,13 +73,13 @@ export async function deploy(ctx, opts) {
   // A Scribase project folder: its public URL and anon key go into the build
   // and the Worker; secrets in the same file are left out (PY1.2).
   const sb = projectEnv(dir, branch);
-  const secrets = [creds.token, ...Object.entries(sb.values).filter(([k]) => /KEY/.test(k)).map(([, v]) => v)];
+  const secrets = [creds.token, ...(hooks.secrets ?? []), ...Object.entries(sb.values).filter(([k]) => /KEY/.test(k)).map(([, v]) => v)];
   const echo = (s) => ctx.out(redact(s, secrets).replace(/\n$/, ""));
   const started = ctx.now();
   const api = consoleApi({ console: creds.console, token: creds.token, fetchImpl: ctx.fetchImpl });
 
-  if (!(await ensureWrangler(ctx, dir))) {
-    ctx.err("Cloudflare login did not finish. Run railyard deploy again.");
+  if (!(await ensureWrangler(ctx, dir, hooks.noLogin))) {
+    ctx.err(hooks.noLogin ? "Cloudflare refused the access token. Run railyard link again to renew the grant." : "Cloudflare login did not finish. Run railyard deploy again.");
     return 1;
   }
   ctx.out(`Deploying ${found.framework} app ${app} (branch ${branch}) as ${name}`);
@@ -110,7 +116,7 @@ export async function deploy(ctx, opts) {
   const ok = result.code === 0 && !!url;
   const record = { app, url: url ?? "", commit_sha: commit, branch, framework: found.framework, version_id: versionId, duration_ms: ctx.now() - started, status: ok ? "succeeded" : "failed" };
   try {
-    await api.recordDeploy(record);
+    await (hooks.record ? hooks.record(record) : api.recordDeploy(record));
   } catch (e) {
     ctx.err(`Deployed, but the console did not record it: ${e.message}`);
   }

@@ -32,9 +32,32 @@ npx railyard deploy    # builds and deploys the folder you are in
 | `railyard deploy [--app NAME] [--branch B] [--dir PATH]` | Builds and deploys |
 | `railyard rollback [--app NAME] [--branch B]` | Goes back one version |
 | `railyard deploys [--app NAME]` | Lists recent deploys |
+| `railyard link [--app NAME]` | Deploys this GitHub repository on every push |
+| `railyard ci` | The deploy step inside GitHub Actions (the workflow `link` adds runs it) |
 
 Your Railyard sign-in is saved in `~/.config/railyard/credentials.json`, readable
 only by you. There is no option that takes a key or a token.
+
+## Ship from GitHub (arriving)
+
+This is switched on per console with `RAILYARD_SHIP_ON_PUSH_LIVE`; until then
+`railyard link` answers that it is not on yet.
+
+```sh
+npx railyard link
+```
+
+`link` prints one page to open. There you install the Railyard GitHub app on
+the repository and allow Cloudflare access on Cloudflare's own screen; either
+step is skipped when you did it before. Railyard then opens one pull request
+that adds `.github/workflows/railyard.yml`. Once you merge it, each push to your
+default branch goes live, and each other branch gets its own preview; Railyard
+writes the preview URL on that branch's pull request.
+
+The workflow holds no key. Each run proves which repository and branch it is
+with GitHub's own identity token, and Railyard answers with a short-lived
+Cloudflare token that is hidden in the log. Builds use your GitHub Actions
+minutes and deploy to your Cloudflare account.
 
 ## In a Scribase project
 

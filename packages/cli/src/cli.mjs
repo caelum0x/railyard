@@ -3,6 +3,8 @@
 
 import { deploy, listDeploys, login, rollback } from "./commands.mjs";
 import { linkScribase } from "./scribase/link.mjs";
+import { link } from "./link/link.mjs";
+import { ci } from "./link/ci.mjs";
 
 const HELP = `railyard: ship it from your coding agent
 
@@ -12,6 +14,9 @@ const HELP = `railyard: ship it from your coding agent
   railyard rollback [--app NAME] [--branch B]
                                       go back to the previous version
   railyard deploys [--app NAME]       list recent deploys
+  railyard link [--app NAME]          deploy this GitHub repository on every push
+                                      (a preview URL on each branch's pull request)
+  railyard ci                         the deploy step inside GitHub Actions (added by link)
 
   In a Scribase project folder, deploy uses the project's URL and anon key
   from its env file; secrets in that file are left out.`;
@@ -43,6 +48,8 @@ export async function main(argv, ctx) {
     return 2;
   }
   const commands = { login: () => login(ctx), deploy: () => deploy(ctx, p.opts), rollback: () => rollback(ctx, p.opts), deploys: () => listDeploys(ctx, p.opts),
+    link: () => link(ctx, p.opts),
+    ci: () => ci(ctx, p.opts),
     // Run by the Scribase CLI (the deploy slot), which pipes a one-time claim on stdin.
     "link-scribase": async () => (Object.keys(p.opts).length ? 2 : linkScribase(ctx, ctx.readStdin ? await ctx.readStdin() : "")) };
   const fn = commands[p.command];

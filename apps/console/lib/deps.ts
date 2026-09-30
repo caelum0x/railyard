@@ -14,6 +14,11 @@ import type { FlagsDeps } from "./flags/service.ts";
 import { PostgrestWatchStore } from "./watch/store.ts";
 import { noMailer, rallySend } from "./watch/mail.ts";
 import type { WatchDeps } from "./watch/service.ts";
+import { CloudflareOAuth, DEFAULT_SCOPES } from "./ship/cloudflare.ts";
+import { GithubApp } from "./ship/github.ts";
+import { githubOidcKeys } from "./ship/http.ts";
+import type { ShipDeps } from "./ship/service.ts";
+import { PostgrestShipStore } from "./ship/store.ts";
 
 export interface Deps {
   cfg: Config;
@@ -23,6 +28,8 @@ export interface Deps {
   insights: InsightsClient | null;
   flags: FlagsDeps;
   watch: WatchDeps;
+  /** Ship on push (PY3.1); null until its GitHub App and Cloudflare client are configured. */
+  ship: ShipDeps | null;
 }
 
 function flagsDeps(cfg: Config): FlagsDeps {
@@ -32,17 +39,37 @@ function flagsDeps(cfg: Config): FlagsDeps {
   return { store, backend: flagsmith ?? table, backends: flagsmith ? { table, flagsmith } : { table } };
 }
 
+function shipDeps(cfg: Config, repo: Repo, sites: SitesStore): ShipDeps | null {
+  if (!cfg.ship) return null;
+  return {
+    store: new PostgrestShipStore({ url: cfg.scribaseUrl, serviceRoleKey: cfg.scribaseServiceRoleKey }),
+    repo,
+    github: new GithubApp(cfg.ship.github),
+    cloudflare: new CloudflareOAuth({
+      clientId: cfg.ship.cloudflare.clientId,
+      clientSecret: cfg.ship.cloudflare.clientSecret,
+      redirectUri: `${cfg.consoleUrl}/api/v1/github/cloudflare/callback`,
+      scopes: cfg.ship.cloudflare.scopes ?? DEFAULT_SCOPES,
+    }),
+    oidcKeys: githubOidcKeys(),
+    consoleUrl: cfg.consoleUrl,
+    credentialsKey: cfg.ship.credentialsKey,
+    sites,
+  };
+}
+
 let cached: Deps | null = null;
 
 export function deps(): Deps {
   if (cached) return cached;
   const cfg = readConfig();
   const repo = new PostgrestRepo({ url: cfg.scribaseUrl, serviceRoleKey: cfg.scribaseServiceRoleKey });
+  const sites = kvSites();
   cached = {
     cfg,
     repo,
     dodo: new Dodo({ base: cfg.dodoBase, apiKey: cfg.dodoApiKey, allowLive: cfg.dodoAllowLive }),
-    sites: kvSites(),
+    sites,
     insights: cfg.insightsApi ? insightsClient({ apiUrl: cfg.insightsApi.url, token: cfg.insightsApi.token }) : null,
     flags: flagsDeps(cfg),
     watch: {
@@ -53,6 +80,7 @@ export function deps(): Deps {
       agentToken: cfg.watchAgentToken,
       live: cfg.watchLive,
     },
+    ship: shipDeps(cfg, repo, sites),
   };
   return cached;
 }

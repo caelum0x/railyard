@@ -24,6 +24,10 @@ export function consoleApi({ console: base, token, fetchImpl = fetch }) {
     deviceToken: (deviceCode) =>
       fetchImpl(url("/api/v1/device/token"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ device_code: deviceCode }) }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) })),
     recordDeploy: (d) => call("POST", "/api/v1/deploys", d),
+    startLink: (repo, app) => call("POST", "/api/v1/github/link", { repo, app }),
+    linkStatus: (id) => call("GET", `/api/v1/github/link/status?id=${encodeURIComponent(id)}`),
+    ciSession: () => call("POST", "/api/v1/github/ci/session"),
+    ciReport: (r) => call("POST", "/api/v1/github/ci/report", r),
     listDeploys: (app, branch) => call("GET", `/api/v1/deploys?app=${encodeURIComponent(app)}${branch ? `&branch=${encodeURIComponent(branch)}` : ""}`),
   };
 }

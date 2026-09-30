@@ -12,6 +12,9 @@ export const SECRET_ENV = [
   "INSIGHTS_API_TOKEN",
   "RELAY_TENANT_KEY",
   "RAILYARD_CREDENTIALS_KEY",
+  "GITHUB_APP_PRIVATE_KEY",
+  "GITHUB_APP_WEBHOOK_SECRET",
+  "CLOUDFLARE_OAUTH_CLIENT_SECRET",
 ] as const;
 
 export const DODO_TEST_BASE = "https://test.dodopayments.com";
@@ -54,6 +57,16 @@ export interface Config {
   flags: { apiUrl: string; adminToken: string } | null;
   /** The AI gateway (PY1.4): Relay's tenant key and the sealing key; null keeps the gateway off (503). */
   aiGateway: { relayUrl: string; relayKey: string; credentialsKey: string } | null;
+  /**
+   * Ship on push (PY3.1, ADR RY-0004): the Railyard GitHub App (owner item Y4)
+   * and the Cloudflare OAuth client. Null until all of them and
+   * RAILYARD_CREDENTIALS_KEY are set and RAILYARD_SHIP_ON_PUSH_LIVE=1; the routes then answer 503.
+   */
+  ship: {
+    github: { appId: string; slug: string; privateKey: string; webhookSecret: string };
+    cloudflare: { clientId: string; clientSecret: string; scopes: string[] | null };
+    credentialsKey: string;
+  } | null;
 }
 
 type Env = Record<string, string | undefined>;
@@ -107,5 +120,23 @@ export function readConfig(env: Env = process.env): Config {
       env.RELAY_URL?.trim() && env.RELAY_TENANT_KEY?.trim() && env.RAILYARD_CREDENTIALS_KEY?.trim()
         ? { relayUrl: env.RELAY_URL.trim(), relayKey: env.RELAY_TENANT_KEY.trim(), credentialsKey: env.RAILYARD_CREDENTIALS_KEY.trim() }
         : null,
+    ship: readShip(env),
   };
+}
+
+function readShip(env: Env): Config["ship"] {
+  const v = (name: string) => env[name]?.trim() || null;
+  const appId = v("GITHUB_APP_ID");
+  const slug = v("GITHUB_APP_SLUG");
+  const privateKey = v("GITHUB_APP_PRIVATE_KEY");
+  const webhookSecret = v("GITHUB_APP_WEBHOOK_SECRET");
+  const clientId = v("CLOUDFLARE_OAUTH_CLIENT_ID");
+  const clientSecret = v("CLOUDFLARE_OAUTH_CLIENT_SECRET");
+  const credentialsKey = v("RAILYARD_CREDENTIALS_KEY");
+  // Copy and routes stay "arriving" until the owner switches it on (denylist rule railyard-slot-ship-on-push).
+  if (env.RAILYARD_SHIP_ON_PUSH_LIVE !== "1") return null;
+  if (!appId || !slug || !privateKey || !webhookSecret || !clientId || !clientSecret || !credentialsKey) return null;
+  if (!/^\d+$/.test(appId) || !/^[a-z0-9][a-z0-9-]{0,33}$/.test(slug)) throw new Error("GITHUB_APP_ID must be a number and GITHUB_APP_SLUG the app's URL name");
+  const scopes = v("CLOUDFLARE_OAUTH_SCOPES")?.split(/[\s,]+/).filter(Boolean) ?? null;
+  return { github: { appId, slug, privateKey, webhookSecret }, cloudflare: { clientId, clientSecret, scopes }, credentialsKey };
 }
