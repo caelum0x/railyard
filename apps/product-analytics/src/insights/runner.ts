@@ -10,7 +10,8 @@ import { buildLifecycle, buildStickiness } from "./lifecycle.ts";
 import { buildPaths } from "./paths.ts";
 import { buildRetention } from "./retention.ts";
 import { previousRange, resolveRange, type ResolvedRange } from "./sql.ts";
-import { buildAxis, buildTrendSeries } from "./trends.ts";
+import { rolledTo } from "./rollups.ts";
+import { buildAxis, buildTrendRollup, buildTrendSeries, rollupEligible } from "./trends.ts";
 import type {
   ActionDef,
   BuildContext,
@@ -126,9 +127,11 @@ async function trendLines(c: Client, q: TrendsQuery, range: ResolvedRange, ctx: 
   const labels = (await run(c, buildAxis(q, range))).map((r) => cut(String(r.bucket), interval));
   const index = new Map(labels.map((l, i) => [l, i]));
   const lines: TrendLine[] = [];
+  const watermark = q.series.some((s) => rollupEligible({ ...q, interval }, s, range)) ? await rolledTo(c, ctx.projectId) : null;
   for (let si = 0; si < q.series.length; si += 1) {
     const s = q.series[si];
-    const rows = await run(c, buildTrendSeries(q, s, range, ctx));
+    const built = watermark && rollupEligible({ ...q, interval }, s, range) ? buildTrendRollup({ ...q, interval }, s, range, ctx, watermark) : buildTrendSeries(q, s, range, ctx);
+    const rows = await run(c, built);
     const byKey = new Map<string, TrendLine>();
     for (const r of rows) {
       const b = q.breakdown ? breakdownLabel(r.bk, r.bv) : null;

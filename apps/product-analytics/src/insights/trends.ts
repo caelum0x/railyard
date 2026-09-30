@@ -9,7 +9,7 @@
 // shape follows the vendored event-metrics SQL (ported/umami).
 
 import { breakdownValue, filtersSql, Joins, seriesSql } from "./filters.ts";
-import { bucketExpr, INTERVAL_SQL, Params, PERSON, PERSON_JOIN, type ResolvedRange } from "./sql.ts";
+import { bucketExpr, INTERVAL_SQL, Params, PERSON, PERSON_JOIN, wholeHourZone, type ResolvedRange } from "./sql.ts";
 import { PROPERTY_MATH, QueryError, type BuildContext, type Built, type Interval, type Series, type TrendsQuery } from "./types.ts";
 
 export const DEFAULT_BREAKDOWN_LIMIT = 10;
@@ -120,4 +120,61 @@ export function buildAxis(q: { interval?: Interval; timezone?: string }, range: 
   const from = P.add(range.from.toISOString());
   const to = P.add(range.to.toISOString());
   return { sql: `select to_char(bucket, ${LABEL_FORMAT}) as bucket from (${axisSql(q.interval ?? "day", P, from, to, tz)}) a order by bucket`, params: P.values };
+}
+
+/**
+ * Plain counts (math total, an event or every event, no filters, no
+ * breakdown) in a whole-hour time zone can read hourly rollups.
+ */
+export function rollupEligible(q: TrendsQuery, s: Series, range: ResolvedRange): boolean {
+  return (
+    (s.math ?? "total") === "total" &&
+    s.kind === "event" &&
+    !s.properties?.length &&
+    !q.properties?.length &&
+    !q.breakdown &&
+    q.interval !== undefined &&
+    q.interval !== "hour" &&
+    wholeHourZone(q.timezone ?? "UTC", range)
+  );
+}
+
+/**
+ * The rollup form of a plain count: rollup rows for whole hours in
+ * [bucket start, hour of date_to), and events for the rest (after that hour,
+ * and anything inserted since the rollup watermark `rolledTo`). Same rows as
+ * buildTrendSeries.
+ */
+export function buildTrendRollup(q: TrendsQuery, s: Series, range: ResolvedRange, ctx: BuildContext, rolledTo: Date): Built {
+  const interval = q.interval ?? "day";
+  const P = new Params();
+  const proj = P.add(ctx.projectId);
+  const tz = P.add(q.timezone ?? "UTC");
+  const from = P.add(range.from.toISOString());
+  const to = P.add(range.to.toISOString());
+  const hourTo = P.add(new Date(Math.floor(range.to.getTime() / 3600_000) * 3600_000).toISOString());
+  const w = P.add(rolledTo.toISOString());
+  const hFrom = `(${bucketExpr(`${from}::timestamptz`, interval, tz)} at time zone ${tz})`;
+  const ev = s.event ? P.add(s.event) : null;
+  const evR = ev ? `and r.event = ${ev}` : "";
+  const evE = ev ? `and e.event = ${ev}` : "";
+  const b = (col: string) => bucketExpr(col, interval, tz);
+  const sql = `with axis as (${axisSql(interval, P, from, to, tz)}),
+parts as (
+  select ${b("r.hour")} as bucket, r.count as n from pa.rollup_hourly r
+   where r.project_id = ${proj} ${evR} and r.hour >= ${hFrom} and r.hour < ${hourTo}::timestamptz
+  union all
+  select ${b('e."timestamp"')}, 1 from pa.events e
+   where e.project_id = ${proj} ${evE} and e."timestamp" >= greatest(${hourTo}::timestamptz, ${hFrom}) and e."timestamp" <= ${to}::timestamptz
+  union all
+  select ${b('e."timestamp"')}, 1 from pa.events e
+   where e.project_id = ${proj} and e.inserted_at >= ${w}::timestamptz ${evE} and e."timestamp" >= ${hFrom} and e."timestamp" < ${hourTo}::timestamptz
+),
+agg as (select bucket, sum(n)::double precision as v from parts group by bucket),
+tot as (select sum(v) as v from agg)
+select to_char(a.bucket, ${LABEL_FORMAT}) as bucket, 0 as bk, null::text as bv, coalesce(agg.v, 0) as value, tot.v as total
+  from axis a cross join tot left join agg on agg.bucket = a.bucket
+ where tot.v is not null
+ order by a.bucket`;
+  return { sql, params: P.values };
 }
