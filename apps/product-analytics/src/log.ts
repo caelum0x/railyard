@@ -13,3 +13,8 @@ export function jsonLogger(write: (line: string) => void = (l) => process.stdout
 }
 
 export const silentLogger: Logger = { info: () => undefined, error: () => undefined };
+
+/** The request path for a log line: no query string, and no person id (often an email) after /persons/. */
+export function logPath(url: string): string {
+  return new URL(url).pathname.replace(/\/persons\/[^/]+/g, "/persons/:distinct_id");
+}

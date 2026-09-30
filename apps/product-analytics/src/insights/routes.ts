@@ -3,6 +3,7 @@
 // app ids and belong to its org. Viewers read; other roles also write.
 // Mounted by src/routes.ts (A1's mount line).
 
+import { logPath } from "../log.ts";
 import { Hono, type Context } from "hono";
 import type { ServiceDeps } from "../app-deps.ts";
 import { isUuid } from "../db.ts";
@@ -79,7 +80,7 @@ export function insightsRoutes(deps: ServiceDeps): Hono<Env> {
     if (err instanceof QueryError || err instanceof SqlRejected || err instanceof Forbidden || err instanceof TooMany || err instanceof SqlUnavailable || status === 400) {
       return c.json({ error: err.message }, (status ?? 400) as 400 | 403 | 429 | 503);
     }
-    deps.log.error("insights request failed", { path: new URL(c.req.url).pathname, error: err.message });
+    deps.log.error("insights request failed", { path: logPath(c.req.url), error: err.message });
     return c.json({ error: "Something went wrong. Try again shortly." }, 500);
   });
 

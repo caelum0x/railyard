@@ -8,6 +8,7 @@
 import { Hono, type Context } from "hono";
 import type { Db } from "../db.ts";
 import type { Logger } from "../log.ts";
+import { logPath } from "../log.ts";
 import { eventOps } from "../persons/properties.ts";
 import { updatePersonProperties } from "../persons/service.ts";
 import { groupTypeIndex, upsertGroup } from "../groups/groups.ts";
@@ -54,7 +55,7 @@ export function problem(c: Context, err: unknown, log: Logger) {
   if (err instanceof DecodeError || err instanceof EventError) {
     return c.json({ type: err.status === 401 ? "authentication_error" : "validation_error", detail: err.message }, err.status, CORS_HEADERS(origin));
   }
-  log.error("request failed", { path: new URL(c.req.url).pathname, error: (err as Error).message });
+  log.error("request failed", { path: logPath(c.req.url), error: (err as Error).message });
   return c.json({ type: "server_error", detail: "The event could not be processed. Try again shortly." }, 503, CORS_HEADERS(origin));
 }
 

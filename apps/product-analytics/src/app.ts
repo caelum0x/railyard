@@ -13,7 +13,7 @@ import { GdprHooks, type GdprHook } from "./gdpr/hooks.ts";
 import { requeueStale, runDueJobs } from "./gdpr/jobs.ts";
 import { runRetention } from "./jobs/retention.ts";
 import { nightly, Scheduler } from "./jobs/scheduler.ts";
-import { jsonLogger, type Logger } from "./log.ts";
+import { jsonLogger, type Logger, logPath } from "./log.ts";
 import { replayGdprHook } from "./replay/gdpr.ts";
 import { mountRoutes } from "./routes.ts";
 import { surveysGdprHook } from "./surveys/gdpr.ts";
@@ -66,7 +66,7 @@ export function createService(opts: ServiceOptions): Service {
   };
   const app = mountRoutes(new Hono(), deps);
   app.onError((err, c) => {
-    log.error("unhandled error", { path: new URL(c.req.url).pathname, error: err.message });
+    log.error("unhandled error", { path: logPath(c.req.url), error: err.message });
     return c.json({ error: "Something went wrong. Try again shortly." }, 500);
   });
   const scheduler = new Scheduler(

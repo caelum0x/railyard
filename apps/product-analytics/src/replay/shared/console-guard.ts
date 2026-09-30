@@ -6,6 +6,7 @@
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import { isUuid } from "../../db.ts";
 import type { Logger } from "../../log.ts";
+import { logPath } from "../../log.ts";
 import { verifyConsoleToken, type ConsoleClaims } from "../../tenancy/console-token.ts";
 import type { Site, SiteDirectory } from "../../tenancy/site-directory.ts";
 
@@ -50,7 +51,7 @@ export function consoleGuard(deps: GuardDeps): MiddlewareHandler<ConsoleEnv> {
 export function plainErrors(app: Hono<ConsoleEnv>, log: Logger, area: string): void {
   app.onError((err, c) => {
     if (err instanceof ApiError) return c.json({ error: err.message }, err.status);
-    log.error(`${area} request failed`, { path: new URL(c.req.url).pathname, error: err.message });
+    log.error(`${area} request failed`, { path: logPath(c.req.url), error: err.message });
     return c.json({ error: "Something went wrong. Try again shortly." }, 500);
   });
 }
