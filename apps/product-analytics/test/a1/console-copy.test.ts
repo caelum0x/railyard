@@ -8,7 +8,6 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { verifyConsoleToken } from "../../src/tenancy/console-token.ts";
 import { makeSite, migratedPg, skipNoPg, startService, type Running, type ScratchPg } from "./helpers.ts";
 
@@ -94,10 +93,10 @@ test("READMEs and type files pass the copy denylist (docs) and name no upstream 
   }
 });
 
-test("exactly one nav line was added to the console", () => {
-  const diff = execFileSync("git", ["-C", RY, "diff", "main", "--", "apps/console/components/Nav.tsx"], { encoding: "utf8" });
-  const added = diff.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++"));
-  const removed = diff.split("\n").filter((l) => l.startsWith("-") && !l.startsWith("---"));
-  assert.deepEqual(added, ['+  { href: "/product-analytics", label: "Product analytics" },']);
-  assert.deepEqual(removed, []);
+test("the console nav has exactly one product analytics line", () => {
+  // Checked on the file, not on `git diff main`: once this lane is merged,
+  // main already holds the line and the diff is empty.
+  const nav = readFileSync(join(RY, "apps/console/components/Nav.tsx"), "utf8");
+  const lines = nav.split("\n").filter((l) => l.includes("/product-analytics"));
+  assert.deepEqual(lines, ['  { href: "/product-analytics", label: "Product analytics" },']);
 });

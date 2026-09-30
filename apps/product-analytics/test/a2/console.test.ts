@@ -198,6 +198,12 @@ test("the screens pass the copy denylist, name no upstream product, use no emoji
 });
 
 test("no new console dependency and no edits outside the insights paths", () => {
-  const diff = execFileSync("git", ["-C", RY, "diff", "--name-only", "main", "--", "apps/console/package.json", "apps/console/lib", "apps/insights/src", "packages/insights-web", "packages/insights-react-native", "apps/console/app/(app)/insights"], { encoding: "utf8" }).trim();
-  assert.equal(diff, "");
+  // Checked per product analytics commit, not on `git diff main`: once this
+  // lane is merged, main moves and other lanes' edits would show up.
+  const guarded = ["apps/console/package.json", "apps/console/lib", "apps/insights/src", "packages/insights-web", "packages/insights-react-native", "apps/console/app/(app)/insights"];
+  const git = (...args: string[]) => execFileSync("git", ["-C", RY, ...args], { encoding: "utf8" }).trim();
+  const commits = git("rev-list", "--no-merges", "HEAD", "--", "apps/product-analytics").split("\n").filter(Boolean);
+  assert.ok(commits.length > 0);
+  const touched = commits.flatMap((c) => git("show", "--name-only", "--format=", c, "--", ...guarded).split("\n").filter(Boolean).map((f) => `${c.slice(0, 7)} ${f}`));
+  assert.deepEqual(touched, []);
 });
