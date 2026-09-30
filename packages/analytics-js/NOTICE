@@ -1,0 +1,9 @@
+@railyard/analytics-js
+Copyright 2026 Railyard. MIT License (see LICENSE).
+
+This package wraps, unmodified, and depends on:
+- posthog-js 1.435.1 (https://github.com/PostHog/posthog-js), Apache-2.0 AND
+  MIT (browser package MIT). Copyright PostHog Inc.
+- posthog-react-native 4.78.2 (https://github.com/PostHog/posthog-js,
+  packages/react-native), MIT. Copyright PostHog Inc.
+Both send with their public wire protocol to the Railyard analytics host.

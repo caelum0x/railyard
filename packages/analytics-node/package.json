@@ -1,0 +1,27 @@
+{
+  "name": "@railyard/analytics-node",
+  "version": "0.1.0",
+  "description": "Server-side event analytics for apps on Railyard: capture, identify, groups and flag checks from Node.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.mjs"
+    }
+  },
+  "files": [
+    "src",
+    "README.md",
+    "NOTICE",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "posthog-node": "5.54.1"
+  }
+}

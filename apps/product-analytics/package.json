@@ -8,8 +8,8 @@
   "scripts": {
     "start": "node src/server.ts",
     "migrate": "node scripts/migrate.ts",
-    "test": "node --test --test-concurrency=1 test/a1/*.test.ts",
-    "test:browser": "node --test test/a1/browser.e2e.ts",
+    "test": "node --test --test-force-exit --test-concurrency=1 test/a1/*.test.ts",
+    "test:browser": "node --test --test-force-exit test/a1/browser.test.ts",
     "capacity": "node test/a1/capacity.ts",
     "typecheck": "tsc --noEmit"
   },
@@ -29,6 +29,7 @@
     "posthog-js": "1.435.1",
     "posthog-node": "5.54.1",
     "posthog-react-native": "4.78.2",
+    "react": "18.3.1",
     "typescript": "5.6.3"
   },
   "engines": {
