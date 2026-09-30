@@ -4,10 +4,11 @@
 // with the project set, and bind project_id.
 
 import { Hono, type Context } from "hono";
+import { stream } from "hono/streaming";
 import { capMessage } from "../caps.ts";
 import type { Db } from "../db.ts";
 import { isUuid } from "../db.ts";
-import { exportPerson } from "../gdpr/export.ts";
+import { openPersonExport } from "../gdpr/export.ts";
 import type { GdprHooks } from "../gdpr/hooks.ts";
 import { listJobs, requestDelete } from "../gdpr/jobs.ts";
 import { personRef } from "../gdpr/person-ref.ts";
@@ -148,12 +149,14 @@ export function consoleRoutes(deps: ConsoleDeps): Hono<Env> {
     const site = c.get("site");
     const distinctId = c.req.param("distinct_id");
     if (!DISTINCT(distinctId)) return c.json({ error: "Name one person." }, 400);
-    const doc = await exportPerson(deps.db, deps.hooks, site.project_id, distinctId, deps.now());
+    const doc = await openPersonExport(deps.db, deps.hooks, site.project_id, distinctId, deps.now());
     if (!doc) return c.json({ error: "No person has that id in this app." }, 404);
-    return c.body(JSON.stringify(doc, null, 2), 200, {
-      "content-type": "application/json",
-      "content-disposition": `attachment; filename="person-export.json"`,
-      "cache-control": "no-store",
+    c.header("content-type", "application/json");
+    c.header("content-disposition", `attachment; filename="person-export.json"`);
+    c.header("cache-control", "no-store");
+    // Streamed page by page: any number of events without holding them all in memory.
+    return stream(c, async (s) => {
+      for await (const piece of doc) await s.write(piece);
     });
   });
 

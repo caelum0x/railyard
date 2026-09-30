@@ -54,6 +54,8 @@ export async function listJobs(db: Db, projectId: string, limit = 50): Promise<G
 /** Deletes one person's data in one project. Returns the rows removed per part. */
 export async function deletePerson(db: Db, hooks: GdprHooks, projectId: string, distinctId: string, now: Date): Promise<Record<string, number>> {
   const { counts, ref } = await db.asProject(projectId, async (c) => {
+    // A background job: a person with very many events must still be deleted whole.
+    await c.query("set local statement_timeout = 0");
     const { person, ref } = await personRef(c, db, projectId, distinctId, now);
     const ev = await c.query("delete from pa.events where project_id = $1 and (person_id = any($2::uuid[]) or distinct_id = any($3::text[]))", [projectId, ref.personIds, ref.distinctIds]);
     const ov = await c.query("delete from pa.person_overrides where project_id = $1 and (old_person_id = any($2::uuid[]) or new_person_id = any($2::uuid[]))", [projectId, ref.personIds]);

@@ -50,6 +50,26 @@ test("export: one JSON file with the person, their ids, every event (merged too)
   assert.equal((await fetch(`${run.base}/v1/projects/${site.project_id}/persons/nobody/export`, { headers: await auth() })).status, 404);
 });
 
+test("export streams every event of a heavy person, past any fixed cap, as one JSON file", { skip: skipNoPg }, async () => {
+  // 100 005 events for one id: more than a single in-memory read would hold
+  // under the service's 192 MiB cap, and more than the old 100 000 cap.
+  const heavy = "heavy@x.example";
+  pg.psql(`select pa.ensure_month('${clock.toISOString().slice(0, 10)}')`);
+  pg.psql(
+    `insert into pa.events (uuid, project_id, event, distinct_id, person_id, "timestamp", properties)
+     select gen_random_uuid(), '${site.project_id}', 'tick', '${heavy}', '${randomUUID()}', '${clock.toISOString()}'::timestamptz - (n || ' seconds')::interval, jsonb_build_object('n', n, 'pad', md5(n::text))
+     from generate_series(1, 100005) n`,
+  );
+  const res = await fetch(`${run.base}/v1/projects/${site.project_id}/persons/${encodeURIComponent(heavy)}/export`, { headers: await auth() });
+  assert.equal(res.status, 200);
+  const doc = (await res.json()) as { person: unknown; distinct_ids: string[]; events: { event: string; properties: { n: number } }[] };
+  assert.equal(doc.events.length, 100005);
+  assert.equal(new Set(doc.events.map((e) => e.properties.n)).size, 100005);
+  assert.ok(doc.events.every((e, i) => i === 0 || e.properties.n < doc.events[i - 1].properties.n), "oldest first");
+  assert.deepEqual(doc.distinct_ids, [heavy]);
+  pg.psql(`delete from pa.events where project_id = '${site.project_id}' and distinct_id = '${heavy}'`);
+});
+
 test("delete: a visible job, done by the scheduler before it is due, removing only that person", { skip: skipNoPg }, async () => {
   const res = await fetch(`${run.base}/v1/projects/${site.project_id}/persons/gone@x.example/delete`, { method: "POST", headers: await auth() });
   assert.equal(res.status, 202);
@@ -69,7 +89,7 @@ test("delete: a visible job, done by the scheduler before it is due, removing on
   const done = after.jobs.find((j) => j.id === job.id)!;
   assert.equal(done.status, "done");
   assert.ok(Date.parse(done.finished_at) < Date.parse(job.due_at));
-  assert.deepEqual(done.result, { events: 4, overrides: 2, distinct_ids: 3, persons: 1, replays: 0, survey_answers: 0, test_replays: 2 });
+  assert.deepEqual(done.result, { events: 4, overrides: 2, distinct_ids: 3, persons: 1, cohorts: 0, replays: 0, survey_answers: 0, test_replays: 2 });
   assert.equal(hookCalls.length, 1);
   assert.equal(hookCalls[0].projectId, site.project_id);
   assert.equal(count(pg, `project_id = '${site.project_id}' and distinct_id in ('anon-g', 'gone@x.example', 'crm-g')`), 0);
