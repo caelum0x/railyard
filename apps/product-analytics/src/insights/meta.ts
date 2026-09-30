@@ -10,7 +10,8 @@ export interface ProjectMeta {
   person_properties: string[];
   group_types: { index: number; name: string }[];
   actions: { id: string; name: string }[];
-  cohorts: { id: string; name: string; people_count: number }[];
+  /** Cohorts, named segments in the console. */
+  segments: { id: string; name: string; people_count: number }[];
 }
 
 export async function projectMeta(db: Db, projectId: string, now: Date): Promise<ProjectMeta> {
@@ -39,7 +40,7 @@ export async function projectMeta(db: Db, projectId: string, now: Date): Promise
       person_properties: pprops.rows.map((r) => r.k),
       group_types: groups.rows,
       actions: actions.rows,
-      cohorts: cohorts.rows,
+      segments: cohorts.rows,
     };
   });
 }

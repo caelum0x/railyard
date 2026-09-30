@@ -117,17 +117,17 @@ test("actions and cohorts, including a CSV upload", { skip: skipNoPg }, async ()
   assert.equal((await call("/actions")).data.actions.length, 1);
   const bad = await call("/actions", { method: "POST", json: { name: "Empty", steps: [{}] } });
   assert.equal(bad.status, 400);
-  const beh = await call("/cohorts", { method: "POST", json: { name: "Signed up", kind: "behavioural", definition: { criteria: [{ type: "behaviour", event: "signup", operator: "gte", count: 1, days: 30 }] } } });
+  const beh = await call("/segments", { method: "POST", json: { name: "Signed up", kind: "behavioural", definition: { criteria: [{ type: "behaviour", event: "signup", operator: "gte", count: 1, days: 30 }] } } });
   assert.equal(beh.status, 201);
-  assert.ok(beh.data.cohort.people_count > 0, "computed on create");
-  const st = await call("/cohorts", { method: "POST", json: { name: "List", kind: "static" } });
-  const up = await call(`/cohorts/${st.data.cohort.id}/csv`, { method: "POST", body: "distinct_id\nuser_1\nuser_2\n", headers: { "content-type": "text/csv" } });
+  assert.ok(beh.data.segment.people_count > 0, "computed on create");
+  const st = await call("/segments", { method: "POST", json: { name: "List", kind: "static" } });
+  const up = await call(`/segments/${st.data.segment.id}/csv`, { method: "POST", body: "distinct_id\nuser_1\nuser_2\n", headers: { "content-type": "text/csv" } });
   assert.equal(up.status, 200);
-  assert.equal(up.data.cohort.people_count, 2);
-  const filtered = await call("/query", { method: "POST", json: { query: { ...trends, properties: [{ type: "cohort", cohort_id: st.data.cohort.id }] } } });
+  assert.equal(up.data.segment.people_count, 2);
+  const filtered = await call("/query", { method: "POST", json: { query: { ...trends, properties: [{ type: "segment", segment_id: st.data.segment.id }] } } });
   assert.equal(filtered.status, 200);
-  assert.equal((await call(`/cohorts/${beh.data.cohort.id}/recompute`, { method: "POST" })).status, 200);
-  assert.equal((await call(`/cohorts/${st.data.cohort.id}/recompute`, { method: "POST" })).status, 400);
+  assert.equal((await call(`/segments/${beh.data.segment.id}/recompute`, { method: "POST" })).status, 200);
+  assert.equal((await call(`/segments/${st.data.segment.id}/recompute`, { method: "POST" })).status, 400);
 });
 
 test("SQL answers as JSON and as a CSV download; refusals are plain", { skip: skipNoPg }, async () => {

@@ -43,7 +43,7 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 
 export function parseDefinition(v: unknown): BehaviouralDefinition {
-  if (!isObj(v) || !Array.isArray(v.criteria) || v.criteria.length < 1 || v.criteria.length > 10) throw new QueryError("A cohort needs 1 to 10 conditions.");
+  if (!isObj(v) || !Array.isArray(v.criteria) || v.criteria.length < 1 || v.criteria.length > 10) throw new QueryError("A segment needs 1 to 10 conditions.");
   const match = v.match === "any" ? "any" : "all";
   const criteria = v.criteria.map((c): Criterion => {
     if (!isObj(c)) throw new QueryError("Each condition must be an object.");
@@ -78,15 +78,16 @@ export async function getCohort(db: Db, projectId: string, id: string): Promise<
 }
 
 export async function createCohort(db: Db, projectId: string, input: { name: unknown; kind: unknown; definition?: unknown }): Promise<CohortRow> {
-  if (typeof input.name !== "string" || input.name.trim().length < 1 || input.name.trim().length > 200) throw new QueryError("Give the cohort a name of 1 to 200 characters.");
-  if (input.kind !== "static" && input.kind !== "behavioural") throw new QueryError("A cohort is built from a file or from what people did.");
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  if (name.length < 1 || name.length > 200) throw new QueryError("Give the segment a name of 1 to 200 characters.");
+  if (input.kind !== "static" && input.kind !== "behavioural") throw new QueryError("A segment is built from a file or from what people did.");
   const definition = input.kind === "behavioural" ? parseDefinition(input.definition) : {};
   try {
     return await db.asProject(projectId, async (c) =>
-      (await c.query<CohortRow>(`insert into pa.cohorts (project_id, name, kind, definition) values ($1, $2, $3, $4) returning ${COLS}`, [projectId, input.name.toString().trim(), input.kind, JSON.stringify(definition)])).rows[0],
+      (await c.query<CohortRow>(`insert into pa.cohorts (project_id, name, kind, definition) values ($1, $2, $3, $4) returning ${COLS}`, [projectId, name, input.kind, JSON.stringify(definition)])).rows[0],
     );
   } catch (err) {
-    if ((err as { code?: string }).code === "23505") throw new QueryError("A cohort with that name already exists.");
+    if ((err as { code?: string }).code === "23505") throw new QueryError("A segment with that name already exists.");
     throw err;
   }
 }
@@ -114,8 +115,8 @@ async function finish(c: Client, projectId: string, id: string, now: Date): Prom
 /** Recomputes a behavioural cohort into pa.cohort_people in one transaction. */
 export async function recomputeCohort(db: Db, projectId: string, id: string, now: Date): Promise<CohortRow> {
   const cohort = await getCohort(db, projectId, id);
-  if (!cohort) throw new QueryError("That cohort no longer exists.");
-  if (cohort.kind !== "behavioural") throw new QueryError("This cohort comes from a file. Upload a new file to change it.");
+  if (!cohort) throw new QueryError("That segment no longer exists.");
+  if (cohort.kind !== "behavioural") throw new QueryError("This segment comes from a file. Upload a new file to change it.");
   const def = parseDefinition(cohort.definition);
   return db.asProject(projectId, async (c) => {
     await c.query("set local statement_timeout = 120000");
@@ -196,8 +197,8 @@ export function parseCsv(text: string): string[][] {
 export async function importCohortCsv(db: Db, projectId: string, id: string, csv: string, now: Date): Promise<CohortRow & { unmatched: number }> {
   if (Buffer.byteLength(csv, "utf8") > MAX_CSV_BYTES) throw new QueryError("Keep the file under 5 MB.");
   const cohort = await getCohort(db, projectId, id);
-  if (!cohort) throw new QueryError("That cohort no longer exists.");
-  if (cohort.kind !== "static") throw new QueryError("This cohort is built from what people did. Create a cohort from a file instead.");
+  if (!cohort) throw new QueryError("That segment no longer exists.");
+  if (cohort.kind !== "static") throw new QueryError("This segment is built from what people did. Create a segment from a file instead.");
   const rows = parseCsv(csv.replace(/^﻿/, ""));
   if (rows.length < 2) throw new QueryError("The file needs a header row and at least one person.");
   const header = rows[0].map((h) => h.trim().toLowerCase());

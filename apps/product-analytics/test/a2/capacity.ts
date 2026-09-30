@@ -5,6 +5,7 @@
 // Uses the same generator as the tests. No hosted database is touched.
 
 import { randomUUID } from "node:crypto";
+import { cpus, loadavg } from "node:os";
 import pg from "pg";
 import { migrate } from "../../scripts/migrate.ts";
 import { Db } from "../../src/db.ts";
@@ -20,7 +21,7 @@ const NOW = new Date("2026-09-30T00:00:00Z");
 const DAYS = 90;
 
 const cluster = scratchPg();
-const out: Record<string, unknown> = { target_events: target, days: DAYS, runs, postgres: "", machine: `${process.platform} ${process.arch}` };
+const out: Record<string, unknown> = { target_events: target, days: DAYS, runs, postgres: "", machine: `${process.platform} ${process.arch}, ${cpus().length} cores`, load_average_start: loadavg().map((x) => Math.round(x)) };
 try {
   await migrate(cluster.url);
   const owner = new pg.Client({ connectionString: cluster.url });
@@ -76,6 +77,7 @@ try {
     process.stderr.write(`${name}: ${JSON.stringify(results[name])}\n`);
   }
   out.queries = results;
+  out.load_average_end = loadavg().map((x) => Math.round(x));
   out.rss_mib = Math.round(process.memoryUsage().rss / 1048576);
   await db.close();
   await owner.end();

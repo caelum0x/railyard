@@ -175,32 +175,32 @@ export function insightsRoutes(deps: ServiceDeps): Hono<Env> {
     return (await deleteAction(deps.db, pid(c), c.req.param("aid"))) ? c.json({ deleted: true }) : c.json({ error: "No action has that id in this app." }, 404);
   });
 
-  // Cohorts
-  app.get(`${P}/cohorts`, async (c) => c.json({ cohorts: await listCohorts(deps.db, pid(c)) }));
-  app.post(`${P}/cohorts`, async (c) => {
+  // Cohorts ("segments" in the console's words and in this API).
+  app.get(`${P}/segments`, async (c) => c.json({ segments: await listCohorts(deps.db, pid(c)) }));
+  app.post(`${P}/segments`, async (c) => {
     writer(c);
     const b = await body(c);
     const cohort = await createCohort(deps.db, pid(c), { name: b.name, kind: b.kind, definition: b.definition });
     const done = cohort.kind === "behavioural" ? await recomputeCohort(deps.db, pid(c), cohort.id, deps.now()) : cohort;
-    return c.json({ cohort: done }, 201);
+    return c.json({ segment: done }, 201);
   });
-  app.get(`${P}/cohorts/:cid`, async (c) => {
+  app.get(`${P}/segments/:cid`, async (c) => {
     const k = await getCohort(deps.db, pid(c), c.req.param("cid"));
-    return k ? c.json({ cohort: k }) : c.json({ error: "No cohort has that id in this app." }, 404);
+    return k ? c.json({ segment: k }) : c.json({ error: "No segment has that id in this app." }, 404);
   });
-  app.delete(`${P}/cohorts/:cid`, async (c) => {
+  app.delete(`${P}/segments/:cid`, async (c) => {
     writer(c);
-    return (await deleteCohort(deps.db, pid(c), c.req.param("cid"))) ? c.json({ deleted: true }) : c.json({ error: "No cohort has that id in this app." }, 404);
+    return (await deleteCohort(deps.db, pid(c), c.req.param("cid"))) ? c.json({ deleted: true }) : c.json({ error: "No segment has that id in this app." }, 404);
   });
-  app.post(`${P}/cohorts/:cid/recompute`, async (c) => {
+  app.post(`${P}/segments/:cid/recompute`, async (c) => {
     writer(c);
-    return c.json({ cohort: await recomputeCohort(deps.db, pid(c), c.req.param("cid"), deps.now()) });
+    return c.json({ segment: await recomputeCohort(deps.db, pid(c), c.req.param("cid"), deps.now()) });
   });
-  app.post(`${P}/cohorts/:cid/csv`, async (c) => {
+  app.post(`${P}/segments/:cid/csv`, async (c) => {
     writer(c);
     const text = await c.req.text();
     if (Buffer.byteLength(text, "utf8") > MAX_CSV_BYTES) throw new QueryError("Keep the file under 5 MB.");
-    return c.json({ cohort: await importCohortCsv(deps.db, pid(c), c.req.param("cid"), text, deps.now()) });
+    return c.json({ segment: await importCohortCsv(deps.db, pid(c), c.req.param("cid"), text, deps.now()) });
   });
 
   // SQL

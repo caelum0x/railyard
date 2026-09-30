@@ -52,17 +52,19 @@ export function parseFilters(v: unknown): PropertyFilter[] {
   if (!Array.isArray(v) || v.length > MAX_FILTERS) throw new QueryError(`Use at most ${MAX_FILTERS} filters.`);
   return v.map((f): PropertyFilter => {
     if (!isObj(f)) throw new QueryError("A filter must be an object.");
-    const type = oneOf(f.type ?? "event", ["event", "person", "group", "cohort"] as const, "event", "a filter type");
-    if (type === "cohort") {
-      if (!isUuid(f.cohort_id)) throw new QueryError("Pick a cohort.");
-      return { type, cohort_id: f.cohort_id, negate: f.negate === true };
+    // "segment" is the console's word for a cohort.
+    const type = oneOf(f.type ?? "event", ["event", "person", "group", "cohort", "segment"] as const, "event", "a filter type");
+    if (type === "cohort" || type === "segment") {
+      const id = f.cohort_id ?? f.segment_id;
+      if (!isUuid(id)) throw new QueryError("Pick a segment.");
+      return { type: "cohort", cohort_id: id, negate: f.negate === true };
     }
     const operator = oneOf(f.operator, OPS, "exact", "an operator");
     const key = checkKey(f.key);
     const value = filterValue(f.value);
     if (operator !== "is_set" && operator !== "is_not_set" && (value === null || (Array.isArray(value) && value.length === 0))) throw new QueryError(`Give a value for the ${key} filter.`);
     if (type === "group") return { type, key, operator, value, group_type_index: groupIndex(f.group_type_index) };
-    return { type, key, operator, value };
+    return { type: type as "event" | "person", key, operator, value };
   });
 }
 
