@@ -22,8 +22,19 @@ begin
 end
 $$;
 
-grant pa_sql to pa_sql_login;
+-- The role inherits before it is granted: from Postgres 16 a membership keeps
+-- the member's inherit setting from the moment of the grant, so a grant made
+-- while the role was noinherit would leave pa_view unreadable. The block below
+-- also repairs a grant made that way by an earlier run on 16 or later.
 alter role pa_sql_login inherit;
+grant pa_sql to pa_sql_login;
+do $$
+begin
+  if current_setting('server_version_num')::int >= 160000 then
+    execute 'grant pa_sql to pa_sql_login with inherit true';
+  end if;
+end
+$$;
 alter role pa_sql_login set statement_timeout = '10s';
 alter role pa_sql_login set default_transaction_read_only = on;
 alter role pa_sql_login set idle_in_transaction_session_timeout = '15s';
