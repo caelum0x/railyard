@@ -111,7 +111,7 @@ test("sum, average, min, max, median and p95 of a numeric property", { skip: ski
 test("a person breakdown keeps the top values and sums the rest into (other)", { skip: skipNoPg }, async () => {
   const r = await trends({ series: [{ event: "$pageview", math: "dau" }], breakdown: { type: "person", key: "country", limit: 2 } });
   const hand = await f.hand<{ country: string; n: string }>(
-    `select p.properties ->> 'country' as country, count(*) as n
+    `select p.properties ->> 'country' as country, count(distinct p.id) as n
        from pa.events e left join pa.person_overrides o on o.project_id = e.project_id and o.old_person_id = e.person_id
        left join pa.persons p on p.project_id = e.project_id and p.id = coalesce(o.new_person_id, e.person_id)
       where e.project_id = $1 and e.event = '$pageview' and e."timestamp" >= $2 and e."timestamp" <= $3

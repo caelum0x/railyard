@@ -132,7 +132,7 @@ async function trendLines(c: Client, q: TrendsQuery, range: ResolvedRange, ctx: 
   const watermark = q.series.some((s) => rollupEligible({ ...q, interval }, s, range) || peopleRollupEligible({ ...q, interval }, s)) ? await rolledTo(c, ctx.projectId) : null;
   for (let si = 0; si < q.series.length; si += 1) {
     const s = q.series[si];
-    const top = q.breakdown ? (await run(c, buildBreakdownTop(q, s, range, ctx))).map((r) => String(r.bv)) : [];
+    const top = q.breakdown ? (await run(c, buildBreakdownTop(q, s, range, ctx, watermark))).map((r) => String(r.bv)) : [];
     const built = watermark && rollupEligible({ ...q, interval }, s, range) ? buildTrendRollup({ ...q, interval }, s, range, ctx, watermark) : buildTrendSeries(q, s, range, ctx, top, watermark);
     const rows = await run(c, built);
     const byKey = new Map<string, TrendLine>();

@@ -90,18 +90,16 @@ function seriesParts(q: TrendsQuery, s: Series, range: ResolvedRange, ctx: Build
  * The breakdown values a series keeps: the most frequent present values in
  * the range (at most the limit). Rows: (bv). Run before buildTrendSeries.
  */
-export function buildBreakdownTop(q: TrendsQuery, s: Series, range: ResolvedRange, ctx: BuildContext): Built {
+export function buildBreakdownTop(q: TrendsQuery, s: Series, range: ResolvedRange, ctx: BuildContext, peopleRolledTo: Date | null = null): Built {
   if (!q.breakdown) throw new QueryError("Pick a property to break down by.");
   const x = seriesParts(q, s, range, ctx);
-  const inRange = x.lookback ? `and e."timestamp" >= (${bucketExpr(`${x.from}::timestamptz`, x.interval, x.tz)} at time zone ${x.tz})` : "";
+  const source = seriesSource(q, s, range, x, peopleRolledTo);
+  const inRange = x.lookback ? `and v.lt >= ${bucketExpr(`${x.from}::timestamptz`, x.interval, x.tz)}` : "";
+  // Unique-people series rank values by people, every other series by events.
+  const math = s.math ?? "total";
+  const rank = math === "dau" || math === "unique_group" || math === "weekly_active" || math === "monthly_active" ? "count(distinct pid)" : "count(*)";
   const limit = x.P.add(Math.min(MAX_BREAKDOWN_LIMIT, Math.max(1, q.breakdown.limit ?? DEFAULT_BREAKDOWN_LIMIT)));
-  const sql = `select bv from (
-  select ${x.bv} as bv
-    from pa.events e
-    ${PERSON_JOIN}
-    ${x.J.sql()}
-   where ${x.where.join("\n     and ")} ${inRange}
-) v where bv is not null group by bv order by count(*) desc, bv limit ${limit}`;
+  const sql = `select bv from (${source}) v where bv is not null ${inRange} group by bv order by ${rank} desc, bv limit ${limit}`;
   return { sql, params: x.P.values };
 }
 
@@ -111,30 +109,9 @@ export function buildBreakdownTop(q: TrendsQuery, s: Series, range: ResolvedRang
  * for "(other)". `top` is the kept values (buildBreakdownTop); a missing
  * value always keeps its own "(none)" line.
  */
-/**
- * Unique people per day, week or month (UTC) for one event, with no filters
- * and at most a person-property breakdown, can read the daily people rollup.
- */
-export function peopleRollupEligible(q: TrendsQuery, s: Series): boolean {
-  return (
-    (s.math ?? "total") === "dau" &&
-    s.kind === "event" &&
-    !!s.event &&
-    !s.properties?.length &&
-    !q.properties?.length &&
-    (!q.breakdown || q.breakdown.type === "person") &&
-    (q.timezone ?? "UTC") === "UTC" &&
-    q.interval !== "hour"
-  );
-}
-
-export function buildTrendSeries(q: TrendsQuery, s: Series, range: ResolvedRange, ctx: BuildContext, top: string[] = [], peopleRolledTo: Date | null = null): Built {
-  const x = seriesParts(q, s, range, ctx);
-  const { P, tz, from, to, interval, lookback } = x;
-  const math = s.math ?? "total";
-  const topP = q.breakdown ? P.add(top) : "";
-  const bk = q.breakdown ? `case when b.bv is null then 0 when b.bv = any(${topP}::text[]) then 1 else 2 end` : "0";
-  const bvKept = q.breakdown ? `case when b.bv = any(${topP}::text[]) then b.bv end` : "null::text";
+/** The rows a series aggregates: (bucket, lt, bv, pid, mv), from events or, when eligible, the daily people rollup plus the tail. */
+function seriesSource(q: TrendsQuery, s: Series, range: ResolvedRange, x: SeriesParts, peopleRolledTo: Date | null): string {
+  const { P, tz, from, interval } = x;
   const rawWhere = (extra: string[]) => `select ${bucketExpr('e."timestamp"', interval, tz)} as bucket, e."timestamp" at time zone ${tz} as lt, ${x.bv} as bv, ${x.actor} as pid, ${x.mv} as mv
       from pa.events e
       ${PERSON_JOIN}
@@ -161,6 +138,34 @@ export function buildTrendSeries(q: TrendsQuery, s: Series, range: ResolvedRange
     union all
     select * from (${rawWhere([`e.inserted_at >= ${w}::timestamptz`])}) t2 where t2.lt < ${dayTo}::timestamptz at time zone ${tz}`;
   }
+  return source;
+}
+
+/**
+ * Unique people per day, week or month (UTC) for one event, with no filters
+ * and at most a person-property breakdown, can read the daily people rollup.
+ */
+export function peopleRollupEligible(q: TrendsQuery, s: Series): boolean {
+  return (
+    (s.math ?? "total") === "dau" &&
+    s.kind === "event" &&
+    !!s.event &&
+    !s.properties?.length &&
+    !q.properties?.length &&
+    (!q.breakdown || q.breakdown.type === "person") &&
+    (q.timezone ?? "UTC") === "UTC" &&
+    q.interval !== "hour"
+  );
+}
+
+export function buildTrendSeries(q: TrendsQuery, s: Series, range: ResolvedRange, ctx: BuildContext, top: string[] = [], peopleRolledTo: Date | null = null): Built {
+  const x = seriesParts(q, s, range, ctx);
+  const { P, tz, from, to, interval, lookback } = x;
+  const math = s.math ?? "total";
+  const topP = q.breakdown ? P.add(top) : "";
+  const bk = q.breakdown ? `case when b.bv is null then 0 when b.bv = any(${topP}::text[]) then 1 else 2 end` : "0";
+  const bvKept = q.breakdown ? `case when b.bv = any(${topP}::text[]) then b.bv end` : "null::text";
+  const source = seriesSource(q, s, range, x, peopleRolledTo);
   const ev = `select b.bucket, b.lt, ${bk} as bk, ${bvKept} as bv, b.pid, b.mv from (
     ${source}
   ) b`;
