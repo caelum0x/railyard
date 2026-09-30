@@ -129,8 +129,8 @@ export function stepSql(step: ActionStep, P: Params, J: Joins, projectParam: str
     if (step.tag_name) parts.push(`coalesce(e.elements_chain, '') ~ ${P.add(tagNameRegex(step.tag_name))}`);
     if (step.href != null) parts.push(matching(`coalesce(substring(e.elements_chain from ${P.add(HREF_PATTERN)}), '')`, step.href, step.href_matching, P));
     if (step.text != null) {
-      const cmp = matching("m[1]", step.text, step.text_matching, P);
-      parts.push(`exists (select 1 from regexp_matches(coalesce(e.elements_chain, ''), ${P.add(TEXT_PATTERN)}, 'g') as m where ${cmp})`);
+      const cmp = matching("m.v[1]", step.text, step.text_matching, P);
+      parts.push(`exists (select 1 from regexp_matches(coalesce(e.elements_chain, ''), ${P.add(TEXT_PATTERN)}, 'g') as m(v) where ${cmp})`);
     }
   }
   if (step.url) {

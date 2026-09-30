@@ -110,6 +110,11 @@ export function tagNameRegex(tag: string): string {
   return `(^|;)${reEscape(tag)}(\\.|$|;|:)`;
 }
 
-/** Postgres patterns extracting the first link and every text of a chain (upstream materialized columns). */
-export const HREF_PATTERN = '(?::|")href="(.*?)"';
-export const TEXT_PATTERN = '(?::|")text="(.*?)"';
+/**
+ * Postgres patterns extracting the first link and every text of a chain
+ * (upstream materialized columns use `(.*?)"`; Postgres decides greediness
+ * per expression, so the value is spelled as "anything but a quote", which
+ * stops at the same place).
+ */
+export const HREF_PATTERN = '(?::|")href="([^"]*)"';
+export const TEXT_PATTERN = '(?::|")text="([^"]*)"';

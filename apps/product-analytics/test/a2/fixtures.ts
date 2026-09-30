@@ -46,7 +46,7 @@ export const URLS = ["https://shop.example/", "https://shop.example/pricing", "h
 export const SCREENS = ["Home", "Search", "Cart", "Checkout", "Settings"];
 export const COUNTRIES = ["US", "DE", "TR", "BR"];
 export const PLANS = ["free", "pro", "team"];
-export const BUY_CHAIN = 'button.btn.primary:text="Buy now"nth-child="1"nth-of-type="1"attr__class="btn primary"attr__id="buy";form:nth-child="2"nth-of-type="1";body:nth-child="1"nth-of-type="1"';
+export const BUY_CHAIN = 'button.btn.primary:text="Buy now"nth-child="1"nth-of-type="1"attr_id="buy"attr__class="btn primary"attr__id="buy";form:nth-child="2"nth-of-type="1";body:nth-child="1"nth-of-type="1"';
 export const PRICING_CHAIN = 'a.nav-link:href="/pricing"text="Pricing"nth-child="3"nth-of-type="3"attr__href="/pricing"attr__class="nav-link";nav:nth-child="1"nth-of-type="1";body:nth-child="1"nth-of-type="1"';
 
 interface Ev {
