@@ -1,0 +1,15 @@
+{
+  "name": "jstat",
+  "version": "1.9.6",
+  "license": null,
+  "licenses": [
+    {
+      "type": "MIT",
+      "url": "http://www.opensource.org/licenses/mit-license.php"
+    }
+  ],
+  "repository": {
+    "type": "git",
+    "url": "http://github.com/jstat/jstat.git"
+  }
+}

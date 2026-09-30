@@ -1,0 +1,541 @@
+{
+ "frequentist": [
+  {
+   "name": "posthog sample mean",
+   "treatment": {
+    "kind": "mean",
+    "sum": 1922.7,
+    "sum_squares": 94698.29,
+    "n": 2461
+   },
+   "control": {
+    "kind": "mean",
+    "sum": 1196.87,
+    "sum_squares": 37377.9767,
+    "n": 2507
+   },
+   "difference": "relative",
+   "sequential_tuning": null,
+   "point_estimate": 0.6364670496854374,
+   "ci": [
+    -0.08754744791751556,
+    1.3604815472883904
+   ],
+   "p_value": 0.08487808030253907,
+   "t": 1.7234743395307741,
+   "df": 4105.070480863958
+  },
+  {
+   "name": "posthog proportion",
+   "treatment": {
+    "kind": "proportion",
+    "sum": 62,
+    "n": 1471
+   },
+   "control": {
+    "kind": "proportion",
+    "sum": 87,
+    "n": 1529
+   },
+   "difference": "relative",
+   "sequential_tuning": null,
+   "point_estimate": -0.2592575228361347,
+   "ci": [
+    -0.49475342160153,
+    -0.023761624070739368
+   ],
+   "p_value": 0.030960728938889792,
+   "t": -2.158605804695349,
+   "df": 2966.5207225002227
+  },
+  {
+   "name": "posthog ratio",
+   "treatment": {
+    "kind": "ratio",
+    "n": 2034,
+    "m": {
+     "kind": "mean",
+     "sum": 99673.9364269569,
+     "sum_squares": 11298745.182728939,
+     "n": 2034
+    },
+    "d": {
+     "kind": "mean",
+     "sum": 947,
+     "sum_squares": 947,
+     "n": 2034
+    },
+    "m_d_sum_of_products": 99673.9364269569
+   },
+   "control": {
+    "kind": "ratio",
+    "n": 1966,
+    "m": {
+     "kind": "mean",
+     "sum": 94605.79858780127,
+     "sum_squares": 10463129.505392816,
+     "n": 1966
+    },
+    "d": {
+     "kind": "mean",
+     "sum": 936,
+     "sum_squares": 936,
+     "n": 1966
+    },
+    "m_d_sum_of_products": 94605.79858780127
+   },
+   "difference": "relative",
+   "sequential_tuning": null,
+   "point_estimate": 0.04133322165029552,
+   "ci": [
+    0.013786092524817883,
+    0.06888035077577316
+   ],
+   "p_value": 0.0032826732160771144,
+   "t": 2.9417340726197585,
+   "df": 3970.5615240253373
+  },
+  {
+   "name": "posthog sequential sample mean, tuning 1000",
+   "treatment": {
+    "kind": "mean",
+    "sum": 2500.0,
+    "sum_squares": 135000.0,
+    "n": 3500
+   },
+   "control": {
+    "kind": "mean",
+    "sum": 1400.0,
+    "sum_squares": 52000.0,
+    "n": 3000
+   },
+   "difference": "relative",
+   "sequential_tuning": 1000,
+   "point_estimate": 0.5306122448979592,
+   "ci": [
+    -0.5323023363839089,
+    1.5935268261798274
+   ],
+   "p_value": 1.0,
+   "t": null,
+   "df": null
+  },
+  {
+   "name": "posthog sequential proportion, tuning 5000",
+   "treatment": {
+    "kind": "proportion",
+    "sum": 2600,
+    "n": 3500
+   },
+   "control": {
+    "kind": "proportion",
+    "sum": 1450,
+    "n": 3050
+   },
+   "difference": "relative",
+   "sequential_tuning": 5000,
+   "point_estimate": 0.56256157635468,
+   "ci": [
+    0.46064109303132994,
+    0.66448205967803
+   ],
+   "p_value": 6.212393028144179e-56,
+   "t": null,
+   "df": null
+  },
+  {
+   "name": "posthog sequential zero effect",
+   "treatment": {
+    "kind": "proportion",
+    "sum": 100,
+    "n": 2000
+   },
+   "control": {
+    "kind": "proportion",
+    "sum": 100,
+    "n": 2000
+   },
+   "difference": "absolute",
+   "sequential_tuning": 5000,
+   "point_estimate": 0.0,
+   "ci": [
+    -0.020954329738575157,
+    0.020954329738575157
+   ],
+   "p_value": 1.0,
+   "t": null,
+   "df": null
+  },
+  {
+   "name": "growthbook two-sided relative",
+   "treatment": {
+    "kind": "mean",
+    "sum": 2422.7,
+    "sum_squares": 134698.29,
+    "n": 3461
+   },
+   "control": {
+    "kind": "mean",
+    "sum": 1396.87,
+    "sum_squares": 52377.9767,
+    "n": 3407
+   },
+   "difference": "relative",
+   "sequential_tuning": null,
+   "point_estimate": 0.7073170731707317,
+   "ci": [
+    -0.03526008906611777,
+    1.449894235407581
+   ],
+   "p_value": 0.06191182745618362,
+   "t": 1.8672851149521694,
+   "df": 5841.742032093565
+  },
+  {
+   "name": "growthbook two-sided absolute",
+   "treatment": {
+    "kind": "mean",
+    "sum": 2422.7,
+    "sum_squares": 134698.29,
+    "n": 3461
+   },
+   "control": {
+    "kind": "mean",
+    "sum": 1396.87,
+    "sum_squares": 52377.9767,
+    "n": 3407
+   },
+   "difference": "absolute",
+   "sequential_tuning": null,
+   "point_estimate": 0.29,
+   "ci": [
+    0.04537789255929012,
+    0.5346221074407098
+   ],
+   "p_value": 0.020158402643587037,
+   "t": 2.3240227609215203,
+   "df": 5841.742032093565
+  },
+  {
+   "name": "growthbook binomial",
+   "treatment": {
+    "kind": "proportion",
+    "sum": 16,
+    "n": 30
+   },
+   "control": {
+    "kind": "proportion",
+    "sum": 14,
+    "n": 28
+   },
+   "difference": "relative",
+   "sequential_tuning": null,
+   "point_estimate": 0.06666666666666665,
+   "ci": [
+    -0.4776740282706785,
+    0.6110073616040118
+   ],
+   "p_value": 0.8070716832021889,
+   "t": 0.2453699696750778,
+   "df": 55.70744914862206
+  }
+ ],
+ "bayesian": [
+  {
+   "name": "posthog basic mean absolute",
+   "treatment": {
+    "kind": "mean",
+    "sum": 550,
+    "sum_squares": 3050,
+    "n": 100
+   },
+   "control": {
+    "kind": "mean",
+    "sum": 500,
+    "sum_squares": 2550,
+    "n": 100
+   },
+   "difference": "absolute",
+   "prior": null,
+   "effect_size": 0.5,
+   "ci": [
+    0.32940703190683884,
+    0.6705929680931612
+   ],
+   "chance_to_win": 0.9999999953920564,
+   "posterior_variance": 0.007575757575757576
+  },
+  {
+   "name": "posthog proportion relative",
+   "treatment": {
+    "kind": "proportion",
+    "sum": 110,
+    "n": 1000
+   },
+   "control": {
+    "kind": "proportion",
+    "sum": 100,
+    "n": 1000
+   },
+   "difference": "relative",
+   "prior": null,
+   "effect_size": 0.09999999999999995,
+   "ci": [
+    -0.18185345201355,
+    0.3818534520135499
+   ],
+   "chance_to_win": 0.7565926771113489,
+   "posterior_variance": 0.020679999999999997
+  },
+  {
+   "name": "posthog informative prior",
+   "treatment": {
+    "kind": "mean",
+    "sum": 550,
+    "sum_squares": 3050,
+    "n": 100
+   },
+   "control": {
+    "kind": "mean",
+    "sum": 500,
+    "sum_squares": 2550,
+    "n": 100
+   },
+   "difference": "relative",
+   "prior": [
+    0.05,
+    0.01
+   ],
+   "effect_size": 0.09833040421792619,
+   "ci": [
+    0.06251509061036117,
+    0.1341457178254912
+   ],
+   "chance_to_win": 0.9999999629740203,
+   "posterior_variance": 0.0003339191564147628
+  },
+  {
+   "name": "posthog realistic",
+   "treatment": {
+    "kind": "mean",
+    "sum": 1922.7,
+    "sum_squares": 94698.29,
+    "n": 2461
+   },
+   "control": {
+    "kind": "mean",
+    "sum": 1196.87,
+    "sum_squares": 37377.9767,
+    "n": 2507
+   },
+   "difference": "relative",
+   "prior": null,
+   "effect_size": 0.6364670496854374,
+   "ci": [
+    -0.08733397602031745,
+    1.3602680753911924
+   ],
+   "chance_to_win": 0.9575986091709435,
+   "posterior_variance": 0.1363773371695391
+  },
+  {
+   "name": "posthog ratio",
+   "treatment": {
+    "kind": "ratio",
+    "n": 2034,
+    "m": {
+     "kind": "mean",
+     "sum": 99673.9364269569,
+     "sum_squares": 11298745.182728939,
+     "n": 2034
+    },
+    "d": {
+     "kind": "mean",
+     "sum": 947,
+     "sum_squares": 947,
+     "n": 2034
+    },
+    "m_d_sum_of_products": 99673.9364269569
+   },
+   "control": {
+    "kind": "ratio",
+    "n": 1966,
+    "m": {
+     "kind": "mean",
+     "sum": 94605.79858780127,
+     "sum_squares": 10463129.505392816,
+     "n": 1966
+    },
+    "d": {
+     "kind": "mean",
+     "sum": 936,
+     "sum_squares": 936,
+     "n": 1966
+    },
+    "m_d_sum_of_products": 94605.79858780127
+   },
+   "difference": "relative",
+   "prior": null,
+   "effect_size": 0.04133322165029552,
+   "ci": [
+    0.013794489800395299,
+    0.06887195350019575
+   ],
+   "chance_to_win": 0.998368099634437,
+   "posterior_variance": 0.00019742024769737727
+  },
+  {
+   "name": "posthog large numbers",
+   "treatment": {
+    "kind": "mean",
+    "sum": 10500000,
+    "sum_squares": 110250001,
+    "n": 1000000
+   },
+   "control": {
+    "kind": "mean",
+    "sum": 10000000,
+    "sum_squares": 100000001,
+    "n": 1000000
+   },
+   "difference": "relative",
+   "prior": null,
+   "effect_size": 0.05,
+   "ci": [
+    0.04999971580508015,
+    0.05000028419491986
+   ],
+   "chance_to_win": 1.0,
+   "posterior_variance": 2.1025021025021024e-14
+  },
+  {
+   "name": "growthbook binomial",
+   "treatment": {
+    "kind": "proportion",
+    "sum": 51,
+    "n": 100
+   },
+   "control": {
+    "kind": "proportion",
+    "sum": 49,
+    "n": 100
+   },
+   "difference": "relative",
+   "prior": null,
+   "effect_size": 0.04081632653061228,
+   "ci": [
+    -0.24779335974122602,
+    0.3294260128024506
+   ],
+   "chance_to_win": 0.6091813095808981,
+   "posterior_variance": 0.021683312225348285
+  },
+  {
+   "name": "growthbook gaussian",
+   "treatment": {
+    "kind": "mean",
+    "sum": 105,
+    "sum_squares": 1111.5,
+    "n": 10
+   },
+   "control": {
+    "kind": "mean",
+    "sum": 100,
+    "sum_squares": 1002.25,
+    "n": 10
+   },
+   "difference": "relative",
+   "prior": null,
+   "effect_size": 0.05,
+   "ci": [
+    -0.02000186360482087,
+    0.12000186360482087
+   ],
+   "chance_to_win": 0.9192339081566245,
+   "posterior_variance": 0.001275625
+  },
+  {
+   "name": "growthbook gaussian informative",
+   "treatment": {
+    "kind": "mean",
+    "sum": 105,
+    "sum_squares": 1111.5,
+    "n": 10
+   },
+   "control": {
+    "kind": "mean",
+    "sum": 100,
+    "sum_squares": 1002.25,
+    "n": 10
+   },
+   "difference": "relative",
+   "prior": [
+    0.1,
+    0.1
+   ],
+   "effect_size": 0.05062977888312218,
+   "ci": [
+    -0.018929830742817587,
+    0.12018938850906194
+   ],
+   "chance_to_win": 0.9231499085772956,
+   "posterior_variance": 0.0012595577662443457
+  }
+ ],
+ "srm": [
+  {
+   "name": "60/40 on 50/50",
+   "counts": [
+    600,
+    400
+   ],
+   "weights": [
+    0.5,
+    0.5
+   ],
+   "chi2": 40.0,
+   "p_value": 2.5396285894708634e-10
+  },
+  {
+   "name": "503/497 on 50/50",
+   "counts": [
+    503,
+    497
+   ],
+   "weights": [
+    0.5,
+    0.5
+   ],
+   "chi2": 0.036,
+   "p_value": 0.8495154923650348
+  },
+  {
+   "name": "three arms",
+   "counts": [
+    3400,
+    3300,
+    3300
+   ],
+   "weights": [
+    0.3333333333333333,
+    0.3333333333333333,
+    0.3333333333333333
+   ],
+   "chi2": 2.0,
+   "p_value": 0.36787944117144245
+  },
+  {
+   "name": "90/10 split kept",
+   "counts": [
+    9020,
+    980
+   ],
+   "weights": [
+    0.9,
+    0.1
+   ],
+   "chi2": 0.4444444444444445,
+   "p_value": 0.5049850750938457
+  }
+ ]
+}
