@@ -1,7 +1,7 @@
 import { a3Context, appQuery } from "../replay/_parts/context.ts";
 import { A3Shell, fmt, NO_APP, NOT_CONNECTED, Notice, Problem } from "../replay/_parts/A3Shell.tsx";
 import { ARRIVING, liveModules } from "../replay/_parts/live.ts";
-import { problemText, type Experiment } from "../_lib/a3-client.ts";
+import { PATHS, problemText, type Experiment } from "../_lib/a3-client.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,7 @@ export default async function ExperimentsPage({ searchParams }: { searchParams: 
   const ctx = await a3Context(searchParams.app);
   if (!liveModules().flags) {
     return (
-      <A3Shell title="Arriving" names={ctx.names} app={ctx.app?.name ?? null} current="/product-analytics/experiments">
+      <A3Shell title="Arriving" names={ctx.names} app={ctx.app?.name ?? null} current={PATHS.exp}>
         <Notice text={ARRIVING} />
       </A3Shell>
     );
@@ -28,12 +28,12 @@ export default async function ExperimentsPage({ searchParams }: { searchParams: 
     }
   }
   return (
-    <A3Shell title="Experiments" names={ctx.names} app={ctx.app?.name ?? null} current="/product-analytics/experiments">
+    <A3Shell title="Variant tests" names={ctx.names} app={ctx.app?.name ?? null} current={PATHS.exp}>
       {!ctx.app ? <Notice text={NO_APP} /> : !ctx.api ? <Notice text={NOT_CONNECTED} /> : null}
       {ctx.api ? (
         <section className="card">
           <p>
-            <a className="primary" href={`/product-analytics/experiments/new?${q}`}>
+            <a className="primary" href={`${PATHS.exp}/new?${q}`}>
               Create an experiment
             </a>
           </p>
@@ -49,11 +49,11 @@ export default async function ExperimentsPage({ searchParams }: { searchParams: 
                   <th>Started</th>
                 </tr>
               </thead>
-              <tbody data-copy-source="product-analytics /experiments (live)">
+              <tbody data-copy-source="product-analytics experiment API (live)">
                 {list.map((x) => (
                   <tr key={x.id}>
                     <td>
-                      <a href={`/product-analytics/experiments/${x.id}?${q}`}>{x.name}</a>
+                      <a href={`${PATHS.exp}/${x.id}?${q}`}>{x.name}</a>
                     </td>
                     <td>{x.flag_key}</td>
                     <td>{STATUS[x.status]}</td>
@@ -63,7 +63,7 @@ export default async function ExperimentsPage({ searchParams }: { searchParams: 
               </tbody>
             </table>
           ) : (
-            <p className="muted">No experiments yet.</p>
+            <p className="muted">No variant tests yet.</p>
           )}
         </section>
       ) : null}

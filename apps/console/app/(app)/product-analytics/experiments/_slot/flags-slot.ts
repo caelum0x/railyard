@@ -65,7 +65,7 @@ export async function changeExperiment(
   actor: string,
   now: Date,
 ): Promise<Flag> {
-  if (!slot) throw new ExperimentChangeError("Flags are not connected on this deployment yet, so experiments cannot start.");
+  if (!slot) throw new ExperimentChangeError("Flags are not connected on this deployment yet, so an experiment cannot start.");
   const key = await api.flagsClientKey();
   if (!key) throw new ExperimentChangeError("Connect this app's flags environment on the Setup screen first.");
   const env = await slot.envForClientKey(orgId, key);

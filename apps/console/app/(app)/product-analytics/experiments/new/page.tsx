@@ -2,24 +2,24 @@ import { redirect } from "next/navigation";
 import { a3Context, appQuery, formObject, isRedirect } from "../../replay/_parts/context.ts";
 import { A3Shell, NO_APP, NOT_CONNECTED, Notice, Problem } from "../../replay/_parts/A3Shell.tsx";
 import { ARRIVING, liveModules } from "../../replay/_parts/live.ts";
-import { experimentFromForm, problemText } from "../../_lib/a3-client.ts";
+import { experimentFromForm, PATHS, problemText } from "../../_lib/a3-client.ts";
 
 export const dynamic = "force-dynamic";
 
 async function create(form: FormData) {
   "use server";
-  if (!liveModules().flags) redirect("/product-analytics/experiments");
+  if (!liveModules().flags) redirect(PATHS.exp);
   const f = formObject(form);
   const ctx = await a3Context(f.app);
-  if (!ctx.api) redirect("/product-analytics/experiments");
+  if (!ctx.api) redirect(PATHS.exp);
   let id = "";
   try {
     id = (await ctx.api.createExperiment(experimentFromForm(f))).experiment.id;
   } catch (e) {
     if (isRedirect(e)) throw e;
-    redirect(`/product-analytics/experiments/new?${appQuery(ctx.app)}&problem=${encodeURIComponent(problemText(e))}`);
+    redirect(`${PATHS.exp}/new?${appQuery(ctx.app)}&problem=${encodeURIComponent(problemText(e))}`);
   }
-  redirect(`/product-analytics/experiments/${id}?${appQuery(ctx.app)}`);
+  redirect(`${PATHS.exp}/${id}?${appQuery(ctx.app)}`);
 }
 
 const input = { display: "grid", gap: 4, fontSize: 13 } as const;
@@ -30,13 +30,13 @@ export default async function NewExperimentPage({ searchParams }: { searchParams
   const ctx = await a3Context(searchParams.app);
   if (!liveModules().flags) {
     return (
-      <A3Shell title="Arriving" names={ctx.names} app={ctx.app?.name ?? null} current="/product-analytics/experiments">
+      <A3Shell title="Arriving" names={ctx.names} app={ctx.app?.name ?? null} current={PATHS.exp}>
         <Notice text={ARRIVING} />
       </A3Shell>
     );
   }
   return (
-    <A3Shell title="New experiment" names={ctx.names} app={ctx.app?.name ?? null} current="/product-analytics/experiments">
+    <A3Shell title="New experiment" names={ctx.names} app={ctx.app?.name ?? null} current={PATHS.exp}>
       {!ctx.app ? <Notice text={NO_APP} /> : !ctx.api ? <Notice text={NOT_CONNECTED} /> : null}
       {ctx.api ? (
         <section className="card">

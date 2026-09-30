@@ -1,7 +1,7 @@
 import { a3Context, appQuery } from "../replay/_parts/context.ts";
 import { A3Shell, NO_APP, NOT_CONNECTED, Notice, Problem, ShareBar } from "../replay/_parts/A3Shell.tsx";
 import { ARRIVING, liveModules } from "../replay/_parts/live.ts";
-import { problemText, type HeatmapAnswer } from "../_lib/a3-client.ts";
+import { PATHS, problemText, type HeatmapAnswer } from "../_lib/a3-client.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +24,7 @@ export default async function HeatmapsPage({ searchParams }: { searchParams: { a
   const ctx = await a3Context(searchParams.app);
   if (!liveModules().replay) {
     return (
-      <A3Shell title="Arriving" names={ctx.names} app={ctx.app?.name ?? null} current="/product-analytics/heatmaps">
+      <A3Shell title="Arriving" names={ctx.names} app={ctx.app?.name ?? null} current={PATHS.heat}>
         <Notice text={ARRIVING} />
       </A3Shell>
     );
@@ -52,7 +52,7 @@ export default async function HeatmapsPage({ searchParams }: { searchParams: { a
   }
   const selected = searchParams.url?.trim() || urls[0]?.url || "";
   return (
-    <A3Shell title="Click maps" names={ctx.names} app={ctx.app?.name ?? null} current="/product-analytics/heatmaps">
+    <A3Shell title="Click maps" names={ctx.names} app={ctx.app?.name ?? null} current={PATHS.heat}>
       {!ctx.app ? <Notice text={NO_APP} /> : !ctx.api ? <Notice text={NOT_CONNECTED} /> : null}
       {ctx.api ? (
         <section className="card">
@@ -102,7 +102,7 @@ export default async function HeatmapsPage({ searchParams }: { searchParams: { a
       {answer && link ? (
         <>
           <section className="card">
-            <p className="muted" data-copy-source="product-analytics /heatmaps (live query)">
+            <p className="muted" data-copy-source="product-analytics click map API (live query)">
               {answer.total.toLocaleString("en-US")} {TYPES.find((t) => t.value === type)!.label.toLowerCase()} on this page. The map link works for 10 minutes without signing in.
             </p>
             <iframe title="Click map" src={link} style={{ width: "100%", height: "80vh", border: "1px solid #d9dde5", borderRadius: 8 }} sandbox="allow-scripts allow-same-origin" referrerPolicy="no-referrer" />
@@ -112,7 +112,7 @@ export default async function HeatmapsPage({ searchParams }: { searchParams: { a
             {answer.scroll.views === 0 ? (
               <p className="muted">No page views with scroll depth yet.</p>
             ) : (
-              <div style={{ display: "grid", gap: 6 }} data-copy-source="product-analytics /heatmaps scroll (live query)">
+              <div style={{ display: "grid", gap: 6 }} data-copy-source="product-analytics click map API, scroll (live query)">
                 {answer.scroll.bands.map((b) => (
                   <ShareBar key={b.percent} label={`Reached ${b.percent}%`} value={b.reached} total={answer!.scroll.views} />
                 ))}

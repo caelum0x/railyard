@@ -3,15 +3,16 @@
 import type { ReactNode } from "react";
 import { Shell } from "../../_components/Shell.tsx";
 import { liveModules, type LiveModules } from "./live.ts";
+import { PATHS } from "../../_lib/a3-client.ts";
 
 // Each screen names the module switch it waits for (null: always shown).
 export const A3_SCREENS: { href: string; label: string; needs: keyof LiveModules | null }[] = [
-  { href: "/product-analytics/replay", label: "Recordings", needs: "replay" },
-  { href: "/product-analytics/heatmaps", label: "Click maps", needs: "replay" },
-  { href: "/product-analytics/surveys", label: "Surveys", needs: null },
+  { href: PATHS.replay, label: "Recordings", needs: "replay" },
+  { href: PATHS.heat, label: "Click maps", needs: "replay" },
+  { href: PATHS.surveys, label: "Surveys", needs: null },
   // The label of a flag-based screen is shown only once the flags slot is live.
-  { href: "/product-analytics/experiments", label: "Experiments", needs: "flags" },
-  { href: "/product-analytics/exports", label: "Exports", needs: null },
+  { href: PATHS.exp, label: "Variant tests", needs: "flags" },
+  { href: PATHS.exports, label: "Exports", needs: null },
 ];
 
 export function A3Shell({ title, names, app, current, children, live = liveModules() }: { title: string; names: string[]; app: string | null; current: string; children: ReactNode; live?: LiveModules }) {

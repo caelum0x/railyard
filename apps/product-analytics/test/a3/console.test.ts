@@ -179,7 +179,8 @@ test("the shared screen parts render without NaN or undefined", { skip: existsSy
   mkdirSync(OUT, { recursive: true });
   const src = readFileSync(join(PA_UI, "replay/_parts/A3Shell.tsx"), "utf8")
     .replace(/import \{ Shell \} from "[^"]+";/, "const Shell = ({ children }: { children: unknown }) => children;")
-    .replace(/import \{ liveModules, type LiveModules \} from "[^"]+";/, `import { liveModules } from ${JSON.stringify(pathToFileURL(join(PA_UI, "replay/_parts/live.ts")).href)};`);
+    .replace(/import \{ liveModules, type LiveModules \} from "[^"]+";/, `import { liveModules } from ${JSON.stringify(pathToFileURL(join(PA_UI, "replay/_parts/live.ts")).href)};`)
+    .replace(/import \{ PATHS \} from "[^"]+";/, `import { PATHS } from ${JSON.stringify(pathToFileURL(join(PA_UI, "_lib/a3-client.ts")).href)};`);
   const js = ts.transpileModule(src, { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
   writeFileSync(join(OUT, "A3Shell.mjs"), js.replace(/from "react\/jsx-runtime"/, `from ${JSON.stringify(pathToFileURL(join(CONSOLE, "node_modules/react/jsx-runtime.js")).href)}`));
   const React = await import(pathToFileURL(join(CONSOLE, "node_modules/react/index.js")).href);
@@ -194,7 +195,7 @@ test("the shared screen parts render without NaN or undefined", { skip: existsSy
   const shell = render(h(m.A3Shell, { title: "Recordings", names: ["shop"], app: "shop", current: "/product-analytics/replay", live: { replay: true, flags: true } }, h(m.Notice, { text: m.NO_APP })));
   for (const s of m.A3_SCREENS) assert.ok(shell.includes(`${s.href}?app=shop`), s.href);
   const off = render(h(m.A3Shell, { title: "Surveys", names: ["shop"], app: "shop", current: "/product-analytics/surveys", live: { replay: false, flags: false } }, null));
-  assert.doesNotMatch(off, /Experiments|Recordings|Click maps/, "switched-off modules are not named");
+  assert.doesNotMatch(off, /Variant tests|Recordings|Click maps/, "switched-off modules are not named");
   assert.match(off, /Surveys/);
   assert.match(shell, /aria-current="page"/);
   assert.doesNotMatch(bar + shell, /NaN|undefined/);

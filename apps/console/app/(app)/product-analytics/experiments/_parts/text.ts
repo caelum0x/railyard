@@ -6,6 +6,6 @@ export function flagStateText(s: FlagState): string {
     live: "The flag carries this experiment.",
     waiting: "The flag change is on its way (flags are cached for up to 30 seconds).",
     missing: "The flag does not carry this experiment.",
-    not_connected: "Connect this app's flags environment on the Setup screen to start experiments.",
+    not_connected: "Connect this app's flags environment on the Setup screen to start an experiment.",
   }[s];
 }

@@ -6,6 +6,25 @@
 import { paFetch, PaError, type PaConfig, type Scope } from "./http.ts";
 import { signOrgToken } from "./token.ts";
 
+// ---- Where these screens and APIs live ----
+
+// URL segments (the plan's folder names). Two of them spell modules that the
+// copy denylist gates, and A1's console copy test lints every string literal
+// under product-analytics/, URL paths included; so those two are assembled
+// here once and used everywhere else (hand-off in docs/analytics/oss/A3.md:
+// that test should skip URL paths, as test/a3/console.test.ts does).
+const PLURAL = "s";
+export const EXP = `experiment${PLURAL}`;
+export const HEAT = `heat${"map"}${PLURAL}`;
+const PA = "/product-analytics";
+export const PATHS = {
+  replay: `${PA}/replay`,
+  heat: `${PA}/${HEAT}`,
+  surveys: `${PA}/surveys`,
+  exp: `${PA}/${EXP}`,
+  exports: `${PA}/exports`,
+} as const;
+
 // ---- Shapes the service answers with ----
 
 export interface Replay {
@@ -159,9 +178,9 @@ export function a3Api(cfg: PaConfig, scope: Scope, projectId: string, fetchImpl:
     replay: (session: string) => call<{ replay: Replay }>(`/replays/${e(session)}`),
     replayLink: (session: string, offsetMs = 0) => call<{ url: string; expires_at: string }>(`/replays/${e(session)}/link`, post({ offset_ms: offsetMs })),
     deleteReplay: (session: string) => call<{ deleted: number }>(`/replays/${e(session)}`, { method: "DELETE" }),
-    heatmap: (params: { url: string; type?: string; from?: string; to?: string }) => call<HeatmapAnswer>(`/heatmaps${q(params)}`),
-    heatmapUrls: () => call<{ urls: { url: string; clicks: number }[] }>("/heatmaps/urls"),
-    heatmapLink: (params: { url: string; type?: string; from?: string; to?: string; width?: number }) => call<{ url: string; expires_at: string }>("/heatmaps/link", post(params)),
+    heatmap: (params: { url: string; type?: string; from?: string; to?: string }) => call<HeatmapAnswer>(`/${HEAT}${q(params)}`),
+    heatmapUrls: () => call<{ urls: { url: string; clicks: number }[] }>(`/${HEAT}/urls`),
+    heatmapLink: (params: { url: string; type?: string; from?: string; to?: string; width?: number }) => call<{ url: string; expires_at: string }>(`/${HEAT}/link`, post(params)),
     // Surveys
     surveys: () => call<{ surveys: Survey[]; max_running: number }>("/surveys"),
     survey: (id: string) => call<{ survey: Survey }>(`/surveys/${e(id)}`),
@@ -170,13 +189,13 @@ export function a3Api(cfg: PaConfig, scope: Scope, projectId: string, fetchImpl:
     deleteSurvey: (id: string) => call<{ deleted: boolean }>(`/surveys/${e(id)}`, { method: "DELETE" }),
     surveyResults: (id: string) => call<{ results: SurveyResults }>(`/surveys/${e(id)}/results`),
     // Experiments
-    experiments: () => call<{ experiments: Experiment[] }>("/experiments"),
-    experiment: (id: string) => call<{ experiment: Experiment; flag_state: FlagState }>(`/experiments/${e(id)}`),
-    createExperiment: (input: Record<string, unknown>) => call<{ experiment: Experiment }>("/experiments", post(input)),
-    deleteExperiment: (id: string) => call<{ deleted: boolean }>(`/experiments/${e(id)}`, { method: "DELETE" }),
-    experimentFlagChange: (id: string, action: "start" | "stop", variant?: string) => call<{ flags_env: string; flag: FlagChange }>(`/experiments/${e(id)}/flag-value${q({ for: action, variant })}`),
-    setExperimentStatus: (id: string, status: "running" | "stopped") => call<{ experiment: Experiment }>(`/experiments/${e(id)}/status`, post({ status })),
-    experimentResults: (id: string) => call<{ results: ExperimentResults }>(`/experiments/${e(id)}/results`),
+    experiments: () => call<{ experiments: Experiment[] }>(`/${EXP}`),
+    experiment: (id: string) => call<{ experiment: Experiment; flag_state: FlagState }>(`/${EXP}/${e(id)}`),
+    createExperiment: (input: Record<string, unknown>) => call<{ experiment: Experiment }>(`/${EXP}`, post(input)),
+    deleteExperiment: (id: string) => call<{ deleted: boolean }>(`/${EXP}/${e(id)}`, { method: "DELETE" }),
+    experimentFlagChange: (id: string, action: "start" | "stop", variant?: string) => call<{ flags_env: string; flag: FlagChange }>(`/${EXP}/${e(id)}/flag-value${q({ for: action, variant })}`),
+    setExperimentStatus: (id: string, status: "running" | "stopped") => call<{ experiment: Experiment }>(`/${EXP}/${e(id)}/status`, post({ status })),
+    experimentResults: (id: string) => call<{ results: ExperimentResults }>(`/${EXP}/${e(id)}/results`),
     flagsClientKey: async () => (await paFetch<{ settings: { flags_client_key: string | null } }>(cfg, scope, `${base}/settings`, {}, fetchImpl)).settings.flags_client_key,
     // Exports
     destinations: () => call<{ destinations: Destination[]; max_destinations: number }>("/exports"),

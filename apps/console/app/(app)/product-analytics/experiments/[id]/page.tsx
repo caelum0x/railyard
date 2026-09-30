@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { a3Context, appQuery, field, isRedirect } from "../../replay/_parts/context.ts";
 import { A3Shell, fmt, NO_APP, NOT_CONNECTED, Notice, Problem } from "../../replay/_parts/A3Shell.tsx";
 import { ARRIVING, liveModules } from "../../replay/_parts/live.ts";
-import { percent, problemText, type Experiment, type ExperimentResults, type FlagState } from "../../_lib/a3-client.ts";
+import { PATHS, percent, problemText, type Experiment, type ExperimentResults, type FlagState } from "../../_lib/a3-client.ts";
 import { flagStateText } from "../_parts/text.ts";
 import { changeExperiment, connectedSlot, ExperimentChangeError } from "../_slot/flags-slot.ts";
 
@@ -10,18 +10,18 @@ export const dynamic = "force-dynamic";
 
 async function act(form: FormData) {
   "use server";
-  if (!liveModules().flags) redirect("/product-analytics/experiments");
+  if (!liveModules().flags) redirect(PATHS.exp);
   const ctx = await a3Context(field(form, "app", 200));
   const id = field(form, "id", 64);
   const what = field(form, "what", 20);
-  if (!ctx.api) redirect("/product-analytics/experiments");
-  const back = `/product-analytics/experiments/${id}?${appQuery(ctx.app)}`;
+  if (!ctx.api) redirect(PATHS.exp);
+  const back = `${PATHS.exp}/${id}?${appQuery(ctx.app)}`;
   try {
     if (what === "start" || what === "stop") {
       await changeExperiment(ctx.api, connectedSlot(), ctx.org, id, what, what === "stop" ? field(form, "keep", 40) || "control" : undefined, `experiment:${ctx.email}`, new Date());
     } else if (what === "delete") {
       await ctx.api.deleteExperiment(id);
-      redirect(`/product-analytics/experiments?${appQuery(ctx.app)}`);
+      redirect(`${PATHS.exp}?${appQuery(ctx.app)}`);
     }
   } catch (e) {
     if (isRedirect(e)) throw e;
@@ -38,7 +38,7 @@ export default async function ExperimentPage({ params, searchParams }: { params:
   const ctx = await a3Context(searchParams.app);
   if (!liveModules().flags) {
     return (
-      <A3Shell title="Arriving" names={ctx.names} app={ctx.app?.name ?? null} current="/product-analytics/experiments">
+      <A3Shell title="Arriving" names={ctx.names} app={ctx.app?.name ?? null} current={PATHS.exp}>
         <Notice text={ARRIVING} />
       </A3Shell>
     );
@@ -66,12 +66,12 @@ export default async function ExperimentPage({ params, searchParams }: { params:
   );
   const metric = exp ? (exp.metric.kind === "conversion" ? `share of people who did ${exp.metric.event}` : exp.metric.kind === "count" ? `times per person they did ${exp.metric.event}` : `sum of ${exp.metric.property} of ${exp.metric.event} per person`) : "";
   return (
-    <A3Shell title={exp?.name ?? "Experiment"} names={ctx.names} app={ctx.app?.name ?? null} current="/product-analytics/experiments">
+    <A3Shell title={exp?.name ?? "Experiment"} names={ctx.names} app={ctx.app?.name ?? null} current={PATHS.exp}>
       {!ctx.app ? <Notice text={NO_APP} /> : !ctx.api ? <Notice text={NOT_CONNECTED} /> : null}
       <Problem text={problem} />
       {exp ? (
         <section className="card">
-          <p className="muted" data-copy-source="product-analytics /experiments/{id} (live)">
+          <p className="muted" data-copy-source="product-analytics experiment API, one experiment (live)">
             Flag {exp.flag_key} in {exp.flags_env}: {exp.variants.map((v) => `${v.key} ${v.weight}%`).join(", ")}, {exp.rollout}% of people. Measures the {metric}. {flagStateText(state)}
           </p>
           <div className="row" style={{ alignItems: "end" }}>
@@ -120,7 +120,7 @@ export default async function ExperimentPage({ params, searchParams }: { params:
                 <th>Change against control (95% interval)</th>
               </tr>
             </thead>
-            <tbody data-copy-source="product-analytics /experiments/{id}/results (live, ported statistics)">
+            <tbody data-copy-source="product-analytics experiment API, results (live, ported statistics)">
               {results.variants.map((v) => {
                 const c = results!.comparisons.find((x) => x.variant === v.variant);
                 return (
