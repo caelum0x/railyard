@@ -1,0 +1,20 @@
+Experiments (package A3) of the Railyard product analytics service.
+
+- stats/*.ts are ported from PostHog products/experiments/stats
+  (bayesian/, frequentist/, shared/), https://github.com/PostHog/posthog,
+  commit 645e1a78140757ea1bb9ddeb0ff9d3915c60b6f6, MIT License (Expat),
+  outside the ee/ directory. Copyright (c) 2020-2026 PostHog Inc.
+  Permission is hereby granted, free of charge, to any person obtaining a
+  copy of this software and associated documentation files, to deal in the
+  Software without restriction, subject to including the copyright notice
+  and permission notice in all copies. THE SOFTWARE IS PROVIDED "AS IS",
+  WITHOUT WARRANTY OF ANY KIND.
+- The test vectors (test/a3/fixtures/stats/vectors.json) come from running
+  that unmodified Python on its own test inputs and on the inputs of
+  GrowthBook packages/stats tests (https://github.com/growthbook/growthbook,
+  commit 44e8a69cf9cf, MIT outside the enterprise directories).
+- vendor/jstat/: jStat 1.9.6 (dist/jstat.js renamed jstat.cjs),
+  https://github.com/jstat/jstat. MIT License, Copyright (c) 2013 jStat.
+- ../flags/variants.ts follows the SDK core's documented flag hashing
+  (@posthog/core getFeatureFlagHash and getFeatureFlagVariant, MIT); the
+  arithmetic is re-implemented and compared with the core in tests.

@@ -4,7 +4,7 @@
 // recording streams its chunks in order. Deleting removes the objects first,
 // then the index rows, so a failed delete is retried rather than orphaned.
 
-import { gunzipSync } from "fflate";
+import { gunzipSync } from "node:zlib";
 import type { Client, Db } from "../db.ts";
 import { isUuid } from "../db.ts";
 import type { ObjectStore } from "./object-store.ts";
@@ -117,7 +117,7 @@ export async function* replayLines(db: Db, store: ObjectStore, projectId: string
   for (const k of keys) {
     const gz = await store.get(k);
     if (!gz) continue;
-    yield new TextDecoder().decode(gunzipSync(gz));
+    yield gunzipSync(gz).toString("utf8");
   }
 }
 

@@ -13,7 +13,7 @@
 |---|---|---|---|---|
 | `product-analytics` service (Node 22, Hono, one process: capture, query, jobs) | box 2 | **192 MiB** (A1 measured 128.5 MiB max, see Measurements) | One Node process with a 2 s / 1 000-row insert buffer; no Kafka, Redis or ClickHouse | A1: RSS at 50 events/s for 10 min on the Mac; A3: with replay ingest and one export running |
 | Postgres database `product_analytics` | box 2's existing Postgres (the Scribase cell) | no new process; shares `shared_buffers`; insight transactions use `work_mem = 32MB`, at most 5 at once (pool size), so at most about 160 MB of sort memory | Monthly partitions; hourly count rollups and a daily people rollup | A2: measured, see Measurements (all three budgets met) |
-| Replay chunks | S3-compatible object storage (Scribase Storage S3 API or R2) | no RAM on box 2 | gzip rrweb chunks; 10% sample and 30-minute maximum (targets) | A3: bytes per recorded minute on the fixture |
+| Replay chunks | S3-compatible object storage (Scribase Storage S3 API or R2) | no RAM on box 2 | gzip rrweb chunks; 10% sample and 30-minute maximum (targets) | A3: measured, see "Recordings (measured by A3)" |
 | Console screens | Cloudflare Workers (existing console) | none on the boxes | | |
 
 ## Rejected for now
@@ -49,10 +49,24 @@ On the 1 000 000-event fixture (`test/a2/fixtures.ts`: 9 927 people over 90 days
 |---|---|---|---|---|
 | 2026-09-30 | A1 | Service RSS (outside view, `ps -o rss`) at 50 events/s for 10 min: 5 gzip batches of 10 per second over 200 people, identify on first sight, one group per event; writer and scheduler running; scratch Postgres 14.18 on the Mac; Node v24.3.0 with `--max-old-space-size=128` | `cd apps/product-analytics && node test/a1/capacity.ts` | **max 128.5 MiB** (start 121.4 MiB, end 128.5 MiB) against the 192 MiB cap; 30 000 sent, 30 000 stored, 0 failed |
 | 2026-09-30 | A2 | Insight latency on 1 000 000 generated events in one project, 20 runs each through the real runner (row level security, bound parameters, `work_mem` 32MB), after one rollup run. Scratch Postgres 14.18 (Homebrew, default `shared_buffers` 128MB) on the Mac (arm64, 8 cores), **shared with other work: load average 44 to 37 during the run** | `node test/a2/perf-cluster.ts start`, then `PA_CAPACITY_URL=<printed url> node test/a2/capacity.ts 1000000 20` | p95: **trends 30 d count 13 ms** (hourly rollup), **trends 30 d unique people 925 ms**, trends 30 d unique people by country 868 ms (budget 1.5 s: met); **3-step funnel, 14-day window 1 913 ms** (budget 3 s: met); **8-week retention 640 ms** (budget 3 s: met); lifecycle 30 d 1 180 ms; stickiness 30 d 720 ms; paths 30 d, depth 5: 5 026 ms (no budget in the plan; over the 3 s we aimed for, see below). Service RSS during the run 45 MiB |
+| 2026-09-30 | A3 | Service RSS (outside view, `ps -o rss`) for 10 min while it takes A1's 50 events/s, recording ingest from 20 browsing sessions flushing every 2 s (6 000 snapshot requests; the recorder's partly compressed events decompressed, masked, re-compressed with native zlib and written to a directory store), and one webhook export destination delivering in batches every 30 s; writer, scheduler and A3 jobs running; scratch Postgres 14.18 on the Mac; Node v24.3.0 with `--max-old-space-size=128` | `cd apps/product-analytics && node test/a3/capacity.ts` | **max 186.4 MiB** (start 129.8 MiB, end 185.5 MiB) against the 192 MiB cap; 30 000 events sent and stored, 6 000 recording requests, 0 failed, 25 850 events exported by the end (the rest were inside the 60 s export lag). Inside view on a 4-minute run (`CAPACITY_MEMLOG=1 CAPACITY_SECONDS=240`, `process.memoryUsage()` every 15 s): rss 100 to 116 MiB, V8 heap used 15 to 32 MiB of at most 82 MiB reserved, external 12 to 20 MiB; no growth in heap used, so the outside number is reserved and shared memory, not a leak. The first 10-minute run, before chunk compression moved from fflate to native zlib, peaked at 182.2 MiB: the margin is about 6 to 10 MiB on the Mac |
 
 Notes on the A2 measurement:
 - Earlier runs at load averages of 60 to 180 on the same machine were 3 to 10 times slower; the numbers above are the ones taken at the lowest load of the day, and they are wall-clock times, not CPU times.
 - What got the budgets met (each a rollup or an index first, as the plan asks): a covering index `(project_id, event, timestamp) include (person_id)` (the retention plan went from 2.8 s to 0.9 s in `EXPLAIN ANALYZE` at the same load), a daily people rollup (unique people went from 1.8 s to 0.3 s p50, measured at different loads, so the ratio is approximate), pruning funnel attempts that a later attempt always beats (a 3-step funnel joins about 17 000 entries instead of 340 000), grouping sets and hash deduplication in trends, and `work_mem` 32MB so sorts stay in memory.
 - DuckDB stays the recorded fallback; it was not needed for the three budgets.
 - Paths is the slowest insight: it sorts every page view of the range by person and time once. The next step if it matters is a per-session path rollup; it has no budget in the plan.
+
+## Recordings (measured by A3 on 2026-09-30)
+
+On the capacity fixture (`test/a3/fixtures/recording.ts`: a product page of about 400 nodes as the opening snapshot, then every second a batch of mouse positions, and per minute 20 clicks, 6 scrolls, 12 typed inputs and 30 small page changes, sent in the recorder's partly compressed form), 40 recordings, 200.6 recorded minutes, 6 000 chunks:
+
+| Part | Bytes per recorded minute | Note |
+|---|---|---|
+| Stored chunks (gzip NDJSON, object storage) | **13 232** | `sum(pa.replays.size_bytes) / recorded minutes`; the first run with fflate compression stored 14 412 |
+| Uncompressed events | 49 923 | `sum(pa.replays.raw_bytes) / recorded minutes` |
+| Index in Postgres | one `pa.replays` row per recording and one `pa.replay_chunks` row per flush | not measured separately |
+
+- Computed from the row above, not measured: 1 000 recorded minutes a day would store about 13 MB a day, about 400 MB for the 30-day replay window (target).
+- Real pages differ from the fixture: pages with large style sheets or many DOM changes store more per minute. The per-project numbers are in `pa.replays` (`size_bytes`, `raw_bytes`, `started_at`, `ended_at`) for the owner to read.
 

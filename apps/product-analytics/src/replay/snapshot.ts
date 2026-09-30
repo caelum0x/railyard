@@ -5,7 +5,7 @@
 // bytes we keep (whatever the page's own settings were), and the index
 // counters (clicks, key presses, URLs, first and last timestamp) are read.
 
-import { gunzipSync } from "fflate";
+import { gunzipSync } from "node:zlib";
 
 export type RrwebEvent = { type: number; timestamp: number; data?: unknown; [k: string]: unknown };
 
@@ -33,15 +33,15 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 
 function gunzipLatin1(s: string): unknown {
-  let out: Uint8Array;
+  let out: Buffer;
   try {
-    out = gunzipSync(Buffer.from(s, "latin1"));
-  } catch {
+    out = gunzipSync(Buffer.from(s, "latin1"), { maxOutputLength: MAX_PART_BYTES });
+  } catch (err) {
+    if (err instanceof RangeError) throw new SnapshotError("a recording part is too large");
     throw new SnapshotError("a compressed recording part is not valid gzip");
   }
-  if (out.length > MAX_PART_BYTES) throw new SnapshotError("a recording part is too large");
   try {
-    return JSON.parse(new TextDecoder().decode(out));
+    return JSON.parse(out.toString("utf8"));
   } catch {
     throw new SnapshotError("a compressed recording part is not valid JSON");
   }

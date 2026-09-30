@@ -9,7 +9,7 @@
 //   s3:      one NDJSON.gz object per batch under <prefix>/events/<project>/<yyyy>/<mm>/<dd>/
 
 import { randomUUID } from "node:crypto";
-import { gzipSync } from "fflate";
+import { gzipSync } from "node:zlib";
 import { sign } from "../bridge/standard-webhooks.ts";
 import type { Db } from "../db.ts";
 import type { Logger } from "../log.ts";
@@ -118,7 +118,7 @@ async function sendS3(d: Destination, secret: string, rows: Row[], batchId: stri
   const last = rows[rows.length - 1].inserted_at;
   const day = last.toISOString().slice(0, 10).split("-");
   const key = `events/${d.project_id}/${day[0]}/${day[1]}/${day[2]}/${last.getTime()}-${batchId}.ndjson.gz`;
-  const body = gzipSync(new TextEncoder().encode(rows.map((r) => JSON.stringify(exported(r))).join("\n") + "\n"));
+  const body = gzipSync(Buffer.from(rows.map((r) => JSON.stringify(exported(r))).join("\n") + "\n", "utf8"));
   try {
     await store.put(key, body, "application/x-ndjson");
   } catch (err) {

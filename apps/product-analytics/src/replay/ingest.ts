@@ -4,7 +4,7 @@
 // longer than MAX_RECORDING_MS; recordings expire after the plan's replay days.
 
 import { createHash, randomUUID } from "node:crypto";
-import { gzipSync } from "fflate";
+import { gzipSync } from "node:zlib";
 import type { Db } from "../db.ts";
 import type { Logger } from "../log.ts";
 import { personIdFor } from "../persons/ids.ts";
@@ -30,7 +30,8 @@ export function chunkKey(projectId: string, sessionId: string): string {
 export function encodeChunk(batches: SnapshotBatch[]): { raw: number; gz: Uint8Array; events: number } {
   const lines: string[] = [];
   for (const b of batches) for (const e of b.events) lines.push(JSON.stringify({ window_id: b.windowId, data: e } satisfies ChunkLine));
-  const raw = new TextEncoder().encode(`${lines.join("\n")}\n`);
+  // Native zlib: the compression runs outside the JS heap (the service has a 192 MiB cap).
+  const raw = Buffer.from(`${lines.join("\n")}\n`, "utf8");
   return { raw: raw.length, gz: gzipSync(raw, { level: 6 }), events: lines.length };
 }
 

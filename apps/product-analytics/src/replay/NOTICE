@@ -1,0 +1,12 @@
+Recordings, click maps and exports (package A3) of the Railyard product
+analytics service.
+
+- vendor/aws4fetch/: aws4fetch 1.0.20 (dist/aws4fetch.esm.mjs, its type file
+  renamed to sit next to it), https://github.com/mhart/aws4fetch. MIT License,
+  Copyright 2018 Michael Hart. Used to sign S3-compatible requests (AWS
+  Signature Version 4) for recordings and S3 exports.
+- snapshot.ts reads the recording format of rrweb (MIT,
+  https://github.com/rrweb-io/rrweb) and undoes the partial compression of the
+  posthog-js recorder (packages/browser/src/extensions/replay/external/
+  lazy-loaded-session-recorder.ts, marker cv "2024-10"; Apache-2.0 AND MIT,
+  commit 666d10918246). No code is copied; the format is re-implemented.

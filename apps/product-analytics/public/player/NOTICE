@@ -1,0 +1,18 @@
+Files served by the Railyard product analytics service's player pages and
+static routes. Each folder keeps its upstream LICENSE; nothing is modified.
+
+- vendor/rrweb-player/: rrweb-player 2.1.6 (umd/rrweb-player.min.js,
+  dist/style.css), https://github.com/rrweb-io/rrweb, tag rrweb-player@2.1.6
+  (commit 376824c03f86). MIT License, Copyright (c) 2018 Contributors
+  (https://github.com/rrweb-io/rrweb/graphs/contributors).
+- vendor/simpleheat/: simpleheat 0.4.0, https://github.com/mourner/simpleheat.
+  BSD 2-Clause License, Copyright (c) 2015, Vladimir Agafonkin.
+- sdk/: posthog-js 1.435.1 dist/lazy-recorder.js, dist/surveys.js and
+  dist/dead-clicks-autocapture.js, the parts the browser SDK loads from its
+  host at /static/, https://github.com/PostHog/posthog-js. Apache License 2.0
+  AND MIT (see sdk/LICENSE), Copyright 2020 Posthog / Hiberly, Inc.,
+  Copyright 2015 Mixpanel, Inc. The copies equal the SDK version the
+  @railyard/analytics-js wrapper installs (test/a3/vendor.test.ts).
+
+replay.js, heatmap.js and player.css are Railyard's own (MIT, see the
+service's package).
