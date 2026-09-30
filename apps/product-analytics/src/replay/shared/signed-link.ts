@@ -7,7 +7,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { isUuid } from "../../db.ts";
 
 export const LINK_TTL_SECONDS = 600;
-export const RESOURCE = /^(replay|heatmap):[A-Za-z0-9._~%-]{1,2048}$/;
+export const RESOURCE = /^(replay|heatmap):[\w.~%-]{1,2048}$/;
 
 const keyOf = (secret: string) => createHmac("sha256", secret).update("pa-share-link-v1").digest();
 
