@@ -63,7 +63,9 @@ export function tally(survey: SurveyRow, answers: Record<string, unknown>[]): Qu
 export async function surveyAnswers(db: Db, projectId: string, surveyId: string, limit = 100_000): Promise<Record<string, unknown>[]> {
   return db.asProject(projectId, async (c) => {
     const r = await c.query<{ properties: Record<string, unknown> }>(
-      `select properties from (
+      // Only the answer keys leave the database (open answers cut to 2000 characters), not whole events.
+      `select (select coalesce(jsonb_object_agg(k, case when jsonb_typeof(v) = 'string' then to_jsonb(left(v #>> '{}', 2000)) else v end), '{}'::jsonb)
+                 from jsonb_each(x.properties) as t(k, v) where k like '$survey\\_response%') as properties from (
          select distinct on (coalesce(properties ->> '$survey_submission_id', uuid::text)) properties, "timestamp"
          from pa.events where project_id = $1 and event = 'survey sent' and properties ->> '$survey_id' = $2
          order by coalesce(properties ->> '$survey_submission_id', uuid::text), "timestamp" desc

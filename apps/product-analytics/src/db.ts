@@ -1,7 +1,9 @@
 // Postgres access. Request paths run inside `asProject`: one transaction as
 // the `pa_app` role (row level security on) with `pa.project_id` set, and
 // every query also binds project_id. Jobs use `asOwner` and bind project_id
-// themselves.
+// themselves. Request-path transactions stop at PROJECT_STATEMENT_TIMEOUT_MS
+// per statement (the pool is small and shared with capture); code that needs
+// longer sets its own `set local statement_timeout`.
 
 import pg from "pg";
 
@@ -13,10 +15,19 @@ export function isUuid(v: unknown): v is string {
   return typeof v === "string" && UUID.test(v);
 }
 
+/** Default per-statement limit inside asProject. */
+export const PROJECT_STATEMENT_TIMEOUT_MS = 60_000;
+
+export interface DbOptions {
+  projectTimeoutMs?: number;
+}
+
 export class Db {
   pool: pg.Pool;
+  projectTimeoutMs: number;
 
-  constructor(url: string, max = 5) {
+  constructor(url: string, max = 5, opts: DbOptions = {}) {
+    this.projectTimeoutMs = Math.max(1, Math.floor(opts.projectTimeoutMs ?? PROJECT_STATEMENT_TIMEOUT_MS));
     this.pool = new pg.Pool({ connectionString: url, max, idleTimeoutMillis: 30_000, application_name: "product-analytics" });
     this.pool.on("error", (err) => console.error(`product-analytics: idle database client error: ${err.message}`));
   }
@@ -28,6 +39,7 @@ export class Db {
       await c.query("begin");
       if (projectId !== null) {
         await c.query("set local role pa_app");
+        await c.query(`set local statement_timeout = ${this.projectTimeoutMs}`);
         await c.query("select set_config('pa.project_id', $1, true)", [projectId]);
       }
       const out = await fn(c);

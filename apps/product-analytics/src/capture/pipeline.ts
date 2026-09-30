@@ -2,6 +2,7 @@
 // chain per org), so the cap decision and the person merges never race.
 //   paused org      counted as received and dropped; nothing stored or metered
 //   outside window  events older than the plan's retention are dropped
+//   too large       an event over MAX_EVENT_BYTES (properties and person updates) is dropped
 //   at the cap      counted (received, capped, metered) and not stored
 //   otherwise       persons resolved in one project transaction, rows buffered
 
@@ -18,6 +19,19 @@ import type { UsageCounter } from "./usage.ts";
 import { monthOf, type EventRow, type EventWriter } from "./writer.ts";
 
 const DAY_MS = 86_400_000;
+/** Largest stored event (its properties and person updates as JSON). */
+export const MAX_EVENT_BYTES = 1024 * 1024;
+
+/** True when the event's stored JSON would exceed MAX_EVENT_BYTES. */
+export function tooLarge(e: CapturedEvent): boolean {
+  let n = e.elements_chain?.length ?? 0;
+  for (const part of [e.properties, e.set, e.set_once]) {
+    if (!part) continue;
+    n += Buffer.byteLength(JSON.stringify(part), "utf8");
+    if (n > MAX_EVENT_BYTES) return true;
+  }
+  return n > MAX_EVENT_BYTES;
+}
 
 export interface IngestResult {
   received: number;
@@ -71,7 +85,7 @@ export class CapturePipeline {
       return { received, accepted: 0, capped: 0, dropped: received, paused: true };
     }
     const oldest = now.getTime() - site.retention_days * DAY_MS;
-    const inWindow = events.filter((e) => e.timestamp.getTime() >= oldest);
+    const inWindow = events.filter((e) => e.timestamp.getTime() >= oldest && !tooLarge(e));
     const expired = received - inWindow.length;
     const used = await usage.used(site.org_id);
     const decision = capDecision(used, site.events_limit, inWindow.length);

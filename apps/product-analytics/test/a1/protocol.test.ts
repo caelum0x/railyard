@@ -97,3 +97,16 @@ test("remote config answers per token; unknown tokens are 404", { skip: skipNoPg
   assert.match(await js.text(), new RegExp(site.token));
   assert.equal((await fetch(`${run.base}/array/site_unknown000000/config`)).status, 404);
 });
+
+test("an event over 1 MB is dropped and counted; the rest of its batch is stored", { skip: skipNoPg }, async () => {
+  // A 2 MB gzip body can decode to 16 MB; one such event would otherwise be
+  // stored whole and later read into the service by exports and results.
+  const big = { ...ev("huge", { blob: "x".repeat(1024 * 1024 + 1) }), distinct_id: "u-big" };
+  const small = { ...ev("fits"), distinct_id: "u-big" };
+  const res = await post("/batch/?compression=gzip-js", gzipSync(strToU8(JSON.stringify({ api_key: site.token, batch: [big, small] }))), {});
+  assert.equal(res.status, 200, "a normal answer so the SDK does not retry the batch forever");
+  await run.svc.deps.writer.flush();
+  assert.equal(count(pg, `distinct_id = 'u-big' and event = 'huge'`), 0);
+  assert.equal(count(pg, `distinct_id = 'u-big' and event = 'fits'`), 1);
+  assert.ok(Number(pg.psql(`select coalesce(sum(dropped), 0) from pa.usage_monthly where project_id = '${site.project_id}'`)) >= 1, "the drop is counted");
+});
