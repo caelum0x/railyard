@@ -106,10 +106,15 @@ test("insights: honest 'no data yet' without a query store; real numbers when on
   assert.equal(seen[0].auth, `Bearer ${con.a.token}`);
 });
 
-test("flags.list says arriving; gateway.traces reads only the configured key's traces", async () => {
+test("flags.list (PY3.4) lists only the signed-in org's flags; gateway.traces reads only the configured key's traces", async () => {
   const dir = signIn("alice3", con.a.token);
   const flags = await call(await client({ RAILYARD_CONFIG_DIR: dir }), "flags.list");
-  assert.deepEqual([flags.data.status, flags.data.flags], ["arriving", []]);
+  assert.deepEqual(flags.data.environments, [{ app: "alice-shop", env: "production", flags: [{ key: "new_checkout", enabled: true, value: "v2", description: "The new checkout" }] }]);
+  assert.ok(!flags.text.includes("bob_secret_flag"), "org A's token never reads org B's flags");
+  const bobs = await call(await client({ RAILYARD_CONFIG_DIR: signIn("bob3", con.b.token) }), "flags.list", { app: "alice-shop" });
+  assert.deepEqual(bobs.data.environments, [], "naming org A's app from org B lists nothing");
+  const out = await call(await client({ RAILYARD_CONFIG_DIR: signIn("nobody3", null) }), "flags.list");
+  assert.equal(out.isError, true);
   const off = await call(await client({ RAILYARD_CONFIG_DIR: dir }), "gateway.traces");
   assert.equal(off.data.status, "not_connected");
   const relayFetch = async (url, init) => {

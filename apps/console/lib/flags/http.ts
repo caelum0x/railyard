@@ -79,3 +79,26 @@ export async function consoleSetFlag(
     throw e;
   }
 }
+
+/**
+ * GET /api/v1/flags?app= with an org's `ry_` token (the agent surface, PY3.4):
+ * the org's flag environments and their flags, read only. A token only ever
+ * reads its own org.
+ */
+export async function tokenListFlags(
+  deps: FlagsDeps,
+  who: { orgId: string } | null,
+  app: string | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  if (!who) return { status: 401, body: { error: "unauthorized" } };
+  if (app !== null && !/^[a-z0-9][a-z0-9-]{0,39}$/.test(app)) return { status: 400, body: { error: "app must be an app name (lowercase letters, digits, dashes)" } };
+  try {
+    const envs = (await deps.store.listEnvs(who.orgId)).filter((e) => app === null || e.app === app).slice(0, 100);
+    const environments = [];
+    for (const env of envs) environments.push({ app: env.app, env: env.env, flags: await listFlags(deps, env) });
+    return { status: 200, body: { environments } };
+  } catch (e) {
+    if (e instanceof FlagsError) return { status: e.status, body: { error: e.message } };
+    throw e;
+  }
+}

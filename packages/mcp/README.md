@@ -21,7 +21,7 @@ never asks for a key and never prints one.
 | `deploy.list` | Recent deploys: URL, branch, commit, framework, duration, status | No |
 | `insights.summary` | Visitors, page views and top pages for an app; says "no data yet" until events arrive | No |
 | `insights.funnel` | Step-by-step conversion between pages or events; says "no data yet" until events arrive | No |
-| `flags.list` | Says the Flags module is arriving and lists nothing until it is live | No |
+| `flags.list` | The org's flags per app and environment: key, on or off, value, description | No |
 | `gateway.traces` | Recent AI gateway calls for the gateway key in this environment | No |
 | `usage.current` | Plan state, trial days left, apps used against the plan | No |
 

@@ -87,12 +87,20 @@ export const TOOLS = [
   {
     name: "flags.list",
     title: "Flags",
-    description: "Lists the org's flags. The Flags module is arriving; until it is live this says so and lists nothing.",
+    description: "Lists the signed-in org's flags per app and environment: key, on or off, value and description. Read only.",
     inputSchema: { type: "object", additionalProperties: false, properties: { app: NAME } },
     annotations: readOnly,
-    async handler(ctx) {
-      needLogin(ctx);
-      return { status: "arriving", flags: [], message: "The Flags module is not live yet. Nothing to list." };
+    async handler(ctx, args) {
+      const q = new URLSearchParams();
+      if (args.app) q.set("app", args.app);
+      const { environments } = await consoleGet(ctx, `/api/v1/flags${q.size ? `?${q}` : ""}`);
+      return {
+        environments: (environments ?? []).map((e) => ({
+          app: e.app,
+          env: e.env,
+          flags: (e.flags ?? []).map((f) => ({ key: f.key, enabled: f.enabled, value: f.value ?? null, description: f.description ?? null })),
+        })),
+      };
     },
   },
   {
