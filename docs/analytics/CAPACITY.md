@@ -11,7 +11,7 @@
 
 | Component | Where | Cap | Basis | Measured by |
 |---|---|---|---|---|
-| `product-analytics` service (Node 22, Hono, one process: capture, query, jobs) | box 2 | **192 MiB** (est.) | One Node process with a 2 s / 1 000-row insert buffer; no Kafka, Redis or ClickHouse | A1: RSS at 50 events/s for 10 min on the Mac; A3: with replay ingest and one export running |
+| `product-analytics` service (Node 22, Hono, one process: capture, query, jobs) | box 2 | **192 MiB** (A1 measured 128.5 MiB max, see Measurements) | One Node process with a 2 s / 1 000-row insert buffer; no Kafka, Redis or ClickHouse | A1: RSS at 50 events/s for 10 min on the Mac; A3: with replay ingest and one export running |
 | Postgres database `product_analytics` | box 2's existing Postgres (the Scribase cell) | no new process; shares `shared_buffers` | Monthly partitions; rollups for counts | A2: query p95 on 1 000 000 events |
 | Replay chunks | S3-compatible object storage (Scribase Storage S3 API or R2) | no RAM on box 2 | gzip rrweb chunks; 10% sample and 30-minute maximum (targets) | A3: bytes per recorded minute on the fixture |
 | Console screens | Cloudflare Workers (existing console) | none on the boxes | | |
@@ -37,4 +37,4 @@
 
 | Date | Package | What | Command | Result |
 |---|---|---|---|---|
-| (none yet) | | | | |
+| 2026-09-30 | A1 | Service RSS (outside view, `ps -o rss`) at 50 events/s for 10 min: 5 gzip batches of 10 per second over 200 people, identify on first sight, one group per event; writer and scheduler running; scratch Postgres 14.18 on the Mac; Node v24.3.0 with `--max-old-space-size=128` | `cd apps/product-analytics && node test/a1/capacity.ts` | **max 128.5 MiB** (start 121.4 MiB, end 128.5 MiB) against the 192 MiB cap; 30 000 sent, 30 000 stored, 0 failed |
