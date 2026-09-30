@@ -5,6 +5,7 @@ import { SignOutIcon } from "./Icons.tsx";
 const LINKS = [
   { href: "/apps", label: "Apps" },
   { href: "/insights", label: "Insights" },
+  { href: "/product-analytics", label: "Product analytics" },
   { href: "/usage", label: "Usage" },
   { href: "/billing", label: "Billing" },
 ];
