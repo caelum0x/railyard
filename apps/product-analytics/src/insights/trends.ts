@@ -141,6 +141,17 @@ ${final(
     return { sql, params: P.values };
   }
   const agg = AGG[math];
+  if (math === "dau" || math === "unique_group") {
+    // Distinct counts: deduplicate (bucket, value, actor) once with a hash, then count rows.
+    const sql = `with d as materialized (select distinct bucket, bk, bv, pid from (${ev}) k),
+res as (
+  select bucket, bk, bv, count(*)::double precision as v, count(*) as n, 0 as whole from d group by bucket, bk, bv
+  union all
+  select null, bk, bv, count(*)::double precision, count(*), 1 from (select distinct bk, bv, pid from d) x group by bk, bv
+)
+${final("select bucket, bk, bv, v from res where whole = 0", "select bk, bv, v, n from res where whole = 1")}`;
+    return { sql, params: P.values };
+  }
   // One pass: per bucket and in total, with grouping sets.
   const sql = `with res as materialized (
   select bucket, bk, bv, ${agg} as v, count(*) as n, grouping(bucket) as whole

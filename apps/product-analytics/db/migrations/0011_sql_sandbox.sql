@@ -34,6 +34,9 @@ create table if not exists pa.sql_sandbox_sessions (
   started_at timestamptz not null default now()
 );
 revoke all on pa.sql_sandbox_sessions from public;
+-- Row level security on with no policy: no request role sees a row; only the
+-- owner (the service's sandbox runner and the security-definer function) does.
+alter table pa.sql_sandbox_sessions enable row level security;
 
 -- The project of the calling backend, or null (every view is then empty).
 create or replace function pa_view.project() returns uuid

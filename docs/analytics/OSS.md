@@ -18,7 +18,7 @@
 | `pg` (node-postgres) | MIT | n/a | 8.23.0 | Postgres client | A1 |
 | `fflate` | MIT | n/a | 0.8.3 | gzip decode of SDK batches | A1 |
 | panva/jose | MIT | n/a | current | Console-to-service tokens | A1 |
-| taozhi8833998/node-sql-parser | Apache-2.0 | 1 042, 2026-07-19 | 5.4.0 | SQL sandbox allowlist | A2 |
+| taozhi8833998/node-sql-parser | Apache-2.0 | 1 042, 2026-07-19 | 5.4.0 (Postgres build vendored, see `oss/A2.md`) | SQL sandbox allowlist | A2 |
 | mourner/simpleheat | BSD-2-Clause | 957, 2024-07-29 (small and finished) | 0.4.0 | Heatmap overlay | A3 |
 | `@aws-sdk/client-s3` | Apache-2.0 | 3 670, 2026-09-29 | 3.1143.0 | S3 export destination | A3 |
 | growthbook/growthbook `packages/stats` (gbstats) | MIT (`packages/stats/LICENSE`; enterprise dirs excluded) | 8 455, 2026-09-29 | commit `d09b71835230` | Cross-check vectors for the experiment stats port | A3 |

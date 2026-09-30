@@ -21,6 +21,7 @@ await c.query("begin");
 await c.query("set local role pa_app");
 await c.query("select set_config('pa.project_id', $1, true)", [projectId]);
 if (process.argv[3]) await c.query(`set local work_mem = '${process.argv[3]}'`);
+if (process.env.PGSET) for (const s of process.env.PGSET.split(";")) await c.query(`set local ${s}`);
 const res = await c.query(`explain (analyze, buffers, format text) ${b.sql}`, b.params);
 const lines = res.rows.map((x: any) => x["QUERY PLAN"]);
 console.log(process.env.FULL ? lines.join("\n") : lines.filter((l: string) => /actual time|Execution|Sort Method|Disk|Planning/.test(l)).slice(0, 60).join("\n"));
