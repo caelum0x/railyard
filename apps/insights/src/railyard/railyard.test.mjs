@@ -95,6 +95,21 @@ test('API-only mode serves only the Railyard API and the heartbeat', () => {
   assert.equal(allowedPath('/login', false), true);
 });
 
+test('the Docker image keeps the API-only guard (the Dockerfile copies docker/proxy.ts over src/proxy.ts)', () => {
+  const root = join(HERE, '..', '..');
+  const dockerfile = readFileSync(join(root, 'Dockerfile'), 'utf8');
+  const copied = /COPY\s+docker\/proxy\.ts\s+\.\/src/.test(dockerfile);
+  const proxies = copied ? ['docker/proxy.ts'] : ['src/proxy.ts'];
+  for (const rel of proxies) {
+    const src = readFileSync(join(root, rel), 'utf8');
+    assert.match(src, /import\s*\{\s*allowedPath\s*\}\s*from\s*'@\/railyard\/api-only'/, `${rel} imports allowedPath`);
+    const guard = src.search(/allowedPath\(\s*req(uest)?\.nextUrl\.pathname,\s*process\.env\.INSIGHTS_API_ONLY === '1'\s*\)/);
+    assert.ok(guard > 0, `${rel} calls allowedPath with INSIGHTS_API_ONLY`);
+    const firstRewrite = src.search(/for \(const fn of fns\)|NextResponse\.next\(\)/);
+    assert.ok(firstRewrite === -1 || guard < firstRewrite, `${rel} applies the guard before any upstream rewrite`);
+  }
+});
+
 test('placeholders become bound parameters, never interpolated text', () => {
   const { text, values } = toPositional(RECEIPT_SQL, { orgId: ORG_A, sentAt: "x'); drop table website; --", siteKey: 'k' });
   assert.match(text, /values \(\$1::uuid, \$2, \$3\)/);

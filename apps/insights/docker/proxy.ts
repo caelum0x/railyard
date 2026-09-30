@@ -1,6 +1,9 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { getContentSecurityPolicy } from '@/lib/csp';
 import { matchesConfiguredPath } from '@/lib/match-configured-path';
+// Railyard fork: the Dockerfile copies this file over src/proxy.ts, so the
+// API-only guard (src/railyard/api-only.ts) must live here too.
+import { allowedPath } from '@/railyard/api-only';
 
 export const config = {
   matcher: '/:path*',
@@ -83,6 +86,12 @@ function disableLogin(request: NextRequest) {
 }
 
 export default function middleware(req: NextRequest) {
+  // Railyard fork: with INSIGHTS_API_ONLY=1 only the Railyard API and the
+  // heartbeat answer; the upstream dashboard, login and tracker are 404.
+  if (!allowedPath(req.nextUrl.pathname, process.env.INSIGHTS_API_ONLY === '1')) {
+    return new NextResponse('Not found', { status: 404 });
+  }
+
   const fns = [customCollectEndpoint, customScriptName, customScriptUrl, disableLogin];
 
   let res: NextResponse | undefined;
