@@ -39,6 +39,7 @@ export function axisSql(interval: Interval, P: Params, from: string, to: string,
 
 interface SeriesParts {
   P: Params;
+  proj: string;
   J: Joins;
   tz: string;
   from: string;
@@ -82,7 +83,7 @@ function seriesParts(q: TrendsQuery, s: Series, range: ResolvedRange, ctx: Build
   }
   const mv = PROPERTY_MATH.includes(math) ? numberOf(`e.properties ->> ${P.add(s.math_property)}`) : "null::double precision";
   const bv = q.breakdown ? breakdownValue(q.breakdown, P, J) : "null::text";
-  return { P, J, tz, from, to, interval, lookback, where, actor, mv, bv };
+  return { P, proj, J, tz, from, to, interval, lookback, where, actor, mv, bv };
 }
 
 /**
@@ -110,19 +111,58 @@ export function buildBreakdownTop(q: TrendsQuery, s: Series, range: ResolvedRang
  * for "(other)". `top` is the kept values (buildBreakdownTop); a missing
  * value always keeps its own "(none)" line.
  */
-export function buildTrendSeries(q: TrendsQuery, s: Series, range: ResolvedRange, ctx: BuildContext, top: string[] = []): Built {
+/**
+ * Unique people per day, week or month (UTC) for one event, with no filters
+ * and at most a person-property breakdown, can read the daily people rollup.
+ */
+export function peopleRollupEligible(q: TrendsQuery, s: Series): boolean {
+  return (
+    (s.math ?? "total") === "dau" &&
+    s.kind === "event" &&
+    !!s.event &&
+    !s.properties?.length &&
+    !q.properties?.length &&
+    (!q.breakdown || q.breakdown.type === "person") &&
+    (q.timezone ?? "UTC") === "UTC" &&
+    q.interval !== "hour"
+  );
+}
+
+export function buildTrendSeries(q: TrendsQuery, s: Series, range: ResolvedRange, ctx: BuildContext, top: string[] = [], peopleRolledTo: Date | null = null): Built {
   const x = seriesParts(q, s, range, ctx);
   const { P, tz, from, to, interval, lookback } = x;
   const math = s.math ?? "total";
   const topP = q.breakdown ? P.add(top) : "";
   const bk = q.breakdown ? `case when b.bv is null then 0 when b.bv = any(${topP}::text[]) then 1 else 2 end` : "0";
   const bvKept = q.breakdown ? `case when b.bv = any(${topP}::text[]) then b.bv end` : "null::text";
-  const ev = `select b.bucket, b.lt, ${bk} as bk, ${bvKept} as bv, b.pid, b.mv from (
-    select ${bucketExpr('e."timestamp"', interval, tz)} as bucket, e."timestamp" at time zone ${tz} as lt, ${x.bv} as bv, ${x.actor} as pid, ${x.mv} as mv
+  const rawWhere = (extra: string[]) => `select ${bucketExpr('e."timestamp"', interval, tz)} as bucket, e."timestamp" at time zone ${tz} as lt, ${x.bv} as bv, ${x.actor} as pid, ${x.mv} as mv
       from pa.events e
       ${PERSON_JOIN}
       ${x.J.sql()}
-     where ${x.where.join("\n       and ")}
+     where ${[...x.where, ...extra].join("\n       and ")}`;
+  const raw = rawWhere([]);
+  let source = raw;
+  if (peopleRolledTo && peopleRollupEligible(q, s)) {
+    // Whole UTC days before the day of date_to come from pa.rollup_daily_people
+    // (events inserted before the watermark); the rest, and late events, from pa.events.
+    const dayTo = P.add(new Date(Date.UTC(range.to.getUTCFullYear(), range.to.getUTCMonth(), range.to.getUTCDate())).toISOString());
+    const w = P.add(peopleRolledTo.toISOString());
+    const ev0 = P.add(s.event);
+    const bvR = q.breakdown ? `(pp.properties ->> ${P.add(q.breakdown.key)})` : "null::text";
+    const joinR = q.breakdown ? "left join pa.persons pp on pp.project_id = r.project_id and pp.id = coalesce(o.new_person_id, r.person_id)" : "";
+    source = `select date_trunc('${interval}', r.day::timestamp) as bucket, r.day::timestamp as lt, ${bvR} as bv, coalesce(o.new_person_id, r.person_id) as pid, null::double precision as mv
+      from pa.rollup_daily_people r
+      left join pa.person_overrides o on o.project_id = r.project_id and o.old_person_id = r.person_id
+      ${joinR}
+     where r.project_id = ${x.proj} and r.event = ${ev0}
+       and r.day >= (${bucketExpr(`${from}::timestamptz`, interval, tz)})::date and r.day < ${dayTo}::date
+    union all
+    select * from (${raw}) t1 where t1.lt >= ${dayTo}::timestamptz at time zone ${tz}
+    union all
+    select * from (${rawWhere([`e.inserted_at >= ${w}::timestamptz`])}) t2 where t2.lt < ${dayTo}::timestamptz at time zone ${tz}`;
+  }
+  const ev = `select b.bucket, b.lt, ${bk} as bk, ${bvKept} as bv, b.pid, b.mv from (
+    ${source}
   ) b`;
   const final = (agg: string, tot: string) => `select to_char(a.bucket, ${LABEL_FORMAT}) as bucket, t.bk, t.bv, coalesce(agg.v, 0) as value, t.v as total
   from (${axisSql(interval, P, from, to, tz)}) a

@@ -11,7 +11,7 @@ import { buildPaths } from "./paths.ts";
 import { buildRetention } from "./retention.ts";
 import { previousRange, resolveRange, type ResolvedRange } from "./sql.ts";
 import { rolledTo } from "./rollups.ts";
-import { buildAxis, buildBreakdownTop, buildTrendRollup, buildTrendSeries, rollupEligible } from "./trends.ts";
+import { buildAxis, buildBreakdownTop, buildTrendRollup, buildTrendSeries, peopleRollupEligible, rollupEligible } from "./trends.ts";
 import type {
   ActionDef,
   BuildContext,
@@ -129,11 +129,11 @@ async function trendLines(c: Client, q: TrendsQuery, range: ResolvedRange, ctx: 
   const labels = (await run(c, buildAxis(q, range))).map((r) => cut(String(r.bucket), interval));
   const index = new Map(labels.map((l, i) => [l, i]));
   const lines: TrendLine[] = [];
-  const watermark = q.series.some((s) => rollupEligible({ ...q, interval }, s, range)) ? await rolledTo(c, ctx.projectId) : null;
+  const watermark = q.series.some((s) => rollupEligible({ ...q, interval }, s, range) || peopleRollupEligible({ ...q, interval }, s)) ? await rolledTo(c, ctx.projectId) : null;
   for (let si = 0; si < q.series.length; si += 1) {
     const s = q.series[si];
     const top = q.breakdown ? (await run(c, buildBreakdownTop(q, s, range, ctx))).map((r) => String(r.bv)) : [];
-    const built = watermark && rollupEligible({ ...q, interval }, s, range) ? buildTrendRollup({ ...q, interval }, s, range, ctx, watermark) : buildTrendSeries(q, s, range, ctx, top);
+    const built = watermark && rollupEligible({ ...q, interval }, s, range) ? buildTrendRollup({ ...q, interval }, s, range, ctx, watermark) : buildTrendSeries(q, s, range, ctx, top, watermark);
     const rows = await run(c, built);
     const byKey = new Map<string, TrendLine>();
     for (const r of rows) {

@@ -10,10 +10,10 @@ import { migratedPg, skipNoPg } from "../a1/helpers.ts";
 
 test("A2 migrations apply twice and keep every table under row level security", { skip: skipNoPg }, async () => {
   const pg = await migratedPg();
-  for (const m of ["0010", "0011", "0012", "0013", "0014"]) assert.ok(MIGRATIONS.some((x) => x.startsWith(m)), m);
+  for (const m of ["0010", "0011", "0012", "0013", "0014", "0015"]) assert.ok(MIGRATIONS.some((x) => x.startsWith(m)), m);
   await migrate(pg.url);
   const tables = pg.psql("select string_agg(c.relname, ',' order by c.relname) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'pa' and c.relkind in ('r','p') and not c.relispartition");
-  for (const t of ["actions", "cohorts", "cohort_people", "saved_insights", "dashboards", "dashboard_tiles", "insight_cache", "rollup_state", "insight_versions", "sql_sandbox_sessions"]) assert.ok(tables.split(",").includes(t), t);
+  for (const t of ["actions", "cohorts", "cohort_people", "saved_insights", "dashboards", "dashboard_tiles", "insight_cache", "rollup_state", "insight_versions", "sql_sandbox_sessions", "rollup_daily_people"]) assert.ok(tables.split(",").includes(t), t);
   assert.equal(pg.psql("select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'pa' and c.relkind in ('r','p') and not c.relispartition and not c.relrowsecurity"), "0");
   assert.equal(pg.psql("select count(*) from information_schema.role_table_grants where table_schema in ('pa', 'pa_view') and grantee in ('anon', 'authenticated')"), "0");
   assert.equal(pg.psql("select string_agg(rolname || ':' || rolbypassrls::text || ':' || rolsuper::text, ',' order by rolname) from pg_roles where rolname in ('pa_sql', 'pa_sql_login')"), "pa_sql:false:false,pa_sql_login:false:false");

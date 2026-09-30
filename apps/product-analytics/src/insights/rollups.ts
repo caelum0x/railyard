@@ -1,4 +1,4 @@
-// Hourly rollups (pa.rollup_hourly). For each project, rolled_to is a time
+// Hourly rollups (pa.rollup_hourly) and daily people (pa.rollup_daily_people). For each project, rolled_to is a time
 // W such that every rollup row counts exactly the events of its hour with
 // inserted_at < W. Each run picks a new W (now minus a settle time, so a
 // writer transaction that began earlier has committed), recomputes only the
@@ -60,6 +60,13 @@ export async function rollupProject(db: Db, projectId: string, w: Date): Promise
       if (hours.length > MAX_HOURS_PER_RUN) rebuilt = true;
     }
     if (rebuilt) {
+      await c.query("delete from pa.rollup_daily_people where project_id = $1", [projectId]);
+      await c.query(
+        `insert into pa.rollup_daily_people (project_id, event, day, person_id)
+         select distinct $1::uuid, event, ("timestamp" at time zone 'UTC')::date, person_id from pa.events
+          where project_id = $1 and inserted_at < $2`,
+        [projectId, w.toISOString()],
+      );
       await c.query("delete from pa.rollup_hourly where project_id = $1", [projectId]);
       await c.query(
         `insert into pa.rollup_hourly (project_id, event, hour, count)
@@ -69,6 +76,16 @@ export async function rollupProject(db: Db, projectId: string, w: Date): Promise
       );
     } else if (hours.length) {
       const iso = hours.map((h) => h.toISOString());
+      const days = [...new Set(iso.map((h) => h.slice(0, 10)))];
+      await c.query("delete from pa.rollup_daily_people where project_id = $1 and day = any($2::date[])", [projectId, days]);
+      await c.query(
+        `insert into pa.rollup_daily_people (project_id, event, day, person_id)
+         select distinct $1::uuid, e.event, d.d, e.person_id
+           from unnest($2::date[]) as d(d)
+           join pa.events e on e.project_id = $1 and e."timestamp" >= d.d::timestamp at time zone 'UTC' and e."timestamp" < (d.d + 1)::timestamp at time zone 'UTC'
+          where e.inserted_at < $3`,
+        [projectId, days, w.toISOString()],
+      );
       await c.query("delete from pa.rollup_hourly where project_id = $1 and hour = any($2::timestamptz[])", [projectId, iso]);
       await c.query(
         `insert into pa.rollup_hourly (project_id, event, hour, count)
@@ -102,7 +119,9 @@ export async function runRollups(db: Db, now: Date, opts: RollupOptions = {}): P
   if (opts.sites) {
     for (const site of await opts.sites.all()) {
       const days = await effectiveRetention(db, site);
-      await db.query("delete from pa.rollup_hourly where project_id = $1 and hour < $2", [site.project_id, new Date(now.getTime() - days * DAY).toISOString()]);
+      const cutoff = new Date(now.getTime() - days * DAY);
+      await db.query("delete from pa.rollup_hourly where project_id = $1 and hour < $2", [site.project_id, cutoff.toISOString()]);
+      await db.query("delete from pa.rollup_daily_people where project_id = $1 and day < $2::date", [site.project_id, cutoff.toISOString().slice(0, 10)]);
     }
   }
   return report;
