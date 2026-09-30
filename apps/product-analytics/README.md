@@ -16,6 +16,10 @@ DATABASE_URL=postgres://... node scripts/migrate.ts
 DATABASE_URL=postgres://... SITE_DIRECTORY_URL=... SITE_DIRECTORY_SERVICE_KEY=... node src/server.ts
 ```
 
+The database user in `DATABASE_URL` owns the schema (it runs the migrations)
+and is a member of `pa_app`; every request runs as `pa_app`, scoped to one
+app by row level security.
+
 Settings (environment):
 
 | Name | What |
