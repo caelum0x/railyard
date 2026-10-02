@@ -18,7 +18,7 @@ export interface ShipStore {
   getCloudflare(orgId: string): Promise<CloudflareConnection | null>;
   createSession(s: LinkSession): Promise<void>;
   getSession(idHash: string): Promise<LinkSession | null>;
-  updateSession(idHash: string, patch: Partial<Pick<LinkSession, "installation_id" | "state" | "message" | "link_id">>): Promise<void>;
+  updateSession(idHash: string, patch: Partial<Pick<LinkSession, "installation_id" | "state" | "message" | "link_id" | "repo_id">>): Promise<void>;
 }
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -75,7 +75,7 @@ export class MemoryShipStore implements ShipStore {
   async getSession(idHash: string) {
     return clone(this.sessions.get(idHash) ?? null);
   }
-  async updateSession(idHash: string, patch: Partial<Pick<LinkSession, "installation_id" | "state" | "message" | "link_id">>) {
+  async updateSession(idHash: string, patch: Partial<Pick<LinkSession, "installation_id" | "state" | "message" | "link_id" | "repo_id">>) {
     const s = this.sessions.get(idHash);
     if (s) this.sessions.set(idHash, { ...s, ...clone(patch) });
   }
@@ -152,7 +152,7 @@ export class PostgrestShipStore implements ShipStore {
   async getSession(idHash: string) {
     return (await this.req<LinkSession>("GET", `ship_link_sessions?id_hash=eq.${encodeURIComponent(idHash)}&limit=1`))[0] ?? null;
   }
-  async updateSession(idHash: string, patch: Partial<Pick<LinkSession, "installation_id" | "state" | "message" | "link_id">>) {
+  async updateSession(idHash: string, patch: Partial<Pick<LinkSession, "installation_id" | "state" | "message" | "link_id" | "repo_id">>) {
     await this.req("PATCH", `ship_link_sessions?id_hash=eq.${encodeURIComponent(idHash)}`, patch, "return=minimal");
   }
 }

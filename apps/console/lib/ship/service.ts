@@ -21,6 +21,7 @@ import { access } from "../ladder.ts";
 import type { Repo } from "../repo.ts";
 import { open, seal } from "../ai/seal.ts";
 import { recordDeploy, type DeployInput } from "../../app/api/v1/deploys/service.ts";
+import { openSession, type Session } from "../session.ts";
 import type { SitesStore } from "../sites.ts";
 import type { CloudflareOAuth } from "./cloudflare.ts";
 import { GithubError, type GithubApp } from "./github.ts";
@@ -47,6 +48,8 @@ export interface ShipDeps {
   oidcKeys: () => Promise<Jwk[]>;
   consoleUrl: string;
   credentialsKey: string;
+  /** Seals `ry_session`. The link steps refuse a cookie that is not this org's (P-Y10). */
+  sessionSecret: string;
   sites?: SitesStore;
 }
 
@@ -78,6 +81,7 @@ export async function startLink(deps: ShipDeps, orgId: string, body: unknown, no
     app,
     repo_full_name: repoName,
     installation_id: null,
+    repo_id: null,
     pkce_verifier: randomToken(48),
     state: "started",
     message: null,
@@ -99,9 +103,35 @@ async function liveSession(deps: ShipDeps, id: string | null, now: Date): Promis
 
 const signInOnGithub = (deps: ShipDeps, id: string) => ({ redirect: deps.github.userAuthorizeUrl(id, `${deps.consoleUrl}${GITHUB_USER_CALLBACK_PATH}`) });
 
-/** The first browser step: where to send the user next. */
-export async function go(deps: ShipDeps, id: string | null, now: Date): Promise<{ redirect: string } | { done: string }> {
+/**
+ * The link was opened in a browser. The `?s=` token is not enough: a forwarded
+ * link would grant GitHub and Cloudflare for someone else's org (P-Y10). The
+ * console session must be that org's, and the org name is shown before any grant.
+ */
+export async function sameOrgSession(deps: ShipDeps, cookie: string | null, orgId: string, now: Date): Promise<Session> {
+  const session = await openSession(deps.sessionSecret, cookie, now);
+  if (!session) throw new ShipError("Sign in to Railyard in this browser, then open the link again.", 403);
+  if (session.org !== orgId) {
+    const org = await deps.repo.getOrg(orgId);
+    const name = org?.name || "another organization";
+    throw new ShipError(`This link is for ${name}. You are not signed in to that organization, so nothing was granted. Sign in to ${name} and open the link again.`, 403);
+  }
+  return session;
+}
+
+/** Names the org and the repository before GitHub or Cloudflare is asked for anything. */
+export async function consentPage(deps: ShipDeps, s: LinkSession, kind: "github" | "cloudflare"): Promise<{ confirm: string }> {
+  const org = await deps.repo.getOrg(s.org_id);
+  const name = org?.name || "your organization";
+  const next = kind === "github" ? "install or confirm the Railyard GitHub app" : "grant Cloudflare";
+  return { confirm: `You are linking ${s.repo_full_name} for ${name}. Continue to ${next}. Nothing is granted until you continue.` };
+}
+
+/** The first browser step: where to send the user next. `ready` is set only after the org was named. */
+export async function go(deps: ShipDeps, id: string | null, now: Date, opts: { cookie: string | null; ready: boolean }): Promise<{ redirect: string } | { done: string } | { confirm: string }> {
   const s = await liveSession(deps, id, now);
+  await sameOrgSession(deps, opts.cookie, s.org_id, now);
+  if (!opts.ready) return consentPage(deps, s, "github");
   const inst = await deps.github.repoInstallation(s.repo_full_name, now);
   if (!inst) return { redirect: deps.github.installUrl(id as string) };
   // Installed (maybe by someone else, for all their repositories): GitHub must still say who is linking.
@@ -132,11 +162,13 @@ export async function githubUserCallback(deps: ShipDeps, q: URLSearchParams, now
     if (e instanceof GithubError) throw new ShipError(e.message, e.status >= 500 ? 502 : 400);
     throw e;
   }
-  if (!access || !access.push) {
+  if (!access || !access.push || access.id <= 0) {
     const message = `Your GitHub account cannot push to ${s.repo_full_name}, so it cannot link it. Someone with write access to the repository has to run railyard link.`;
     await deps.store.updateSession(idHash, { state: "failed", message });
     throw new ShipError(message, 403);
   }
+  // The id GitHub just confirmed is what finish looks up. A later rename of the name cannot replace it (P-Y11).
+  await deps.store.updateSession(idHash, { repo_id: access.id });
   const inst = await deps.github.repoInstallation(s.repo_full_name, now);
   if (!inst) throw new ShipError(`The Railyard app is not installed on ${s.repo_full_name}. Open the link again to install it.`, 409);
   return afterGithub(deps, id as string, s, inst, now);
@@ -148,7 +180,8 @@ async function afterGithub(deps: ShipDeps, id: string, s: LinkSession, inst: { i
   const known = await deps.store.getInstallation(inst.id);
   if (!known) await deps.store.saveInstallation({ installation_id: inst.id, org_id: s.org_id, account_login: inst.account_login, created_at: now.toISOString() });
   await deps.store.updateSession(await sha256Hex(id), { installation_id: inst.id, state: "github_done" });
-  if (await deps.store.getCloudflare(s.org_id)) return { done: await finish(deps, id, { ...s, installation_id: inst.id }, now) };
+  const checked = await deps.store.getSession(await sha256Hex(id));
+  if (await deps.store.getCloudflare(s.org_id)) return { done: await finish(deps, id, { ...s, ...checked, installation_id: inst.id }, now) };
   return { redirect: await deps.cloudflare.authorizeLink(id, s.pkce_verifier) };
 }
 
@@ -164,10 +197,12 @@ export async function githubSetup(deps: ShipDeps, q: URLSearchParams, now: Date)
   return signInOnGithub(deps, id as string);
 }
 
-/** Cloudflare's redirect after the consent screen. */
-export async function cloudflareCallback(deps: ShipDeps, q: URLSearchParams, now: Date): Promise<{ done: string }> {
+/** Cloudflare's redirect after the consent screen. `ready` is set only after the org was named. */
+export async function cloudflareCallback(deps: ShipDeps, q: URLSearchParams, now: Date, opts: { cookie: string | null; ready: boolean }): Promise<{ done: string } | { confirm: string }> {
   const id = q.get("state");
   const s = await liveSession(deps, id, now);
+  await sameOrgSession(deps, opts.cookie, s.org_id, now);
+  if (!opts.ready && !q.get("error")) return consentPage(deps, s, "cloudflare");
   if (q.get("error")) {
     await deps.store.updateSession(await sha256Hex(id as string), { state: "failed", message: "Cloudflare access was not granted." });
     throw new ShipError("Cloudflare access was not granted, so nothing was linked. Run railyard link again when you are ready.", 400);
@@ -193,14 +228,22 @@ export async function cloudflareCallback(deps: ShipDeps, q: URLSearchParams, now
     access_expires_at: new Date(now.getTime() + tokens.expires_in * 1000).toISOString(),
     updated_at: now.toISOString(),
   });
-  return { done: await finish(deps, id as string, s, now) };
+  const checked = await deps.store.getSession(await sha256Hex(id as string));
+  return { done: await finish(deps, id as string, { ...s, ...checked }, now) };
 }
 
 async function finish(deps: ShipDeps, id: string, s: LinkSession, now: Date): Promise<string> {
   const idHash = await sha256Hex(id);
   try {
+    if (!s.repo_id) throw new ShipError("This link was not checked against the repository. Run railyard link again.", 409);
     const token = await deps.github.installationToken(s.installation_id as number, now);
-    const repo = await deps.github.repo(token, s.repo_full_name);
+    const repo = await deps.github.repoById(token, s.repo_id).catch((e: unknown) => {
+      if (e instanceof GithubError && e.status === 404) throw new ShipError("GitHub did not return the repository this link was checked against. A renamed or look-alike repository is not linked. Run railyard link again.", 409);
+      throw e;
+    });
+    if (repo.id !== s.repo_id || repo.full_name.toLowerCase() !== s.repo_full_name.toLowerCase()) {
+      throw new ShipError(`${s.repo_full_name} is not the repository this link was checked against. A renamed or look-alike repository is not linked. Run railyard link again.`, 409);
+    }
     const other = await deps.store.findLinkByRepoId(repo.id);
     if (other && other.org_id !== s.org_id) throw new ShipError("This repository is linked to another Railyard organization.", 403);
     const prUrl = await deps.github.openWorkflowPr(token, repo, WORKFLOW_PATH, workflowYaml({ consoleUrl: deps.consoleUrl, productionBranch: repo.default_branch }));

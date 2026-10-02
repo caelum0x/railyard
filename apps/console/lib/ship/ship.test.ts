@@ -9,18 +9,21 @@ import { createHmac, createVerify, generateKeyPairSync } from "node:crypto";
 import { MemoryRepo } from "../repo.ts";
 import { emptyEntitlement } from "../types.ts";
 import { b64url } from "../crypto.ts";
+import { sealSession, SESSION_COOKIE } from "../session.ts";
 import { CloudflareOAuth, pkceChallenge } from "./cloudflare.ts";
 import { GithubApp } from "./github.ts";
 import { fromB64url, pkcs1ToPkcs8, signRs256, verifyRs256, type Jwk } from "./jwt.ts";
 import { MemoryShipStore } from "./store.ts";
 import { ciReport, ciSession, cloudflareCallback, githubSetup, githubUserCallback, go, linkStatus, ShipError, startLink, webhook, type ShipDeps } from "./service.ts";
-import { ciSessionH, goH, linkStartH, page, webhookH } from "./http.ts";
+import { ciSessionH, cloudflareCallbackH, goH, linkStartH, page, webhookH } from "./http.ts";
 import { WORKFLOW_PATH, workflowYaml } from "./workflow.ts";
 import { manifest, manifestDone } from "./manifest.ts";
 
 const T0 = new Date("2026-09-30T10:00:00Z");
 const CONSOLE = "https://railyard.example";
 const CREDS_KEY = Buffer.alloc(32, 7).toString("base64");
+/** Same secret the console uses to seal `ry_session` (P-Y10). */
+const SESSION_SECRET = "ry-session-secret-for-ship-tests";
 const REPO_ID = 4242;
 const FULL = "acme/shop";
 const INST = 777;
@@ -106,7 +109,7 @@ function fakes() {
         return reply(404);
       }
       if (!auth.startsWith("Bearer ghs_install_")) return reply(401);
-      if (p === `/repos/${FULL}`) return reply(200, { id: REPO_ID, full_name: FULL, default_branch: "main", owner: { login: "acme" } });
+      if (p === `/repos/${FULL}` || p === `/repositories/${REPO_ID}`) return reply(200, { id: REPO_ID, full_name: FULL, default_branch: "main", owner: { login: "acme" } });
       if (p === `/repos/${FULL}/contents/${WORKFLOW_PATH}`) {
         const ref = url.searchParams.get("ref") ?? JSON.parse(body || "{}").branch;
         if (method === "GET") {
@@ -186,6 +189,7 @@ async function setup(opts: { plan?: "addon" | "none"; active?: boolean } = {}) {
     oidcKeys: async () => [oidcJwk],
     consoleUrl: CONSOLE,
     credentialsKey: CREDS_KEY,
+    sessionSecret: SESSION_SECRET,
   };
   return { ...f, repo, store, deps, org: org.id };
 }
@@ -196,10 +200,16 @@ async function signInOnGithub(s: Awaited<ReturnType<typeof setup>>, id: string, 
   return githubUserCallback(s.deps, new URLSearchParams({ code, state: id }), T0);
 }
 
+/** The org's own console session, already past the page that names the org (P-Y10). */
+async function ownerBrowser(s: Awaited<ReturnType<typeof setup>>) {
+  const cookie = await sealSession(SESSION_SECRET, { uid: "u1", email: "founder@example.com", org: s.org }, T0);
+  return { cookie, ready: true as const };
+}
+
 /** Walks the browser half: install the App, sign in on GitHub, grant Cloudflare. Returns the session id and the final message. */
 async function linkThrough(s: Awaited<ReturnType<typeof setup>>) {
   const { id } = await startLink(s.deps, s.org, { repo: FULL, app: "Shop" }, T0);
-  const first = await go(s.deps, id, T0);
+  const first = await go(s.deps, id, T0, await ownerBrowser(s));
   assert.ok("redirect" in first);
   s.gh.installedOn.add(FULL);
   const setupStep = await githubSetup(s.deps, new URLSearchParams({ installation_id: String(INST), setup_action: "install", state: id }), T0);
@@ -214,7 +224,7 @@ async function linkThrough(s: Awaited<ReturnType<typeof setup>>) {
   const auth = new URL(second.redirect);
   const session = [...s.store.sessions.values()][0]!;
   s.cf.codes.set("code-1", auth.searchParams.get("code_challenge")!);
-  const done = await cloudflareCallback(s.deps, new URLSearchParams({ code: "code-1", state: id }), T0);
+  const done = await cloudflareCallback(s.deps, new URLSearchParams({ code: "code-1", state: id }), T0, await ownerBrowser(s));
   return { id, first, second, auth, session, done };
 }
 
@@ -277,7 +287,75 @@ test("link: two browser steps (install on the repo, grant Cloudflare), then one 
   // Another org cannot read this link's status.
   await assert.rejects(linkStatus(s.deps, crypto.randomUUID(), id), (e: ShipError) => e.status === 404);
   // A used link cannot be replayed.
-  await assert.rejects(go(s.deps, id, T0), (e: ShipError) => e.status === 409);
+  await assert.rejects(go(s.deps, id, T0, await ownerBrowser(s)), (e: ShipError) => e.status === 409);
+});
+
+test("link: a renamed or look-alike repository is refused; finish looks up by the stored repo id (P-Y11)", async () => {
+  const s = await setup();
+  const { id } = await startLink(s.deps, s.org, { repo: FULL, app: "shop" }, T0);
+  s.gh.installedOn.add(FULL);
+  assert.ok("redirect" in (await go(s.deps, id, T0, await ownerBrowser(s))));
+  // GitHub says this person can push to repository 4242 (acme/shop). That id is what finish must use.
+  const signIn = await signInOnGithub(s, id);
+  assert.ok("redirect" in signIn);
+  const session = [...s.store.sessions.values()].find((row) => row.app === "shop")!;
+  assert.equal(session.repo_id, REPO_ID);
+  // Between the check and finish the name now points at a different repository (renamed away, or a look-alike that took the name).
+  const original = s.fetchImpl;
+  s.deps.github.fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const auth = new Headers(init?.headers).get("authorization") ?? "";
+    if (url.host === "api.github.com" && url.pathname === `/repos/${FULL}` && auth.startsWith("Bearer ghs_install_")) {
+      return new Response(JSON.stringify({ id: 9999, full_name: "attacker/shop", default_branch: "main", owner: { login: "attacker" } }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.host === "api.github.com" && url.pathname === "/repositories/4242" && auth.startsWith("Bearer ghs_install_")) {
+      return new Response(JSON.stringify({ id: 9999, full_name: "attacker/shop", default_branch: "main", owner: { login: "attacker" } }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return original(input, init);
+  }) as typeof fetch;
+  const auth = new URL(signIn.redirect);
+  s.cf.codes.set("code-rename", auth.searchParams.get("code_challenge")!);
+  await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ code: "code-rename", state: id }), T0, await ownerBrowser(s)), (e: ShipError) => e.status === 409 && /renamed or look-alike/.test(e.message));
+  assert.equal(s.store.links.length, 0, "a renamed or look-alike repository is not linked");
+  assert.equal(s.gh.prs.length, 0, "no pull request on the look-alike");
+  assert.equal((await linkStatus(s.deps, s.org, id)).state, "failed");
+  // The stored id still named acme/shop is linked, and finish asks GitHub by that id (a name lookup would hit the look-alike).
+  s.deps.github.fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const method = init?.method ?? "GET";
+    const authz = new Headers(init?.headers).get("authorization") ?? "";
+    if (url.host === "api.github.com" && authz.startsWith("Bearer ghs_install_")) {
+      if (url.pathname === "/repositories/4242") {
+        s.gh.calls.push(`${method} ${url.pathname}`);
+        return new Response(JSON.stringify({ id: REPO_ID, full_name: FULL, default_branch: "main", owner: { login: "acme" } }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.pathname === `/repos/${FULL}`) {
+        s.gh.calls.push(`NAME ${url.pathname}`);
+        return new Response(JSON.stringify({ id: 9999, full_name: "attacker/shop", default_branch: "main", owner: { login: "attacker" } }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+    }
+    return original(input, init);
+  }) as typeof fetch;
+  const fresh = await setup();
+  fresh.gh.installedOn.add(FULL);
+  const { id: id2 } = await startLink(fresh.deps, fresh.org, { repo: FULL, app: "other" }, T0);
+  assert.ok("redirect" in (await go(fresh.deps, id2, T0, await ownerBrowser(fresh))));
+  const signedIn = await signInOnGithub(fresh, id2);
+  assert.ok("redirect" in signedIn);
+  const counted = s.deps.github.fetchImpl;
+  fresh.deps.github.fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    fresh.gh.calls.push(`${init?.method ?? "GET"} ${url.pathname}`);
+    return counted(input, init);
+  }) as typeof fetch;
+  const auth2 = new URL(signedIn.redirect);
+  fresh.cf.codes.set("code-same", auth2.searchParams.get("code_challenge")!);
+  const done = await cloudflareCallback(fresh.deps, new URLSearchParams({ code: "code-same", state: id2 }), T0, await ownerBrowser(fresh));
+  assert.match(done.done, /Linked acme\/shop to other/);
+  assert.equal(fresh.store.links[0]!.repo_id, REPO_ID);
+  assert.equal(fresh.store.links[0]!.repo_full_name, FULL);
+  assert.ok(fresh.gh.calls.some((c) => c.includes("/repositories/4242")), "finish asked GitHub for the stored id");
+  assert.ok(!fresh.gh.calls.some((c) => c.startsWith("NAME ")), "finish did not look the repository up by name");
 });
 
 test("link: with the App installed and Cloudflare granted, the link finishes on the first open (no click)", async () => {
@@ -285,7 +363,7 @@ test("link: with the App installed and Cloudflare granted, the link finishes on 
   await linkThrough(s);
   s.gh.files.set(`main:${WORKFLOW_PATH}`, workflowYaml({ consoleUrl: CONSOLE, productionBranch: "main" }));
   const { id } = await startLink(s.deps, s.org, { repo: FULL, app: "shop" }, T0);
-  assert.ok("redirect" in (await go(s.deps, id, T0)));
+  assert.ok("redirect" in (await go(s.deps, id, T0, await ownerBrowser(s))));
   const r = await signInOnGithub(s, id);
   assert.ok("done" in r && /The workflow is already on main; your next push there goes live\./.test(r.done));
   assert.equal(s.gh.prs.length, 1, "no second pull request");
@@ -298,25 +376,25 @@ test("link: bad input, a paused org, an expired link, a forged install and a ref
   const paused = await setup({ active: false });
   await assert.rejects(startLink(paused.deps, paused.org, { repo: FULL, app: "shop" }, T0), (e: ShipError) => e.status === 402 && /renew the add-on/.test(e.message));
   const { id } = await startLink(s.deps, s.org, { repo: FULL, app: "shop" }, T0);
-  await assert.rejects(go(s.deps, id, new Date(T0.getTime() + 16 * 60_000)), (e: ShipError) => e.status === 410);
+  await assert.rejects(go(s.deps, id, new Date(T0.getTime() + 16 * 60_000), await ownerBrowser(s)), (e: ShipError) => e.status === 410);
   // GitHub's setup redirect names an installation, but the App is not on the repo: nothing links.
   await assert.rejects(githubSetup(s.deps, new URLSearchParams({ installation_id: "999", state: id }), T0), (e: ShipError) => e.status === 409);
   // Cloudflare before GitHub: refused.
-  await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ code: "c", state: id }), T0), (e: ShipError) => e.status === 409);
+  await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ code: "c", state: id }), T0, await ownerBrowser(s)), (e: ShipError) => e.status === 409);
   s.gh.installedOn.add(FULL);
   await githubSetup(s.deps, new URLSearchParams({ state: id }), T0);
   // Setup alone (no GitHub sign-in yet) does not unlock the Cloudflare step.
-  await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ code: "c", state: id }), T0), (e: ShipError) => e.status === 409);
+  await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ code: "c", state: id }), T0, await ownerBrowser(s)), (e: ShipError) => e.status === 409);
   await signInOnGithub(s, id);
-  await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ error: "access_denied", state: id }), T0), (e: ShipError) => e.status === 400);
+  await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ error: "access_denied", state: id }), T0, await ownerBrowser(s)), (e: ShipError) => e.status === 400);
   assert.equal((await linkStatus(s.deps, s.org, id)).state, "failed");
   // A wrong PKCE verifier (a stolen code) is refused by the token endpoint.
   const { id: id2 } = await startLink(s.deps, s.org, { repo: FULL, app: "shop" }, T0);
-  const r = await go(s.deps, id2, T0);
+  const r = await go(s.deps, id2, T0, await ownerBrowser(s));
   assert.ok("redirect" in r);
   assert.ok("redirect" in (await signInOnGithub(s, id2)));
   s.cf.codes.set("stolen", await pkceChallenge("a-different-verifier-of-enough-length-xxxxxxxxxxxxxx"));
-  await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ code: "stolen", state: id2 }), T0), /invalid_grant/);
+  await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ code: "stolen", state: id2 }), T0, await ownerBrowser(s)), /invalid_grant/);
 });
 
 test("link: another Railyard org cannot link a repository it cannot push to, even where the shared App is installed", async () => {
@@ -326,12 +404,13 @@ test("link: another Railyard org cannot link a repository it cannot push to, eve
   const attacker = await s.repo.createOrgForUser({ userId: "u-evil", email: "evil@example.com", name: "Evil" });
   await s.repo.saveEntitlement({ ...emptyEntitlement(attacker.id, T0), plan: "addon", status: "active", addon_slots: ["deploy"], apps_limit: 10 });
   const { id } = await startLink(s.deps, attacker.id, { repo: FULL, app: "loot" }, T0);
+  const asAttacker = { cookie: await sealSession(SESSION_SECRET, { uid: "u-evil", email: "evil@example.com", org: attacker.id }, T0), ready: true as const };
   // Opening the link never skips straight to Cloudflare or the pull request: GitHub must say who this is.
-  const first = await go(s.deps, id, T0);
+  const first = await go(s.deps, id, T0, asAttacker);
   assert.ok("redirect" in first && first.redirect.startsWith("https://github.com/login/oauth/authorize"));
   assert.equal(s.gh.prs.length, 0);
   // The Cloudflare step and a replayed setup redirect do not bypass the sign-in.
-  await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ code: "c", state: id }), T0), (e: ShipError) => e.status === 409);
+  await assert.rejects(cloudflareCallback(s.deps, new URLSearchParams({ code: "c", state: id }), T0, asAttacker), (e: ShipError) => e.status === 409);
   assert.ok("redirect" in (await githubSetup(s.deps, new URLSearchParams({ installation_id: String(INST), state: id }), T0)));
   // The attacker's GitHub account can read the repository but not push to it: refused, nothing linked.
   s.gh.userCodes.set("evil-code", { token: "ghu_evil", push: false });
@@ -348,6 +427,92 @@ test("link: another Railyard org cannot link a repository it cannot push to, eve
   const own = await linkThrough(s);
   assert.match(own.done.done, /^Linked acme\/shop to shop\./);
   assert.equal(s.store.links[0]!.org_id, s.org);
+});
+
+test("link/go and the Cloudflare step need an ry_session of the same org, and the org name is shown before any grant (P-Y10)", async () => {
+  const s = await setup();
+  const org = await s.repo.getOrg(s.org);
+  assert.equal(org?.name, "Acme");
+  const { id, url } = await startLink(s.deps, s.org, { repo: FULL, app: "shop" }, T0);
+  const owner = await sealSession(SESSION_SECRET, { uid: "u1", email: "founder@example.com", org: s.org }, T0);
+  const otherOrg = await s.repo.createOrgForUser({ userId: "u-other", email: "other@example.com", name: "Other Co" });
+  const other = await sealSession(SESSION_SECRET, { uid: "u-other", email: "other@example.com", org: otherOrg.id }, T0);
+  const cookie = (value: string) => ({ cookie: `${SESSION_COOKIE}=${value}` });
+
+  // No console session: the link token alone is not enough (a forwarded link).
+  const bare = await goH(s.deps, new Request(url), T0);
+  assert.equal(bare.status, 403);
+  assert.match(await bare.text(), /Sign in/);
+  assert.equal(s.gh.calls.length, 0, "nothing is asked of GitHub before the session matches");
+
+  // A session of a different org (the phishing replay) is the same refusal.
+  const phish = await goH(s.deps, new Request(url, { headers: cookie(other) }), T0);
+  assert.equal(phish.status, 403);
+  const phishHtml = await phish.text();
+  assert.match(phishHtml, /Acme/);
+  assert.match(phishHtml, /not signed in to that organization/);
+  assert.equal(s.gh.calls.length, 0);
+  assert.equal(s.store.links.length, 0);
+  assert.equal(s.store.cloudflare.size, 0);
+
+  // A bad or expired cookie is not a session.
+  const junk = await goH(s.deps, new Request(url, { headers: cookie("not-a-session") }), T0);
+  assert.equal(junk.status, 403);
+  const expired = await sealSession(SESSION_SECRET, { uid: "u1", email: "founder@example.com", org: s.org }, new Date(T0.getTime() - 8 * 24 * 3600 * 1000));
+  assert.equal((await goH(s.deps, new Request(url, { headers: cookie(expired) }), T0)).status, 403);
+
+  // The owner's session is shown the org name and then sent to GitHub. The grant has not happened yet.
+  const shown = await goH(s.deps, new Request(url, { headers: cookie(owner) }), T0);
+  assert.equal(shown.status, 200);
+  const shownHtml = await shown.text();
+  assert.match(shownHtml, /Acme/);
+  assert.match(shownHtml, /acme\/shop/);
+  assert.ok(!/github\.com\/apps\//.test(shown.headers.get("location") ?? shownHtml), "the install is not started on the page that only names the org");
+  assert.equal(s.gh.calls.length, 0);
+
+  // Continuing is a same-origin POST of the form. A copied URL, another origin, or another org does not start the grant.
+  const confirm = (value: string, extra: Record<string, string> = {}) =>
+    new Request(url, { method: "POST", headers: { ...cookie(value), origin: CONSOLE, "content-type": "application/x-www-form-urlencoded", ...extra }, body: `s=${encodeURIComponent(id)}&confirm=1` });
+  const phishConfirm = await goH(s.deps, confirm(other), T0);
+  assert.equal(phishConfirm.status, 403);
+  assert.equal((await goH(s.deps, new Request(`${url}&confirm=1`, { headers: cookie(owner) }), T0)).status, 200, "a confirm flag in the URL is still only the naming page");
+  assert.equal((await goH(s.deps, confirm(owner, { origin: "https://evil.example" }), T0)).status, 200, "another origin cannot continue");
+  assert.equal(s.gh.calls.length, 0);
+  const goOn = await goH(s.deps, confirm(owner), T0);
+  assert.equal(goOn.status, 302);
+  assert.match(goOn.headers.get("location") ?? "", /github\.com\/apps\/railyard-test\/installations\/new/);
+
+  // Walk GitHub as the owner, then the Cloudflare return.
+  s.gh.installedOn.add(FULL);
+  assert.ok("redirect" in (await githubSetup(s.deps, new URLSearchParams({ installation_id: String(INST), state: id }), T0)));
+  const signed = await signInOnGithub(s, id);
+  assert.ok("redirect" in signed);
+  const cf = new URL(signed.redirect);
+  s.cf.codes.set("code-phish", cf.searchParams.get("code_challenge")!);
+  const cb = `${CONSOLE}/api/v1/github/cloudflare/callback?code=code-phish&state=${encodeURIComponent(id)}`;
+
+  // Another org's session replaying the Cloudflare redirect gets 403 and stores no grant.
+  const stolen = await cloudflareCallbackH(s.deps, new Request(cb, { headers: cookie(other) }), T0);
+  assert.equal(stolen.status, 403);
+  assert.match(await stolen.text(), /Acme/);
+  assert.equal(s.store.cloudflare.size, 0);
+  assert.equal(s.cf.lastForm, null, "the code was not exchanged");
+  assert.equal((await cloudflareCallbackH(s.deps, new Request(cb), T0)).status, 403);
+
+  // The same org sees its name, then confirms, and only then is the grant stored.
+  const preview = await cloudflareCallbackH(s.deps, new Request(cb, { headers: cookie(owner) }), T0);
+  assert.equal(preview.status, 200);
+  assert.match(await preview.text(), /Acme/);
+  assert.equal(s.store.cloudflare.size, 0, "naming the org is not the grant");
+  const granted = await cloudflareCallbackH(
+    s.deps,
+    new Request(cb, { method: "POST", headers: { ...cookie(owner), origin: CONSOLE, "content-type": "application/x-www-form-urlencoded" }, body: `code=code-phish&state=${encodeURIComponent(id)}&confirm=1` }),
+    T0,
+  );
+  assert.equal(granted.status, 200);
+  assert.match(await granted.text(), /Linked acme\/shop to shop/);
+  assert.equal(s.store.cloudflare.size, 1);
+  assert.equal(s.store.links.length, 1);
 });
 
 // ------------------------------------------------------------------- ci ----
@@ -423,7 +588,7 @@ test("webhook: signed events only; an uninstall or a removed repository drops it
   assert.deepEqual(await webhook(s.deps, "whsec-test", "installation_repositories", sign(removed), removed), { handled: true, links_removed: 1 });
   await assert.rejects(ciSession(s.deps, `Bearer ${await oidc()}`, T0), (e: ShipError) => e.status === 404);
   const again = await startLink(s.deps, s.org, { repo: FULL, app: "shop" }, T0);
-  const relink = await go(s.deps, again.id, T0);
+  const relink = await go(s.deps, again.id, T0, await ownerBrowser(s));
   assert.ok("redirect" in relink && relink.redirect.startsWith("https://github.com/login/oauth/authorize"), "GitHub confirms who is relinking (no click once authorized)");
   assert.ok("done" in (await signInOnGithub(s, again.id)), "relinking needs no Cloudflare step once the grant exists");
   const deleted = JSON.stringify({ action: "deleted", installation: { id: INST } });
@@ -445,7 +610,8 @@ test("no token is ever shown: pages, link responses and status carry none; the w
   assert.ok(started.url.startsWith(`${CONSOLE}/api/v1/github/link/go?s=`));
   assert.equal((await linkStartH(s.deps, s.repo, new Request(`${CONSOLE}/x`, { method: "POST" }), T0)).status, 401);
   assert.equal((await linkStartH(null, s.repo, new Request(`${CONSOLE}/x`, { method: "POST", headers: { authorization: `Bearer ${token}` } }), T0)).status, 503);
-  const goRes = await goH(s.deps, new Request(started.url), T0);
+  const owner = await sealSession(SESSION_SECRET, { uid: "u1", email: "founder@example.com", org: s.org }, T0);
+  const goRes = await goH(s.deps, new Request(started.url, { method: "POST", headers: { cookie: `${SESSION_COOKIE}=${owner}`, origin: CONSOLE, "content-type": "application/x-www-form-urlencoded" }, body: `s=${encodeURIComponent(started.id)}&confirm=1` }), T0);
   assert.equal(goRes.status, 302);
   s.gh.installedOn.add(FULL);
   const { done } = await linkThrough(s);

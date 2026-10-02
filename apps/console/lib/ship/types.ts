@@ -46,6 +46,8 @@ export interface LinkSession {
   org_id: string;
   app: string;
   repo_full_name: string;
+  /** GitHub's repository id, stored when the linking user is checked (P-Y11). Null until then. */
+  repo_id: number | null;
   installation_id: number | null;
   pkce_verifier: string;
   state: LinkState;

@@ -54,6 +54,7 @@ function shipDeps(cfg: Config, repo: Repo, sites: SitesStore): ShipDeps | null {
     oidcKeys: githubOidcKeys(),
     consoleUrl: cfg.consoleUrl,
     credentialsKey: cfg.ship.credentialsKey,
+    sessionSecret: cfg.sessionSecret,
     sites,
   };
 }

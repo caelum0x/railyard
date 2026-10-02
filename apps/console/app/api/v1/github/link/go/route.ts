@@ -7,3 +7,8 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   return goH(deps().ship, req, new Date());
 }
+
+/** The form that names the org posts back here before any GitHub grant (P-Y10). */
+export async function POST(req: Request) {
+  return goH(deps().ship, req, new Date());
+}
