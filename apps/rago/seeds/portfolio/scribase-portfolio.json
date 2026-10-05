@@ -39,6 +39,14 @@
       "description": "One event per email accepted by the sender.",
       "aggregation_type": "count_agg",
       "recurring": false
+    },
+    {
+      "name": "Scribase Purchases tracked revenue",
+      "code": "scribase.purchases.tracked_revenue",
+      "description": "One event per organization and month: tracked_usd is the store revenue Purchases tracked, billable_usd the share Scribase bills (Wave Q 5.2, QU1.4).",
+      "aggregation_type": "sum_agg",
+      "recurring": false,
+      "field_name": "tracked_usd"
     }
   ],
   "plans": [
@@ -86,6 +94,14 @@
         },
         {
           "billable_metric_code": "scribase.email.sent",
+          "charge_model": "standard",
+          "invoiceable": true,
+          "properties": {
+            "amount": "0.0"
+          }
+        },
+        {
+          "billable_metric_code": "scribase.purchases.tracked_revenue",
           "charge_model": "standard",
           "invoiceable": true,
           "properties": {

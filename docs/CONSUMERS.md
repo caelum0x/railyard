@@ -172,7 +172,7 @@ reads `RAILYARD_LIVE` at deploy.
 
 | Product | Meters (Rago `code`) | `RAILYARD_LIVE=0` | `RAILYARD_LIVE=1` |
 |---|---|---|---|
-| Scribase | `scribase.addon.slot_active`, `scribase.ai.tokens`, `scribase.analytics.events`, `scribase.push.sent`, `scribase.email.sent` | counts stay in Scribase (`scribase.usage_*`, add-on rows) | the carve-out metering hook (`CA/adapters/railyard/metering.rs`) posts each event |
+| Scribase | `scribase.addon.slot_active`, `scribase.ai.tokens`, `scribase.analytics.events`, `scribase.push.sent`, `scribase.email.sent`, `scribase.purchases.tracked_revenue` (Wave Q, one event per organization and month) | counts stay in Scribase (`scribase.usage_*`, add-on rows) | the carve-out metering hook (`CA/adapters/railyard/metering.rs`) posts each event |
 | Menivor | `menivor.reel.rendered`, `menivor.preset.render`, `menivor.lora.train`, `menivor.ott.gb_stored`, `menivor.ott.minutes_delivered`, `menivor.ott.encode_minutes`, `menivor.ai.minutes` | Menivor's own ledger only | PM1.5 posts each event |
 | Rally | `rally.email.sent`, `rally.lead.revealed`, `rally.verification`, `rally.passthrough.domain`, `rally.passthrough.mailbox` | Rally's own counts only | PR1.5 posts each event |
 

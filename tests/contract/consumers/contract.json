@@ -34,7 +34,8 @@
         "scribase.ai.tokens",
         "scribase.analytics.events",
         "scribase.push.sent",
-        "scribase.email.sent"
+        "scribase.email.sent",
+        "scribase.purchases.tracked_revenue"
       ],
       "sample_events": [
         {
@@ -79,6 +80,17 @@
           "code": "scribase.email.sent",
           "timestamp": 1790683200,
           "properties": {},
+          "external_subscription_id": "scribase-portfolio-scribase_org_0001"
+        },
+        {
+          "transaction_id": "scribase:scribase.purchases.tracked_revenue:scribase_org_0001_202609",
+          "external_customer_id": "scribase_org_0001",
+          "code": "scribase.purchases.tracked_revenue",
+          "timestamp": 1790683200,
+          "properties": {
+            "tracked_usd": 3000.0,
+            "billable_usd": 5.0
+          },
           "external_subscription_id": "scribase-portfolio-scribase_org_0001"
         }
       ]
