@@ -10,6 +10,7 @@
     "migrate": "node scripts/migrate.ts",
     "test": "node --test --test-force-exit --test-concurrency=1 test/a1/*.test.ts",
     "test:browser": "node --test --test-force-exit test/a1/browser.test.ts",
+    "test:egress": "node --test --test-force-exit test/a3/net-guard.test.ts",
     "test:qy": "node --test --test-force-exit --test-concurrency=1 test/qy/*.test.ts",
     "capacity": "node test/a1/capacity.ts",
     "typecheck": "tsc --noEmit"
