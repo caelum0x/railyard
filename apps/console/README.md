@@ -8,7 +8,10 @@ Usage, Billing), one primary action on each, a pause switch and one-click cancel
 ## How it works
 
 - **Sign-in:** the console's own Scribase project handles Google and GitHub
-  (OAuth with PKCE). The console reads the user from the auth server, creates the
+  (OAuth with PKCE) and email: a one-time code mailed by Scribase Auth
+  (`POST /otp`, then `POST /verify`, `lib/email-signin.ts`). Email sign-in needs
+  no OAuth app, so the console can open before the Google and GitHub apps exist
+  (`RAILYARD_OAUTH_PROVIDERS=` hides their buttons). The console reads the user from the auth server, creates the
   org and its entitlements row, and keeps a signed, HttpOnly session cookie.
 - **Data:** schema `railyard` in the same Scribase project
   (`db/migrations/0001_railyard_console.sql`), reached with the service role
@@ -31,6 +34,7 @@ Usage, Billing), one primary action on each, a pause switch and one-click cancel
 |---|---|---|
 | `SCRIBASE_URL` | var | The console's Scribase project URL |
 | `SCRIBASE_ANON_KEY` | secret | Project anon key (sign-in calls only) |
+| `RAILYARD_OAUTH_PROVIDERS` | var | OAuth buttons to show, comma separated (default `google,github`; empty = email sign-in only) |
 | `SCRIBASE_SERVICE_ROLE_KEY` | secret | Project service role (schema `railyard`) |
 | `RAILYARD_SESSION_SECRET` | secret | 32+ random bytes; signs sessions and checkout metadata |
 | `DODO_API_KEY` | secret | Test-mode key of the `railyard` brand |
@@ -94,7 +98,9 @@ test starts a throwaway local Postgres.
 2. Apply `db/migrations/0001_railyard_console.sql`, then
    `db/migrations/0002_scribase_bridge.sql` and `db/migrations/0003_ai_gateway.sql`, to the console's Scribase project
    and add `railyard` to its exposed schemas.
-3. Enable Google and GitHub sign-in on that project with
-   `https://railyard.ereboslab.com/auth/callback` as a redirect URL.
+3. Email sign-in works as soon as the project mails (its SMTP or Rally Send).
+   Later, enable Google and GitHub sign-in on that project with
+   `https://railyard.ereboslab.com/auth/callback` as a redirect URL and drop
+   `RAILYARD_OAUTH_PROVIDERS`.
 4. Point the webhook at `/api/billing/webhook`, then run one card check and one
    refund in test mode and record the result.

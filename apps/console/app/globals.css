@@ -32,7 +32,7 @@ h2 { font-size: 16px; margin: 0 0 10px; }
 .primary { background: var(--accent); color: #fff; box-shadow: 0 6px 18px rgba(47, 91, 234, 0.3); }
 .ghost { background: transparent; color: var(--muted); }
 .icon { background: var(--glass); border: 1px solid var(--line); border-radius: 10px; width: 36px; height: 36px; display: inline-grid; place-items: center; cursor: pointer; }
-input[type="text"] { font: inherit; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line); background: #fff; min-width: 240px; }
+input[type="text"], input[type="email"] { font: inherit; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line); background: #fff; min-width: 240px; }
 pre { background: #1d2433; color: #e8ecf5; padding: 14px 16px; border-radius: 12px; overflow-x: auto; margin: 0; font-size: 13px; }
 .list { list-style: none; padding: 0; margin: 0; }
 .list li { padding: 12px 0; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; }
