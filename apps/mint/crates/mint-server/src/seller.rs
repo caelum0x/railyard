@@ -16,12 +16,9 @@
 //!   success_url, cancel_url?}` → `{url, id}`: the buyer pays the seller's
 //!   processor directly.
 //!   `discount_code?` applies one of the seller's discount codes up front.
-//! - `POST /mint/v1/sellers/{seller}/discounts` `{code, type, amount,
-//!   expires_at?, name?, currency_options?, restricted_to?}` (Dodo's
-//!   `POST /discounts` shape; `restricted_to` holds the seller's skus) →
-//!   `{discount:{id, code, type, amount, expires_at}}`: a code made on the
-//!   seller's own account with the seller's key, which stays in Mint. Mint
-//!   stores nothing about it (Wave Q, for Menivor QM1.3 creator coupons).
+//! - `POST  /mint/v1/sellers/{seller}/discounts` and
+//!   `PATCH /mint/v1/sellers/{seller}/discounts/{discount_id}`: discount codes
+//!   on the seller's own Dodo account (see [`crate::seller_discounts`]).
 //! - `GET  /mint/v1/sellers/{seller}/entitlements?limit=`: recent events.
 //! - Seller webhooks (`/mint/webhooks/seller/{product}/{seller}/dodo`, and
 //!   `/mint/webhooks/stripe-connect`) become `entitlement.granted` /
@@ -42,12 +39,12 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use mint_payments::seller::seal::SealKey;
 use mint_payments::seller::stripe::ConnectConfig;
 use mint_payments::seller::{
-    self, dodo, stripe, CheckoutMeta, DiscountKind, DiscountSpec, EntitlementEvent, Interval, ProductSpec, SellerAccount, SellerError, SellerMode, SellerProvider,
+    self, dodo, stripe, CheckoutMeta, EntitlementEvent, Interval, ProductSpec, SellerAccount, SellerError, SellerMode, SellerProvider,
 };
 use mint_payments::{HttpTransport, WebhookError};
 use mint_store::{ConnectToken, EntitlementRecord, SellerProductRecord, SellerRecord, SellerStore};
@@ -120,11 +117,11 @@ pub fn stripe_from_env(client_id: Option<String>, secret: Option<String>, webhoo
     }
 }
 
-fn problem(status: StatusCode, code: &str, detail: &str) -> Response {
+pub(crate) fn problem(status: StatusCode, code: &str, detail: &str) -> Response {
     (status, Json(json!({ "error": { "code": code, "message": detail } }))).into_response()
 }
 
-fn caller(state: &SellerState, headers: &HeaderMap) -> Option<ProductKey> {
+pub(crate) fn caller(state: &SellerState, headers: &HeaderMap) -> Option<ProductKey> {
     let given = headers.get("x-api-key")?.to_str().ok()?;
     state
         .products
@@ -133,7 +130,7 @@ fn caller(state: &SellerState, headers: &HeaderMap) -> Option<ProductKey> {
         .cloned()
 }
 
-fn seller_key(product: &str, seller: &str) -> String {
+pub(crate) fn seller_key(product: &str, seller: &str) -> String {
     format!("{product}:{seller}")
 }
 
@@ -148,21 +145,22 @@ fn new_token() -> String {
     hex::encode(bytes)
 }
 
-fn seller_error(error: SellerError) -> Response {
+pub(crate) fn seller_error(error: SellerError) -> Response {
     match error {
         SellerError::Invalid(msg) => problem(StatusCode::BAD_REQUEST, "invalid_request", &msg),
         SellerError::Refused(msg) => problem(StatusCode::UNPROCESSABLE_ENTITY, "refused_by_payment_account", &msg),
         SellerError::NotConnected => problem(StatusCode::CONFLICT, "not_connected", "this seller has not connected a payment account yet"),
+        SellerError::NotFound => problem(StatusCode::NOT_FOUND, "unknown_object", "the payment account has no such object"),
         SellerError::Unavailable => problem(StatusCode::BAD_GATEWAY, "payment_account_unavailable", "the payment account did not answer; nothing was changed"),
     }
 }
 
-fn storage() -> Response {
+pub(crate) fn storage() -> Response {
     problem(StatusCode::SERVICE_UNAVAILABLE, "storage", "seller payments could not be read or written; retry")
 }
 
 /// The seller's account, opened for one call.
-fn open_account(state: &SellerState, record: &SellerRecord) -> Result<SellerAccount, SellerError> {
+pub(crate) fn open_account(state: &SellerState, record: &SellerRecord) -> Result<SellerAccount, SellerError> {
     let seal = state.seal.as_ref().ok_or(SellerError::NotConnected)?;
     let context = seller_key(&record.product, &record.seller);
     let secret = seal.open(&context, &record.sealed_secret).map_err(|_| SellerError::NotConnected)?;
@@ -372,79 +370,6 @@ async fn checkout(State(state): State<SellerState>, headers: HeaderMap, Path(sel
     };
     match session {
         Ok(s) => (StatusCode::CREATED, Json(json!({ "url": s.url, "id": s.id }))).into_response(),
-        Err(e) => seller_error(e),
-    }
-}
-
-#[derive(Deserialize)]
-struct CurrencyOption {
-    currency: String,
-}
-
-#[derive(Deserialize)]
-struct DiscountBody {
-    code: String,
-    #[serde(rename = "type")]
-    kind: String,
-    amount: i64,
-    expires_at: Option<String>,
-    name: Option<String>,
-    currency: Option<String>,
-    currency_options: Option<Vec<CurrencyOption>>,
-    /// The seller's skus (Mint maps them to the processor's product ids).
-    restricted_to: Option<Vec<String>>,
-}
-
-async fn create_discount(State(state): State<SellerState>, headers: HeaderMap, Path(seller_id): Path<String>, Json(body): Json<DiscountBody>) -> Response {
-    let Some(key) = caller(&state, &headers) else {
-        return problem(StatusCode::UNAUTHORIZED, "unauthorized", "a product seller key is required");
-    };
-    let kind = match body.kind.as_str() {
-        "percentage" => DiscountKind::Percentage,
-        "flat" => DiscountKind::Flat,
-        _ => return problem(StatusCode::BAD_REQUEST, "invalid_type", "type is percentage or flat"),
-    };
-    let currency = body.currency.clone().or_else(|| body.currency_options.as_ref().and_then(|o| o.first()).map(|o| o.currency.clone())).map(|c| c.to_ascii_uppercase());
-    let skus = body.restricted_to.clone().unwrap_or_default();
-    if skus.len() > 50 || !skus.iter().all(|s| seller::valid_sku(s)) {
-        return problem(StatusCode::BAD_REQUEST, "invalid_restricted_to", "restricted_to lists up to 50 of the seller's skus");
-    }
-    let Ok(Some(record)) = state.store.get_seller(&key.product, &seller_id).await else {
-        return seller_error(SellerError::NotConnected);
-    };
-    let mut product_ids = Vec::with_capacity(skus.len());
-    for sku in &skus {
-        match state.store.get_product(&key.product, &seller_id, sku).await {
-            Ok(Some(p)) => product_ids.push(p.provider_ref),
-            Ok(None) => return problem(StatusCode::NOT_FOUND, "unknown_sku", "create the product first"),
-            Err(_) => return storage(),
-        }
-    }
-    let spec = DiscountSpec {
-        code: body.code.trim().to_ascii_uppercase(),
-        name: body.name.as_deref().map_or_else(|| body.code.trim().to_owned(), |n| n.trim().to_owned()),
-        kind,
-        amount: body.amount,
-        currency,
-        expires_at: body.expires_at.clone(),
-        restricted_to: product_ids,
-    };
-    if let Err(msg) = spec.validate() {
-        return problem(StatusCode::BAD_REQUEST, "invalid_discount", &msg);
-    }
-    let account = match open_account(&state, &record) {
-        Ok(a) => a,
-        Err(e) => return seller_error(e),
-    };
-    if account.provider != SellerProvider::Dodo {
-        return problem(StatusCode::CONFLICT, "discounts_unsupported", "discount codes work on Dodo payment accounts; this seller connected Stripe");
-    }
-    match dodo::create_discount(state.transport.as_ref(), &account, &spec).await {
-        Ok(d) => (
-            StatusCode::CREATED,
-            Json(json!({ "discount": { "id": d.id, "code": d.code, "type": body.kind, "amount": spec.amount, "currency": spec.currency, "expires_at": spec.expires_at, "restricted_to": skus } })),
-        )
-            .into_response(),
         Err(e) => seller_error(e),
     }
 }
@@ -738,7 +663,8 @@ pub fn router(state: SellerState) -> Router {
         .route("/mint/v1/sellers/:seller/connect", post(connect))
         .route("/mint/v1/sellers/:seller/products", post(create_product).get(list_products))
         .route("/mint/v1/sellers/:seller/checkout-sessions", post(checkout))
-        .route("/mint/v1/sellers/:seller/discounts", post(create_discount))
+        .route("/mint/v1/sellers/:seller/discounts", post(crate::seller_discounts::create_discount))
+        .route("/mint/v1/sellers/:seller/discounts/:discount", patch(crate::seller_discounts::update_discount))
         .route("/mint/v1/sellers/:seller/entitlements", get(list_entitlements))
         .route("/mint/connect/stripe/callback", get(stripe_callback))
         .route("/mint/connect/:token", get(connect_page).post(connect_submit))

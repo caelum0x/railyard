@@ -68,6 +68,10 @@ impl HttpTransport for Fake {
         self.calls.lock().unwrap().push(("POST".into(), url.into(), headers.to_vec(), body.to_vec()));
         Ok(self.reply(url))
     }
+    async fn patch_json(&self, url: &str, headers: &[(String, String)], body: &[u8]) -> Result<HttpResponse, TransportError> {
+        self.calls.lock().unwrap().push(("PATCH".into(), url.into(), headers.to_vec(), body.to_vec()));
+        Ok(self.reply(url))
+    }
 }
 
 fn now() -> i64 {
@@ -333,5 +337,106 @@ async fn discount_codes_are_made_on_the_sellers_account_and_reach_checkout() {
     }
     assert_eq!(api(&app, "POST", &format!("/mint/v1/sellers/{SELLER}/discounts"), None, json!({"code":"ABC","type":"percentage","amount":100})).await.0, StatusCode::UNAUTHORIZED);
     assert_eq!(api(&app, "POST", &format!("/mint/v1/sellers/{SELLER}/discounts"), Some(RALLY_KEY), json!({"code":"ABC","type":"percentage","amount":100})).await.0, StatusCode::CONFLICT, "Rally's view of this seller id is not connected");
+    assert_eq!(fake.calls.lock().unwrap().len(), before, "no processor call for refused requests");
+}
+
+/// Connects `seller` of Scribase to a Dodo account with `api_key` (the page flow).
+async fn connect_seller(app: &Router, fake: &Fake, seller_id: &str, api_key: &str) {
+    let (_, link) = api(app, "POST", &format!("/mint/v1/sellers/{seller_id}/connect"), Some(SCRIBASE_KEY), Value::Null).await;
+    let token = link["connect_url"].as_str().unwrap().rsplit('/').next().unwrap().to_owned();
+    fake.answer("https://test.dodopayments.com/products?page_size=1", 200, json!({"items": []}));
+    let form = format!("mode=test&api_key={api_key}&webhook_secret={}", SELLER_HOOK.replace('=', "%3D"));
+    let (status, _) = send(app, "POST", &format!("/mint/connect/{token}"), None, "application/x-www-form-urlencoded", form.into_bytes(), &[]).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+fn dodo_discount(id: &str, code: &str, kind: &str, amount: i64, expires_at: Value) -> Value {
+    json!({"discount_id": id, "code": code, "type": kind, "amount": amount, "expires_at": expires_at, "business_id": "bus_1", "restricted_to": []})
+}
+
+/// Menivor stops a coupon (`expires_at` now) and switches it back on later on
+/// the same discount id; a seller can only touch its own discount ids, and
+/// a retried create answers with the code already made.
+#[tokio::test]
+async fn a_seller_stops_and_switches_back_on_only_its_own_discounts() {
+    const OTHER: &str = "org_2.shop.production";
+    let fake = Arc::new(Fake::default());
+    let app = seller::router(state(fake.clone()));
+    connect_seller(&app, &fake, SELLER, "seller_dodo_key_123").await;
+    connect_seller(&app, &fake, OTHER, "other_dodo_key_456").await;
+    let base = format!("/mint/v1/sellers/{SELLER}/discounts");
+    fake.answer("https://test.dodopayments.com/discounts", 200, dodo_discount("dsc_1", "LAUNCH20", "percentage", 2000, json!("2026-12-31T23:59:59Z")));
+    let create = json!({"code":"LAUNCH20","type":"percentage","amount":2000,"expires_at":"2026-12-31T23:59:59Z","name":"Launch"});
+    let (status, made) = api(&app, "POST", &base, Some(SCRIBASE_KEY), create.clone()).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    assert_eq!(made["discount"]["discount_id"], "dsc_1", "the contract's field");
+
+    // A retried create with the same terms: the code already made, no second POST.
+    fake.answer("https://test.dodopayments.com/discounts/dsc_1", 200, dodo_discount("dsc_1", "LAUNCH20", "percentage", 2000, json!("2026-12-31T23:59:59Z")));
+    let (status, again) = api(&app, "POST", &base, Some(SCRIBASE_KEY), create.clone()).await;
+    assert_eq!((status, again["created"].clone(), again["discount"]["discount_id"].clone()), (StatusCode::OK, json!(false), json!("dsc_1")));
+    // The same code with other terms is a conflict that names the way out.
+    fake.answer("https://test.dodopayments.com/discounts/dsc_1", 200, dodo_discount("dsc_1", "LAUNCH20", "percentage", 2000, Value::Null));
+    let (status, clash) = api(&app, "POST", &base, Some(SCRIBASE_KEY), json!({"code":"launch20","type":"percentage","amount":2500})).await;
+    assert_eq!((status, clash["error"]["code"].clone()), (StatusCode::CONFLICT, json!("code_in_use")));
+    assert_eq!(fake.calls.lock().unwrap().iter().filter(|c| c.0 == "POST" && c.1 == "https://test.dodopayments.com/discounts").count(), 1);
+
+    // Stop: only expires_at moves.
+    fake.answer("https://test.dodopayments.com/discounts/dsc_1", 200, dodo_discount("dsc_1", "LAUNCH20", "percentage", 2000, json!("2026-10-05T10:00:00Z")));
+    let (status, stopped) = api(&app, "PATCH", &format!("{base}/dsc_1"), Some(SCRIBASE_KEY), json!({"expires_at":"2026-10-05T10:00:00Z"})).await;
+    assert_eq!(status, StatusCode::OK, "{stopped}");
+    assert_eq!(stopped["discount"], json!({"discount_id":"dsc_1","id":"dsc_1","code":"LAUNCH20","type":"percentage","amount":2000,"expires_at":"2026-10-05T10:00:00Z"}));
+    let patches = || fake.calls.lock().unwrap().iter().filter(|c| c.0 == "PATCH").cloned().collect::<Vec<_>>();
+    assert_eq!(patches()[0].1, "https://test.dodopayments.com/discounts/dsc_1");
+    assert_eq!(serde_json::from_slice::<Value>(&patches()[0].3).unwrap(), json!({"expires_at":"2026-10-05T10:00:00Z"}));
+    assert!(patches()[0].2.contains(&("authorization".to_owned(), "Bearer seller_dodo_key_123".to_owned())), "the seller's own key");
+
+    // Switch back on as a flat amount (Menivor's re-enable body), then clear the expiry.
+    fake.answer("https://test.dodopayments.com/discounts/dsc_1", 200, dodo_discount("dsc_1", "LAUNCH20", "flat", 500, json!("2027-01-31T00:00:00Z")));
+    let reenable = json!({"type":"flat","amount":500,"currency_options":[{"currency":"usd","max_amount_possible":500,"is_default":true}],"expires_at":"2027-01-31T00:00:00Z","name":"Five off"});
+    let (status, back) = api(&app, "PATCH", &format!("{base}/dsc_1"), Some(SCRIBASE_KEY), reenable).await;
+    assert_eq!((status, back["discount"]["type"].clone()), (StatusCode::OK, json!("flat")), "{back}");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&patches()[1].3).unwrap(),
+        json!({"type":"flat","amount":500,"currency_options":[{"currency":"USD","max_amount_possible":500,"is_default":true}],"expires_at":"2027-01-31T00:00:00Z","name":"Five off"})
+    );
+    fake.answer("https://test.dodopayments.com/discounts/dsc_1", 200, dodo_discount("dsc_1", "LAUNCH20", "flat", 500, Value::Null));
+    assert_eq!(api(&app, "PATCH", &format!("{base}/dsc_1"), Some(SCRIBASE_KEY), json!({"expires_at":null})).await.0, StatusCode::OK);
+    assert_eq!(serde_json::from_slice::<Value>(&patches()[2].3).unwrap(), json!({"expires_at":null}));
+
+    // A new code on the same id is what a later retried create finds.
+    fake.answer("https://test.dodopayments.com/discounts/dsc_1", 200, dodo_discount("dsc_1", "SPRING", "flat", 500, Value::Null));
+    assert_eq!(api(&app, "PATCH", &format!("{base}/dsc_1"), Some(SCRIBASE_KEY), json!({"code":"spring"})).await.0, StatusCode::OK);
+    fake.answer("https://test.dodopayments.com/discounts/dsc_1", 200, dodo_discount("dsc_1", "SPRING", "flat", 500, Value::Null));
+    let (status, found) = api(&app, "POST", &base, Some(SCRIBASE_KEY), json!({"code":"SPRING","type":"flat","amount":500,"currency":"USD"})).await;
+    assert_eq!((status, found["discount"]["discount_id"].clone()), (StatusCode::OK, json!("dsc_1")));
+
+    // Deleted on the processor's dashboard: 404, never a fake success.
+    fake.answer("https://test.dodopayments.com/discounts/dsc_1", 404, json!({"message":"Discount not found"}));
+    let (status, gone) = api(&app, "PATCH", &format!("{base}/dsc_1"), Some(SCRIBASE_KEY), json!({"expires_at":"2026-10-05T10:00:00Z"})).await;
+    assert_eq!((status, gone["error"]["code"].clone()), (StatusCode::NOT_FOUND, json!("unknown_discount")));
+
+    // Refused before any processor call.
+    let before = fake.calls.lock().unwrap().len();
+    let other = format!("/mint/v1/sellers/{OTHER}/discounts/dsc_1");
+    let (status, body) = api(&app, "PATCH", &other, Some(SCRIBASE_KEY), json!({"expires_at":"2026-10-05T10:00:00Z"})).await;
+    assert_eq!((status, body["error"]["code"].clone()), (StatusCode::NOT_FOUND, json!("unknown_discount")), "another seller's id is unknown to this seller");
+    for (uri, key, body, want) in [
+        (format!("{base}/dsc_999"), Some(SCRIBASE_KEY), json!({"expires_at":"2026-10-05T10:00:00Z"}), StatusCode::NOT_FOUND),
+        (format!("{base}/dsc_1"), Some(RALLY_KEY), json!({"expires_at":"2026-10-05T10:00:00Z"}), StatusCode::CONFLICT),
+        (format!("{base}/dsc_1"), None, json!({"expires_at":"2026-10-05T10:00:00Z"}), StatusCode::UNAUTHORIZED),
+        (format!("{base}/dsc%2D1"), Some(SCRIBASE_KEY), json!({"expires_at":"2026-10-05T10:00:00Z"}), StatusCode::BAD_REQUEST),
+        (format!("{base}/dsc_1"), Some(SCRIBASE_KEY), json!({}), StatusCode::BAD_REQUEST),
+        (format!("{base}/dsc_1"), Some(SCRIBASE_KEY), json!({"usage_limit": 5}), StatusCode::BAD_REQUEST),
+        (format!("{base}/dsc_1"), Some(SCRIBASE_KEY), json!({"amount": 500}), StatusCode::BAD_REQUEST),
+        (format!("{base}/dsc_1"), Some(SCRIBASE_KEY), json!({"type":"flat","amount":500}), StatusCode::BAD_REQUEST),
+        (format!("{base}/dsc_1"), Some(SCRIBASE_KEY), json!({"type":"flat","amount":500,"currency_options":[{"currency":"USD","max_amount_possible":400}]}), StatusCode::BAD_REQUEST),
+        (format!("{base}/dsc_1"), Some(SCRIBASE_KEY), json!({"expires_at":"next week"}), StatusCode::BAD_REQUEST),
+        (format!("{base}/dsc_1"), Some(SCRIBASE_KEY), json!({"restricted_to":["nope"]}), StatusCode::NOT_FOUND),
+    ] {
+        let (status, answer) = api(&app, "PATCH", &uri, key, body.clone()).await;
+        assert_eq!(status, want, "{uri} {body} {answer}");
+        assert!(answer["error"]["code"].is_string(), "the seller error shape: {answer}");
+    }
     assert_eq!(fake.calls.lock().unwrap().len(), before, "no processor call for refused requests");
 }

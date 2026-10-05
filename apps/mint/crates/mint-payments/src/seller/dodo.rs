@@ -6,7 +6,7 @@
 
 use serde_json::{json, Value};
 
-use super::{meta_from, CheckoutMeta, CheckoutSession, Discount, DiscountKind, DiscountSpec, EntitlementEvent, EntitlementKind, Interval, ProductSpec, RevokeReason, SellerAccount, SellerError, SellerMode};
+use super::{meta_from, CheckoutMeta, CheckoutSession, Discount, DiscountKind, DiscountPatch, DiscountSpec, DiscountState, EntitlementEvent, EntitlementKind, Interval, ProductSpec, RevokeReason, SellerAccount, SellerError, SellerMode};
 use crate::http::{Headers, HttpTransport};
 use crate::verify::standard_webhooks_verify;
 use crate::WebhookError;
@@ -157,6 +157,93 @@ pub async fn create_discount(transport: &dyn HttpTransport, acct: &SellerAccount
     }
 }
 
+/// Like [`answer`], but a 404 is [`SellerError::NotFound`] (a by-id call).
+fn answer_by_id(status: u16, body: &[u8]) -> Result<Value, SellerError> {
+    if status == 404 {
+        return Err(SellerError::NotFound);
+    }
+    answer(status, body)
+}
+
+fn discount_state(v: &Value) -> Result<DiscountState, SellerError> {
+    let kind = match v["type"].as_str() {
+        Some("percentage") => DiscountKind::Percentage,
+        Some("flat") => DiscountKind::Flat,
+        _ => return Err(SellerError::Unavailable),
+    };
+    match (v["discount_id"].as_str(), v["code"].as_str(), v["amount"].as_i64()) {
+        (Some(id), Some(code), Some(amount)) if !id.is_empty() && !code.is_empty() => Ok(DiscountState {
+            id: id.to_owned(),
+            code: code.to_owned(),
+            kind,
+            amount,
+            expires_at: v["expires_at"].as_str().map(str::to_owned),
+        }),
+        _ => Err(SellerError::Unavailable),
+    }
+}
+
+/// The partial body `PATCH /discounts/{discount_id}` takes for `patch`.
+pub fn discount_patch_body(patch: &DiscountPatch) -> Value {
+    let mut body = json!({});
+    if let Some(code) = &patch.code {
+        body["code"] = json!(code.to_ascii_uppercase());
+    }
+    if let Some(name) = &patch.name {
+        body["name"] = json!(name.trim());
+    }
+    if let (Some(kind), Some(amount)) = (patch.kind, patch.amount) {
+        body["type"] = json!(if kind == DiscountKind::Percentage { "percentage" } else { "flat" });
+        body["amount"] = json!(amount);
+        // Replace-set semantics: a flat code gets its one default currency
+        // row; a percentage code gets none, so an old flat row cannot stay
+        // behind as a percentage cap.
+        body["currency_options"] = match (kind, &patch.currency) {
+            (DiscountKind::Flat, Some(currency)) => json!([{ "currency": currency, "max_amount_possible": amount, "is_default": true }]),
+            _ => json!([]),
+        };
+    }
+    if let Some(expires_at) = &patch.expires_at {
+        body["expires_at"] = json!(expires_at);
+    }
+    if let Some(restricted_to) = &patch.restricted_to {
+        body["restricted_to"] = json!(restricted_to);
+    }
+    body
+}
+
+/// Reads one discount on the seller's own account.
+///
+/// # Errors
+/// `NotFound` when the account has no such discount, a refusal, or the
+/// account not answering.
+pub async fn get_discount(transport: &dyn HttpTransport, acct: &SellerAccount, discount_id: &str) -> Result<DiscountState, SellerError> {
+    if !super::valid_discount_id(discount_id) {
+        return Err(SellerError::Invalid("discount id must be letters, digits or underscores".into()));
+    }
+    let url = format!("{}/discounts/{discount_id}", api_base(acct.mode));
+    let resp = transport.get(&url, &auth(acct)).await.map_err(|_| SellerError::Unavailable)?;
+    discount_state(&answer_by_id(resp.status, &resp.body)?)
+}
+
+/// Changes one discount on the seller's own account in place (stop it by
+/// moving `expires_at` to now; switch it back on with a later one). The same
+/// patch sent twice leaves the same discount, so a retry is safe.
+///
+/// # Errors
+/// Invalid patch, `NotFound`, a refusal (a code already in use included), or
+/// the account not answering.
+pub async fn update_discount(transport: &dyn HttpTransport, acct: &SellerAccount, discount_id: &str, patch: &DiscountPatch) -> Result<DiscountState, SellerError> {
+    if !super::valid_discount_id(discount_id) {
+        return Err(SellerError::Invalid("discount id must be letters, digits or underscores".into()));
+    }
+    patch.validate().map_err(SellerError::Invalid)?;
+    let url = format!("{}/discounts/{discount_id}", api_base(acct.mode));
+    let raw = serde_json::to_vec(&discount_patch_body(patch)).map_err(|_| SellerError::Unavailable)?;
+    let resp = transport.patch_json(&url, &auth(acct), &raw).await.map_err(|_| SellerError::Unavailable)?;
+    discount_state(&answer_by_id(resp.status, &resp.body)?)
+}
+
 /// Verifies one delivery from the seller's Dodo account and maps it.
 /// `Ok(None)` for an event that changes no entitlement. An event whose
 /// metadata names another seller is ignored (it cannot touch this one).
@@ -270,10 +357,10 @@ mod tests {
     use async_trait::async_trait;
     use serde_json::json;
 
-    use super::{create_checkout, create_checkout_with, create_discount, create_product, parse_rfc3339_ms, product_body, verify_event};
+    use super::{create_checkout, create_checkout_with, create_discount, create_product, get_discount, update_discount, parse_rfc3339_ms, product_body, verify_event};
     use crate::http::{HttpResponse, HttpTransport, TransportError};
     use crate::outbound::sign;
-    use crate::seller::{CheckoutMeta, Discount, DiscountKind, DiscountSpec, EntitlementKind, Interval, ProductSpec, RevokeReason, SellerAccount, SellerError, SellerMode, SellerProvider};
+    use crate::seller::{CheckoutMeta, Discount, DiscountKind, DiscountPatch, DiscountSpec, DiscountState, EntitlementKind, Interval, ProductSpec, RevokeReason, SellerAccount, SellerError, SellerMode, SellerProvider};
 
     const WH: &str = "whsec_c2VsbGVyLXdlYmhvb2stc2VjcmV0LTMyLWJ5dGVzLTAwMA==";
     const NOW: i64 = 1_790_683_200;
@@ -295,6 +382,11 @@ mod tests {
         }
         async fn post_json(&self, url: &str, headers: &[(String, String)], body: &[u8]) -> Result<HttpResponse, TransportError> {
             self.calls.lock().unwrap().push(("POST".into(), url.into(), headers.to_vec(), String::from_utf8_lossy(body).into()));
+            let (status, body) = self.answers.lock().unwrap().remove(0);
+            Ok(HttpResponse { status, body: body.into_bytes() })
+        }
+        async fn patch_json(&self, url: &str, headers: &[(String, String)], body: &[u8]) -> Result<HttpResponse, TransportError> {
+            self.calls.lock().unwrap().push(("PATCH".into(), url.into(), headers.to_vec(), String::from_utf8_lossy(body).into()));
             let (status, body) = self.answers.lock().unwrap().remove(0);
             Ok(HttpResponse { status, body: body.into_bytes() })
         }
@@ -364,6 +456,51 @@ mod tests {
             assert!(matches!(create_discount(&fake, &acct(), &bad).await, Err(SellerError::Invalid(_))), "{bad:?}");
         }
         assert_eq!(fake.calls.lock().unwrap().len(), 4, "nothing was sent for the refused specs");
+    }
+
+    #[tokio::test]
+    async fn discounts_stop_and_switch_back_on_in_place_on_the_sellers_account() {
+        let fake = Fake::default();
+        let dodo = |kind: &str, amount: i64, expires: serde_json::Value| json!({"discount_id":"dsc_1","code":"LAUNCH20","type":kind,"amount":amount,"expires_at":expires,"business_id":"bus_1"}).to_string();
+        fake.answers.lock().unwrap().extend([
+            (200, dodo("percentage", 2000, json!("2026-10-05T10:00:00Z"))),
+            (200, dodo("flat", 500, json!("2026-12-31T23:59:59Z"))),
+            (200, dodo("percentage", 1500, serde_json::Value::Null)),
+            (404, json!({"message":"Discount not found"}).to_string()),
+            (200, dodo("flat", 500, serde_json::Value::Null)),
+        ]);
+        let stop = DiscountPatch { expires_at: Some(Some("2026-10-05T10:00:00Z".into())), ..DiscountPatch::default() };
+        let stopped = update_discount(&fake, &acct(), "dsc_1", &stop).await.unwrap();
+        assert_eq!(stopped, DiscountState { id: "dsc_1".into(), code: "LAUNCH20".into(), kind: DiscountKind::Percentage, amount: 2000, expires_at: Some("2026-10-05T10:00:00Z".into()) });
+        let back_flat = DiscountPatch { kind: Some(DiscountKind::Flat), amount: Some(500), currency: Some("USD".into()), name: Some("Five off".into()), expires_at: Some(Some("2026-12-31T23:59:59Z".into())), ..DiscountPatch::default() };
+        update_discount(&fake, &acct(), "dsc_1", &back_flat).await.unwrap();
+        let back_pct = DiscountPatch { kind: Some(DiscountKind::Percentage), amount: Some(1500), expires_at: Some(None), ..DiscountPatch::default() };
+        update_discount(&fake, &acct(), "dsc_1", &back_pct).await.unwrap();
+        assert_eq!(update_discount(&fake, &acct(), "dsc_gone", &stop).await, Err(SellerError::NotFound));
+        assert_eq!(get_discount(&fake, &acct(), "dsc_1").await.unwrap().kind, DiscountKind::Flat);
+        let calls = fake.calls.lock().unwrap().clone();
+        assert_eq!((calls[0].0.as_str(), calls[0].1.as_str()), ("PATCH", "https://test.dodopayments.com/discounts/dsc_1"));
+        assert!(calls.iter().all(|c| c.2.contains(&("authorization".to_owned(), "Bearer seller_dodo_key".to_owned()))), "the seller's key, not ours");
+        let body = |i: usize| serde_json::from_str::<serde_json::Value>(&calls[i].3).unwrap();
+        assert_eq!(body(0), json!({"expires_at":"2026-10-05T10:00:00Z"}), "the stop shape touches nothing else");
+        assert_eq!(body(1), json!({"name":"Five off","type":"flat","amount":500,"currency_options":[{"currency":"USD","max_amount_possible":500,"is_default":true}],"expires_at":"2026-12-31T23:59:59Z"}));
+        assert_eq!(body(2), json!({"type":"percentage","amount":1500,"currency_options":[],"expires_at":null}), "a percentage clears the old flat row and the expiry");
+        assert_eq!((calls[4].0.as_str(), calls[4].1.as_str()), ("GET", "https://test.dodopayments.com/discounts/dsc_1"));
+        // Checked before any call.
+        for (id, bad) in [
+            ("dsc_1", DiscountPatch::default()),
+            ("dsc_1", DiscountPatch { amount: Some(100), ..DiscountPatch::default() }),
+            ("dsc_1", DiscountPatch { kind: Some(DiscountKind::Percentage), amount: Some(10_001), ..DiscountPatch::default() }),
+            ("dsc_1", DiscountPatch { kind: Some(DiscountKind::Flat), amount: Some(500), ..DiscountPatch::default() }),
+            ("dsc_1", DiscountPatch { kind: Some(DiscountKind::Percentage), amount: Some(500), currency: Some("USD".into()), ..DiscountPatch::default() }),
+            ("dsc_1", DiscountPatch { expires_at: Some(Some("soon".into())), ..DiscountPatch::default() }),
+            ("dsc_1", DiscountPatch { code: Some("a b".into()), ..DiscountPatch::default() }),
+            ("../products", stop.clone()),
+        ] {
+            assert!(matches!(update_discount(&fake, &acct(), id, &bad).await, Err(SellerError::Invalid(_))), "{id} {bad:?}");
+        }
+        assert!(matches!(get_discount(&fake, &acct(), "dsc_1/../x").await, Err(SellerError::Invalid(_))));
+        assert_eq!(fake.calls.lock().unwrap().len(), 5, "nothing was sent for the refused patches");
     }
 
     #[tokio::test]

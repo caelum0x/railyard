@@ -28,7 +28,7 @@ pub use journal::{Bucket, JournalEntry, OpKind};
 pub use memory::{ait_to_micros, InMemoryStore};
 pub use mirror::{MemoryMirror, MirrorDelivery, MirrorEvent, MirrorKind, MirrorStore};
 pub use seller::{
-    ConnectToken, EntitlementDelivery, EntitlementRecord, MemorySellerStore, SellerProductRecord, SellerRecord,
+    ConnectToken, EntitlementDelivery, EntitlementRecord, MemorySellerStore, SellerDiscountRecord, SellerProductRecord, SellerRecord,
     SellerStore,
 };
 pub use operator::{

@@ -21,6 +21,7 @@ pub mod jobs;
 pub mod metrics;
 pub mod mirror;
 pub mod seller;
+pub mod seller_discounts;
 pub mod seller_page;
 pub mod payer_registry;
 pub mod router;
