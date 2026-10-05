@@ -16,6 +16,9 @@
 //   POST /api/v1/bridge/scribase/proof   {scribase_org_id, slot}
 //        {slot, state, live, proof:{kind,id,at}, next}: the real thing that
 //        happened for this slot, or "arriving" while its package has not landed.
+//   POST /api/v1/bridge/scribase/domains {scribase_org_id, app?}
+//        (QY1.5) The custom domains attached to the org's apps and their
+//        certificate state, for the Scribase Deploy tab.
 //   POST /api/v1/bridge/scribase/product_analytics {scribase_org_id, app, days?, with_server_key?}
 //        (QY1.2) The project's product analytics: public host and key, the
 //        first product event, the web view, and (only when asked, only to the
@@ -36,6 +39,8 @@ import type { Repo } from "../../../../../lib/repo.ts";
 import { verify, type WebhookHeaders } from "../../../../../lib/standard-webhooks.ts";
 import { createApprovedDevice } from "../../../../../lib/tokens.ts";
 import type { ProductAnalyticsClient, ProductFirstEvent } from "../../../../../lib/product-analytics.ts";
+import { appDomains } from "../../../../../lib/ship/domains.ts";
+import type { ShipDeps } from "../../../../../lib/ship/service.ts";
 import { emptyEntitlement, type Entitlement } from "../../../../../lib/types.ts";
 import { ensureEnv, firstRead, FlagsError, listFlags, setFlag, type FlagsDeps } from "../../../../../lib/flags/service.ts";
 import { createCheck, listWithState, WatchError, type WatchDeps } from "../../../../../lib/watch/service.ts";
@@ -79,6 +84,8 @@ export interface BridgeDeps {
   watch?: WatchDeps;
   /** Page speed with deploy markers in the Analytics tab (PY3.3), only with RAILYARD_REPLAY_LIVE=1. */
   replayLive?: boolean;
+  /** Ship on push and custom domains (QY1.5); absent or null while not configured. */
+  ship?: ShipDeps | null;
   /** Product analytics (QY1.2); absent or null while the service is not connected. */
   productAnalytics?: ProductAnalyticsClient | null;
   /** P-Y1 transition: accept unbound ids and orgs syncs without `addon.as_of` (RAILYARD_BRIDGE_ACCEPT_LEGACY=1). */
@@ -415,6 +422,27 @@ async function vitalsFor(deps: BridgeDeps, orgId: string, appId: string, now: Da
   return v ? vitalsView(v, appId, marks) : null;
 }
 
+/** The org's custom domains for the Scribase Deploy tab (QY1.5): `{scribase_org_id, app?}`. */
+async function domainsFor(deps: BridgeDeps, body: Record<string, unknown>): Promise<BridgeResult> {
+  const scribaseOrgId = parseOrgRef(body);
+  if (!scribaseOrgId) return fail(400, "scribase_org_id is required");
+  const app = typeof body.app === "string" ? normaliseAppName(body.app) : null;
+  if (app !== null && !/^[a-z0-9][a-z0-9-]{0,39}$/.test(app)) return fail(400, "app must be a project name (letters, numbers, dashes)");
+  const now = deps.now();
+  const who = await entitledOrg(deps.repo, scribaseOrgId, "deploy", now);
+  if ("status" in who) return who;
+  if (!deps.ship) return { status: 200, body: { available: false, domains: [], next: "Custom domains are being set up on this deployment." } };
+  const rows = await appDomains(deps.ship, who.orgId, app, now);
+  return {
+    status: 200,
+    body: {
+      available: true,
+      domains: rows.map((d) => ({ app: d.app, hostname: d.hostname, state: d.state, checked_at: d.checked_at, created_at: d.created_at })),
+      next: rows.length ? null : "Attach one from the app's folder: railyard domains add app.example.com",
+    },
+  };
+}
+
 const WEB_DAYS = new Set([1, 7, 30, 90]);
 
 /**
@@ -577,7 +605,7 @@ async function uptimeFor(deps: BridgeDeps, body: Record<string, unknown>): Promi
   }
 }
 
-export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights" | "ai" | "ai_usage" | "flags" | "uptime" | "product_analytics";
+export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights" | "ai" | "ai_usage" | "flags" | "uptime" | "product_analytics" | "domains";
 
 /**
  * The route a signed message id names (P-Y1). Scribase sends
@@ -629,5 +657,7 @@ export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers
       return uptimeFor(deps, b);
     case "product_analytics":
       return productAnalyticsFor(deps, b);
+    case "domains":
+      return domainsFor(deps, b);
   }
 }

@@ -8,6 +8,7 @@ import { orgForBearer } from "../tokens.ts";
 import { CloudflareError } from "./cloudflare.ts";
 import { GithubError } from "./github.ts";
 import type { Jwk } from "./jwt.ts";
+import { addAppDomain, appDomains, recordAppDomain, removeAppDomain } from "./domains.ts";
 import { ciReport, ciSession, cloudflareCallback, githubSetup, githubUserCallback, go, linkStatus, ShipError, startLink, webhook, type ShipDeps } from "./service.ts";
 
 export const NOT_CONFIGURED = "Ship on push is not switched on for this console yet.";
@@ -158,4 +159,43 @@ export function githubOidcKeys(fetchImpl: typeof fetch = fetch, ttlMs = 3_600_00
     cache = { at: Date.now(), keys: body.keys };
     return body.keys;
   };
+}
+
+/**
+ * Custom domains (QY1.5), CLI bearer:
+ *   GET    /api/v1/domains?app=        the org's domains with their certificate state
+ *   POST   /api/v1/domains {app, hostname}   attach with the org's Cloudflare grant
+ *   DELETE /api/v1/domains {app, hostname}   detach (idempotent)
+ * 409 {code: "no_cloudflare_grant"} tells the CLI to use the local login.
+ */
+export async function domainsH(deps: ShipDeps | null, repo: Repo, req: Request, now: Date): Promise<Response> {
+  const who = await orgForBearer(repo, req.headers.get("authorization"));
+  if (!who) return json({ error: "unauthorized" }, 401);
+  if (!deps) return json({ error: NOT_CONFIGURED }, 503);
+  try {
+    if (req.method === "GET") {
+      const app = new URL(req.url).searchParams.get("app");
+      return json({ domains: await appDomains(deps, who.orgId, app && /^[a-z0-9][a-z0-9-]{0,39}$/.test(app) ? app : null, now) });
+    }
+    const body = await req.json().catch(() => null);
+    if (req.method === "POST") return json({ domain: await addAppDomain(deps, who.orgId, body, now) }, 201);
+    if (req.method === "DELETE") return json(await removeAppDomain(deps, who.orgId, body, now));
+    return json({ error: "method not allowed" }, 405);
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code) return json({ error: (e as Error).message, code }, (e as { status: number }).status);
+    return failure(e, false);
+  }
+}
+
+/** POST /api/v1/domains/record: what the CLI did with the local Cloudflare login. */
+export async function domainsRecordH(deps: ShipDeps | null, repo: Repo, req: Request, now: Date): Promise<Response> {
+  const who = await orgForBearer(repo, req.headers.get("authorization"));
+  if (!who) return json({ error: "unauthorized" }, 401);
+  if (!deps) return json({ error: NOT_CONFIGURED }, 503);
+  try {
+    return json(await recordAppDomain(deps, who.orgId, await req.json().catch(() => null), now));
+  } catch (e) {
+    return failure(e, false);
+  }
 }

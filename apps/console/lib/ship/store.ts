@@ -1,7 +1,7 @@
 // Storage for ship on push (PY3.1): MemoryShipStore for tests and local dev,
 // PostgrestShipStore for the console's Scribase project (migration 0007).
 
-import type { CloudflareConnection, GithubInstallation, LinkSession, ShipLink } from "./types.ts";
+import type { AppDomain, CloudflareConnection, GithubInstallation, LinkSession, ShipLink } from "./types.ts";
 
 export interface ShipStore {
   saveInstallation(inst: GithubInstallation): Promise<void>;
@@ -19,6 +19,10 @@ export interface ShipStore {
   createSession(s: LinkSession): Promise<void>;
   getSession(idHash: string): Promise<LinkSession | null>;
   updateSession(idHash: string, patch: Partial<Pick<LinkSession, "installation_id" | "state" | "message" | "link_id" | "repo_id">>): Promise<void>;
+  // Custom domains (QY1.5).
+  listDomains(orgId: string, app?: string | null): Promise<AppDomain[]>;
+  saveDomain(d: AppDomain): Promise<void>;
+  deleteDomain(orgId: string, hostname: string): Promise<boolean>;
 }
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -28,6 +32,7 @@ export class MemoryShipStore implements ShipStore {
   links: ShipLink[] = [];
   cloudflare = new Map<string, CloudflareConnection>();
   sessions = new Map<string, LinkSession>();
+  domains: AppDomain[] = [];
 
   async saveInstallation(inst: GithubInstallation) {
     this.installations.set(inst.installation_id, clone(inst));
@@ -78,6 +83,17 @@ export class MemoryShipStore implements ShipStore {
   async updateSession(idHash: string, patch: Partial<Pick<LinkSession, "installation_id" | "state" | "message" | "link_id" | "repo_id">>) {
     const s = this.sessions.get(idHash);
     if (s) this.sessions.set(idHash, { ...s, ...clone(patch) });
+  }
+  async listDomains(orgId: string, app?: string | null) {
+    return clone(this.domains.filter((d) => d.org_id === orgId && (!app || d.app === app)).sort((a, b) => a.hostname.localeCompare(b.hostname)));
+  }
+  async saveDomain(d: AppDomain) {
+    this.domains = [...this.domains.filter((x) => !(x.org_id === d.org_id && x.hostname === d.hostname)), clone(d)];
+  }
+  async deleteDomain(orgId: string, hostname: string) {
+    const before = this.domains.length;
+    this.domains = this.domains.filter((x) => !(x.org_id === orgId && x.hostname === hostname));
+    return this.domains.length < before;
   }
 }
 
@@ -154,5 +170,14 @@ export class PostgrestShipStore implements ShipStore {
   }
   async updateSession(idHash: string, patch: Partial<Pick<LinkSession, "installation_id" | "state" | "message" | "link_id" | "repo_id">>) {
     await this.req("PATCH", `ship_link_sessions?id_hash=eq.${encodeURIComponent(idHash)}`, patch, "return=minimal");
+  }
+  async listDomains(orgId: string, app?: string | null) {
+    return this.req<AppDomain>("GET", `app_domains?org_id=eq.${encodeURIComponent(orgId)}${app ? `&app=eq.${encodeURIComponent(app)}` : ""}&order=hostname.asc`);
+  }
+  async saveDomain(d: AppDomain) {
+    await this.req("POST", "app_domains?on_conflict=org_id,hostname", d, "resolution=merge-duplicates,return=minimal");
+  }
+  async deleteDomain(orgId: string, hostname: string) {
+    return (await this.req("DELETE", `app_domains?org_id=eq.${encodeURIComponent(orgId)}&hostname=eq.${encodeURIComponent(hostname)}`, undefined, "return=representation")).length > 0;
   }
 }

@@ -308,7 +308,7 @@ export async function ciIdentity(deps: ShipDeps, authorization: string | null, n
   return { link, branch, sha, production: branch === link.production_branch };
 }
 
-async function cloudflareAccess(deps: ShipDeps, conn: CloudflareConnection, now: Date): Promise<{ token: string; expiresIn: number }> {
+export async function cloudflareAccess(deps: ShipDeps, conn: CloudflareConnection, now: Date): Promise<{ token: string; expiresIn: number }> {
   if (conn.access_nonce && conn.access_ciphertext && conn.access_expires_at) {
     const left = Math.floor((Date.parse(conn.access_expires_at) - now.getTime()) / 1000);
     if (left >= ACCESS_REUSE_SECONDS) return { token: await open(deps.credentialsKey, sealAad(conn.org_id, "access"), conn.access_nonce, conn.access_ciphertext), expiresIn: left };

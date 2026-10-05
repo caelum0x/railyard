@@ -56,3 +56,16 @@ export interface LinkSession {
   expires_at: string;
   created_at: string;
 }
+
+/** A hostname attached to an app's production Worker (QY1.5, migration 0010). */
+export interface AppDomain {
+  org_id: string;
+  app: string;
+  hostname: string;
+  worker: string;
+  cf_domain_id: string | null;
+  zone_name: string | null;
+  state: "pending" | "active" | "error";
+  checked_at: string | null;
+  created_at: string;
+}
