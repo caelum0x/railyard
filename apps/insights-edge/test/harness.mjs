@@ -9,7 +9,7 @@ import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-export async function startCollector({ bindings = {}, sites = {} } = {}) {
+export async function startCollector({ bindings = {}, sites = {}, respond = () => 200 } = {}) {
   const persist = mkdtempSync(join(tmpdir(), "ry-insights-"));
   const outbound = [];
   // Miniflare 5 takes its new option shape; the converter keeps the classic one readable.
@@ -37,8 +37,9 @@ export async function startCollector({ bindings = {}, sites = {} } = {}) {
           ...bindings,
         },
         outboundService: async (req) => {
-          outbound.push({ url: req.url, at: Date.now(), body: await req.text(), auth: req.headers.get("authorization") });
-          return new Response("{}", { status: 200 });
+          const entry = { url: req.url, at: Date.now(), body: await req.text(), auth: req.headers.get("authorization") };
+          outbound.push(entry);
+          return new Response("{}", { status: respond(entry) });
         },
       },
     ],

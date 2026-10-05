@@ -19,6 +19,12 @@ import { ciSessionH, cloudflareCallbackH, goH, linkStartH, page, webhookH } from
 import { WORKFLOW_PATH, workflowYaml } from "./workflow.ts";
 import { manifest, manifestDone } from "./manifest.ts";
 
+
+/** The finished page text of a callback that must have finished (not asked for a confirmation). */
+function doneText(r: { done: string } | { confirm: string } | { redirect: string }): string {
+  assert.ok("done" in r, `expected a finished link, got ${JSON.stringify(r)}`);
+  return r.done;
+}
 const T0 = new Date("2026-09-30T10:00:00Z");
 const CONSOLE = "https://railyard.example";
 const CREDS_KEY = Buffer.alloc(32, 7).toString("base64");
@@ -273,7 +279,7 @@ test("link: two browser steps (install on the repo, grant Cloudflare), then one 
   assert.equal(auth.searchParams.get("redirect_uri"), `${CONSOLE}/api/v1/github/cloudflare/callback`);
   // The verifier went to the token endpoint, never into a URL.
   assert.ok(!auth.toString().includes([...s.store.sessions.values()][0]!.pkce_verifier));
-  assert.match(done.done, /^Linked acme\/shop to shop\. Merge the pull request \(https:\/\/github\.com\/acme\/shop\/pull\/1\)/);
+  assert.match(doneText(done), /^Linked acme\/shop to shop\. Merge the pull request \(https:\/\/github\.com\/acme\/shop\/pull\/1\)/);
   const wf = s.gh.files.get(`railyard/ship-on-push:${WORKFLOW_PATH}`)!;
   assert.equal(wf, workflowYaml({ consoleUrl: CONSOLE, productionBranch: "main" }));
   assert.equal(s.gh.prs[0]!.head, "railyard/ship-on-push");
@@ -351,7 +357,7 @@ test("link: a renamed or look-alike repository is refused; finish looks up by th
   const auth2 = new URL(signedIn.redirect);
   fresh.cf.codes.set("code-same", auth2.searchParams.get("code_challenge")!);
   const done = await cloudflareCallback(fresh.deps, new URLSearchParams({ code: "code-same", state: id2 }), T0, await ownerBrowser(fresh));
-  assert.match(done.done, /Linked acme\/shop to other/);
+  assert.match(doneText(done), /Linked acme\/shop to other/);
   assert.equal(fresh.store.links[0]!.repo_id, REPO_ID);
   assert.equal(fresh.store.links[0]!.repo_full_name, FULL);
   assert.ok(fresh.gh.calls.some((c) => c.includes("/repositories/4242")), "finish asked GitHub for the stored id");
@@ -425,7 +431,7 @@ test("link: another Railyard org cannot link a repository it cannot push to, eve
   await assert.rejects(githubUserCallback(s.deps, new URLSearchParams({ error: "access_denied", state: id2 }), T0), (e: ShipError) => e.status === 400);
   // The real owner (push access) still links normally afterwards.
   const own = await linkThrough(s);
-  assert.match(own.done.done, /^Linked acme\/shop to shop\./);
+  assert.match(doneText(own.done), /^Linked acme\/shop to shop\./);
   assert.equal(s.store.links[0]!.org_id, s.org);
 });
 
@@ -615,7 +621,7 @@ test("no token is ever shown: pages, link responses and status carry none; the w
   assert.equal(goRes.status, 302);
   s.gh.installedOn.add(FULL);
   const { done } = await linkThrough(s);
-  const html = await page("Linked", done.done).text();
+  const html = await page("Linked", doneText(done)).text();
   for (const secret of ["cf-access", "cf-refresh", "ghs_install", "ghu_", "ry_", APP_PEM.slice(40, 80)]) assert.ok(!html.includes(secret), secret);
   assert.match(html, /<a href="https:\/\/github\.com\/acme\/shop\/pull\/\d+">/);
   const wf = workflowYaml({ consoleUrl: CONSOLE, productionBranch: "main" });

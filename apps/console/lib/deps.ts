@@ -6,6 +6,7 @@ import { Dodo } from "./dodo.ts";
 import { PostgrestRepo } from "./postgrest-repo.ts";
 import type { Repo } from "./repo.ts";
 import { insightsClient, type InsightsClient } from "./insights.ts";
+import { productAnalyticsFromEnv, type ProductAnalyticsClient } from "./product-analytics.ts";
 import { kvSites, type SitesStore } from "./sites.ts";
 import { PostgrestFlagsStore } from "./flags/store.ts";
 import { TableFlagsBackend } from "./flags/table-backend.ts";
@@ -26,6 +27,8 @@ export interface Deps {
   dodo: Dodo;
   sites: SitesStore;
   insights: InsightsClient | null;
+  /** Product analytics (QY1.2); null while the service is not connected. */
+  productAnalytics: ProductAnalyticsClient | null;
   flags: FlagsDeps;
   watch: WatchDeps;
   /** Ship on push (PY3.1); null until its GitHub App and Cloudflare client are configured. */
@@ -72,6 +75,7 @@ export function deps(): Deps {
     dodo: new Dodo({ base: cfg.dodoBase, apiKey: cfg.dodoApiKey, allowLive: cfg.dodoAllowLive }),
     sites,
     insights: cfg.insightsApi ? insightsClient({ apiUrl: cfg.insightsApi.url, token: cfg.insightsApi.token }) : null,
+    productAnalytics: productAnalyticsFromEnv(),
     flags: flagsDeps(cfg),
     watch: {
       store: new PostgrestWatchStore({ url: cfg.scribaseUrl, serviceRoleKey: cfg.scribaseServiceRoleKey }),

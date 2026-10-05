@@ -18,6 +18,13 @@ A Cloudflare Worker (RYP-D3) that takes page views and custom events from the
   request, so each site sees at most one downstream request every 2 seconds.
 - Once a minute each org's counts go to the usage meter as `insights_events`
   ($0 until paid overage is switched on).
+- Page speed (QY1.2): the page tag sends each page view's LCP, INP and CLS (and
+  FCP and TTFB) once, as a `performance` event, when the page is hidden.
+  `data-vitals="off"` on the script tag turns it off. The tag stays under 3 KB gzip.
+- With `PRODUCT_ANALYTICS_URL` set, every stored event also goes to product
+  analytics in its capture protocol (page views as `$pageview`, page speed as
+  `$web_vitals`, a cookieless daily id for anonymous visitors), so the web view
+  there reads the same store as funnels and replay.
 
 The downstream contract is `contract/INGEST-API.md` (and its JSON schema). Until
 Insights ingest is deployed, `INGEST_URL` is empty and events are counted and

@@ -16,6 +16,10 @@
 //   POST /api/v1/bridge/scribase/proof   {scribase_org_id, slot}
 //        {slot, state, live, proof:{kind,id,at}, next}: the real thing that
 //        happened for this slot, or "arriving" while its package has not landed.
+//   POST /api/v1/bridge/scribase/product_analytics {scribase_org_id, app, days?, with_server_key?}
+//        (QY1.2) The project's product analytics: public host and key, the
+//        first product event, the web view, and (only when asked, only to the
+//        control plane) the project's server key for server-side forwarders.
 //
 // Contract fixtures: railyard/tests/contract/fixtures/scribase-bridge/.
 
@@ -31,6 +35,7 @@ import { issueAiKey, issueConnectToken } from "../../../../../lib/ai/provision.t
 import type { Repo } from "../../../../../lib/repo.ts";
 import { verify, type WebhookHeaders } from "../../../../../lib/standard-webhooks.ts";
 import { createApprovedDevice } from "../../../../../lib/tokens.ts";
+import type { ProductAnalyticsClient, ProductFirstEvent } from "../../../../../lib/product-analytics.ts";
 import { emptyEntitlement, type Entitlement } from "../../../../../lib/types.ts";
 import { ensureEnv, firstRead, FlagsError, listFlags, setFlag, type FlagsDeps } from "../../../../../lib/flags/service.ts";
 import { createCheck, listWithState, WatchError, type WatchDeps } from "../../../../../lib/watch/service.ts";
@@ -74,6 +79,8 @@ export interface BridgeDeps {
   watch?: WatchDeps;
   /** Page speed with deploy markers in the Analytics tab (PY3.3), only with RAILYARD_REPLAY_LIVE=1. */
   replayLive?: boolean;
+  /** Product analytics (QY1.2); absent or null while the service is not connected. */
+  productAnalytics?: ProductAnalyticsClient | null;
   /** P-Y1 transition: accept unbound ids and orgs syncs without `addon.as_of` (RAILYARD_BRIDGE_ACCEPT_LEGACY=1). */
   acceptLegacy?: boolean;
 }
@@ -250,6 +257,7 @@ export async function slotProof(
   insights: InsightsClient | null = null,
   flags: FlagsDeps | null = null,
   watch: WatchDeps | null = null,
+  productAnalytics: ProductAnalyticsClient | null = null,
 ): Promise<SlotState> {
   const isLanded = landed[slot] ?? BRIDGE_SLOTS[slot].landed;
   if (!isLanded) {
@@ -268,10 +276,13 @@ export async function slotProof(
       : { slot, state: "no_proof_yet", live: true, proof: null, next: "Connect your own AI provider on the connect page." };
   }
   if (slot === "analytics") {
-    if (!insights) return { slot, state: "no_proof_yet", live: true, proof: null, next: "Analytics is being set up on this deployment; events are counted meanwhile." };
-    const first = firstEvent(await insights.summary(orgId));
-    return first
-      ? { slot, state: "live", live: true, proof: { kind: "first_event", id: first.app_id, at: first.at }, next: null }
+    if (!insights && !productAnalytics) return { slot, state: "no_proof_yet", live: true, proof: null, next: "Analytics is being set up on this deployment; events are counted meanwhile." };
+    const first = insights ? firstEvent(await insights.summary(orgId)) : null;
+    if (first) return { slot, state: "live", live: true, proof: { kind: "first_event", id: first.app_id, at: first.at }, next: null };
+    // QY1.2: an app that only uses the product analytics SDK proves the slot with its first product event.
+    const product = productAnalytics ? await firstProductEvent(productAnalytics, repo, orgId) : null;
+    return product
+      ? { slot, state: "live", live: true, proof: { kind: "first_product_event", id: product.app_id, at: product.at }, next: null }
       : { slot, state: "no_proof_yet", live: true, proof: null, next: "Waiting for the first event from the app." };
   }
   if (slot === "flags") {
@@ -291,6 +302,14 @@ export async function slotProof(
   return { slot, state: "no_proof_yet", live: true, proof: null, next: null };
 }
 
+/** The org's earliest first product event over its apps (QY1.2); a service error reads as none yet. */
+async function firstProductEvent(pa: ProductAnalyticsClient, repo: Repo, orgId: string): Promise<{ app_id: string; at: string } | null> {
+  const apps = await repo.listApps(orgId);
+  const firsts = await Promise.all(apps.map(async (a) => ({ app_id: a.id, first: await pa.firstEvent(orgId, a.id).catch(() => null) })));
+  const seen = firsts.filter((f): f is { app_id: string; first: ProductFirstEvent } => f.first !== null).sort((a, b) => (a.first.at < b.first.at ? -1 : 1));
+  return seen[0] ? { app_id: seen[0].app_id, at: seen[0].first.at } : null;
+}
+
 async function proofFor(deps: BridgeDeps, body: Record<string, unknown>): Promise<BridgeResult> {
   const scribaseOrgId = parseOrgRef(body);
   if (!scribaseOrgId) return fail(400, "scribase_org_id is required");
@@ -300,7 +319,7 @@ async function proofFor(deps: BridgeDeps, body: Record<string, unknown>): Promis
   if (!BRIDGE_SLOTS[s].landed) return { status: 200, body: { ...(await slotProof(deps.repo, "", s)) } };
   const bound = await deps.repo.findScribaseBinding(scribaseOrgId);
   if (!bound) return { status: 200, body: { slot: s, state: "not_entitled", live: false, proof: null, next: "Turn on the add-on first." } };
-  return { status: 200, body: { ...(await slotProof(deps.repo, bound.org_id, s, {}, deps.insights ?? null, deps.flags ?? null, deps.watch ?? null)) } };
+  return { status: 200, body: { ...(await slotProof(deps.repo, bound.org_id, s, {}, deps.insights ?? null, deps.flags ?? null, deps.watch ?? null, deps.productAnalytics ?? null)) } };
 }
 
 async function deploysFor(deps: BridgeDeps, body: Record<string, unknown>): Promise<BridgeResult> {
@@ -335,7 +354,16 @@ async function siteFor(deps: BridgeDeps, body: Record<string, unknown>): Promise
   const base = (deps.insightsUrl ?? "").replace(/\/$/, "");
   return {
     status: 200,
-    body: { app_id: app.id, app: app.name, site_key: app.site_key, script_url: base ? `${base}/s.js` : null, collector_url: base || null },
+    body: {
+      app_id: app.id,
+      app: app.name,
+      site_key: app.site_key,
+      script_url: base ? `${base}/s.js` : null,
+      collector_url: base || null,
+      // QY1.2 (contract 5.3): the product analytics host and the project's public key (the site key).
+      analytics_host: deps.productAnalytics?.host ?? null,
+      analytics_key: app.site_key,
+    },
   };
 }
 
@@ -350,7 +378,9 @@ async function insightsFor(deps: BridgeDeps, body: Record<string, unknown>): Pro
   if ("status" in who) return who;
   const app = await deps.repo.findAppByName(who.orgId, name);
   if (!app) return { status: 200, body: { available: false, next: "Turn on analytics for this project first." } };
-  if (!deps.insights) return { status: 200, body: { available: false, next: "Analytics is being set up on this deployment; events are counted meanwhile." } };
+  const product = deps.productAnalytics ? await deps.productAnalytics.firstEvent(who.orgId, app.id).catch(() => null) : null;
+  const first_product_event_at = product?.at ?? null;
+  if (!deps.insights) return { status: 200, body: { available: false, first_product_event_at, next: "Analytics is being set up on this deployment; events are counted meanwhile." } };
   const summary = await deps.insights.summary(who.orgId, { app: app.id, days: 7 });
   const row = summary.apps.find((a) => a.app_id === app.id);
   const limit = access(await deps.repo.getEntitlement(who.orgId), now).eventsLimit;
@@ -362,6 +392,7 @@ async function insightsFor(deps: BridgeDeps, body: Record<string, unknown>): Pro
       available: true,
       app: app.name,
       first_event_at: row?.first_event_at ?? null,
+      first_product_event_at,
       visitors: row?.visitors ?? 0,
       events: row?.events ?? 0,
       month_events: row?.month_events ?? 0,
@@ -382,6 +413,46 @@ async function vitalsFor(deps: BridgeDeps, orgId: string, appId: string, now: Da
   const marks = markTimes(await deps.repo.listDeploys(orgId, appId), appId, since);
   const v = await deps.insights.vitals(orgId, { app: appId, days: 7, marks: marks.map((d) => d.created_at) }).catch(() => null);
   return v ? vitalsView(v, appId, marks) : null;
+}
+
+const WEB_DAYS = new Set([1, 7, 30, 90]);
+
+/**
+ * Product analytics for one Scribase project environment (QY1.2, A26):
+ * `{scribase_org_id, app, days?, with_server_key?}`. The server key goes to
+ * the Scribase control plane only, which keeps it as an environment secret.
+ */
+async function productAnalyticsFor(deps: BridgeDeps, body: Record<string, unknown>): Promise<BridgeResult> {
+  const scribaseOrgId = parseOrgRef(body);
+  if (!scribaseOrgId) return fail(400, "scribase_org_id is required");
+  const name = typeof body.app === "string" ? normaliseAppName(body.app) : "";
+  if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(name)) return fail(400, "app must be a project name (letters, numbers, dashes)");
+  const days = body.days === undefined ? 7 : body.days;
+  if (typeof days !== "number" || !WEB_DAYS.has(days)) return fail(400, "days must be 1, 7, 30 or 90");
+  const now = deps.now();
+  const who = await entitledOrg(deps.repo, scribaseOrgId, "analytics", now);
+  if ("status" in who) return who;
+  const app = await deps.repo.findAppByName(who.orgId, name);
+  if (!app) return { status: 200, body: { available: false, next: "Turn on analytics for this project first." } };
+  const pa = deps.productAnalytics;
+  if (!pa) return { status: 200, body: { available: false, next: "Product analytics is being set up on this deployment; page analytics keeps working meanwhile." } };
+  try {
+    const [first, web] = await Promise.all([pa.firstEvent(who.orgId, app.id), pa.web(who.orgId, app.id, days)]);
+    return {
+      status: 200,
+      body: {
+        available: true,
+        app: app.name,
+        host: pa.host,
+        key: app.site_key,
+        first_event: first,
+        web,
+        ...(body.with_server_key === true ? { server_key: await pa.serverKey(app.id) } : {}),
+      },
+    };
+  } catch {
+    return { status: 200, body: { available: false, next: "Product analytics could not be reached. Try again shortly." } };
+  }
 }
 
 /** The AI gateway for one project environment (PY1.4, BYOK only). The key goes to the Scribase control plane only. */
@@ -506,7 +577,7 @@ async function uptimeFor(deps: BridgeDeps, body: Record<string, unknown>): Promi
   }
 }
 
-export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights" | "ai" | "ai_usage" | "flags" | "uptime";
+export type BridgeRoute = "orgs" | "claims" | "proof" | "deploys" | "sites" | "insights" | "ai" | "ai_usage" | "flags" | "uptime" | "product_analytics";
 
 /**
  * The route a signed message id names (P-Y1). Scribase sends
@@ -556,5 +627,7 @@ export async function handleBridge(deps: BridgeDeps, route: BridgeRoute, headers
       return flagsFor(deps, b);
     case "uptime":
       return uptimeFor(deps, b);
+    case "product_analytics":
+      return productAnalyticsFor(deps, b);
   }
 }

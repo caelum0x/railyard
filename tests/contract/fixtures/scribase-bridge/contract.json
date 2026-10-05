@@ -2,7 +2,7 @@
   "contract": "scribase-bridge",
   "version": 2,
   "package": "Wave P PY1.0 (RYP-E6)",
-  "note": "Scribase control-api (CA/adapters/railyard/bridge_client.rs) sends these requests; Railyard console (apps/console/app/api/v1/bridge/scribase) answers. Both sides test against this file. Every request is a POST with Standard Webhooks headers (webhook-id, webhook-timestamp, webhook-signature: v1,<base64 HMAC-SHA256 of id.timestamp.body>) under the shared secret RAILYARD_SCRIBASE_BRIDGE_SECRET (whsec_...). Version 2 (P-Y1): webhook-id is msg_<route>_<24 lowercase hex>, so the route is inside the signed content and a signature made for one route is refused on another (wrong_route); every orgs request carries addon.as_of, Scribase's time of that add-on state in epoch milliseconds, and an orgs request older than the stored state changes nothing and answers stale: true.",
+  "note": "Scribase control-api (CA/adapters/railyard/bridge_client.rs) sends these requests; Railyard console (apps/console/app/api/v1/bridge/scribase) answers. Both sides test against this file. Every request is a POST with Standard Webhooks headers (webhook-id, webhook-timestamp, webhook-signature: v1,<base64 HMAC-SHA256 of id.timestamp.body>) under the shared secret RAILYARD_SCRIBASE_BRIDGE_SECRET (whsec_...). Version 2 (P-Y1): webhook-id is msg_<route>_<24 lowercase hex>, so the route is inside the signed content and a signature made for one route is refused on another (wrong_route); every orgs request carries addon.as_of, Scribase's time of that add-on state in epoch milliseconds, and an orgs request older than the stored state changes nothing and answers stale: true. Wave Q QY1.2 adds, without changing anything above: the product_analytics route; analytics_host and analytics_key on the sites answer; first_product_event_at on the insights answer; the proof kind first_product_event; and the analytics_host section (contract 5.3) that Scribase SDKs and the Purchases forwarders (QU1.4) build against.",
   "base_path": "/api/v1/bridge/scribase",
   "cases": [
     {
@@ -176,6 +176,8 @@
       },
       "status": 200,
       "response_keys": [
+        "analytics_host",
+        "analytics_key",
         "app",
         "app_id",
         "collector_url",
@@ -189,6 +191,23 @@
     {
       "name": "analytics tab before Insights is configured",
       "route": "insights",
+      "request": {
+        "scribase_org_id": "org_fixture",
+        "app": "shop-prod"
+      },
+      "status": 200,
+      "response_keys": [
+        "available",
+        "first_product_event_at",
+        "next"
+      ],
+      "response_match": {
+        "available": false
+      }
+    },
+    {
+      "name": "product analytics tab before the service is connected",
+      "route": "product_analytics",
       "request": {
         "scribase_org_id": "org_fixture",
         "app": "shop-prod"
@@ -500,11 +519,12 @@
     "events",
     "events_limit",
     "first_event_at",
+    "first_product_event_at",
     "funnel",
     "month_events",
     "visitors"
   ],
-  "id_format": "^msg_(orgs|claims|proof|deploys|sites|insights|ai|ai_usage|flags|uptime)_[0-9a-f]{24}$",
+  "id_format": "^msg_(orgs|claims|proof|deploys|sites|insights|ai|ai_usage|flags|uptime|product_analytics)_[0-9a-f]{24}$",
   "wrong_route": {
     "status": 401,
     "response_keys": [
@@ -538,5 +558,79 @@
     "state",
     "status_url",
     "url"
-  ]
+  ],
+  "product_analytics_answer_keys": [
+    "app",
+    "available",
+    "first_event",
+    "host",
+    "key",
+    "web"
+  ],
+  "product_analytics_server_key": {
+    "request_field": "with_server_key",
+    "answer_field": "server_key",
+    "format": "^ry_pak_[0-9a-f]{64}$",
+    "note": "Only when the request sets with_server_key: true; only the Scribase control plane receives it and keeps it as the environment secret ANALYTICS_SERVER_KEY. Never written to an env file, printed or logged."
+  },
+  "web_keys": [
+    "range",
+    "totals",
+    "series",
+    "pages",
+    "referrers",
+    "utm",
+    "vitals"
+  ],
+  "analytics_host": {
+    "package": "Wave Q QY1.2 (contract 5.3)",
+    "env": {
+      "host": [
+        "NEXT_PUBLIC_ANALYTICS_HOST",
+        "EXPO_PUBLIC_ANALYTICS_HOST",
+        "VITE_ANALYTICS_HOST"
+      ],
+      "key": [
+        "NEXT_PUBLIC_ANALYTICS_KEY",
+        "EXPO_PUBLIC_ANALYTICS_KEY",
+        "VITE_ANALYTICS_KEY"
+      ],
+      "site": [
+        "NEXT_PUBLIC_ANALYTICS_SITE",
+        "EXPO_PUBLIC_ANALYTICS_SITE",
+        "VITE_ANALYTICS_SITE"
+      ],
+      "server_secret": "ANALYTICS_SERVER_KEY"
+    },
+    "sites_fields": {
+      "analytics_host": "public base URL of product analytics, or null while it is not connected",
+      "analytics_key": "the project's public key; equal to site_key"
+    },
+    "capture": {
+      "public": [
+        "/capture/",
+        "/batch/",
+        "/e/",
+        "/i/v0/e/"
+      ],
+      "protocol": "the open product analytics capture protocol: {api_key, event, distinct_id, properties, uuid?, timestamp?} or {api_key, batch:[...]}",
+      "key_field": "api_key"
+    },
+    "server_capture": {
+      "path": "/v1/server/{app_id}/batch",
+      "auth": "Authorization: Bearer ry_pak_<64 hex>",
+      "body": "{batch:[{event, distinct_id, properties, uuid?, timestamp?}]} without api_key",
+      "answers": {
+        "200": "{status:1, received}",
+        "401": "wrong key for this app",
+        "400": "invalid batch or a payload naming another project's key"
+      }
+    },
+    "proof": {
+      "kind": "first_product_event",
+      "id": "the app id",
+      "at": "RFC 3339"
+    },
+    "app_id_of_scribase_project": "the sites answer's app_id for app <project>-<environment>"
+  }
 }

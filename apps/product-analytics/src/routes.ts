@@ -17,6 +17,7 @@ import { heatmapsRoutes } from "./heatmaps/routes.ts";
 import { surveysRoutes } from "./surveys/routes.ts";
 import { experimentsRoutes } from "./experiments/routes.ts";
 import { exportsRoutes } from "./exports/routes.ts";
+import { webRoutes } from "./web/routes.ts";
 
 export function mountRoutes(app: Hono, deps: ServiceDeps): Hono {
   app.get("/healthz", (c) => c.json({ ok: true }));
@@ -31,5 +32,6 @@ export function mountRoutes(app: Hono, deps: ServiceDeps): Hono {
   app.route("/", surveysRoutes(deps)); // A3
   app.route("/", experimentsRoutes(deps)); // A3
   app.route("/", exportsRoutes(deps)); // A3
+  app.route("/", webRoutes(deps)); // QY1.2: web view and server-side capture
   return app;
 }

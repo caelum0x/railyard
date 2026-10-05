@@ -6,6 +6,7 @@
 // (a $0 shadow meter). It never receives an IP address.
 
 import { capDecision } from "./caps.ts";
+import { PA_MAX_BATCH, sendToPa, toPaEvent } from "./pa-forward.mjs";
 
 export const FLUSH_MS = 2000;
 export const MAX_BUFFER_PER_SITE = 10_000;
@@ -26,6 +27,8 @@ export class OrgCollector {
     this.dirty = new Set();
     this.seen = new Map(); // siteKey -> Map(event id -> expiry ms)
     this.seenDirty = new Set();
+    // QY1.2: stored events in the product analytics protocol, per site (only with PRODUCT_ANALYTICS_URL).
+    this.pa = new Map(); // siteKey -> events
     // Usage bucket for Rago: one minute (RAGO_BUCKET_MS exists for tests only).
     this.bucketMs = Number(env.RAGO_BUCKET_MS ?? 60_000);
   }
@@ -80,6 +83,11 @@ export class OrgCollector {
       }
       this.buffers.set(site.key, buf);
       m.stored += stored.length;
+      if (this.env.PRODUCT_ANALYTICS_URL) {
+        const pa = this.pa.get(site.key) ?? [];
+        pa.push(...stored.map((e) => toPaEvent(e, crypto.randomUUID())));
+        this.pa.set(site.key, pa.slice(-MAX_BUFFER_PER_SITE));
+      }
     }
     await this.schedule();
     return Response.json({ stored: stored.length, capped, duplicates });
@@ -113,12 +121,13 @@ export class OrgCollector {
     if (!this.orgId) this.orgId = await this.state.storage.get("orgId");
     const now = this.now();
     await this.flushIngest(now);
+    await this.flushPa(now);
     for (const k of this.dirty) await this.state.storage.put(`count:${k}`, this.counts.get(k));
     this.dirty.clear();
     for (const k of this.seenDirty) await this.state.storage.put(`seen:${k}`, [...(this.seen.get(k) ?? new Map())]);
     this.seenDirty.clear();
     await this.flushRago(now);
-    const pending = [...this.buffers.values()].some((b) => b.events.length) || this.minutes.size > 0;
+    const pending = [...this.buffers.values()].some((b) => b.events.length) || [...this.pa.values()].some((l) => l.length) || this.minutes.size > 0;
     if (pending) {
       await this.state.storage.setAlarm(now + FLUSH_MS);
       this.alarmAt = now + FLUSH_MS;
@@ -144,6 +153,26 @@ export class OrgCollector {
         this.buffers.set(b.site_key, cur);
       }
       console.error(`insights-edge: ingest flush for org ${this.orgId} failed: ${err.message}`);
+    }
+  }
+
+  /** QY1.2: the same stored events into product analytics, at most PA_MAX_BATCH per request; a server error is retried at the next alarm. */
+  async flushPa(now) {
+    if (!this.env.PRODUCT_ANALYTICS_URL || !this.pa.size) return;
+    const all = this.pa;
+    this.pa = new Map();
+    for (const [siteKey, events] of all) {
+      for (let i = 0; i < events.length; i += PA_MAX_BATCH) {
+        const chunk = events.slice(i, i + PA_MAX_BATCH);
+        const r = await sendToPa(this.env.PRODUCT_ANALYTICS_URL, siteKey, chunk, now);
+        if (r === "retry") {
+          const rest = events.slice(i);
+          this.pa.set(siteKey, [...rest, ...(this.pa.get(siteKey) ?? [])].slice(-MAX_BUFFER_PER_SITE));
+          console.error(`insights-edge: product analytics flush for org ${this.orgId} will be retried`);
+          break;
+        }
+        if (r === "drop") console.error(`insights-edge: product analytics refused ${chunk.length} events of one site of org ${this.orgId}`);
+      }
     }
   }
 
