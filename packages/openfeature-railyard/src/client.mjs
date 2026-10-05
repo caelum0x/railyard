@@ -5,6 +5,12 @@
 // given (localStorage, AsyncStorage or anything with getItem/setItem), so an
 // app that starts offline still has its last flags. Plain fetch, no
 // dependencies: works in browsers, Next.js (server and client) and Expo.
+//
+// Targeting (Wave Q QY1.3): a targeted flag carries its rules and the
+// environment's segments; evaluate(key, ctx) answers for any person locally,
+// with the same code and hash the server uses.
+
+import { evaluateAnswer } from "./targeting.mjs";
 
 export const DEFAULT_URL = "https://railyard.ereboslab.com/api/v1/flags/client";
 export const DEFAULT_POLL_MS = 30_000;
@@ -22,7 +28,19 @@ function asFlags(v) {
     if (!f || typeof f !== "object") continue;
     const row = /** @type {Record<string, unknown>} */ (f);
     out[k] = { enabled: row.enabled === true, value: typeof row.value === "string" ? row.value : null };
+    const t = /** @type {Record<string, unknown> | undefined} */ (row.targeting);
+    if (t && typeof t === "object" && Array.isArray(t.rules)) out[k].targeting = { on: t.on === true, value: typeof t.value === "string" ? t.value : null, rules: t.rules };
   }
+  return out;
+}
+
+/** @param {unknown} v */
+function asSegments(v) {
+  const segs = v && typeof v === "object" ? /** @type {Record<string, unknown>} */ (v).segments : null;
+  if (!segs || typeof segs !== "object" || Array.isArray(segs)) return {};
+  /** @type {Record<string, {conditions: unknown[]}>} */
+  const out = {};
+  for (const [k, seg] of Object.entries(segs)) if (seg && typeof seg === "object" && Array.isArray(/** @type {any} */ (seg).conditions)) out[k] = { conditions: /** @type {any} */ (seg).conditions };
   return out;
 }
 
@@ -46,6 +64,8 @@ export function createFlagsClient(options) {
   const storageKey = `railyard-flags:${options.key.slice(-12)}`;
   /** @type {Record<string, {enabled: boolean, value: string | null}>} */
   let flags = {};
+  /** @type {Record<string, {conditions: unknown[]}>} */
+  let segments = {};
   let source = "default";
   let timer = null;
   let closed = false;
@@ -70,8 +90,10 @@ export function createFlagsClient(options) {
     if (!storage) return false;
     try {
       const raw = await storage.getItem(storageKey);
-      const saved = typeof raw === "string" ? asFlags(JSON.parse(raw)) : null;
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : null;
+      const saved = asFlags(parsed);
       if (saved && source === "default") {
+        segments = asSegments(parsed);
         set(saved, "cache");
         return true;
       }
@@ -89,10 +111,13 @@ export function createFlagsClient(options) {
     const next = asFlags(body);
     if (!next) throw new Error("flags read answered an unexpected shape");
     failures = 0;
-    const changed = set(next, "live");
+    const nextSegments = asSegments(body);
+    const segmentsChanged = !same(nextSegments, segments);
+    segments = nextSegments;
+    const changed = set(next, "live") || segmentsChanged;
     if (storage) {
       try {
-        await storage.setItem(storageKey, JSON.stringify({ flags: next }));
+        await storage.setItem(storageKey, JSON.stringify({ flags: next, segments }));
       } catch {
         // Storage full or unavailable: the flags still work for this session.
       }
@@ -144,6 +169,18 @@ export function createFlagsClient(options) {
     },
     all() {
       return { ...flags };
+    },
+    /**
+     * The flag for one person: `{enabled, value, reason, rule}`. Plain flags
+     * answer as `isEnabled`/`getValue` do; targeted flags run their rules.
+     * @param {string} key
+     * @param {{ id?: string | null, properties?: Record<string, unknown>, cohorts?: string[] }} [ctx]
+     */
+    evaluate(key, ctx = {}) {
+      return Object.hasOwn(flags, key) ? evaluateAnswer(key, flags[key], ctx, segments) : null;
+    },
+    segments() {
+      return { ...segments };
     },
     /** "default" before any answer, "cache" from storage, "live" from the server. */
     source() {

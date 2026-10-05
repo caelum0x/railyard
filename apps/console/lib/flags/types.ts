@@ -8,6 +8,10 @@
 //   table      Railyard's own tables (migration 0005), the fallback when the
 //              box 2 memory gate keeps Flagsmith down.
 
+import type { Segment, Targeting } from "./targeting.mjs";
+
+export type { Condition, Rule, Segment, Targeting, TargetingContext } from "./targeting.mjs";
+
 export const FLAG_KEY = /^[a-z][a-z0-9_]{0,63}$/;
 export const ENV_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 export const CLIENT_KEY = /^ry_flags_[A-Za-z0-9_-]{24,64}$/;
@@ -41,6 +45,8 @@ export interface Flag {
   value: string | null;
   description: string | null;
   updated_at: string | null;
+  /** Rules and % rollouts (QY1.3); null for a plain on/off flag. */
+  targeting?: Targeting | null;
 }
 
 export interface FlagInput {
@@ -48,7 +54,11 @@ export interface FlagInput {
   enabled: boolean;
   value?: string | null;
   description?: string | null;
+  /** Absent: unchanged. Null: the flag is plain again. */
+  targeting?: Targeting | null;
 }
+
+export type SegmentRow = Segment & { updated_at: string | null };
 
 export type BackendRefs = Pick<FlagEnv, "backend_ref" | "backend_project" | "backend_org">;
 

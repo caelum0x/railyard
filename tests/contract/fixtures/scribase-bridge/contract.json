@@ -2,7 +2,7 @@
   "contract": "scribase-bridge",
   "version": 2,
   "package": "Wave P PY1.0 (RYP-E6)",
-  "note": "Scribase control-api (CA/adapters/railyard/bridge_client.rs) sends these requests; Railyard console (apps/console/app/api/v1/bridge/scribase) answers. Both sides test against this file. Every request is a POST with Standard Webhooks headers (webhook-id, webhook-timestamp, webhook-signature: v1,<base64 HMAC-SHA256 of id.timestamp.body>) under the shared secret RAILYARD_SCRIBASE_BRIDGE_SECRET (whsec_...). Version 2 (P-Y1): webhook-id is msg_<route>_<24 lowercase hex>, so the route is inside the signed content and a signature made for one route is refused on another (wrong_route); every orgs request carries addon.as_of, Scribase's time of that add-on state in epoch milliseconds, and an orgs request older than the stored state changes nothing and answers stale: true. Wave Q QY1.2 adds, without changing anything above: the product_analytics route; analytics_host and analytics_key on the sites answer; first_product_event_at on the insights answer; the proof kind first_product_event; and the analytics_host section (contract 5.3) that Scribase SDKs and the Purchases forwarders (QU1.4) build against.",
+  "note": "Scribase control-api (CA/adapters/railyard/bridge_client.rs) sends these requests; Railyard console (apps/console/app/api/v1/bridge/scribase) answers. Both sides test against this file. Every request is a POST with Standard Webhooks headers (webhook-id, webhook-timestamp, webhook-signature: v1,<base64 HMAC-SHA256 of id.timestamp.body>) under the shared secret RAILYARD_SCRIBASE_BRIDGE_SECRET (whsec_...). Version 2 (P-Y1): webhook-id is msg_<route>_<24 lowercase hex>, so the route is inside the signed content and a signature made for one route is refused on another (wrong_route); every orgs request carries addon.as_of, Scribase's time of that add-on state in epoch milliseconds, and an orgs request older than the stored state changes nothing and answers stale: true. Wave Q QY1.2 adds, without changing anything above: the product_analytics route; analytics_host and analytics_key on the sites answer; first_product_event_at on the insights answer; the proof kind first_product_event; and the analytics_host section (contract 5.3) that Scribase SDKs and the Purchases forwarders (QU1.4) build against. Wave Q QY1.3 adds targeting (null, or {rules:[...]}) to every flags item, and the flags set may carry targeting.",
   "base_path": "/api/v1/bridge/scribase",
   "cases": [
     {
@@ -545,6 +545,7 @@
     "description",
     "enabled",
     "key",
+    "targeting",
     "updated_at",
     "value"
   ],

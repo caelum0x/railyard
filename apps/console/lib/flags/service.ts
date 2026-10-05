@@ -1,9 +1,17 @@
 // Railyard Flags service (Wave P PY2.1): environments, flags and the public
 // evaluation the SDK polls. Every write names its org; a client key reads one
 // environment only (tenant isolation, PY2.1 acceptance 3).
+//
+// Targeting (Wave Q QY1.3): a flag may carry ordered rules (person property,
+// cohort or segment conditions, each with a % rollout on a stable hash).
+// Rules and segments live in Railyard's store for both backends; the read
+// endpoint answers each flag for the caller's own context and ships the rules
+// so the SDK can answer for any person locally with the same code
+// (targeting.mjs, shared byte for byte with the SDK and product analytics).
 
 import { randomToken } from "../crypto.ts";
 import type { FlagsStore } from "./store.ts";
+import { answerFlag, MAX_SEGMENTS, parseSegment, parseTargeting, referencedSegments, segmentRefs, type AnsweredFlag, type SegmentMap, type TargetingContext } from "./targeting.mjs";
 import { FlagsBackendError } from "./flagsmith-backend.ts";
 import {
   CLIENT_KEY,
@@ -17,6 +25,8 @@ import {
   type FlagEnv,
   type FlagInput,
   type FlagsBackend,
+  type SegmentRow,
+  type Targeting,
 } from "./types.ts";
 
 export const MAX_ENVS_PER_ORG = 500;
@@ -78,6 +88,12 @@ export function parseFlagInput(raw: unknown): FlagInput | string {
     if (b.description !== null && (typeof b.description !== "string" || b.description.length > MAX_DESCRIPTION)) return `description must be at most ${MAX_DESCRIPTION} characters`;
     out.description = b.description as string | null;
   }
+  if (b.targeting !== undefined) {
+    // Segment references are checked against the environment in setFlag.
+    const t = parseTargeting(b.targeting);
+    if (typeof t === "string") return t;
+    out.targeting = t;
+  }
   return out;
 }
 
@@ -105,17 +121,44 @@ export async function ensureEnv(
     copied_from: parent?.id ?? null,
   });
   if (parent) {
-    // A branch starts with its parent's flags, then changes on its own.
-    const flags = await wrap(() => backendFor(deps, parent).list(parent));
+    // A branch starts with its parent's flags, rules and segments, then changes on its own.
+    for (const seg of await deps.store.listSegments(parent.id)) {
+      await deps.store.upsertSegment(env.id, { key: seg.key, name: seg.name, conditions: seg.conditions }, "branch-copy", now.toISOString());
+    }
+    const flags = await listFlags(deps, parent);
     for (const f of flags) {
       await wrap(() => backendFor(deps, env).set(env, { key: f.key, enabled: f.enabled, value: f.value, description: f.description }, "branch-copy", now));
+      if (f.targeting) await deps.store.setTargeting(env.id, f.key, f.targeting, "branch-copy", now.toISOString());
     }
   }
   return { env, created: true };
 }
 
-export function listFlags(deps: FlagsDeps, env: FlagEnv): Promise<Flag[]> {
-  return wrap(() => backendFor(deps, env).list(env));
+/** The environment's flags, each with its rules (null for a plain flag). */
+export async function listFlags(deps: FlagsDeps, env: FlagEnv): Promise<Flag[]> {
+  const [flags, rules] = await Promise.all([wrap(() => backendFor(deps, env).list(env)), deps.store.listTargeting(env.id)]);
+  return flags.map((f) => ({ ...f, targeting: rules[f.key] ?? null }));
+}
+
+export function listSegments(deps: FlagsDeps, env: FlagEnv): Promise<SegmentRow[]> {
+  return deps.store.listSegments(env.id);
+}
+
+/** Creates or changes one segment of one environment (a named set of property conditions). */
+export async function setSegment(deps: FlagsDeps, env: FlagEnv, raw: unknown, actor: string, now: Date): Promise<SegmentRow> {
+  const seg = parseSegment(raw);
+  if (typeof seg === "string") throw new FlagsError(400, seg);
+  const existing = await deps.store.listSegments(env.id);
+  if (!existing.some((s) => s.key === seg.key) && existing.length >= MAX_SEGMENTS) throw new FlagsError(409, `An environment can have ${MAX_SEGMENTS} segments.`);
+  return deps.store.upsertSegment(env.id, seg, actor, now.toISOString());
+}
+
+/** Removes a segment no flag rule uses. */
+export async function deleteSegment(deps: FlagsDeps, env: FlagEnv, key: string): Promise<boolean> {
+  const rules = await deps.store.listTargeting(env.id);
+  const users = Object.entries(rules).filter(([, t]) => segmentRefs(t).has(key)).map(([k]) => k);
+  if (users.length) throw new FlagsError(409, `The segment is used by ${users.join(", ")}. Change those rules first.`);
+  return deps.store.deleteSegment(env.id, key);
 }
 
 /** Creates or changes one flag of one environment. */
@@ -127,28 +170,45 @@ export async function setFlag(deps: FlagsDeps, env: FlagEnv, raw: unknown, actor
   if (!current.some((f) => f.key === input.key) && current.length >= MAX_FLAGS_PER_ENV) {
     throw new FlagsError(409, `An environment can have ${MAX_FLAGS_PER_ENV} flags.`);
   }
-  return wrap(() => backend.set(env, input, actor, now));
+  if (input.targeting) {
+    const known = new Set((await deps.store.listSegments(env.id)).map((s) => s.key));
+    const checked = parseTargeting(input.targeting, known);
+    if (typeof checked === "string") throw new FlagsError(400, checked);
+  }
+  const { targeting, ...plain } = input;
+  const saved = await wrap(() => backend.set(env, plain, actor, now));
+  if (targeting !== undefined) await deps.store.setTargeting(env.id, input.key, targeting, actor, now.toISOString());
+  const rules = targeting !== undefined ? targeting : ((await deps.store.listTargeting(env.id))[input.key] ?? null);
+  return { ...saved, targeting: rules };
 }
 
 export interface Evaluation {
   env: string;
-  flags: Record<string, { enabled: boolean; value: string | null }>;
+  /** Each flag for the caller's context; targeted flags also carry their rules. */
+  flags: Record<string, AnsweredFlag>;
+  /** The segments the rules use (property conditions), for local evaluation. */
+  segments: SegmentMap;
   fetched_at: string;
 }
 
-/** What an app reads with its public client key. Records the environment's first read (the slot's proof). */
-export async function evaluate(deps: FlagsDeps, clientKey: string | null, now: Date): Promise<Evaluation> {
+/**
+ * What an app reads with its public client key. `ctx` is the caller's own
+ * person (id, properties, cohorts), optional: without it a targeted flag
+ * answers as for an anonymous person. Records the environment's first read
+ * (the slot's proof).
+ */
+export async function evaluate(deps: FlagsDeps, clientKey: string | null, now: Date, ctx: TargetingContext = {}): Promise<Evaluation> {
   if (!clientKey || !CLIENT_KEY.test(clientKey)) throw new FlagsError(401, "A valid flags key is required.");
   const env = await deps.store.findEnvByClientKey(clientKey);
   if (!env) throw new FlagsError(401, "A valid flags key is required.");
-  const flags = await listFlags(deps, env);
+  const [flags, segRows] = await Promise.all([listFlags(deps, env), deps.store.listSegments(env.id)]);
   if (!env.first_read_at) await deps.store.markFirstRead(env.id, now.toISOString());
-  return {
-    env: env.env,
-    flags: Object.fromEntries(flags.map((f) => [f.key, { enabled: f.enabled, value: f.value }])),
-    fetched_at: now.toISOString(),
-  };
+  const all: SegmentMap = Object.fromEntries(segRows.map((s) => [s.key, { conditions: s.conditions }]));
+  const answered = Object.fromEntries(flags.map((f) => [f.key, answerFlag(f.key, { enabled: f.enabled, value: f.value, targeting: f.targeting ?? null }, ctx, all)]));
+  return { env: env.env, flags: answered, segments: referencedSegments(answered, all), fetched_at: now.toISOString() };
 }
+
+export type { Targeting };
 
 /** The flags slot's proof: the first read of any environment's flags by an app. */
 export async function firstRead(store: FlagsStore, orgId: string): Promise<{ kind: string; id: string; at: string } | null> {
