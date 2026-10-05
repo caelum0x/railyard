@@ -15,6 +15,13 @@
 //! - `POST /mint/v1/sellers/{seller}/checkout-sessions` `{sku, buyer_ref,
 //!   success_url, cancel_url?}` → `{url, id}`: the buyer pays the seller's
 //!   processor directly.
+//!   `discount_code?` applies one of the seller's discount codes up front.
+//! - `POST /mint/v1/sellers/{seller}/discounts` `{code, type, amount,
+//!   expires_at?, name?, currency_options?, restricted_to?}` (Dodo's
+//!   `POST /discounts` shape; `restricted_to` holds the seller's skus) →
+//!   `{discount:{id, code, type, amount, expires_at}}`: a code made on the
+//!   seller's own account with the seller's key, which stays in Mint. Mint
+//!   stores nothing about it (Wave Q, for Menivor QM1.3 creator coupons).
 //! - `GET  /mint/v1/sellers/{seller}/entitlements?limit=`: recent events.
 //! - Seller webhooks (`/mint/webhooks/seller/{product}/{seller}/dodo`, and
 //!   `/mint/webhooks/stripe-connect`) become `entitlement.granted` /
@@ -40,7 +47,7 @@ use axum::{Json, Router};
 use mint_payments::seller::seal::SealKey;
 use mint_payments::seller::stripe::ConnectConfig;
 use mint_payments::seller::{
-    self, dodo, stripe, CheckoutMeta, EntitlementEvent, Interval, ProductSpec, SellerAccount, SellerError, SellerMode, SellerProvider,
+    self, dodo, stripe, CheckoutMeta, DiscountKind, DiscountSpec, EntitlementEvent, Interval, ProductSpec, SellerAccount, SellerError, SellerMode, SellerProvider,
 };
 use mint_payments::{HttpTransport, WebhookError};
 use mint_store::{ConnectToken, EntitlementRecord, SellerProductRecord, SellerRecord, SellerStore};
@@ -321,6 +328,7 @@ struct CheckoutBody {
     buyer_ref: String,
     success_url: String,
     cancel_url: Option<String>,
+    discount_code: Option<String>,
 }
 
 async fn checkout(State(state): State<SellerState>, headers: HeaderMap, Path(seller_id): Path<String>, Json(body): Json<CheckoutBody>) -> Response {
@@ -329,6 +337,9 @@ async fn checkout(State(state): State<SellerState>, headers: HeaderMap, Path(sel
     };
     if !seller::valid_buyer_ref(&body.buyer_ref) {
         return problem(StatusCode::BAD_REQUEST, "invalid_buyer_ref", "buyer_ref must be the app's user id (1-200 printable characters)");
+    }
+    if body.discount_code.as_deref().is_some_and(|c| !seller::valid_discount_code(c)) {
+        return problem(StatusCode::BAD_REQUEST, "invalid_discount_code", "discount_code must be 3-32 letters, digits, dashes or underscores");
     }
     let cancel = body.cancel_url.clone().unwrap_or_else(|| body.success_url.clone());
     if !body.success_url.starts_with("https://") || !cancel.starts_with("https://") || body.success_url.len() > 500 || cancel.len() > 500 {
@@ -347,7 +358,10 @@ async fn checkout(State(state): State<SellerState>, headers: HeaderMap, Path(sel
     let skey = seller_key(&key.product, &seller_id);
     let meta = CheckoutMeta { seller_key: &skey, buyer_ref: &body.buyer_ref, sku: &body.sku };
     let session = match account.provider {
-        SellerProvider::Dodo => dodo::create_checkout(state.transport.as_ref(), &account, &product.provider_ref, &meta, &body.success_url).await,
+        SellerProvider::Dodo => dodo::create_checkout_with(state.transport.as_ref(), &account, &product.provider_ref, &meta, &body.success_url, body.discount_code.as_deref()).await,
+        SellerProvider::Stripe if body.discount_code.is_some() => {
+            return problem(StatusCode::CONFLICT, "discounts_unsupported", "discount codes work on Dodo payment accounts; this seller connected Stripe");
+        }
         SellerProvider::Stripe => match &state.stripe {
             Some(cfg) => {
                 let request = stripe::CheckoutRequest { price_id: &product.provider_ref, recurring: product.interval.is_some(), success_url: &body.success_url, cancel_url: &cancel };
@@ -358,6 +372,79 @@ async fn checkout(State(state): State<SellerState>, headers: HeaderMap, Path(sel
     };
     match session {
         Ok(s) => (StatusCode::CREATED, Json(json!({ "url": s.url, "id": s.id }))).into_response(),
+        Err(e) => seller_error(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct CurrencyOption {
+    currency: String,
+}
+
+#[derive(Deserialize)]
+struct DiscountBody {
+    code: String,
+    #[serde(rename = "type")]
+    kind: String,
+    amount: i64,
+    expires_at: Option<String>,
+    name: Option<String>,
+    currency: Option<String>,
+    currency_options: Option<Vec<CurrencyOption>>,
+    /// The seller's skus (Mint maps them to the processor's product ids).
+    restricted_to: Option<Vec<String>>,
+}
+
+async fn create_discount(State(state): State<SellerState>, headers: HeaderMap, Path(seller_id): Path<String>, Json(body): Json<DiscountBody>) -> Response {
+    let Some(key) = caller(&state, &headers) else {
+        return problem(StatusCode::UNAUTHORIZED, "unauthorized", "a product seller key is required");
+    };
+    let kind = match body.kind.as_str() {
+        "percentage" => DiscountKind::Percentage,
+        "flat" => DiscountKind::Flat,
+        _ => return problem(StatusCode::BAD_REQUEST, "invalid_type", "type is percentage or flat"),
+    };
+    let currency = body.currency.clone().or_else(|| body.currency_options.as_ref().and_then(|o| o.first()).map(|o| o.currency.clone())).map(|c| c.to_ascii_uppercase());
+    let skus = body.restricted_to.clone().unwrap_or_default();
+    if skus.len() > 50 || !skus.iter().all(|s| seller::valid_sku(s)) {
+        return problem(StatusCode::BAD_REQUEST, "invalid_restricted_to", "restricted_to lists up to 50 of the seller's skus");
+    }
+    let Ok(Some(record)) = state.store.get_seller(&key.product, &seller_id).await else {
+        return seller_error(SellerError::NotConnected);
+    };
+    let mut product_ids = Vec::with_capacity(skus.len());
+    for sku in &skus {
+        match state.store.get_product(&key.product, &seller_id, sku).await {
+            Ok(Some(p)) => product_ids.push(p.provider_ref),
+            Ok(None) => return problem(StatusCode::NOT_FOUND, "unknown_sku", "create the product first"),
+            Err(_) => return storage(),
+        }
+    }
+    let spec = DiscountSpec {
+        code: body.code.trim().to_ascii_uppercase(),
+        name: body.name.as_deref().map_or_else(|| body.code.trim().to_owned(), |n| n.trim().to_owned()),
+        kind,
+        amount: body.amount,
+        currency,
+        expires_at: body.expires_at.clone(),
+        restricted_to: product_ids,
+    };
+    if let Err(msg) = spec.validate() {
+        return problem(StatusCode::BAD_REQUEST, "invalid_discount", &msg);
+    }
+    let account = match open_account(&state, &record) {
+        Ok(a) => a,
+        Err(e) => return seller_error(e),
+    };
+    if account.provider != SellerProvider::Dodo {
+        return problem(StatusCode::CONFLICT, "discounts_unsupported", "discount codes work on Dodo payment accounts; this seller connected Stripe");
+    }
+    match dodo::create_discount(state.transport.as_ref(), &account, &spec).await {
+        Ok(d) => (
+            StatusCode::CREATED,
+            Json(json!({ "discount": { "id": d.id, "code": d.code, "type": body.kind, "amount": spec.amount, "currency": spec.currency, "expires_at": spec.expires_at, "restricted_to": skus } })),
+        )
+            .into_response(),
         Err(e) => seller_error(e),
     }
 }
@@ -651,6 +738,7 @@ pub fn router(state: SellerState) -> Router {
         .route("/mint/v1/sellers/:seller/connect", post(connect))
         .route("/mint/v1/sellers/:seller/products", post(create_product).get(list_products))
         .route("/mint/v1/sellers/:seller/checkout-sessions", post(checkout))
+        .route("/mint/v1/sellers/:seller/discounts", post(create_discount))
         .route("/mint/v1/sellers/:seller/entitlements", get(list_entitlements))
         .route("/mint/connect/stripe/callback", get(stripe_callback))
         .route("/mint/connect/:token", get(connect_page).post(connect_submit))

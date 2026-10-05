@@ -6,7 +6,7 @@
 
 use serde_json::{json, Value};
 
-use super::{meta_from, CheckoutMeta, CheckoutSession, EntitlementEvent, EntitlementKind, Interval, ProductSpec, RevokeReason, SellerAccount, SellerError, SellerMode};
+use super::{meta_from, CheckoutMeta, CheckoutSession, Discount, DiscountKind, DiscountSpec, EntitlementEvent, EntitlementKind, Interval, ProductSpec, RevokeReason, SellerAccount, SellerError, SellerMode};
 use crate::http::{Headers, HttpTransport};
 use crate::verify::standard_webhooks_verify;
 use crate::WebhookError;
@@ -89,17 +89,70 @@ pub async fn create_checkout(
     meta: &CheckoutMeta<'_>,
     return_url: &str,
 ) -> Result<CheckoutSession, SellerError> {
-    let body = json!({
+    create_checkout_with(transport, acct, product_id, meta, return_url, None).await
+}
+
+/// As [`create_checkout`], with a discount code of the seller's applied up front
+/// (sent as `discount_codes`, the processor's current field).
+///
+/// # Errors
+/// A refusal (an unknown or expired code included), or the account not answering.
+pub async fn create_checkout_with(
+    transport: &dyn HttpTransport,
+    acct: &SellerAccount,
+    product_id: &str,
+    meta: &CheckoutMeta<'_>,
+    return_url: &str,
+    discount_code: Option<&str>,
+) -> Result<CheckoutSession, SellerError> {
+    let mut body = json!({
         "product_cart": [{ "product_id": product_id, "quantity": 1 }],
         "return_url": return_url,
         "metadata": { "mint_seller": meta.seller_key, "buyer_ref": meta.buyer_ref, "sku": meta.sku },
     });
+    if let Some(code) = discount_code {
+        body["discount_codes"] = json!([code.to_ascii_uppercase()]);
+    }
     let url = format!("{}/checkouts", api_base(acct.mode));
     let raw = serde_json::to_vec(&body).map_err(|_| SellerError::Unavailable)?;
     let resp = transport.post_json(&url, &auth(acct), &raw).await.map_err(|_| SellerError::Unavailable)?;
     let v = answer(resp.status, &resp.body)?;
     match (v["checkout_url"].as_str(), v["session_id"].as_str()) {
         (Some(url), Some(id)) if url.starts_with("https://") && !id.is_empty() => Ok(CheckoutSession { url: url.to_owned(), id: id.to_owned() }),
+        _ => Err(SellerError::Unavailable),
+    }
+}
+
+/// The body `POST /discounts` takes for `spec`.
+pub fn discount_body(spec: &DiscountSpec) -> Value {
+    let mut body = json!({
+        "code": spec.code.to_ascii_uppercase(),
+        "name": spec.name,
+        "type": if spec.kind == DiscountKind::Percentage { "percentage" } else { "flat" },
+        "amount": spec.amount,
+        "expires_at": spec.expires_at,
+    });
+    if let (DiscountKind::Flat, Some(currency)) = (spec.kind, &spec.currency) {
+        body["currency_options"] = json!([{ "currency": currency, "max_amount_possible": spec.amount, "is_default": true }]);
+    }
+    if !spec.restricted_to.is_empty() {
+        body["restricted_to"] = json!(spec.restricted_to);
+    }
+    body
+}
+
+/// Creates a discount code on the seller's own account (the seller's key; Mint stores nothing).
+///
+/// # Errors
+/// Invalid spec, a refusal (a code already in use included), or the account not answering.
+pub async fn create_discount(transport: &dyn HttpTransport, acct: &SellerAccount, spec: &DiscountSpec) -> Result<Discount, SellerError> {
+    spec.validate().map_err(SellerError::Invalid)?;
+    let url = format!("{}/discounts", api_base(acct.mode));
+    let raw = serde_json::to_vec(&discount_body(spec)).map_err(|_| SellerError::Unavailable)?;
+    let resp = transport.post_json(&url, &auth(acct), &raw).await.map_err(|_| SellerError::Unavailable)?;
+    let v = answer(resp.status, &resp.body)?;
+    match (v["discount_id"].as_str(), v["code"].as_str()) {
+        (Some(id), Some(code)) if !id.is_empty() && !code.is_empty() => Ok(Discount { id: id.to_owned(), code: code.to_owned() }),
         _ => Err(SellerError::Unavailable),
     }
 }
@@ -217,10 +270,10 @@ mod tests {
     use async_trait::async_trait;
     use serde_json::json;
 
-    use super::{create_checkout, create_product, parse_rfc3339_ms, product_body, verify_event};
+    use super::{create_checkout, create_checkout_with, create_discount, create_product, parse_rfc3339_ms, product_body, verify_event};
     use crate::http::{HttpResponse, HttpTransport, TransportError};
     use crate::outbound::sign;
-    use crate::seller::{CheckoutMeta, EntitlementKind, Interval, ProductSpec, RevokeReason, SellerAccount, SellerMode, SellerProvider};
+    use crate::seller::{CheckoutMeta, Discount, DiscountKind, DiscountSpec, EntitlementKind, Interval, ProductSpec, RevokeReason, SellerAccount, SellerError, SellerMode, SellerProvider};
 
     const WH: &str = "whsec_c2VsbGVyLXdlYmhvb2stc2VjcmV0LTMyLWJ5dGVzLTAwMA==";
     const NOW: i64 = 1_790_683_200;
@@ -274,6 +327,43 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&calls[1].3).unwrap();
         assert_eq!(body["metadata"], json!({"mint_seller":"scribase:org.shop.production","buyer_ref":"user_1","sku":"pro"}));
         assert_eq!(product_body(&spec)["price"]["payment_frequency_interval"], "Month");
+    }
+
+    #[tokio::test]
+    async fn discounts_and_coded_checkouts_go_to_the_sellers_own_account() {
+        let fake = Fake::default();
+        fake.answers.lock().unwrap().extend([
+            (200, json!({"discount_id":"dsc_1","code":"LAUNCH20"}).to_string()),
+            (200, json!({"discount_id":"dsc_2","code":"FIVEOFF"}).to_string()),
+            (200, json!({"checkout_url":"https://test.checkout.dodopayments.com/s/2","session_id":"cks_2"}).to_string()),
+            (409, json!({"message":"code already exists"}).to_string()),
+        ]);
+        let pct = DiscountSpec { code: "launch20".into(), name: "Launch".into(), kind: DiscountKind::Percentage, amount: 2000, currency: None, expires_at: Some("2026-12-31T23:59:59Z".into()), restricted_to: vec!["pdt_1".into()] };
+        assert_eq!(create_discount(&fake, &acct(), &pct).await.unwrap(), Discount { id: "dsc_1".into(), code: "LAUNCH20".into() });
+        let flat = DiscountSpec { code: "FIVEOFF".into(), name: "Five off".into(), kind: DiscountKind::Flat, amount: 500, currency: Some("USD".into()), expires_at: None, restricted_to: vec![] };
+        create_discount(&fake, &acct(), &flat).await.unwrap();
+        let meta = CheckoutMeta { seller_key: "menivor:creator_1", buyer_ref: "viewer_1", sku: "title.42.buy" };
+        create_checkout_with(&fake, &acct(), "pdt_1", &meta, "https://watch.example/back", Some("launch20")).await.unwrap();
+        assert!(matches!(create_discount(&fake, &acct(), &pct).await, Err(SellerError::Refused(_))));
+        let calls = fake.calls.lock().unwrap().clone();
+        assert_eq!(calls[0].1, "https://test.dodopayments.com/discounts");
+        assert!(calls.iter().all(|c| c.2.contains(&("authorization".to_owned(), "Bearer seller_dodo_key".to_owned()))), "the seller's key, not ours");
+        let body: serde_json::Value = serde_json::from_str(&calls[0].3).unwrap();
+        assert_eq!(body, json!({"code":"LAUNCH20","name":"Launch","type":"percentage","amount":2000,"expires_at":"2026-12-31T23:59:59Z","restricted_to":["pdt_1"]}));
+        let body: serde_json::Value = serde_json::from_str(&calls[1].3).unwrap();
+        assert_eq!(body["currency_options"], json!([{"currency":"USD","max_amount_possible":500,"is_default":true}]));
+        let body: serde_json::Value = serde_json::from_str(&calls[2].3).unwrap();
+        assert_eq!(body["discount_codes"], json!(["LAUNCH20"]));
+        // Checked before any call: bad codes, amounts, currencies and dates.
+        for bad in [
+            DiscountSpec { code: "x".into(), ..pct.clone() },
+            DiscountSpec { amount: 10_001, ..pct.clone() },
+            DiscountSpec { currency: None, ..flat.clone() },
+            DiscountSpec { expires_at: Some("tomorrow".into()), ..pct.clone() },
+        ] {
+            assert!(matches!(create_discount(&fake, &acct(), &bad).await, Err(SellerError::Invalid(_))), "{bad:?}");
+        }
+        assert_eq!(fake.calls.lock().unwrap().len(), 4, "nothing was sent for the refused specs");
     }
 
     #[tokio::test]
