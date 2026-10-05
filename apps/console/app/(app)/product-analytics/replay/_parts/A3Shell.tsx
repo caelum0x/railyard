@@ -13,6 +13,7 @@ export const A3_SCREENS: { href: string; label: string; needs: keyof LiveModules
   // The label of a flag-based screen is shown only once the flags slot is live.
   { href: PATHS.exp, label: "Variant tests", needs: "flags" },
   { href: PATHS.exports, label: "Exports", needs: null },
+  { href: PATHS.alerts, label: "Alerts", needs: null },
 ];
 
 export function A3Shell({ title, names, app, current, children, live = liveModules() }: { title: string; names: string[]; app: string | null; current: string; children: ReactNode; live?: LiveModules }) {

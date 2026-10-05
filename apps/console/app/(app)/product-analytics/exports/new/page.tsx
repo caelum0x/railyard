@@ -30,8 +30,9 @@ async function create(form: FormData) {
 
 const input = { display: "grid", gap: 4, fontSize: 13 } as const;
 
-// A new destination: a webhook (the service signs every batch) or an S3
-// bucket (the service writes gzip NDJSON files). One action: add it.
+// A new destination: a webhook (the service signs every batch), an S3
+// bucket (the service writes gzip NDJSON files), or Slack, Discord or HubSpot
+// (QY1.4). One action: add it.
 export default async function NewDestinationPage({ searchParams }: { searchParams: { app?: string; problem?: string } }) {
   const ctx = await a3Context(searchParams.app);
   return (
@@ -85,6 +86,25 @@ export default async function NewDestinationPage({ searchParams }: { searchParam
                 <label style={input}>
                   <span className="muted">Secret access key</span>
                   <input name="secret" type="password" autoComplete="off" />
+                </label>
+              </div>
+              <label>
+                <input type="radio" name="kind" value="slack" /> Slack (a message per batch)
+              </label>
+              <label>
+                <input type="radio" name="kind" value="discord" /> Discord (a message per batch)
+              </label>
+              <label>
+                <input type="radio" name="kind" value="hubspot" /> HubSpot (contacts kept up to date by email)
+              </label>
+              <div className="row">
+                <label style={input}>
+                  <span className="muted">Slack or Discord webhook address, or HubSpot private app token</span>
+                  <input name="target" type="password" autoComplete="off" />
+                </label>
+                <label style={input}>
+                  <span className="muted">Label (optional)</span>
+                  <input name="label" maxLength={80} placeholder="#growth" />
                 </label>
               </div>
             </fieldset>

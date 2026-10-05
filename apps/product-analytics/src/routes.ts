@@ -18,6 +18,7 @@ import { surveysRoutes } from "./surveys/routes.ts";
 import { experimentsRoutes } from "./experiments/routes.ts";
 import { exportsRoutes } from "./exports/routes.ts";
 import { webRoutes } from "./web/routes.ts";
+import { alertsRoutes } from "./alerts/routes.ts";
 
 export function mountRoutes(app: Hono, deps: ServiceDeps): Hono {
   app.get("/healthz", (c) => c.json({ ok: true }));
@@ -33,5 +34,6 @@ export function mountRoutes(app: Hono, deps: ServiceDeps): Hono {
   app.route("/", experimentsRoutes(deps)); // A3
   app.route("/", exportsRoutes(deps)); // A3
   app.route("/", webRoutes(deps)); // QY1.2: web view and server-side capture
+  app.route("/", alertsRoutes(deps)); // QY1.4: alerts, subscriptions, unsubscribe
   return app;
 }

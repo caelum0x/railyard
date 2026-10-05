@@ -29,6 +29,12 @@ re-implemented in Postgres SQL: page views of `$pageview`, entry referrer and
 UTM per session, "$direct" without a referrer, p75 page speed with the
 published thresholds. Same MIT notice as above.
 
+Destination catalogue (QY1.4, src/exports/catalogue.ts): the Slack message
+and HubSpot upsert shapes follow PostHog/posthog
+nodejs/src/cdp/templates/_destinations/{slack,hubspot} (MIT; commit
+1348173f5911; nothing from `ee/`), re-implemented in TypeScript. Same MIT
+notice as above.
+
 Runtime dependencies (unmodified, from npm): hono and @hono/node-server
 (MIT), pg (MIT), fflate (MIT), jose (MIT).
 

@@ -21,6 +21,12 @@ services:
       RAGO_URL: ${RAGO_URL:-}
       RAGO_API_KEY: ${RAGO_API_KEY:-}
       RAILYARD_LIVE: ${RAILYARD_LIVE:-0}
+      # Export destination secrets at rest (32 bytes); alert and report mail (QY1.4).
+      PA_EXPORTS_KEY: ${PA_EXPORTS_KEY:-}
+      PA_PUBLIC_URL: ${PA_PUBLIC_URL:-https://pa.railyard.ereboslab.com}
+      PA_CONSOLE_URL: ${PA_CONSOLE_URL:-https://railyard.ereboslab.com}
+      RALLY_TX_URL: ${RALLY_TX_URL:-}
+      RALLY_TX_KEY: ${RALLY_TX_KEY:-}
     ports:
       - "127.0.0.1:8790:8790"
     mem_limit: 192m

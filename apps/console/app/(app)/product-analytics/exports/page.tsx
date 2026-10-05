@@ -1,6 +1,6 @@
 import { a3Context, appQuery } from "../replay/_parts/context.ts";
 import { A3Shell, fmt, NO_APP, NOT_CONNECTED, Notice, Problem } from "../replay/_parts/A3Shell.tsx";
-import { problemText, STATUS_TEXT, type Destination } from "../_lib/a3-client.ts";
+import { KIND_TEXT, problemText, STATUS_TEXT, type Destination } from "../_lib/a3-client.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +57,7 @@ export default async function ExportsPage({ searchParams }: { searchParams: { ap
                       <td>
                         <a href={`/product-analytics/exports/${d.id}?${q}`}>{d.name}</a>
                       </td>
-                      <td>{d.kind === "webhook" ? "Webhook" : "S3 bucket"}</td>
+                      <td>{KIND_TEXT[d.kind]}</td>
                       <td>{d.enabled ? STATUS_TEXT[d.status] : "Paused"}</td>
                       <td>{d.delivered.toLocaleString("en-US")}</td>
                       <td>{fmt(d.last_success_at)}</td>

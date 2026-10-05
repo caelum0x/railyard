@@ -9,6 +9,7 @@ import type { FlagsReader } from "./flags/client.ts";
 import type { GdprHooks } from "./gdpr/hooks.ts";
 import type { Logger } from "./log.ts";
 import type { SiteDirectory } from "./tenancy/site-directory.ts";
+import type { Mailer } from "./alerts/mail.ts";
 
 export interface ServiceDeps {
   db: Db;
@@ -23,4 +24,6 @@ export interface ServiceDeps {
   now: () => Date;
   consoleSecret: string | null;
   bridgeSecret: string | null;
+  /** Alert and report mail (QY1.4): Rally Send, or none (logged as not configured). */
+  mailer: Mailer;
 }

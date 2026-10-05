@@ -7,6 +7,7 @@
 // retried with exponential backoff (30 s doubling, at most an hour).
 //   webhook: POST {type, project_id, batch_id, events[]} signed with Standard Webhooks
 //   s3:      one NDJSON.gz object per batch under <prefix>/events/<project>/<yyyy>/<mm>/<dd>/
+//   slack, discord, hubspot (QY1.4): catalogue.ts turns the batch into the target's request
 
 import { randomUUID } from "node:crypto";
 import { gzipSync } from "node:zlib";
@@ -17,6 +18,7 @@ import { S3ObjectStore } from "../replay/object-store.ts";
 import { toDestination, type Destination, type S3DestConfig, type WebhookConfig } from "./destinations.ts";
 import { checkReachable, checkUrlShape } from "./net-guard.ts";
 import { open } from "./secrets.ts";
+import { isCatalogue, openBundle, sendCatalogue, type SecretBundle } from "./catalogue.ts";
 
 export const BATCH_SIZE = 500;
 export const MAX_BATCHES_PER_RUN = 20;
@@ -142,8 +144,10 @@ export async function deliver(db: Db, raw: Record<string, unknown>, now: Date, o
   const d: Destination & Cursor = { ...toDestination(raw), cursor_uuid: (raw.cursor_uuid as string | null) ?? null, cursor_text: (raw.cursor_text as string | null) ?? null };
   const fetchImpl = opts.fetchImpl ?? fetch;
   let secret: string;
+  let bundle: SecretBundle | null = null;
   try {
     secret = open(String(raw.secret_enc));
+    if (isCatalogue(d.kind)) bundle = openBundle(secret);
   } catch (err) {
     opts.log.error("export secret could not be opened", { destination: d.id, error: (err as Error).message });
     await failed(db, d, now, `The destination's secret could not be read on this deployment.`, null, 0, 0);
@@ -163,6 +167,10 @@ export async function deliver(db: Db, raw: Record<string, unknown>, now: Date, o
         const body = JSON.stringify({ type: "events", project_id: d.project_id, batch_id: batchId, events: rows.map(exported) });
         bytes = Buffer.byteLength(body);
         httpStatus = await sendWebhook(d.config as WebhookConfig, secret, body, `msg_${batchId}`, now, fetchImpl);
+      } else if (isCatalogue(d.kind) && bundle) {
+        const sent = await sendCatalogue(d.kind, bundle, rows.map(exported), `msg_${batchId}`, now, fetchImpl);
+        bytes = sent.bytes;
+        httpStatus = sent.status;
       } else {
         bytes = await sendS3(d, secret, rows, batchId, fetchImpl);
       }
