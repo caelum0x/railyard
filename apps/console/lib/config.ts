@@ -29,6 +29,13 @@ export interface Config {
   scribaseAnonKey: string;
   scribaseServiceRoleKey: string;
   sessionSecret: string;
+  /**
+   * The direct-signup money ladder ($1 card check, then the plan) runs only when
+   * the Dodo key, webhook secret and three product ids are all set. Without
+   * them the console still runs: sign-in, Scribase add-on orgs (the bridge) and
+   * every slot work, and checkout answers "card payments open soon".
+   */
+  billingReady: boolean;
   dodoApiKey: string;
   dodoWebhookSecret: string;
   dodoBase: string;
@@ -79,6 +86,10 @@ export interface Config {
 
 type Env = Record<string, string | undefined>;
 
+function opt(env: Env, name: string): string {
+  return env[name]?.trim() ?? "";
+}
+
 function need(env: Env, name: string): string {
   const v = env[name];
   if (!v || !v.trim()) throw new Error(`${name} is not set`);
@@ -98,15 +109,16 @@ export function readConfig(env: Env = process.env): Config {
     scribaseAnonKey: need(env, "SCRIBASE_ANON_KEY"),
     scribaseServiceRoleKey: need(env, "SCRIBASE_SERVICE_ROLE_KEY"),
     sessionSecret: need(env, "RAILYARD_SESSION_SECRET"),
-    dodoApiKey: need(env, "DODO_API_KEY"),
-    dodoWebhookSecret: need(env, "DODO_WEBHOOK_SECRET"),
+    billingReady: ["DODO_API_KEY", "DODO_WEBHOOK_SECRET", "DODO_PRODUCT_ID_CARD_CHECK", "DODO_PRODUCT_ID_MONTH", "DODO_PRODUCT_ID_YEAR"].every((n) => !!opt(env, n)),
+    dodoApiKey: opt(env, "DODO_API_KEY"),
+    dodoWebhookSecret: opt(env, "DODO_WEBHOOK_SECRET"),
     dodoBase,
     dodoAllowLive,
     dodoBrandId: env.DODO_BRAND_ID?.trim() || null,
     products: {
-      cardCheck: need(env, "DODO_PRODUCT_ID_CARD_CHECK"),
-      month: need(env, "DODO_PRODUCT_ID_MONTH"),
-      year: need(env, "DODO_PRODUCT_ID_YEAR"),
+      cardCheck: opt(env, "DODO_PRODUCT_ID_CARD_CHECK"),
+      month: opt(env, "DODO_PRODUCT_ID_MONTH"),
+      year: opt(env, "DODO_PRODUCT_ID_YEAR"),
     },
     scribaseBridgeSecret: env.RAILYARD_SCRIBASE_BRIDGE_SECRET?.trim() || null,
     bridgeAcceptLegacy: env.RAILYARD_BRIDGE_ACCEPT_LEGACY === "1",

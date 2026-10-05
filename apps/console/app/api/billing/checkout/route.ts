@@ -8,6 +8,7 @@ export async function POST(req: Request) {
   const s = await sessionFromRequest(req);
   if (!s) return new Response(null, { status: 303, headers: { location: `${d.cfg.consoleUrl}/` } });
   if (!sameOrigin(req, d.cfg.consoleUrl)) return new Response("Forbidden", { status: 403 });
+  if (!d.cfg.billingReady) return new Response(null, { status: 303, headers: { location: `${d.cfg.consoleUrl}/billing?error=arriving` } });
   const form = await req.formData();
   const kind = form.get("kind") === "plan" ? "plan" : ("card_check" as CheckoutKind);
   const interval = form.get("interval") === "year" ? "year" : "month";

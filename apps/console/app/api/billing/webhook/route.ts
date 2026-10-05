@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   const { cfg, repo, dodo } = deps();
+  if (!cfg.billingReady) return json({ error: "billing_not_configured" }, 503);
   const body = await req.text();
   const res = await handleDodoWebhook(
     { repo, dodo, webhookSecret: cfg.dodoWebhookSecret, sessionSecret: cfg.sessionSecret, brandId: cfg.dodoBrandId, now: () => new Date() },

@@ -8,6 +8,7 @@ export async function POST(req: Request) {
   const s = await sessionFromRequest(req);
   if (!s) return new Response(null, { status: 303, headers: { location: `${d.cfg.consoleUrl}/` } });
   if (!sameOrigin(req, d.cfg.consoleUrl)) return new Response("Forbidden", { status: 403 });
+  if (!d.cfg.billingReady) return new Response(null, { status: 303, headers: { location: `${d.cfg.consoleUrl}/billing?error=arriving` } });
   try {
     await cancel(d, s.org, new Date());
     return new Response(null, { status: 303, headers: { location: `${d.cfg.consoleUrl}/billing?cancelled=1` } });

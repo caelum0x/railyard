@@ -27,6 +27,10 @@ Usage, Billing), one primary action on each, a pause switch and one-click cancel
   org-scoped and stored as SHA-256 hashes.
 - **Test mode only:** the payment client refuses the live host unless
   `RAILYARD_DODO_LIVE=1` is set by the owner.
+- **Billing optional:** without all five Dodo values (key, webhook secret,
+  three product ids) the console still runs. Sign-in, Scribase add-on orgs and
+  every slot work; checkout, pause and cancel answer "card payments open soon"
+  and the webhook answers 503.
 
 ## Environment
 
