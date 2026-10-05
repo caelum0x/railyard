@@ -222,13 +222,14 @@ test("S3: NDJSON.gz objects under the prefix, signed with AWS Signature V4, this
   assert.ok(s3Refusals.includes("signature mismatch"), "the fake really checks signatures");
 });
 
-test("destinations: at most three, paused ones wait, and the API never serves another project's", { skip: skipNoPg }, async () => {
+test("destinations: at most MAX_DESTINATIONS (6 since QY1.4 added the catalogue), paused ones wait, and the API never serves another project's", { skip: skipNoPg }, async () => {
   const s = makeSite({ name: "many" });
   run.sites.sites.push(s);
   const h = await hook();
   const ids: string[] = [];
-  for (let i = 0; i < 3; i += 1) ids.push((await api(run, s, "/exports", { body: { name: `h${i}`, kind: "webhook", config: { url: h.url } } })).body.destination.id);
-  assert.equal((await api(run, s, "/exports", { body: { name: "h3", kind: "webhook", config: { url: h.url } } })).status, 409);
+  for (let i = 0; i < 6; i += 1) ids.push((await api(run, s, "/exports", { body: { name: `h${i}`, kind: "webhook", config: { url: h.url } } })).body.destination.id);
+  assert.equal((await api(run, s, "/exports", { body: { name: "h6", kind: "webhook", config: { url: h.url } } })).status, 409);
+  for (const id of ids.slice(3)) await api(run, s, `/exports/${id}`, { method: "DELETE" });
   assert.equal((await api(run, s, "/exports", { body: { name: "bad", kind: "ftp" } })).status, 400);
   assert.equal((await api(run, site, `/exports/${ids[0]}`)).status, 404);
   assert.equal((await api(run, s, `/exports/${ids[0]}`, { method: "PUT", body: { enabled: false } })).body.destination.enabled, false);

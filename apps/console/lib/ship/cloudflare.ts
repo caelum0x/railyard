@@ -37,8 +37,8 @@ export class CloudflareError extends Error {
 
 export const DEFAULT_AUTHORIZE_URL = "https://dash.cloudflare.com/oauth2/auth";
 export const DEFAULT_TOKEN_URL = "https://dash.cloudflare.com/oauth2/token";
-/** Enough to deploy Workers with static assets and read the account (wrangler's deploy set). */
-export const DEFAULT_SCOPES = ["account:read", "user:read", "workers:write", "workers_scripts:write", "workers_routes:write", "offline_access"];
+/** Enough to deploy Workers with static assets and read the account (wrangler's deploy set), plus zone read and certificates for custom domains (QY1.5). */
+export const DEFAULT_SCOPES = ["account:read", "user:read", "workers:write", "workers_scripts:write", "workers_routes:write", "zone:read", "ssl_certs:write", "offline_access"];
 
 export async function pkceChallenge(verifier: string): Promise<string> {
   return b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));

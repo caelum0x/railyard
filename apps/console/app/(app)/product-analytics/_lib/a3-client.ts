@@ -23,6 +23,7 @@ export const PATHS = {
   surveys: `${PA}/surveys`,
   exp: `${PA}/${EXP}`,
   exports: `${PA}/exports`,
+  alerts: `${PA}/alerts`,
 } as const;
 
 // ---- Shapes the service answers with ----
@@ -131,8 +132,8 @@ export interface FlagChange {
 export interface Destination {
   id: string;
   name: string;
-  kind: "webhook" | "s3";
-  config: { url?: string; endpoint?: string; bucket?: string; region?: string; prefix?: string; access_key_id?: string };
+  kind: "webhook" | "s3" | "slack" | "discord" | "hubspot";
+  config: { url?: string; endpoint?: string; bucket?: string; region?: string; prefix?: string; access_key_id?: string; label?: string };
   events: string[] | null;
   enabled: boolean;
   status: "ok" | "retrying" | "failing";
@@ -153,6 +154,61 @@ export interface ExportRun {
   status: "ok" | "failed";
   http_status: number | null;
   error: string | null;
+}
+
+export interface AlertRow {
+  id: string;
+  insight_id: string;
+  name: string;
+  kind: "threshold" | "anomaly";
+  direction: "above" | "below" | "either";
+  threshold: number | null;
+  sensitivity: number | null;
+  check_every: "hour" | "day";
+  recipients: string[];
+  enabled: boolean;
+  state: "ok" | "firing" | "error";
+  last_value: number | null;
+  last_checked_at: string | null;
+  last_fired_at: string | null;
+  last_error: string | null;
+}
+
+export interface SubscriptionRow {
+  id: string;
+  dashboard_id: string;
+  weekday: number;
+  hour_utc: number;
+  recipients: string[];
+  enabled: boolean;
+  next_send_at: string;
+  last_sent_at: string | null;
+  last_error: string | null;
+}
+
+export interface MailLogRow {
+  recipient: string;
+  status: "sent" | "failed" | "unsubscribed" | "not_configured";
+  error: string | null;
+  created_at: string;
+}
+
+/** Addresses typed one per line or comma separated. */
+export const recipients = (v: string | undefined): string[] =>
+  (v ?? "")
+    .split(/[\n,]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+/** The alert the form describes (QY1.4). */
+export function alertFromForm(form: Record<string, string>): Record<string, unknown> {
+  const base = { name: form.name ?? "", insight_id: form.insight_id ?? "", recipients: recipients(form.recipients), check_every: form.check_every === "day" ? "day" : "hour" };
+  if (form.kind === "anomaly") return { ...base, kind: "anomaly", direction: form.direction || "either", sensitivity: Number(form.sensitivity || 3) };
+  return { ...base, kind: "threshold", direction: form.direction === "below" ? "below" : "above", threshold: form.threshold === "" || form.threshold === undefined ? null : Number(form.threshold) };
+}
+
+export function subscriptionFromForm(form: Record<string, string>): Record<string, unknown> {
+  return { dashboard_id: form.dashboard_id ?? "", weekday: Number(form.weekday ?? 1), hour_utc: Number(form.hour_utc ?? 8), recipients: recipients(form.recipients) };
 }
 
 // ---- The client ----
@@ -205,6 +261,16 @@ export function a3Api(cfg: PaConfig, scope: Scope, projectId: string, fetchImpl:
     deleteDestination: (id: string) => call<{ deleted: boolean }>(`/exports/${e(id)}`, { method: "DELETE" }),
     testDestination: (id: string) => call<{ ok: boolean; status?: number; error?: string }>(`/exports/${e(id)}/test`, post({})),
     runs: (id: string) => call<{ runs: ExportRun[] }>(`/exports/${e(id)}/runs`),
+    // Alerts and subscriptions (QY1.4)
+    alerts: () => call<{ alerts: AlertRow[]; max_alerts: number; mail_configured: boolean }>("/alerts"),
+    createAlert: (input: Record<string, unknown>) => call<{ alert: AlertRow }>("/alerts", post(input)),
+    updateAlert: (id: string, patch: { enabled?: boolean; check_now?: boolean; recipients?: string[] }) => call<{ alert: AlertRow }>(`/alerts/${e(id)}`, post(patch, "PUT")),
+    deleteAlert: (id: string) => call<{ deleted: boolean }>(`/alerts/${e(id)}`, { method: "DELETE" }),
+    alertLog: (id: string) => call<{ log: MailLogRow[] }>(`/alerts/${e(id)}/log`),
+    subscriptions: () => call<{ subscriptions: SubscriptionRow[]; weekdays: string[]; mail_configured: boolean }>("/subscriptions"),
+    createSubscription: (input: Record<string, unknown>) => call<{ subscription: SubscriptionRow }>("/subscriptions", post(input)),
+    updateSubscription: (id: string, patch: { enabled?: boolean; send_now?: boolean }) => call<{ subscription: SubscriptionRow }>(`/subscriptions/${e(id)}`, post(patch, "PUT")),
+    deleteSubscription: (id: string) => call<{ deleted: boolean }>(`/subscriptions/${e(id)}`, { method: "DELETE" }),
     /** A saved insight's answer as CSV (raw response, status and body passed through). */
     async savedInsightCsv(insightId: string, now = new Date()): Promise<Response> {
       const token = await signOrgToken(cfg.secret, { org_id: scope.org_id, app_ids: scope.app_ids, role: scope.role ?? "owner" }, now);
@@ -290,10 +356,23 @@ export function destinationFromForm(form: Record<string, string>): Record<string
     .map((s) => s.trim())
     .filter(Boolean);
   const common = { name: form.name ?? "", start: form.start === "all" ? "all" : "now", ...(events.length ? { events } : {}) };
+  if (form.kind === "slack" || form.kind === "discord" || form.kind === "hubspot") {
+    // QY1.4: the webhook address (Slack, Discord) or the private app token (HubSpot) is sealed by the service.
+    return { ...common, kind: form.kind, config: { label: form.label ?? "" }, secret: form.target ?? "" };
+  }
   if (form.kind === "s3") {
     return { ...common, kind: "s3", config: { endpoint: form.endpoint ?? "", bucket: form.bucket ?? "", region: form.region || "auto", prefix: form.prefix ?? "", access_key_id: form.access_key_id ?? "" }, secret: form.secret ?? "" };
   }
   return { ...common, kind: "webhook", config: { url: form.url ?? "" } };
+}
+
+export const KIND_TEXT: Record<Destination["kind"], string> = { webhook: "Webhook", s3: "S3 bucket", slack: "Slack", discord: "Discord", hubspot: "HubSpot contacts" };
+
+/** Where a destination sends, in words (never its secret). */
+export function destinationTarget(d: Pick<Destination, "kind" | "config">): string {
+  if (d.kind === "webhook") return `Webhook ${d.config.url}`;
+  if (d.kind === "s3") return `Bucket ${d.config.bucket} at ${d.config.endpoint}${d.config.prefix ? `, folder ${d.config.prefix}` : ""}`;
+  return `${KIND_TEXT[d.kind]}${d.config.label ? ` (${d.config.label})` : ""}`;
 }
 
 export const STATUS_TEXT: Record<Destination["status"], string> = { ok: "Delivering", retrying: "Retrying after an error", failing: "Failing: check the destination" };

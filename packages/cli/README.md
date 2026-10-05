@@ -34,6 +34,14 @@ npx railyard deploy    # builds and deploys the folder you are in
 | `railyard deploys [--app NAME]` | Lists recent deploys |
 | `railyard link [--app NAME]` | Deploys this GitHub repository on every push |
 | `railyard ci` | The deploy step inside GitHub Actions (the workflow `link` adds runs it) |
+| `railyard domains [--app NAME]` | Lists the app's own domains and whether their certificate is issued |
+| `railyard domains add HOSTNAME [--app NAME]` | Serves the app's production deploy on your domain (the domain must be in your Cloudflare account; Cloudflare issues the certificate) |
+| `railyard domains remove HOSTNAME [--app NAME]` | Takes the domain off the app; running it again changes nothing |
+
+Domains use your organization's Cloudflare connection from `railyard link` when
+there is one; otherwise your local Cloudflare login (`wrangler login`, or
+`CLOUDFLARE_API_TOKEN` with `CLOUDFLARE_ACCOUNT_ID` when it reaches several
+accounts). The token is never printed or sent to Railyard.
 
 Your Railyard sign-in is saved in `~/.config/railyard/credentials.json`, readable
 only by you. There is no option that takes a key or a token.

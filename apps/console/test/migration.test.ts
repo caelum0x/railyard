@@ -16,6 +16,9 @@ const ORDER = join(ROOT, "db/migrations/0004_bridge_order.sql");
 const FLAGS = join(ROOT, "db/migrations/0005_flags.sql");
 const WATCH = join(ROOT, "db/migrations/0006_watch.sql");
 const SHIP = join(ROOT, "db/migrations/0007_ship.sql");
+const SHIP_REPO = join(ROOT, "db/migrations/0008_ship_repo_id.sql");
+const TARGETING = join(ROOT, "db/migrations/0009_flag_targeting.sql");
+const DOMAINS = join(ROOT, "db/migrations/0010_app_domains.sql");
 const have = spawnSync("pg_ctl", ["--version"]).status === 0 && spawnSync("initdb", ["--version"]).status === 0;
 
 test("0001 applies twice on a scratch cluster; RLS on; anon has no access", { skip: have ? false : "pg_ctl/initdb not installed" }, () => {
@@ -197,6 +200,78 @@ test("0007 (ship on push, PY3.1) applies twice; one link per repository; the gra
   assert.throws(() => psql(["-c", `update railyard.ship_link_sessions set state = 'done' where id_hash = '${"a".repeat(64)}'`]), /check constraint/);
   psql(["-c", `delete from railyard.orgs where id = '${org}'`]);
   assert.equal(psql(["-c", "select (select count(*) from railyard.ship_links) + (select count(*) from railyard.cloudflare_connections) + (select count(*) from railyard.ship_link_sessions) + (select count(*) from railyard.github_installations)"]).trim(), "0");
+  assert.equal(psql(["-c", "select count(*) from pg_tables where schemaname = 'railyard' and not rowsecurity"]).trim(), "0");
+  assert.equal(psql(["-c", "select count(*) from information_schema.role_table_grants where table_schema = 'railyard' and grantee in ('anon', 'authenticated')"]).trim(), "0");
+});
+
+test("0008 (ship repo id, P-Y11) applies twice after 0007; a session stores the checked repository id", { skip: have ? false : "pg_ctl/initdb not installed" }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "ry-pg-"));
+  const port = String(49000 + Math.floor(Math.random() * 1900));
+  after(() => {
+    spawnSync("pg_ctl", ["-D", join(dir, "data"), "-m", "immediate", "stop"], { stdio: "ignore" });
+    rmSync(dir, { recursive: true, force: true });
+  });
+  execFileSync("initdb", ["-D", join(dir, "data"), "-U", "postgres", "-A", "trust", "--no-sync"], { stdio: "ignore" });
+  execFileSync("pg_ctl", ["-D", join(dir, "data"), "-o", `-p ${port} -k ${dir} -c listen_addresses=''`, "-w", "start"], { stdio: "ignore" });
+  const psql = (args: string[]) => execFileSync("psql", ["-h", dir, "-p", port, "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-qAt", ...args], { encoding: "utf8" });
+  psql(["-c", "create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;"]);
+  for (const f of [MIGRATION, BRIDGE, AI, ORDER, FLAGS, WATCH, SHIP, SHIP_REPO, SHIP_REPO]) psql(["-f", f]);
+  const org = psql(["-c", "insert into railyard.orgs (name, owner_user_id) values ('Acme', gen_random_uuid()) returning id"]).trim();
+  // A session starts with no checked id (the link was only opened), then stores the id GitHub confirmed.
+  psql(["-c", `insert into railyard.ship_link_sessions (id_hash, org_id, app, repo_full_name, pkce_verifier, expires_at) values ('${"b".repeat(64)}', '${org}', 'shop', 'acme/shop', '${"v".repeat(64)}', now() + interval '15 minutes')`]);
+  assert.equal(psql(["-c", `select repo_id is null from railyard.ship_link_sessions where id_hash = '${"b".repeat(64)}'`]).trim(), "t");
+  psql(["-c", `update railyard.ship_link_sessions set repo_id = 4242 where id_hash = '${"b".repeat(64)}'`]);
+  assert.equal(psql(["-c", `select repo_id from railyard.ship_link_sessions where id_hash = '${"b".repeat(64)}'`]).trim(), "4242");
+  assert.throws(() => psql(["-c", `update railyard.ship_link_sessions set repo_id = 0 where id_hash = '${"b".repeat(64)}'`]), /check constraint/);
+  assert.throws(() => psql(["-c", `update railyard.ship_link_sessions set repo_id = -1 where id_hash = '${"b".repeat(64)}'`]), /check constraint/);
+  const col = psql(["-c", "select data_type from information_schema.columns where table_schema = 'railyard' and table_name = 'ship_link_sessions' and column_name = 'repo_id'"]).trim();
+  assert.equal(col, "bigint");
+});
+
+test("0009 (flag targeting, QY1.3) applies twice after 0008; rules and segments are bounded, cascade with the environment, RLS on, no anon", { skip: have ? false : "pg_ctl/initdb not installed" }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "ry-pg-"));
+  const port = String(51000 + Math.floor(Math.random() * 1900));
+  after(() => {
+    spawnSync("pg_ctl", ["-D", join(dir, "data"), "-m", "immediate", "stop"], { stdio: "ignore" });
+    rmSync(dir, { recursive: true, force: true });
+  });
+  execFileSync("initdb", ["-D", join(dir, "data"), "-U", "postgres", "-A", "trust", "--no-sync"], { stdio: "ignore" });
+  execFileSync("pg_ctl", ["-D", join(dir, "data"), "-o", `-p ${port} -k ${dir} -c listen_addresses=''`, "-w", "start"], { stdio: "ignore" });
+  const psql = (args: string[]) => execFileSync("psql", ["-h", dir, "-p", port, "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-qAt", ...args], { encoding: "utf8" });
+  psql(["-c", "create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;"]);
+  for (const f of [MIGRATION, BRIDGE, AI, ORDER, FLAGS, WATCH, SHIP, SHIP_REPO, TARGETING, TARGETING]) psql(["-f", f]);
+  const org = psql(["-c", "insert into railyard.orgs (name, owner_user_id) values ('Acme', gen_random_uuid()) returning id"]).trim();
+  const env = psql(["-c", `insert into railyard.flag_envs (org_id, app, env, client_key) values ('${org}', 'shop', 'production', 'ry_flags_${"a".repeat(32)}') returning id`]).trim();
+  psql(["-c", `insert into railyard.flag_targeting (env_id, key, targeting) values ('${env}', 'new_checkout', '{"rules":[{"conditions":[],"rollout":50}]}')`]);
+  psql(["-c", `insert into railyard.flag_segments (env_id, key, name, conditions) values ('${env}', 'paying', 'Paying', '[{"type":"property","key":"plan","operator":"exact","value":"pro"}]')`]);
+  assert.throws(() => psql(["-c", `insert into railyard.flag_targeting (env_id, key, targeting) values ('${env}', 'empty', '{"rules":[]}')`]), /check constraint/);
+  assert.throws(() => psql(["-c", `insert into railyard.flag_targeting (env_id, key, targeting) values ('${env}', 'Bad Key', '{"rules":[{}]}')`]), /check constraint/);
+  assert.throws(() => psql(["-c", `insert into railyard.flag_segments (env_id, key, name, conditions) values ('${env}', 'none', 'None', '[]')`]), /check constraint/);
+  psql(["-c", `delete from railyard.flag_envs where id = '${env}'`]);
+  assert.equal(psql(["-c", "select (select count(*) from railyard.flag_targeting) + (select count(*) from railyard.flag_segments)"]).trim(), "0");
+  assert.equal(psql(["-c", "select count(*) from pg_tables where schemaname = 'railyard' and not rowsecurity"]).trim(), "0");
+  assert.equal(psql(["-c", "select count(*) from information_schema.role_table_grants where table_schema = 'railyard' and grantee in ('anon', 'authenticated')"]).trim(), "0");
+});
+
+test("0010 (custom domains, QY1.5) applies twice after 0009; one org per hostname, lower case, cascade, RLS on, no anon", { skip: have ? false : "pg_ctl/initdb not installed" }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "ry-pg-"));
+  const port = String(53000 + Math.floor(Math.random() * 1900));
+  after(() => {
+    spawnSync("pg_ctl", ["-D", join(dir, "data"), "-m", "immediate", "stop"], { stdio: "ignore" });
+    rmSync(dir, { recursive: true, force: true });
+  });
+  execFileSync("initdb", ["-D", join(dir, "data"), "-U", "postgres", "-A", "trust", "--no-sync"], { stdio: "ignore" });
+  execFileSync("pg_ctl", ["-D", join(dir, "data"), "-o", `-p ${port} -k ${dir} -c listen_addresses=''`, "-w", "start"], { stdio: "ignore" });
+  const psql = (args: string[]) => execFileSync("psql", ["-h", dir, "-p", port, "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-qAt", ...args], { encoding: "utf8" });
+  psql(["-c", "create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;"]);
+  for (const f of [MIGRATION, BRIDGE, AI, ORDER, FLAGS, WATCH, SHIP, SHIP_REPO, TARGETING, DOMAINS, DOMAINS]) psql(["-f", f]);
+  const org = psql(["-c", "insert into railyard.orgs (name, owner_user_id) values ('Acme', gen_random_uuid()) returning id"]).trim();
+  psql(["-c", `insert into railyard.app_domains (org_id, app, hostname, worker) values ('${org}', 'shop', 'app.example.com', 'shop')`]);
+  assert.throws(() => psql(["-c", `insert into railyard.app_domains (org_id, app, hostname, worker) values ('${org}', 'blog', 'app.example.com', 'blog')`]), /duplicate key/);
+  assert.throws(() => psql(["-c", `insert into railyard.app_domains (org_id, app, hostname, worker) values ('${org}', 'shop', 'App.Example.com', 'shop')`]), /check constraint/);
+  assert.throws(() => psql(["-c", `insert into railyard.app_domains (org_id, app, hostname, worker, state) values ('${org}', 'shop', 'b.example.com', 'shop', 'weird')`]), /check constraint/);
+  psql(["-c", `delete from railyard.orgs where id = '${org}'`]);
+  assert.equal(psql(["-c", "select count(*) from railyard.app_domains"]).trim(), "0");
   assert.equal(psql(["-c", "select count(*) from pg_tables where schemaname = 'railyard' and not rowsecurity"]).trim(), "0");
   assert.equal(psql(["-c", "select count(*) from information_schema.role_table_grants where table_schema = 'railyard' and grantee in ('anon', 'authenticated')"]).trim(), "0");
 });

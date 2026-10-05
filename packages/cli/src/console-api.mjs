@@ -28,6 +28,14 @@ export function consoleApi({ console: base, token, fetchImpl = fetch }) {
     linkStatus: (id) => call("GET", `/api/v1/github/link/status?id=${encodeURIComponent(id)}`),
     ciSession: () => call("POST", "/api/v1/github/ci/session"),
     ciReport: (r) => call("POST", "/api/v1/github/ci/report", r),
+    // Custom domains (QY1.5). `raw` keeps the status and code for the local-login fallback.
+    domains: (app) => call("GET", `/api/v1/domains${app ? `?app=${encodeURIComponent(app)}` : ""}`),
+    domainChange: (method, app, hostname) =>
+      fetchImpl(url("/api/v1/domains"), { method, headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ app, hostname }) }).then(async (r) => ({
+        status: r.status,
+        body: await r.json().catch(() => ({})),
+      })),
+    recordDomain: (r) => call("POST", "/api/v1/domains/record", r),
     listDeploys: (app, branch) => call("GET", `/api/v1/deploys?app=${encodeURIComponent(app)}${branch ? `&branch=${encodeURIComponent(branch)}` : ""}`),
   };
 }

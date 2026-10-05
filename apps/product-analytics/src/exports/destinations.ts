@@ -3,26 +3,31 @@
 // service makes, or the bucket's secret key the customer gives) is sealed at
 // rest and never read back through the API; a webhook's secret is shown once,
 // when it is created. At most MAX_DESTINATIONS per project (target).
+// QY1.4 (A23): Slack, Discord and HubSpot from the catalogue (catalogue.ts);
+// their secret (the webhook address or the token) is sealed together with a
+// signing secret the service makes, shown once like a webhook's.
 
 import type { Client, Db } from "../db.ts";
 import { BUCKET } from "../replay/object-store.ts";
 import { ApiError, text } from "../replay/shared/console-guard.ts";
 import { checkUrlShape, DestinationRefused } from "./net-guard.ts";
 import { newSigningSecret, seal, SecretsUnavailable } from "./secrets.ts";
+import { checkCatalogue, isCatalogue, sealBundle, type CatalogueKind } from "./catalogue.ts";
 
 /** Destinations per project (target, copy-source: apps/product-analytics/src/exports/destinations.ts). */
-export const MAX_DESTINATIONS = 3;
+export const MAX_DESTINATIONS = 6;
 export const MAX_EVENT_FILTER = 50;
 
 export type WebhookConfig = { url: string };
+export type CatalogueConfig = { label: string };
 export type S3DestConfig = { endpoint: string; bucket: string; region: string; prefix: string; access_key_id: string };
 
 export interface Destination {
   id: string;
   project_id: string;
   name: string;
-  kind: "webhook" | "s3";
-  config: WebhookConfig | S3DestConfig;
+  kind: "webhook" | "s3" | CatalogueKind;
+  config: WebhookConfig | S3DestConfig | CatalogueConfig;
   events: string[] | null;
   enabled: boolean;
   status: "ok" | "retrying" | "failing";
@@ -48,9 +53,12 @@ export const toDestination = (r: Record<string, unknown>): Destination => ({
 
 export interface NewDestination {
   name: string;
-  kind: "webhook" | "s3";
-  config: WebhookConfig | S3DestConfig;
+  kind: "webhook" | "s3" | CatalogueKind;
+  config: WebhookConfig | S3DestConfig | CatalogueConfig;
+  /** What is sealed: the signing secret, the S3 key, or a catalogue bundle (JSON). */
   secret: string;
+  /** The signing secret shown once (webhook and catalogue kinds). */
+  signing: string | null;
   events: string[] | null;
   start: "now" | "all";
 }
@@ -75,7 +83,8 @@ export function checkDestination(b: Record<string, unknown>): NewDestination {
   const c = (b.config ?? {}) as Record<string, unknown>;
   if (b.kind === "webhook") {
     const url = guard(() => checkUrlShape(text(c.url, "The webhook URL", 2000)!, "The webhook URL")).toString();
-    return { name, kind: "webhook", config: { url }, secret: newSigningSecret(), events: events as string[] | null, start };
+    const signing = newSigningSecret();
+    return { name, kind: "webhook", config: { url }, secret: signing, signing, events: events as string[] | null, start };
   }
   if (b.kind === "s3") {
     const endpoint = guard(() => checkUrlShape(text(c.endpoint, "The endpoint", 500)!, "The endpoint")).origin;
@@ -87,9 +96,13 @@ export function checkDestination(b: Record<string, unknown>): NewDestination {
     if (!/^[a-z0-9-]{1,50}$/.test(region)) throw new ApiError(400, "The region is not valid.");
     const access = text(c.access_key_id, "The access key id", 200)!;
     const secret = text(b.secret, "The secret access key", 500)!;
-    return { name, kind: "s3", config: { endpoint, bucket, region, prefix, access_key_id: access }, secret, events: events as string[] | null, start };
+    return { name, kind: "s3", config: { endpoint, bucket, region, prefix, access_key_id: access }, secret, signing: null, events: events as string[] | null, start };
   }
-  throw new ApiError(400, "The destination kind must be webhook or s3.");
+  if (typeof b.kind === "string" && isCatalogue(b.kind)) {
+    const { config, bundle } = checkCatalogue(b.kind, c, b.secret);
+    return { name, kind: b.kind, config: config as CatalogueConfig, secret: sealBundle(bundle), signing: bundle.signing, events: events as string[] | null, start };
+  }
+  throw new ApiError(400, "The destination kind must be webhook, s3, slack, discord or hubspot.");
 }
 
 export async function createDestination(db: Db, projectId: string, d: NewDestination, now: Date): Promise<Destination> {

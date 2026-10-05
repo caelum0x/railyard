@@ -2,6 +2,7 @@
 // key or token: sign-in is the device flow, Cloudflare is wrangler's login.
 
 import { deploy, listDeploys, login, rollback } from "./commands.mjs";
+import { domains } from "./domain-commands.mjs";
 import { linkScribase } from "./scribase/link.mjs";
 import { link } from "./link/link.mjs";
 import { ci } from "./link/ci.mjs";
@@ -17,6 +18,11 @@ const HELP = `railyard: ship it from your coding agent
   railyard link [--app NAME]          deploy this GitHub repository on every push
                                       (a preview URL on each branch's pull request)
   railyard ci                         the deploy step inside GitHub Actions (added by link)
+  railyard domains [--app NAME]       list the app's custom domains
+  railyard domains add HOSTNAME [--app NAME]
+                                      serve the app's production deploy on your own domain
+                                      (Cloudflare issues the certificate)
+  railyard domains remove HOSTNAME [--app NAME]
 
   In a Scribase project folder, deploy uses the project's URL and anon key
   from its env file; secrets in that file are left out.`;
@@ -24,8 +30,14 @@ const HELP = `railyard: ship it from your coding agent
 const FLAGS = new Set(["--app", "--branch", "--dir"]);
 
 export function parse(argv) {
-  const [command, ...rest] = argv;
+  const [command, ...all] = argv;
   const opts = {};
+  // `domains` takes up to two words before its flags: add|remove and the hostname.
+  const words = [];
+  let rest = all;
+  if (command === "domains") {
+    while (rest.length && !rest[0].startsWith("--") && words.length < 2) words.push(rest[0]), (rest = rest.slice(1));
+  }
   for (let i = 0; i < rest.length; i += 1) {
     const a = rest[i];
     if (!FLAGS.has(a)) return { error: `Unknown option ${a}. Run railyard --help.` };
@@ -34,7 +46,7 @@ export function parse(argv) {
     opts[a.slice(2)] = v;
     i += 1;
   }
-  return { command, opts };
+  return { command, opts, words };
 }
 
 export async function main(argv, ctx) {
@@ -50,6 +62,7 @@ export async function main(argv, ctx) {
   const commands = { login: () => login(ctx), deploy: () => deploy(ctx, p.opts), rollback: () => rollback(ctx, p.opts), deploys: () => listDeploys(ctx, p.opts),
     link: () => link(ctx, p.opts),
     ci: () => ci(ctx, p.opts),
+    domains: () => domains(ctx, p.words[0], p.words[1], p.opts),
     // Run by the Scribase CLI (the deploy slot), which pipes a one-time claim on stdin.
     "link-scribase": async () => (Object.keys(p.opts).length ? 2 : linkScribase(ctx, ctx.readStdin ? await ctx.readStdin() : "")) };
   const fn = commands[p.command];

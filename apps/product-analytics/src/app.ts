@@ -2,6 +2,9 @@
 // reader, clock and meter fetch; server.ts passes the real ones.
 
 import { Hono } from "hono";
+import { mailerFromEnv, type Mailer } from "./alerts/mail.ts";
+import { mailDeps, runAlerts } from "./alerts/jobs.ts";
+import { runSubscriptions } from "./alerts/subscriptions.ts";
 import type { ServiceDeps } from "./app-deps.ts";
 import { Meter, type MeterConfig } from "./capture/meter.ts";
 import { CapturePipeline } from "./capture/pipeline.ts";
@@ -31,6 +34,8 @@ export interface ServiceOptions {
   now?: () => Date;
   hooks?: GdprHook[];
   poolSize?: number;
+  /** Alert and report mail (QY1.4); default from RALLY_TX_URL and RALLY_TX_KEY. */
+  mailer?: Mailer;
 }
 
 export interface Service {
@@ -63,6 +68,7 @@ export function createService(opts: ServiceOptions): Service {
     now,
     consoleSecret: opts.consoleSecret ?? null,
     bridgeSecret: opts.bridgeSecret ?? null,
+    mailer: opts.mailer ?? mailerFromEnv(),
   };
   const app = mountRoutes(new Hono(), deps);
   app.onError((err, c) => {
@@ -74,6 +80,9 @@ export function createService(opts: ServiceOptions): Service {
       { name: "meter", everyMs: 60_000, run: (t) => meter.flush(t) },
       { name: "privacy", everyMs: 60_000, run: async (t) => (await requeueStale(db, t), runDueJobs(db, hooks, log, t)) },
       { name: "retention", everyMs: 20 * 3600_000, when: nightly, run: (t) => runRetention(db, opts.sites, t) },
+      // QY1.4: alerts and dashboard subscriptions (each alert keeps its own hour or day).
+      { name: "alerts", everyMs: 60_000, run: (t) => runAlerts(db, t, mailDeps(deps)) },
+      { name: "subscriptions", everyMs: 60_000, run: (t) => runSubscriptions(db, t, mailDeps(deps)) },
     ],
     log,
     now,

@@ -38,7 +38,7 @@ export function exportsRoutes(deps: ServiceDeps): Hono {
     const input = checkDestination(await jsonBody(c));
     const destination = await createDestination(deps.db, projectOf(c), input, deps.now());
     // The signing secret is shown once, now; it is never read back.
-    return c.json({ destination, signing_secret: input.kind === "webhook" ? input.secret : null }, 201);
+    return c.json({ destination, signing_secret: input.signing }, 201);
   });
 
   api.post(`${P}/insight.csv`, async (c) => {
@@ -83,7 +83,7 @@ export function exportsRoutes(deps: ServiceDeps): Hono {
     const id = uuidParam(c, "did", "destination");
     const raw = await deps.db.asProject(projectOf(c), async (tx) => (await tx.query("select kind, config, secret_enc from pa.export_destinations where project_id = $1 and id = $2", [projectOf(c), id])).rows[0]);
     if (!raw) throw new ApiError(404, "That destination does not exist.");
-    if (raw.kind !== "webhook") throw new ApiError(400, "A test ping is for webhooks. A bucket is checked by its first delivery.");
+    if (raw.kind !== "webhook") throw new ApiError(400, "A test ping is for webhooks. Other destinations are checked by their first delivery.");
     const batch = randomUUID();
     try {
       const status = await sendWebhook(raw.config as WebhookConfig, open(raw.secret_enc), JSON.stringify({ type: "ping", project_id: projectOf(c), batch_id: batch, events: [] }), `msg_${batch}`, deps.now(), fetch);

@@ -1,6 +1,42 @@
-export interface Flag {
+export type Operator = "exact" | "is_not" | "icontains" | "not_icontains" | "regex" | "not_regex" | "gt" | "gte" | "lt" | "lte" | "is_set" | "is_not_set";
+export type Condition =
+  | { type: "property"; key: string; operator: Operator; value?: string | number | boolean | (string | number | boolean)[] }
+  | { type: "cohort"; id: string }
+  | { type: "segment"; key: string };
+export interface Rule {
+  conditions: Condition[];
+  /** 0 to 100 (default 100): the share of matching people, by a stable hash of flag key and id. */
+  rollout: number;
+  /** A value for the people this rule serves (else the flag's value). */
+  value?: string | null;
+}
+export interface Targeting {
+  rules: Rule[];
+}
+export interface Segment {
+  key: string;
+  name: string;
+  conditions: Condition[];
+}
+/** Who is asking: the id (OpenFeature targetingKey), properties, cohort ids. */
+export interface TargetingContext {
+  id?: string | null;
+  properties?: Record<string, unknown>;
+  cohorts?: string[];
+}
+export interface Evaluation {
   enabled: boolean;
   value: string | null;
+  reason: "DISABLED" | "STATIC" | "TARGETING_MATCH" | "NO_MATCH";
+  rule: number | null;
+}
+
+export interface Flag {
+  /** For the read request's own context (an anonymous person when none was given). */
+  enabled: boolean;
+  value: string | null;
+  /** A targeted flag's switch, base value and rules, for local evaluation. */
+  targeting?: { on: boolean; value: string | null; rules: Rule[] };
 }
 export type Flags = Record<string, Flag>;
 
@@ -30,6 +66,9 @@ export interface FlagsClient {
   getValue(key: string, fallback?: string | null): string | null;
   has(key: string): boolean;
   all(): Flags;
+  /** The flag for one person, with the server's rules and hash; null when the flag does not exist. */
+  evaluate(key: string, ctx?: TargetingContext): Evaluation | null;
+  segments(): Record<string, { conditions: Condition[] }>;
   source(): "default" | "cache" | "live";
   subscribe(listener: (flags: Flags) => void): () => void;
   close(): void;
@@ -53,10 +92,10 @@ export declare class RailyardFlagsProvider {
   readonly runsOn: "client";
   initialize(): Promise<void>;
   onClose(): Promise<void>;
-  resolveBooleanEvaluation(key: string, fallback: boolean): ResolutionDetails<boolean>;
-  resolveStringEvaluation(key: string, fallback: string): ResolutionDetails<string>;
-  resolveNumberEvaluation(key: string, fallback: number): ResolutionDetails<number>;
-  resolveObjectEvaluation<T>(key: string, fallback: T): ResolutionDetails<T>;
+  resolveBooleanEvaluation(key: string, fallback: boolean, context?: Record<string, unknown>): ResolutionDetails<boolean>;
+  resolveStringEvaluation(key: string, fallback: string, context?: Record<string, unknown>): ResolutionDetails<string>;
+  resolveNumberEvaluation(key: string, fallback: number, context?: Record<string, unknown>): ResolutionDetails<number>;
+  resolveObjectEvaluation<T>(key: string, fallback: T, context?: Record<string, unknown>): ResolutionDetails<T>;
 }
 
 export declare class RailyardServerFlagsProvider {
@@ -64,8 +103,17 @@ export declare class RailyardServerFlagsProvider {
   readonly metadata: { name: string };
   readonly runsOn: "server";
   initialize(): Promise<void>;
-  resolveBooleanEvaluation(key: string, fallback: boolean): Promise<ResolutionDetails<boolean>>;
-  resolveStringEvaluation(key: string, fallback: string): Promise<ResolutionDetails<string>>;
-  resolveNumberEvaluation(key: string, fallback: number): Promise<ResolutionDetails<number>>;
-  resolveObjectEvaluation<T>(key: string, fallback: T): Promise<ResolutionDetails<T>>;
+  resolveBooleanEvaluation(key: string, fallback: boolean, context?: Record<string, unknown>): Promise<ResolutionDetails<boolean>>;
+  resolveStringEvaluation(key: string, fallback: string, context?: Record<string, unknown>): Promise<ResolutionDetails<string>>;
+  resolveNumberEvaluation(key: string, fallback: number, context?: Record<string, unknown>): Promise<ResolutionDetails<number>>;
+  resolveObjectEvaluation<T>(key: string, fallback: T, context?: Record<string, unknown>): Promise<ResolutionDetails<T>>;
 }
+
+export declare function targetingContext(context?: Record<string, unknown>): TargetingContext;
+export declare const OPERATORS: readonly Operator[];
+export declare function flagHash(key: string, id: string, salt?: string): number;
+export declare function matchProperty(condition: Condition & { type: "property" }, properties: Record<string, unknown> | undefined): boolean;
+export declare function evaluateFlag(key: string, flag: { enabled: boolean; value: string | null; targeting?: Targeting | null }, ctx?: TargetingContext, segments?: Record<string, { conditions: Condition[] }>): Evaluation;
+export declare function evaluateAnswer(key: string, flag: Flag, ctx?: TargetingContext, segments?: Record<string, { conditions: Condition[] }>): Evaluation;
+export declare function parseTargeting(raw: unknown, segments?: Set<string>): Targeting | null | string;
+export declare function parseSegment(raw: unknown): Segment | string;

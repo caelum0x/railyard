@@ -8,7 +8,11 @@ import assert from "node:assert/strict";
 import { MemoryFlagsStore, PostgrestFlagsStore } from "./store.ts";
 import { TableFlagsBackend } from "./table-backend.ts";
 import { FlagsmithBackend } from "./flagsmith-backend.ts";
-import { ensureEnv, evaluate, firstRead, FlagsError, listFlags, parseFlagInput, setFlag, type FlagsDeps } from "./service.ts";
+import { deleteSegment, ensureEnv, evaluate, firstRead, FlagsError, listFlags, listSegments, parseFlagInput, setFlag, setSegment, type FlagsDeps } from "./service.ts";
+import { clientFlags, consoleSegment, readContext } from "./http.ts";
+import { evaluateFlag } from "./targeting.mjs";
+import { RailyardFlagsProvider } from "../../../../packages/openfeature-railyard/src/index.mjs";
+import { COHORT_A, RULE_SETS, SEGMENTS, cohortsOf, idOf, propsOf } from "../../../../packages/openfeature-railyard/test/fixtures/rule-sets.mjs";
 
 const NOW = new Date("2026-09-29T12:00:00Z");
 
@@ -143,6 +147,121 @@ for (const [label, make] of [
     assert.equal((await deps.store.listEnvs("org_b")).length, 1);
   });
 }
+
+// ---------------------------------------------------------------- QY1.3 targeting
+
+const SEG_MAP = Object.fromEntries(Object.entries(SEGMENTS).map(([k, v]) => [k, { conditions: v.conditions }]));
+
+async function seeded(deps: FlagsDeps, orgId = "org_t") {
+  const env = (await ensureEnv(deps, { orgId, orgName: "T", app: "shop", env: "production" }, NOW)).env;
+  for (const seg of Object.values(SEGMENTS)) await setSegment(deps, env, seg, "user:1", NOW);
+  for (const [key, f] of Object.entries(RULE_SETS)) await setFlag(deps, env, { key, enabled: f.enabled, value: f.value, targeting: f.targeting }, "user:1", NOW);
+  return env;
+}
+
+for (const [label, make] of [
+  ["table", () => ({ deps: tableDeps() })],
+  ["flagsmith", () => flagsmithDeps()],
+] as const) {
+  test(`QY1.3 ${label}: rules and % rollouts are stored, listed, answered per person and cleared - the same features on both backends`, async () => {
+    const { deps } = make();
+    const env = await seeded(deps);
+    const listed = await listFlags(deps, env);
+    assert.equal(listed.length, 20);
+    assert.deepEqual(listed.find((f) => f.key === "r16_two_rules")?.targeting, RULE_SETS.r16_two_rules.targeting);
+    for (let i = 0; i < 300; i += 1) {
+      const ctx = { id: idOf(i), properties: propsOf(i), cohorts: cohortsOf(i) };
+      const read = await evaluate(deps, env.client_key, NOW, ctx);
+      for (const [key, f] of Object.entries(RULE_SETS)) assert.equal(read.flags[key].enabled, evaluateFlag(key, f, ctx, SEG_MAP).enabled, `${key} ${i}`);
+    }
+    // Without a person, a targeted flag is off (old clients stay safe) and its rules travel for local evaluation.
+    const anon = await evaluate(deps, env.client_key, NOW);
+    assert.equal(anon.flags.r04_pro.enabled, false);
+    assert.deepEqual(anon.flags.r04_pro.targeting?.rules, RULE_SETS.r04_pro.targeting.rules);
+    assert.deepEqual(Object.keys(anon.segments).sort(), ["eu_adults", "paying"]);
+    // A flip keeps the rules; null makes the flag plain again.
+    await setFlag(deps, env, { key: "r04_pro", enabled: false }, "u", NOW);
+    assert.deepEqual((await listFlags(deps, env)).find((f) => f.key === "r04_pro")?.targeting, RULE_SETS.r04_pro.targeting);
+    await setFlag(deps, env, { key: "r04_pro", enabled: true, targeting: null }, "u", NOW);
+    const plain = await evaluate(deps, env.client_key, NOW);
+    assert.deepEqual(plain.flags.r04_pro, { enabled: true, value: null });
+  });
+}
+
+test("QY1.3: segments - unknown references refused, a used segment cannot be removed, a branch copies rules and segments", async () => {
+  const deps = tableDeps();
+  const env = await seeded(deps);
+  await assert.rejects(setFlag(deps, env, { key: "x", enabled: true, targeting: { rules: [{ conditions: [{ type: "segment", key: "nope" }] }] } }, "u", NOW), (e: FlagsError) => e.status === 400 && /no segment "nope"/.test(e.message));
+  await assert.rejects(deleteSegment(deps, env, "paying"), (e: FlagsError) => e.status === 409 && /r15_segment/.test(e.message));
+  await assert.rejects(setSegment(deps, env, { key: "bad", conditions: [{ type: "cohort", id: COHORT_A }] }, "u", NOW), (e: FlagsError) => e.status === 400);
+  await setSegment(deps, env, { key: "spare", conditions: [{ type: "property", key: "plan", operator: "exact", value: "free" }] }, "u", NOW);
+  assert.equal(await deleteSegment(deps, env, "spare"), true);
+  const branch = (await ensureEnv(deps, { orgId: "org_t", orgName: "T", app: "shop", env: "feature-y", copyFrom: "production" }, NOW)).env;
+  assert.deepEqual((await listSegments(deps, branch)).map((s) => s.key), ["eu_adults", "paying"]);
+  assert.deepEqual((await listFlags(deps, branch)).find((f) => f.key === "r15_segment")?.targeting, RULE_SETS.r15_segment.targeting);
+  // The console's segment handler: the user's own org only.
+  assert.equal((await consoleSegment(deps, { org: "org_other", uid: "x" }, { app: "shop", env: "production", segment: SEGMENTS.paying }, NOW)).status, 404);
+  assert.equal((await consoleSegment(deps, null, {}, NOW)).status, 401);
+  const ok = await consoleSegment(deps, { org: "org_t", uid: "1" }, { app: "shop", env: "production", segment: { key: "vip", name: "VIP", conditions: [{ type: "property", key: "plan", operator: "exact", value: "enterprise" }] } }, NOW);
+  assert.equal(ok.status, 200);
+});
+
+test("QY1.3: tenant isolation - one environment's rules and segments never reach another's people", async () => {
+  const deps = tableDeps();
+  const a = await seeded(deps, "org_a");
+  const b = (await ensureEnv(deps, { orgId: "org_b", orgName: "B", app: "shop", env: "production" }, NOW)).env;
+  await setFlag(deps, b, { key: "r15_segment", enabled: true }, "u", NOW);
+  // B has no segments: a rule naming A's segment is refused in B.
+  await assert.rejects(setFlag(deps, b, { key: "r15_segment", enabled: true, targeting: RULE_SETS.r15_segment.targeting }, "u", NOW), (e: FlagsError) => e.status === 400);
+  const readB = await evaluate(deps, b.client_key, NOW, { id: "user_1", properties: { plan: "pro" } });
+  assert.deepEqual(Object.keys(readB.flags), ["r15_segment"]);
+  assert.deepEqual(readB.segments, {});
+  assert.equal(readB.flags.r15_segment.targeting, undefined, "B's flag is plain; A's rules are not B's");
+  const readA = await evaluate(deps, a.client_key, NOW);
+  assert.equal(Object.keys(readA.flags).length, 20);
+});
+
+test("QY1.3: the read endpoint takes the person from the query, refuses bad context, and caches per URL", async () => {
+  const deps = tableDeps();
+  const env = await seeded(deps);
+  const props = encodeURIComponent(JSON.stringify({ plan: "enterprise" }));
+  const res = await clientFlags(deps, new Request(`https://c/api/v1/flags/client?key=${env.client_key}&id=user_9&props=${props}`), NOW);
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { flags: Record<string, { enabled: boolean; value: string | null }> };
+  assert.deepEqual(body.flags.r16_two_rules, { enabled: true, value: "enterprise", targeting: { on: true, value: "default", rules: RULE_SETS.r16_two_rules.targeting.rules } });
+  for (const bad of ["props=%7B", "props=%5B%5D", `props=${"x".repeat(2100)}`, "cohorts=nope", `id=${"i".repeat(201)}`]) {
+    const r = await clientFlags(deps, new Request(`https://c/api/v1/flags/client?key=${env.client_key}&${bad}`), NOW);
+    assert.equal(r.status, 400, bad);
+  }
+  assert.deepEqual(readContext(new URLSearchParams(`id=u&cohorts=${COHORT_A}`)), { id: "u", cohorts: [COHORT_A] });
+});
+
+test("QY1.3: 10 000 ids x 20 rule sets - the OpenFeature provider's local answer equals the read endpoint's answer for that person", { timeout: 240_000 }, async () => {
+  const deps = tableDeps();
+  const env = await seeded(deps);
+  const read = async (url: string) => clientFlags(deps, new Request(url), NOW);
+  const provider = new RailyardFlagsProvider({ key: env.client_key, url: "https://c/api/v1/flags/client", fetch: ((u: string) => read(u)) as typeof fetch, setTimeout: (() => 0) as unknown as typeof setTimeout, clearTimeout: (() => {}) as typeof clearTimeout });
+  await provider.initialize();
+  let mismatches = 0;
+  let on = 0;
+  for (let i = 0; i < 10_000; i += 1) {
+    const props = propsOf(i);
+    const q = `id=${encodeURIComponent(idOf(i))}&props=${encodeURIComponent(JSON.stringify(props))}${cohortsOf(i).length ? `&cohorts=${cohortsOf(i).join(",")}` : ""}`;
+    const server = (await (await read(`https://c/api/v1/flags/client?key=${env.client_key}&${q}`)).json()) as { flags: Record<string, { enabled: boolean; value: string | null }> };
+    for (const key of Object.keys(RULE_SETS)) {
+      const local = provider.resolveBooleanEvaluation(key, false, { targetingKey: idOf(i), ...props, cohorts: cohortsOf(i) });
+      if (local.value !== server.flags[key].enabled) mismatches += 1;
+      if (local.value) on += 1;
+      if (key === "r16_two_rules" && local.value) {
+        const v = provider.resolveStringEvaluation(key, "", { targetingKey: idOf(i), ...props, cohorts: cohortsOf(i) }).value;
+        if (v !== server.flags[key].value) mismatches += 1;
+      }
+    }
+  }
+  assert.equal(mismatches, 0);
+  assert.ok(on > 20_000 && on < 180_000, `a real mix of on and off (${on})`);
+  await provider.onClose();
+});
 
 test("flagsmith: one organisation per Railyard org, one project per app, one environment per env", async () => {
   const { deps, fake } = flagsmithDeps();

@@ -262,3 +262,76 @@ async fn the_mint_ledger_is_never_touched_by_seller_payments() {
         assert!(!call.1.contains("/payouts") && !call.1.contains("/refunds") && !call.1.contains("/transfers"), "Mint never moves money: {}", call.1);
     }
 }
+
+/// Wave Q, for Menivor QM1.3: a creator's coupon is a discount code made on
+/// the creator's own Dodo account through Mint (the key never leaves Mint),
+/// limited to the creator's skus, and a checkout can apply it up front.
+#[tokio::test]
+async fn discount_codes_are_made_on_the_sellers_account_and_reach_checkout() {
+    let fake = Arc::new(Fake::default());
+    let st = state(fake.clone());
+    let app = seller::router(st.clone());
+    // Connect the seller (the connect page is the only place a key is typed).
+    let (_, link) = api(&app, "POST", &format!("/mint/v1/sellers/{SELLER}/connect"), Some(SCRIBASE_KEY), Value::Null).await;
+    let token = link["connect_url"].as_str().unwrap().rsplit('/').next().unwrap().to_owned();
+    fake.answer("https://test.dodopayments.com/products?page_size=1", 200, json!({"items": []}));
+    let form = format!("mode=test&api_key=seller_dodo_key_123&webhook_secret={}", SELLER_HOOK.replace('=', "%3D"));
+    let (status, _) = send(&app, "POST", &format!("/mint/connect/{token}"), None, "application/x-www-form-urlencoded", form.into_bytes(), &[]).await;
+    assert_eq!(status, StatusCode::OK);
+    fake.answer("https://test.dodopayments.com/products", 200, json!({"product_id": "pdt_title_42"}));
+    api(&app, "POST", &format!("/mint/v1/sellers/{SELLER}/products"), Some(SCRIBASE_KEY), json!({"sku":"title.42.buy","name":"Title 42","price_cents":499,"currency":"USD"})).await;
+
+    // A percent code limited to one title, then a flat one (Menivor's body, Dodo's shape).
+    fake.answer("https://test.dodopayments.com/discounts", 200, json!({"discount_id":"dsc_1","code":"LAUNCH20","business_id":"bus_1"}));
+    let (status, made) = api(
+        &app,
+        "POST",
+        &format!("/mint/v1/sellers/{SELLER}/discounts"),
+        Some(SCRIBASE_KEY),
+        json!({"code":"launch20","type":"percentage","amount":2000,"expires_at":"2026-12-31T23:59:59Z","name":"Launch","restricted_to":["title.42.buy"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    assert_eq!(made["discount"]["code"], "LAUNCH20");
+    assert_eq!(made["discount"]["id"], "dsc_1");
+    let sent: Value = serde_json::from_slice(&fake.calls_to("https://test.dodopayments.com/discounts")[0].3).unwrap();
+    assert_eq!(sent["restricted_to"], json!(["pdt_title_42"]), "skus become the seller's own product ids");
+    fake.answer("https://test.dodopayments.com/discounts", 200, json!({"discount_id":"dsc_2","code":"FIVEOFF"}));
+    let (status, _) = api(
+        &app,
+        "POST",
+        &format!("/mint/v1/sellers/{SELLER}/discounts"),
+        Some(SCRIBASE_KEY),
+        json!({"code":"FIVEOFF","type":"flat","amount":500,"expires_at":null,"name":"FIVEOFF","currency_options":[{"currency":"usd","max_amount_possible":500,"is_default":true}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let sent: Value = serde_json::from_slice(&fake.calls_to("https://test.dodopayments.com/discounts")[1].3).unwrap();
+    assert_eq!(sent["currency_options"], json!([{"currency":"USD","max_amount_possible":500,"is_default":true}]));
+    for call in fake.calls_to("https://test.dodopayments.com/discounts") {
+        assert!(call.2.contains(&("authorization".to_owned(), "Bearer seller_dodo_key_123".to_owned())), "the seller's own key");
+    }
+
+    // The checkout applies the code; a malformed code is refused before any call.
+    fake.answer("https://test.dodopayments.com/checkouts", 200, json!({"checkout_url":"https://test.checkout.dodopayments.com/s/9","session_id":"cks_9"}));
+    let (status, session) = api(&app, "POST", &format!("/mint/v1/sellers/{SELLER}/checkout-sessions"), Some(SCRIBASE_KEY), json!({"sku":"title.42.buy","buyer_ref":"viewer_1","success_url":"https://watch.example/back","discount_code":"launch20"})).await;
+    assert_eq!(status, StatusCode::CREATED, "{session}");
+    let sent: Value = serde_json::from_slice(&fake.calls_to("https://test.dodopayments.com/checkouts")[0].3).unwrap();
+    assert_eq!(sent["discount_codes"], json!(["LAUNCH20"]));
+    let before = fake.calls.lock().unwrap().len();
+    let (status, _) = api(&app, "POST", &format!("/mint/v1/sellers/{SELLER}/checkout-sessions"), Some(SCRIBASE_KEY), json!({"sku":"title.42.buy","buyer_ref":"viewer_1","success_url":"https://watch.example/back","discount_code":"no spaces!"})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Refused before any processor call: bad type, bad amount, unknown sku, no key, another product's seller.
+    for (body, want) in [
+        (json!({"code":"X1X","type":"bogo","amount":1}), StatusCode::BAD_REQUEST),
+        (json!({"code":"BIG","type":"percentage","amount":10001}), StatusCode::BAD_REQUEST),
+        (json!({"code":"NOCUR","type":"flat","amount":100}), StatusCode::BAD_REQUEST),
+        (json!({"code":"SKU","type":"percentage","amount":100,"restricted_to":["nope"]}), StatusCode::NOT_FOUND),
+    ] {
+        assert_eq!(api(&app, "POST", &format!("/mint/v1/sellers/{SELLER}/discounts"), Some(SCRIBASE_KEY), body.clone()).await.0, want, "{body}");
+    }
+    assert_eq!(api(&app, "POST", &format!("/mint/v1/sellers/{SELLER}/discounts"), None, json!({"code":"ABC","type":"percentage","amount":100})).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(api(&app, "POST", &format!("/mint/v1/sellers/{SELLER}/discounts"), Some(RALLY_KEY), json!({"code":"ABC","type":"percentage","amount":100})).await.0, StatusCode::CONFLICT, "Rally's view of this seller id is not connected");
+    assert_eq!(fake.calls.lock().unwrap().len(), before, "no processor call for refused requests");
+}

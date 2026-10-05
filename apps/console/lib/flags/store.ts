@@ -2,7 +2,7 @@
 // MemoryFlagsStore serves tests and local dev; PostgrestFlagsStore talks to
 // the console's Scribase project (schema railyard, migration 0005).
 
-import type { Flag, FlagEnv, FlagInput } from "./types.ts";
+import type { Flag, FlagEnv, FlagInput, Segment, SegmentRow, Targeting } from "./types.ts";
 
 export interface FlagsStore {
   findEnv(orgId: string, app: string, env: string): Promise<FlagEnv | null>;
@@ -15,6 +15,13 @@ export interface FlagsStore {
   // Table backend values.
   listFlags(envId: string): Promise<Flag[]>;
   upsertFlag(envId: string, input: FlagInput, actor: string, at: string): Promise<Flag>;
+  // Targeting (QY1.3), for every backend.
+  listTargeting(envId: string): Promise<Record<string, Targeting>>;
+  /** Null removes the rules (the flag is plain again). */
+  setTargeting(envId: string, key: string, targeting: Targeting | null, actor: string, at: string): Promise<void>;
+  listSegments(envId: string): Promise<SegmentRow[]>;
+  upsertSegment(envId: string, segment: Segment, actor: string, at: string): Promise<SegmentRow>;
+  deleteSegment(envId: string, key: string): Promise<boolean>;
 }
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -22,6 +29,8 @@ const clone = <T>(v: T): T => structuredClone(v);
 export class MemoryFlagsStore implements FlagsStore {
   envs: FlagEnv[] = [];
   values = new Map<string, Map<string, Flag>>();
+  targeting = new Map<string, Map<string, Targeting>>();
+  segments = new Map<string, Map<string, SegmentRow>>();
   async findEnv(orgId: string, app: string, env: string) {
     return clone(this.envs.find((e) => e.org_id === orgId && e.app === app && e.env === env) ?? null);
   }
@@ -60,6 +69,31 @@ export class MemoryFlagsStore implements FlagsStore {
     flags.set(input.key, row);
     this.values.set(envId, flags);
     return clone(row);
+  }
+  async listTargeting(envId: string) {
+    return clone(Object.fromEntries(this.targeting.get(envId) ?? []));
+  }
+  async setTargeting(envId: string, key: string, targeting: Targeting | null) {
+    const rows = new Map(this.targeting.get(envId) ?? []);
+    if (targeting === null) rows.delete(key);
+    else rows.set(key, clone(targeting));
+    this.targeting.set(envId, rows);
+  }
+  async listSegments(envId: string) {
+    return clone([...(this.segments.get(envId)?.values() ?? [])].sort((a, b) => a.key.localeCompare(b.key)));
+  }
+  async upsertSegment(envId: string, segment: Segment, _actor: string, at: string) {
+    const rows = new Map(this.segments.get(envId) ?? []);
+    const row: SegmentRow = { ...clone(segment), updated_at: at };
+    rows.set(segment.key, row);
+    this.segments.set(envId, rows);
+    return clone(row);
+  }
+  async deleteSegment(envId: string, key: string) {
+    const rows = new Map(this.segments.get(envId) ?? []);
+    const had = rows.delete(key);
+    this.segments.set(envId, rows);
+    return had;
   }
 }
 
@@ -122,5 +156,33 @@ export class PostgrestFlagsStore implements FlagsStore {
     const { rows } = await this.req<Flag>("POST", "flags?on_conflict=env_id,key&select=key,enabled,value,description,updated_at", row, "resolution=merge-duplicates,return=representation");
     if (!rows[0]) throw new Error("could not save the flag");
     return rows[0];
+  }
+  async listTargeting(envId: string) {
+    const { rows } = await this.req<{ key: string; targeting: Targeting }>("GET", `flag_targeting?env_id=eq.${encodeURIComponent(envId)}&select=key,targeting`);
+    return Object.fromEntries(rows.map((r) => [r.key, r.targeting]));
+  }
+  async setTargeting(envId: string, key: string, targeting: Targeting | null, actor: string, at: string) {
+    if (targeting === null) {
+      await this.req("DELETE", `flag_targeting?env_id=eq.${encodeURIComponent(envId)}&key=eq.${encodeURIComponent(key)}`);
+      return;
+    }
+    await this.req("POST", "flag_targeting?on_conflict=env_id,key", { env_id: envId, key, targeting, updated_at: at, updated_by: actor }, "resolution=merge-duplicates,return=minimal");
+  }
+  async listSegments(envId: string) {
+    return (await this.req<SegmentRow>("GET", `flag_segments?env_id=eq.${encodeURIComponent(envId)}&select=key,name,conditions,updated_at&order=key.asc`)).rows;
+  }
+  async upsertSegment(envId: string, segment: Segment, actor: string, at: string) {
+    const { rows } = await this.req<SegmentRow>(
+      "POST",
+      "flag_segments?on_conflict=env_id,key&select=key,name,conditions,updated_at",
+      { env_id: envId, key: segment.key, name: segment.name, conditions: segment.conditions, updated_at: at, updated_by: actor },
+      "resolution=merge-duplicates,return=representation",
+    );
+    if (!rows[0]) throw new Error("could not save the segment");
+    return rows[0];
+  }
+  async deleteSegment(envId: string, key: string) {
+    const { rows } = await this.req<{ key: string }>("DELETE", `flag_segments?env_id=eq.${encodeURIComponent(envId)}&key=eq.${encodeURIComponent(key)}&select=key`, undefined, "return=representation");
+    return rows.length > 0;
   }
 }

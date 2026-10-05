@@ -2,10 +2,13 @@
 // under app/api/v1/github/** only pass the request through.
 
 import type { Repo } from "../repo.ts";
+import { readCookie, sameOrigin } from "../http.ts";
+import { SESSION_COOKIE } from "../session.ts";
 import { orgForBearer } from "../tokens.ts";
 import { CloudflareError } from "./cloudflare.ts";
 import { GithubError } from "./github.ts";
 import type { Jwk } from "./jwt.ts";
+import { addAppDomain, appDomains, recordAppDomain, removeAppDomain } from "./domains.ts";
 import { ciReport, ciSession, cloudflareCallback, githubSetup, githubUserCallback, go, linkStatus, ShipError, startLink, webhook, type ShipDeps } from "./service.ts";
 
 export const NOT_CONFIGURED = "Ship on push is not switched on for this console yet.";
@@ -32,7 +35,26 @@ function failure(e: unknown, html: boolean): Response {
   return html ? page("Not linked", message, status) : json({ error: message }, status);
 }
 
-const redirectOrPage = (r: { redirect: string } | { done: string }) => ("redirect" in r ? Response.redirect(r.redirect, 302) : page("Linked", r.done));
+async function browserSession(deps: ShipDeps, req: Request): Promise<{ cookie: string | null; ready: boolean }> {
+  // A query flag is not enough: a forwarded link could carry it. Continuing is a same-origin POST of the form that named the org.
+  const posted = req.method === "POST" && sameOrigin(req, deps.consoleUrl);
+  const body = posted ? await req.clone().text() : "";
+  return { cookie: readCookie(req, SESSION_COOKIE), ready: posted && new URLSearchParams(body).get("confirm") === "1" };
+}
+
+/** Names the org. Continuing is a same-origin POST, so a copied link cannot skip this page. */
+function confirmPage(message: string, req: Request): Response {
+  const url = new URL(req.url);
+  const fields = [...url.searchParams.entries()].map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`).join("");
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Confirm</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:36rem;margin:15vh auto;padding:0 1.5rem;color:#1d2330;background:#f6f7f9}h1{font-size:1.25rem}button{font:inherit;background:#2b5bd7;color:#fff;border:0;border-radius:6px;padding:.5rem 1rem;cursor:pointer}</style></head>
+<body><h1>Confirm this link</h1><p>${escapeHtml(message)}</p>
+<form method="post" action="${escapeHtml(url.pathname)}">${fields}<input type="hidden" name="confirm" value="1"><button type="submit">Continue</button></form></body></html>`;
+  return new Response(body, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" } });
+}
+
+const redirectOrPage = (r: { redirect: string } | { done: string } | { confirm: string }, req: Request) =>
+  "redirect" in r ? Response.redirect(r.redirect, 302) : "confirm" in r ? confirmPage(r.confirm, req) : page("Linked", r.done);
 
 export async function linkStartH(deps: ShipDeps | null, repo: Repo, req: Request, now: Date): Promise<Response> {
   const who = await orgForBearer(repo, req.headers.get("authorization"));
@@ -59,7 +81,7 @@ export async function linkStatusH(deps: ShipDeps | null, repo: Repo, req: Reques
 export async function goH(deps: ShipDeps | null, req: Request, now: Date): Promise<Response> {
   if (!deps) return page("Not available", NOT_CONFIGURED, 503);
   try {
-    return redirectOrPage(await go(deps, new URL(req.url).searchParams.get("s"), now));
+    return redirectOrPage(await go(deps, new URL(req.url).searchParams.get("s"), now, await browserSession(deps, req)), req);
   } catch (e) {
     return failure(e, true);
   }
@@ -68,7 +90,7 @@ export async function goH(deps: ShipDeps | null, req: Request, now: Date): Promi
 export async function setupH(deps: ShipDeps | null, req: Request, now: Date): Promise<Response> {
   if (!deps) return page("Not available", NOT_CONFIGURED, 503);
   try {
-    return redirectOrPage(await githubSetup(deps, new URL(req.url).searchParams, now));
+    return redirectOrPage(await githubSetup(deps, new URL(req.url).searchParams, now), req);
   } catch (e) {
     return failure(e, true);
   }
@@ -77,7 +99,7 @@ export async function setupH(deps: ShipDeps | null, req: Request, now: Date): Pr
 export async function githubUserCallbackH(deps: ShipDeps | null, req: Request, now: Date): Promise<Response> {
   if (!deps) return page("Not available", NOT_CONFIGURED, 503);
   try {
-    return redirectOrPage(await githubUserCallback(deps, new URL(req.url).searchParams, now));
+    return redirectOrPage(await githubUserCallback(deps, new URL(req.url).searchParams, now), req);
   } catch (e) {
     return failure(e, true);
   }
@@ -86,7 +108,12 @@ export async function githubUserCallbackH(deps: ShipDeps | null, req: Request, n
 export async function cloudflareCallbackH(deps: ShipDeps | null, req: Request, now: Date): Promise<Response> {
   if (!deps) return page("Not available", NOT_CONFIGURED, 503);
   try {
-    return redirectOrPage(await cloudflareCallback(deps, new URL(req.url).searchParams, now));
+    const url = new URL(req.url);
+    if (req.method === "POST") {
+      const posted = new URLSearchParams(await req.clone().text());
+      for (const [k, v] of posted) if (!url.searchParams.has(k)) url.searchParams.set(k, v);
+    }
+    return redirectOrPage(await cloudflareCallback(deps, url.searchParams, now, await browserSession(deps, req)), req);
   } catch (e) {
     return failure(e, true);
   }
@@ -132,4 +159,43 @@ export function githubOidcKeys(fetchImpl: typeof fetch = fetch, ttlMs = 3_600_00
     cache = { at: Date.now(), keys: body.keys };
     return body.keys;
   };
+}
+
+/**
+ * Custom domains (QY1.5), CLI bearer:
+ *   GET    /api/v1/domains?app=        the org's domains with their certificate state
+ *   POST   /api/v1/domains {app, hostname}   attach with the org's Cloudflare grant
+ *   DELETE /api/v1/domains {app, hostname}   detach (idempotent)
+ * 409 {code: "no_cloudflare_grant"} tells the CLI to use the local login.
+ */
+export async function domainsH(deps: ShipDeps | null, repo: Repo, req: Request, now: Date): Promise<Response> {
+  const who = await orgForBearer(repo, req.headers.get("authorization"));
+  if (!who) return json({ error: "unauthorized" }, 401);
+  if (!deps) return json({ error: NOT_CONFIGURED }, 503);
+  try {
+    if (req.method === "GET") {
+      const app = new URL(req.url).searchParams.get("app");
+      return json({ domains: await appDomains(deps, who.orgId, app && /^[a-z0-9][a-z0-9-]{0,39}$/.test(app) ? app : null, now) });
+    }
+    const body = await req.json().catch(() => null);
+    if (req.method === "POST") return json({ domain: await addAppDomain(deps, who.orgId, body, now) }, 201);
+    if (req.method === "DELETE") return json(await removeAppDomain(deps, who.orgId, body, now));
+    return json({ error: "method not allowed" }, 405);
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code) return json({ error: (e as Error).message, code }, (e as { status: number }).status);
+    return failure(e, false);
+  }
+}
+
+/** POST /api/v1/domains/record: what the CLI did with the local Cloudflare login. */
+export async function domainsRecordH(deps: ShipDeps | null, repo: Repo, req: Request, now: Date): Promise<Response> {
+  const who = await orgForBearer(repo, req.headers.get("authorization"));
+  if (!who) return json({ error: "unauthorized" }, 401);
+  if (!deps) return json({ error: NOT_CONFIGURED }, 503);
+  try {
+    return json(await recordAppDomain(deps, who.orgId, await req.json().catch(() => null), now));
+  } catch (e) {
+    return failure(e, false);
+  }
 }

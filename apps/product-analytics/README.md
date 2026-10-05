@@ -30,6 +30,9 @@ Settings (environment):
 | `RAILYARD_SCRIBASE_BRIDGE_SECRET` | The bridge secret, the same as the console's |
 | `FLAGS_URL` | The console base whose public flags client API is read |
 | `RAGO_URL`, `RAGO_API_KEY`, `RAILYARD_LIVE` | Usage metering; only `RAILYARD_LIVE=1` sends |
+| `PA_EXPORTS_KEY` | 32 bytes (hex or base64) that seal export destination secrets at rest |
+| `PA_PUBLIC_URL`, `PA_CONSOLE_URL` | Where links in emails point: unsubscribe (this service) and "open" (the console) |
+| `RALLY_TX_URL`, `RALLY_TX_KEY` | Alert and weekly report email through Rally Send (https only); without them each email is logged as not configured |
 
 ## What happens to events
 

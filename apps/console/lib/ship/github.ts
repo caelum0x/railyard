@@ -133,8 +133,17 @@ export class GithubApp {
   }
 
   async repo(token: string, fullName: string): Promise<RepoInfo> {
-    const r = await this.call<{ id: number; full_name: string; default_branch: string; owner: { login: string } }>("GET", `/repos/${fullName}`, token);
-    if (!r) throw new GithubError("repository not found", 404);
+    return this.repoFrom(await this.call<{ id: number; full_name: string; default_branch: string; owner: { login: string } }>("GET", `/repos/${fullName}`, token));
+  }
+
+  /** The repository by the id stored at the push check (P-Y11), not by its current name. */
+  async repoById(token: string, repoId: number): Promise<RepoInfo> {
+    if (!Number.isSafeInteger(repoId) || repoId <= 0) throw new GithubError("repository not found", 404);
+    return this.repoFrom(await this.call<{ id: number; full_name: string; default_branch: string; owner: { login: string } }>("GET", `/repositories/${repoId}`, token));
+  }
+
+  private repoFrom(r: { id: number; full_name: string; default_branch: string; owner: { login: string } } | null): RepoInfo {
+    if (!r || !Number.isSafeInteger(r.id)) throw new GithubError("repository not found", 404);
     return { id: r.id, full_name: r.full_name, default_branch: r.default_branch, owner_login: r.owner.login };
   }
 

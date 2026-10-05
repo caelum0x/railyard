@@ -14,6 +14,8 @@
 	"vars": {
 		// Empty until RYP-D2 is deployed at the Wave E gate: events are counted and capped but not forwarded.
 		"INGEST_URL": "",
-		"RAGO_URL": ""
+		"RAGO_URL": "",
+		// QY1.2: the product analytics service base URL. Empty until it is started (owner Y-2): page-tag events then also land there.
+		"PRODUCT_ANALYTICS_URL": ""
 	}
 }

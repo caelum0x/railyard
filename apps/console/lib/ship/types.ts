@@ -46,11 +46,26 @@ export interface LinkSession {
   org_id: string;
   app: string;
   repo_full_name: string;
+  /** GitHub's repository id, stored when the linking user is checked (P-Y11). Null until then. */
+  repo_id: number | null;
   installation_id: number | null;
   pkce_verifier: string;
   state: LinkState;
   message: string | null;
   link_id: string | null;
   expires_at: string;
+  created_at: string;
+}
+
+/** A hostname attached to an app's production Worker (QY1.5, migration 0010). */
+export interface AppDomain {
+  org_id: string;
+  app: string;
+  hostname: string;
+  worker: string;
+  cf_domain_id: string | null;
+  zone_name: string | null;
+  state: "pending" | "active" | "error";
+  checked_at: string | null;
   created_at: string;
 }

@@ -71,7 +71,7 @@ Access and developer experience:
 | G9 | **Cloud simulators, emulators and remote Xcode/Gradle builds.** This is Limrun's core product. Scribase has none. | Mobile app developers on Scribase need to see their Expo app run from an agent | **Not Scribase.** Per `VIBE-CODER-PLATFORM-PLAN` VC12, this belongs to **Recoder** (mobile-lane gate step with Maestro, Apache-2.0, on our own Mac, with an optional paid-provider adapter). Scribase should only offer the hook: a branch preview record that can hold a video and build artifact link | L, owner decision |
 | G10 | **Build asset storage with scoped registry tokens.** | Mobile build artifacts next to the backend | **PS lane** (Storage already exists): a `builds` bucket convention plus time-limited scoped read tokens reusing `storage_s3_keys.rs`; only after G9 is decided | S |
 | G11 | **Idle and build-time billing units.** Limrun bills on running time only. Scribase has plans plus Rago usage meters. | Not a gap to copy for databases; noted for the Recoder mobile lane if built | none now | n/a |
-| G12 | **Per-instance log streaming to the agent** (`ios-logs`). Scribase has logs (`scribase.app_logs`, VictoriaLogs in PS3.5) but no MCP tool that tails a branch's function and database logs live. | Agents debug without a console | **PS lane**: `logs.tail` MCP tool over the PS3.5 log store, scoped by G1's URL | S |
+| G12 | **Done (2026-09-30).** Per-instance log streaming to the agent (`ios-logs`). The `logs.tail` MCP tool is in `SB/crates/mcp/src/control.rs:908` (`a01da6f`). This entry was stale; the recount marks L12 DONE. | Agents debug without a console | **PS lane**: `logs.tail` MCP tool over the PS3.5 log store, scoped by G1's URL | S |
 
 ## 4. Suggested order (owner can reorder)
 

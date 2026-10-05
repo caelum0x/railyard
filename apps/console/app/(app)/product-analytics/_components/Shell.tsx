@@ -1,11 +1,12 @@
 "use client";
-// Frame of every product analytics screen: title, the four screens, the app
+// Frame of every product analytics screen: title, the five screens, the app
 // picker, and (on live screens) a quiet refresh every 10 seconds.
 import { useEffect, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 const SCREENS = [
   { href: "/product-analytics", label: "Events" },
+  { href: "/product-analytics/web", label: "Web" },
   { href: "/product-analytics/persons", label: "People" },
   { href: "/product-analytics/setup", label: "Setup" },
   { href: "/product-analytics/privacy", label: "Privacy" },

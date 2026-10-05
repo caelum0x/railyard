@@ -7,3 +7,8 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   return cloudflareCallbackH(deps().ship, req, new Date());
 }
+
+/** The form that names the org posts back here before the Cloudflare grant is stored (P-Y10). */
+export async function POST(req: Request) {
+  return cloudflareCallbackH(deps().ship, req, new Date());
+}

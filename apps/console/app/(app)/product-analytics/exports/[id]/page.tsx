@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { a3Context, appQuery, field, isRedirect } from "../../replay/_parts/context.ts";
 import { A3Shell, fmt, NO_APP, NOT_CONNECTED, Notice, Problem } from "../../replay/_parts/A3Shell.tsx";
-import { problemText, STATUS_TEXT, type Destination, type ExportRun } from "../../_lib/a3-client.ts";
+import { destinationTarget, problemText, STATUS_TEXT, type Destination, type ExportRun } from "../../_lib/a3-client.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -92,7 +92,7 @@ export default async function DestinationPage({ params, searchParams }: { params
         <>
           <section className="card">
             <p className="muted" data-copy-source="product-analytics /exports/{id} (live)">
-              {d.kind === "webhook" ? `Webhook ${d.config.url}` : `Bucket ${d.config.bucket} at ${d.config.endpoint}${d.config.prefix ? `, folder ${d.config.prefix}` : ""}`}.{" "}
+              {destinationTarget(d)}.{" "}
               {d.events ? `Only ${d.events.join(", ")}.` : "Every event."} {d.enabled ? STATUS_TEXT[d.status] : "Paused"}. {d.delivered.toLocaleString("en-US")} events sent
               {d.last_success_at ? `, last at ${fmt(d.last_success_at)}` : ""}.
               {d.last_error ? ` Last error: ${d.last_error}` : ""}

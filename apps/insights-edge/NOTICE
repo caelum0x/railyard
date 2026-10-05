@@ -1,0 +1,12 @@
+@railyard/insights-edge
+Copyright 2026 Railyard
+
+The page-speed part of the page tag (src/tracker.mjs, QY1.2) is a compact
+port of @railyard/insights-web src/metrics.ts in this repository, which adapts
+the page-speed collection of umami-software/umami (src/tracker/index.ts,
+v3.4.0, MIT License, Copyright (c) 2022 Umami Software, Inc.; the full licence
+text is in packages/insights-web/NOTICE).
+
+The metric definitions (LCP, INP, CLS session windows, FCP and TTFB counted
+from activation) follow GoogleChrome/web-vitals (Apache License 2.0,
+Copyright Google LLC). No source file of web-vitals is copied.
