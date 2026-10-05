@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { countStatuses, formatReport, groups, run, selfTest } from './recount.mjs';
+import { applyChanges, countStatuses, formatReport, groups, run, selfTest } from './recount.mjs';
 import { ANALYTICS, BASELINE, INFRA, LIMRUN, ROWS } from './rows.mjs';
+import { WAVE_Q } from './wave-q.mjs';
 
 test('rows cover I1-I44, A1-A26 and L1-L12 once each', () => {
   assert.equal(INFRA.length, 44);
@@ -75,6 +76,24 @@ test('empty input, a bad status and a duplicate id fail the self-test', () => {
 test('--self-test exits 0 on the committed rows and 1 when the baseline is wrong', () => {
   assert.equal(run(['--self-test'], () => {}), 0);
   const lines = [];
+  assert.equal(run(['--baseline'], (line) => lines.push(line)), 0);
+  assert.match(lines.join('\n'), /infra: 26 \/ 12 \/ 6/);
+});
+
+test('Wave Q changes apply only with their test file and leave the baseline alone', () => {
+  const { rows, skipped } = applyChanges();
+  assert.deepEqual(skipped, []);
+  const split = groups(rows);
+  assert.deepEqual(countStatuses(split.infra), { DONE: 29, PARTIAL: 10, MISSING: 5 });
+  assert.deepEqual(countStatuses(split.analytics), { DONE: 24, PARTIAL: 6, MISSING: 7 });
+  assert.deepEqual(selfTest(), []);
+  for (const change of WAVE_Q) assert.match(change.evidence, /test/, change.id);
+  const none = applyChanges(ROWS, WAVE_Q, () => false);
+  assert.equal(none.skipped.length, WAVE_Q.length);
+  assert.deepEqual(countStatuses(groups(none.rows).infra), { ...BASELINE.infra });
+  const lines = [];
   assert.equal(run([], (line) => lines.push(line)), 0);
-  assert.match(lines.join('\n'), /26 \/ 12 \/ 6/);
+  const text = lines.join('\n');
+  assert.match(text, /infra: 29 \/ 10 \/ 5/);
+  assert.match(text, /baseline 2026-09-30: infra 26 \/ 12 \/ 6, analytics 20 \/ 9 \/ 8/);
 });

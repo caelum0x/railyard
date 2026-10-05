@@ -6,15 +6,24 @@
  * The statuses are the static record of PARITY-RECOUNT-2026-09-30.md section 5
  * on today's main (ae0f113). The script does not re-run the product tests.
  *
- *   node scripts/parity/recount.mjs
+ *   node scripts/parity/recount.mjs              (baseline plus Wave Q verified changes)
+ *   node scripts/parity/recount.mjs --baseline   (the static 2026-09-30 record only)
  *   node scripts/parity/recount.mjs --self-test
+ *
+ * Wave Q changes live in wave-q.mjs; each names the test file that proves it,
+ * and a change whose test file is gone is ignored (the row keeps its baseline).
  *
  * --self-test checks that the printed totals are infra 26/12/6 and analytics
  * 20/9/8 (A1-A26 plus L1-L12 except L11, which the recount marks n/a).
  */
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ANALYTICS, BASELINE, INFRA, LIMRUN, ROWS } from './rows.mjs';
+import { BASELINE, ROWS } from './rows.mjs';
+import { WAVE_Q } from './wave-q.mjs';
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export const STATUSES = Object.freeze(['DONE', 'PARTIAL', 'MISSING']);
 
@@ -34,11 +43,33 @@ export function countStatuses(rows) {
  * Infra is I1-I44. Analytics follows the recount: A1-A26 plus lim.run rows
  * except L11 (G11), which is n/a and not in the 37.
  */
-export function groups() {
+export function groups(rows = ROWS) {
   return {
-    infra: INFRA,
-    analytics: [...ANALYTICS, ...LIMRUN.filter((row) => row.id !== 'L11')],
+    infra: rows.filter((row) => row.group === 'infra'),
+    analytics: rows.filter((row) => row.group === 'analytics' || (row.group === 'limrun' && row.id !== 'L11')),
   };
+}
+
+/**
+ * Overlay verified changes on the baseline rows. A change is applied only when
+ * its evidence file exists in the repo; otherwise it is reported as skipped.
+ */
+export function applyChanges(rows = ROWS, changes = WAVE_Q, exists = (path) => existsSync(join(REPO_ROOT, path))) {
+  const byId = new Map(changes.map((change) => [change.id, change]));
+  const skipped = [];
+  const out = rows.map((row) => {
+    const change = byId.get(row.id);
+    if (!change) return row;
+    if (!exists(change.evidence)) {
+      skipped.push(`${row.id}: evidence ${change.evidence} is missing`);
+      return row;
+    }
+    return { ...row, status: change.status, evidence: change.evidence, note: `${change.pkg}: ${change.note ?? ''}`.trim() };
+  });
+  for (const id of byId.keys()) {
+    if (!rows.some((row) => row.id === id)) skipped.push(`${id}: no such row`);
+  }
+  return { rows: out, skipped };
 }
 
 /** @param {{ DONE: number, PARTIAL: number, MISSING: number }} got @param {{ DONE: number, PARTIAL: number, MISSING: number }} want */
@@ -87,11 +118,11 @@ export function selfTest(rows = ROWS) {
 /** One line per row, then the two totals. */
 export function formatReport(rows = ROWS) {
   const lines = [];
-  const split = groups();
+  const split = groups(rows);
   const printable = [
     ['infra', split.infra],
     ['analytics', split.analytics],
-    ['limrun n/a', LIMRUN.filter((row) => row.id === 'L11')],
+    ['limrun n/a', rows.filter((row) => row.id === 'L11')],
   ];
   for (const [label, list] of printable) {
     lines.push(`== ${label}`);
@@ -113,7 +144,19 @@ export function run(argv = process.argv.slice(2), log = (line) => process.stdout
     log(problems.length === 0 ? 'self-test ok' : 'self-test failed');
     return problems.length === 0 ? 0 : 1;
   }
-  log(formatReport());
+  if (argv.includes('--baseline')) {
+    log(formatReport());
+  } else {
+    const { rows, skipped } = applyChanges();
+    log(formatReport(rows));
+    const base = groups();
+    const b = (list) => {
+      const c = countStatuses(list);
+      return `${c.DONE} / ${c.PARTIAL} / ${c.MISSING}`;
+    };
+    log(`baseline 2026-09-30: infra ${b(base.infra)}, analytics ${b(base.analytics)}`);
+    for (const line of skipped) log(`skipped change ${line}`);
+  }
   const problems = selfTest();
   if (problems.length > 0) {
     for (const problem of problems) log(`recount: ${problem}`);
