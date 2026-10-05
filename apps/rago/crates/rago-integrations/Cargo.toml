@@ -9,7 +9,7 @@ description = "Rago payment providers (Stripe) + outbound webhooks, over an inje
 [features]
 default = []
 # The live reqwest-backed HTTP transport (owner-gated: needs real provider keys).
-live = ["dep:reqwest"]
+live = ["dep:reqwest", "egress-guard/reqwest"]
 
 [dependencies]
 rago-core.workspace = true
@@ -24,6 +24,8 @@ hmac.workspace = true
 sha2.workspace = true
 base64.workspace = true
 reqwest = { workspace = true, optional = true }
+# Outbound webhooks reach public addresses only (shared with rithub).
+egress-guard = { path = "../egress-guard", default-features = false }
 
 [dev-dependencies]
 tokio = { workspace = true }

@@ -1,0 +1,28 @@
+[package]
+name = "egress-guard"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.80"
+description = "Outbound requests to user-chosen URLs reach public addresses only: one resolution, validated, pinned; no redirects"
+# Shared by rago (outbound webhooks) and rithub (repository webhooks); rithub
+# depends on it by path. No workspace inheritance so either workspace can
+# build it as a path dependency.
+
+[features]
+# The pinned reqwest client. On by default so `cargo test` covers it; rago
+# turns it on only with its `live` transport.
+default = ["reqwest"]
+reqwest = ["dep:reqwest"]
+
+[[test]]
+name = "guard"
+required-features = ["reqwest"]
+
+[dependencies]
+url = "2"
+tokio = { version = "1", features = ["net"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "io-util", "time"] }
