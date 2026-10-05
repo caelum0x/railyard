@@ -228,6 +228,85 @@ pub struct Discount {
     pub code: String,
 }
 
+/// A discount as the seller's processor holds it now (read back after a
+/// change or a lookup).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DiscountState {
+    pub id: String,
+    pub code: String,
+    pub kind: DiscountKind,
+    pub amount: i64,
+    pub expires_at: Option<String>,
+}
+
+/// A discount id the processor issued (`dsc_...`); checked before it goes
+/// into a processor URL.
+pub fn valid_discount_id(value: &str) -> bool {
+    (1..=64).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+/// A partial change to one discount, in the shape Dodo's
+/// `PATCH /discounts/{discount_id}` takes. `None` leaves a field as it is.
+///
+/// `kind` and `amount` travel together (the amount means basis points or
+/// money depending on the type). A flat change also names its currency; a
+/// change to a percentage clears the old currency rows, so a former flat
+/// amount never lingers as a percentage cap.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DiscountPatch {
+    pub code: Option<String>,
+    pub name: Option<String>,
+    pub kind: Option<DiscountKind>,
+    pub amount: Option<i64>,
+    /// ISO 4217; only with a flat `kind`.
+    pub currency: Option<String>,
+    /// `Some(None)` clears the expiry; `Some(Some(t))` sets it.
+    pub expires_at: Option<Option<String>>,
+    /// The seller's processor product ids (replaces the set; empty clears it).
+    pub restricted_to: Option<Vec<String>>,
+}
+
+impl DiscountPatch {
+    /// Checks the fields before anything is sent to a processor.
+    ///
+    /// # Errors
+    /// A plain reason when a field cannot be used.
+    pub fn validate(&self) -> Result<(), String> {
+        if *self == Self::default() {
+            return Err("nothing to change on this discount".into());
+        }
+        if self.code.as_deref().is_some_and(|c| !valid_discount_code(c)) {
+            return Err("code must be 3-32 letters, digits, dashes or underscores".into());
+        }
+        if self.name.as_deref().is_some_and(|n| n.trim().is_empty() || n.chars().count() > 120) {
+            return Err("name must be 1-120 characters".into());
+        }
+        match (self.kind, self.amount) {
+            (None, None) => {}
+            (Some(DiscountKind::Percentage), Some(a)) if (1..=10_000).contains(&a) => {}
+            (Some(DiscountKind::Percentage), Some(_)) => return Err("a percentage amount is in basis points, 1 to 10000".into()),
+            (Some(DiscountKind::Flat), Some(a)) if (1..=100_000_000).contains(&a) => {}
+            (Some(DiscountKind::Flat), Some(_)) => return Err("a flat amount is 1 to 100000000 of the smallest currency unit".into()),
+            _ => return Err("type and amount change together".into()),
+        }
+        match (self.kind, self.currency.as_deref()) {
+            (Some(DiscountKind::Flat), Some(c)) if c.len() == 3 && c.bytes().all(|b| b.is_ascii_uppercase()) => {}
+            (Some(DiscountKind::Flat), _) => return Err("a flat amount needs its currency, an ISO code such as USD".into()),
+            (_, Some(_)) => return Err("a currency goes with a flat amount only".into()),
+            _ => {}
+        }
+        if let Some(Some(at)) = &self.expires_at {
+            if dodo::parse_rfc3339_ms(at).is_none() {
+                return Err("expires_at must be an RFC 3339 date and time".into());
+            }
+        }
+        if self.restricted_to.as_ref().is_some_and(|r| r.len() > 50) {
+            return Err("a code can be limited to at most 50 products".into());
+        }
+        Ok(())
+    }
+}
+
 /// A hosted checkout on the seller's account.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct CheckoutSession {
@@ -309,6 +388,10 @@ pub enum SellerError {
     Unavailable,
     #[error("this seller has not connected a payment account")]
     NotConnected,
+    /// The processor has no such object on this seller's account (a
+    /// discount deleted on the processor's dashboard, say).
+    #[error("the payment account has no such object")]
+    NotFound,
 }
 
 pub(crate) fn meta_from(value: &serde_json::Value) -> Option<(String, String, String)> {

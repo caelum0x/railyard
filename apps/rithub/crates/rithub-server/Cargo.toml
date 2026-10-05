@@ -32,6 +32,8 @@ base64 = "0.22"
 async-graphql = { version = "7", default-features = false, features = ["time", "uuid", "graphiql"] }
 async-graphql-axum = "7"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# Webhook targets reach public addresses only, pinned (shared with rago).
+egress-guard = { path = "../../../rago/crates/egress-guard" }
 hmac = "0.12"
 sha2 = "0.10"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
@@ -44,3 +46,6 @@ lettre = { version = "0.11", default-features = false, features = [
     "hostname",
     "builder",
 ] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util"] }

@@ -1134,6 +1134,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "egress-guard"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "either"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3497,6 +3506,7 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "base64 0.22.1",
+ "egress-guard",
  "forge-search",
  "hmac",
  "lettre",

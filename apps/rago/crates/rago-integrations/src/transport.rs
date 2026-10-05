@@ -65,6 +65,22 @@ pub trait HttpTransport: Send + Sync {
         Err(TransportError::Io("PATCH is not supported by this transport".into()))
     }
 
+    /// POST to a destination a customer chose (outbound webhooks). The live
+    /// transport resolves the host once, refuses private, loopback,
+    /// link-local, metadata and other reserved addresses, connects only to
+    /// the validated address and follows no redirect (`egress_guard`).
+    /// In-memory transports keep this default, a plain [`post`](Self::post);
+    /// [`crate::webhooks::deliver`] checks the URL's shape and any address
+    /// literal itself before calling.
+    async fn post_external(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: String,
+    ) -> Result<HttpResponse, TransportError> {
+        self.post(url, headers, body).await
+    }
+
     /// PUT `url` with a body (used for idempotent provider writes such as CRM
     /// associations).
     async fn put(
@@ -151,6 +167,15 @@ impl<T: HttpTransport + ?Sized> HttpTransport for &T {
         body: String,
     ) -> Result<HttpResponse, TransportError> {
         (**self).post(url, headers, body).await
+    }
+
+    async fn post_external(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: String,
+    ) -> Result<HttpResponse, TransportError> {
+        (**self).post_external(url, headers, body).await
     }
 
     async fn get(
@@ -288,17 +313,35 @@ impl Clone for TransportError {
 }
 
 /// Live reqwest transport (owner-gated behind the `live` feature).
+///
+/// Provider calls (fixed provider hosts, and Mint) use one shared client.
+/// Outbound webhooks go to customer-chosen URLs through
+/// [`HttpTransport::post_external`]: one resolution, every answer public,
+/// the connection pinned to the validated addresses, no redirects, no proxy.
 #[cfg(feature = "live")]
 pub struct ReqwestTransport {
     client: reqwest::Client,
+    resolver: std::sync::Arc<dyn egress_guard::Resolver>,
+    webhook_policy: egress_guard::Policy,
 }
+
+/// How long one outbound webhook delivery may take.
+#[cfg(feature = "live")]
+const WEBHOOK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[cfg(feature = "live")]
 impl Default for ReqwestTransport {
     fn default() -> Self {
-        Self {
-            client: reqwest::Client::new(),
-        }
+        Self::with_guard(std::sync::Arc::new(egress_guard::SystemResolver), crate::webhooks::webhook_policy())
+    }
+}
+
+#[cfg(feature = "live")]
+impl ReqwestTransport {
+    /// A transport whose webhook deliveries resolve through `resolver` under
+    /// `webhook_policy` (tests; production uses [`Default`]).
+    pub fn with_guard(resolver: std::sync::Arc<dyn egress_guard::Resolver>, webhook_policy: egress_guard::Policy) -> Self {
+        Self { client: reqwest::Client::new(), resolver, webhook_policy }
     }
 }
 
@@ -331,6 +374,33 @@ impl ReqwestTransport {
 #[cfg(feature = "live")]
 #[async_trait]
 impl HttpTransport for ReqwestTransport {
+    async fn post_external(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: String,
+    ) -> Result<HttpResponse, TransportError> {
+        let pinned = egress_guard::resolve_pinned(url, self.webhook_policy, self.resolver.as_ref())
+            .await
+            .map_err(|e| TransportError::Io(format!("blocked target: {e}")))?;
+        let client = egress_guard::pinned_client(&pinned, WEBHOOK_TIMEOUT)
+            .map_err(|e| TransportError::Io(format!("http client unavailable: {e}")))?;
+        let mut req = client.post(pinned.url.clone()).body(body);
+        for (k, v) in headers {
+            req = req.header(k, v);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| TransportError::Io(e.to_string()))?;
+        let status = resp.status().as_u16();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| TransportError::Io(e.to_string()))?;
+        Ok(HttpResponse { status, body })
+    }
+
     async fn patch(
         &self,
         url: &str,

@@ -1,9 +1,9 @@
-//! Postgres [`SellerStore`] (Wave P PY2.3), migration 0014. Runtime queries
+//! Postgres [`SellerStore`] (Wave P PY2.3), migrations 0014 and 0015 (discount ownership). Runtime queries
 //! with `.bind` only.
 
 use async_trait::async_trait;
 use mint_core::MintError;
-use mint_store::{ConnectToken, EntitlementDelivery, EntitlementRecord, SellerProductRecord, SellerRecord, SellerStore};
+use mint_store::{ConnectToken, EntitlementDelivery, EntitlementRecord, SellerDiscountRecord, SellerProductRecord, SellerRecord, SellerStore};
 use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
 
@@ -25,6 +25,7 @@ fn storage(error: sqlx::Error) -> MintError {
 const TOKEN_COLS: &str = "token_hash, product, seller, return_url, expires_at_ms";
 const SELLER_COLS: &str = "product, seller, provider, mode, sealed_secret, sealed_webhook_secret, account_ref, connected_at_ms";
 const PRODUCT_COLS: &str = "product, seller, sku, name, price_cents, currency, interval, provider_ref, created_at_ms";
+const DISCOUNT_COLS: &str = "product, seller, discount_id, code, created_at_ms";
 const ENT_COLS: &str = "id, product, seller, provider, provider_event_id, kind, reason, buyer_ref, sku, occurred_at_ms, expires_at_ms, recorded_at_ms";
 
 fn token(row: &PgRow) -> Result<ConnectToken, MintError> {
@@ -60,6 +61,16 @@ fn product(row: &PgRow) -> Result<SellerProductRecord, MintError> {
         currency: row.try_get("currency").map_err(storage)?,
         interval: row.try_get("interval").map_err(storage)?,
         provider_ref: row.try_get("provider_ref").map_err(storage)?,
+        created_at_ms: row.try_get("created_at_ms").map_err(storage)?,
+    })
+}
+
+fn discount(row: &PgRow) -> Result<SellerDiscountRecord, MintError> {
+    Ok(SellerDiscountRecord {
+        product: row.try_get("product").map_err(storage)?,
+        seller: row.try_get("seller").map_err(storage)?,
+        discount_id: row.try_get("discount_id").map_err(storage)?,
+        code: row.try_get("code").map_err(storage)?,
         created_at_ms: row.try_get("created_at_ms").map_err(storage)?,
     })
 }
@@ -201,6 +212,47 @@ impl SellerStore for PgSeller {
             .await
             .map_err(storage)?;
         rows.iter().map(product).collect()
+    }
+
+    async fn put_discount(&self, r: SellerDiscountRecord) -> Result<(), MintError> {
+        sqlx::query(&format!(
+            "INSERT INTO mint_seller_discounts ({DISCOUNT_COLS}) VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT (product, seller, discount_id) DO UPDATE SET code = excluded.code"
+        ))
+        .bind(&r.product)
+        .bind(&r.seller)
+        .bind(&r.discount_id)
+        .bind(&r.code)
+        .bind(r.created_at_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(storage)?;
+        Ok(())
+    }
+
+    async fn get_discount(&self, p: &str, s: &str, discount_id: &str) -> Result<Option<SellerDiscountRecord>, MintError> {
+        let row = sqlx::query(&format!("SELECT {DISCOUNT_COLS} FROM mint_seller_discounts WHERE product = $1 AND seller = $2 AND discount_id = $3"))
+            .bind(p)
+            .bind(s)
+            .bind(discount_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(storage)?;
+        row.as_ref().map(discount).transpose()
+    }
+
+    async fn discount_by_code(&self, p: &str, s: &str, code: &str) -> Result<Option<SellerDiscountRecord>, MintError> {
+        let row = sqlx::query(&format!(
+            "SELECT {DISCOUNT_COLS} FROM mint_seller_discounts WHERE product = $1 AND seller = $2 AND code = $3 \
+             ORDER BY created_at_ms DESC, discount_id DESC LIMIT 1"
+        ))
+        .bind(p)
+        .bind(s)
+        .bind(code)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage)?;
+        row.as_ref().map(discount).transpose()
     }
 
     async fn record_entitlement(&self, r: EntitlementRecord) -> Result<bool, MintError> {

@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use mint_receipts::FixedSigner;
-use mint_store::{ConnectToken, EntitlementRecord, SellerProductRecord, SellerRecord, SellerStore};
+use mint_store::{ConnectToken, EntitlementRecord, SellerDiscountRecord, SellerProductRecord, SellerRecord, SellerStore};
 use mint_store_postgres::{PgSeller, PgStore};
 
 fn seller(seller: &str, account: Option<&str>) -> SellerRecord {
@@ -51,6 +51,7 @@ async fn sellers_products_tokens_and_the_entitlement_outbox() {
     store.run_migrations().await.expect("migrations");
     for sql in [
         "DELETE FROM mint_seller_entitlements WHERE id LIKE 'ent_live_%'",
+        "DELETE FROM mint_seller_discounts WHERE seller LIKE 'live.%'",
         "DELETE FROM mint_seller_products WHERE seller LIKE 'live.%'",
         "DELETE FROM mint_seller_accounts WHERE seller LIKE 'live.%'",
         "DELETE FROM mint_seller_connect_tokens WHERE seller LIKE 'live.%'",
@@ -69,6 +70,12 @@ async fn sellers_products_tokens_and_the_entitlement_outbox() {
     let p = SellerProductRecord { product: "scribase".into(), seller: "live.shop.production".into(), sku: "pro".into(), name: "Pro".into(), price_cents: 900, currency: "USD".into(), interval: Some("month".into()), provider_ref: "pdt_1".into(), created_at_ms: 1 };
     assert_eq!(s.put_product(p.clone()).await.expect("product").provider_ref, "pdt_1");
     assert_eq!(s.put_product(SellerProductRecord { provider_ref: "pdt_2".into(), ..p }).await.expect("again").provider_ref, "pdt_1", "the first stays");
+    let d = SellerDiscountRecord { product: "scribase".into(), seller: "live.shop.production".into(), discount_id: "dsc_live_1".into(), code: "LAUNCH20".into(), created_at_ms: 1 };
+    s.put_discount(d.clone()).await.expect("discount");
+    s.put_discount(SellerDiscountRecord { code: "LAUNCH25".into(), created_at_ms: 2, ..d.clone() }).await.expect("re-code");
+    assert_eq!(s.get_discount("scribase", "live.shop.production", "dsc_live_1").await.expect("get").map(|r| (r.code, r.created_at_ms)), Some(("LAUNCH25".into(), 1)));
+    assert!(s.get_discount("scribase", "live.other.production", "dsc_live_1").await.expect("other").is_none(), "another seller never sees it");
+    assert_eq!(s.discount_by_code("scribase", "live.shop.production", "LAUNCH25").await.expect("by code").map(|r| r.discount_id), Some("dsc_live_1".into()));
     assert!(s.record_entitlement(ent("ent_live_1", "dodo:msg_live_1", "granted")).await.expect("record"));
     assert!(!s.record_entitlement(ent("ent_live_2", "dodo:msg_live_1", "granted")).await.expect("replay"));
     assert!(s.due(1_000, 100).await.expect("due").iter().any(|d| d.record.id == "ent_live_1"));

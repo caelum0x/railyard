@@ -43,6 +43,20 @@ pub struct SellerProductRecord {
     pub created_at_ms: i64,
 }
 
+/// A discount code Mint made on a seller's account. Only the ownership is
+/// kept (which seller made which processor discount id), so one seller can
+/// never change another's code; the terms live on the processor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SellerDiscountRecord {
+    pub product: String,
+    pub seller: String,
+    /// The processor's discount id (`dsc_...`).
+    pub discount_id: String,
+    /// The code as the processor holds it (upper-case).
+    pub code: String,
+    pub created_at_ms: i64,
+}
+
 /// A one-time connect link (stored as a hash of its token).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConnectToken {
@@ -93,6 +107,12 @@ pub trait SellerStore: Send + Sync {
     async fn put_product(&self, record: SellerProductRecord) -> Result<SellerProductRecord, MintError>;
     async fn get_product(&self, product: &str, seller: &str, sku: &str) -> Result<Option<SellerProductRecord>, MintError>;
     async fn list_products(&self, product: &str, seller: &str) -> Result<Vec<SellerProductRecord>, MintError>;
+    /// Records (or, for a known id, re-codes) a discount of this seller.
+    async fn put_discount(&self, record: SellerDiscountRecord) -> Result<(), MintError>;
+    /// The discount only when this seller of this product made it.
+    async fn get_discount(&self, product: &str, seller: &str, discount_id: &str) -> Result<Option<SellerDiscountRecord>, MintError>;
+    /// This seller's most recent discount with `code`.
+    async fn discount_by_code(&self, product: &str, seller: &str, code: &str) -> Result<Option<SellerDiscountRecord>, MintError>;
     /// Records an entitlement event and its delivery; `false` for a replay.
     async fn record_entitlement(&self, record: EntitlementRecord) -> Result<bool, MintError>;
     async fn list_entitlements(&self, product: &str, seller: &str, limit: usize) -> Result<Vec<EntitlementRecord>, MintError>;
@@ -106,6 +126,7 @@ struct Inner {
     tokens: BTreeMap<String, (ConnectToken, bool)>,
     sellers: BTreeMap<(String, String), SellerRecord>,
     products: BTreeMap<(String, String, String), SellerProductRecord>,
+    discounts: BTreeMap<(String, String, String), SellerDiscountRecord>,
     events: Vec<EntitlementRecord>,
     /// id -> (attempts, next ms, delivered ms, last error)
     deliveries: BTreeMap<String, (i32, i64, Option<i64>, Option<String>)>,
@@ -168,6 +189,28 @@ impl SellerStore for MemorySellerStore {
     }
     async fn list_products(&self, product: &str, seller: &str) -> Result<Vec<SellerProductRecord>, MintError> {
         Ok(lock(&self.inner)?.products.values().filter(|p| p.product == product && p.seller == seller).cloned().collect())
+    }
+    async fn put_discount(&self, record: SellerDiscountRecord) -> Result<(), MintError> {
+        let mut inner = lock(&self.inner)?;
+        let key = (record.product.clone(), record.seller.clone(), record.discount_id.clone());
+        match inner.discounts.get_mut(&key) {
+            Some(existing) => existing.code = record.code,
+            None => {
+                inner.discounts.insert(key, record);
+            }
+        }
+        Ok(())
+    }
+    async fn get_discount(&self, product: &str, seller: &str, discount_id: &str) -> Result<Option<SellerDiscountRecord>, MintError> {
+        Ok(lock(&self.inner)?.discounts.get(&(product.to_owned(), seller.to_owned(), discount_id.to_owned())).cloned())
+    }
+    async fn discount_by_code(&self, product: &str, seller: &str, code: &str) -> Result<Option<SellerDiscountRecord>, MintError> {
+        Ok(lock(&self.inner)?
+            .discounts
+            .values()
+            .filter(|d| d.product == product && d.seller == seller && d.code == code)
+            .max_by_key(|d| (d.created_at_ms, d.discount_id.clone()))
+            .cloned())
     }
     async fn record_entitlement(&self, record: EntitlementRecord) -> Result<bool, MintError> {
         let mut inner = lock(&self.inner)?;

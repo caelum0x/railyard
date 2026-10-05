@@ -153,17 +153,37 @@ impl Webhook {
     }
 }
 
+/// What an outbound webhook endpoint may be: `http` or `https`, no
+/// credentials, and a public address. `RAGO_WEBHOOK_ALLOW_PRIVATE=1` lifts the
+/// address rule for self-hosted or local receivers (still pinned).
+pub fn webhook_policy() -> egress_guard::Policy {
+    let allow_private = matches!(
+        std::env::var("RAGO_WEBHOOK_ALLOW_PRIVATE").as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    );
+    egress_guard::Policy { allow_http: true, allow_private }
+}
+
 /// `Webhooks::SendHttpService#call` — deliver one webhook once, updating its
 /// status. Returns whether the caller should re-enqueue a retry.
+///
+/// The endpoint is checked first (shape, and any address literal in all its
+/// spellings); a refused endpoint fails without a retry. The POST goes
+/// through [`HttpTransport::post_external`], which on the live transport
+/// resolves once, refuses internal answers and pins the connection.
 pub async fn deliver<T: HttpTransport>(
     transport: &T,
     webhook: &mut Webhook,
     hmac_key: &str,
 ) -> bool {
+    if let Err(refused) = egress_guard::check_url(&webhook.endpoint, webhook_policy()) {
+        webhook.mark_unsuccessful(None, format!("blocked target: {refused}"), false);
+        return false;
+    }
     let headers = webhook.headers(hmac_key);
     let body = serde_json::to_string(&webhook.payload).unwrap_or_default();
 
-    match transport.post(&webhook.endpoint, &headers, body).await {
+    match transport.post_external(&webhook.endpoint, &headers, body).await {
         Ok(resp) if resp.is_success() => {
             webhook.mark_succeeded(resp.status, resp.body);
             false

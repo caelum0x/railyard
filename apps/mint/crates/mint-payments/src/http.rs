@@ -64,6 +64,17 @@ pub trait HttpTransport: Send + Sync {
         headers: &[(String, String)],
         body: &[u8],
     ) -> Result<HttpResponse, TransportError>;
+
+    /// Issue a PATCH with a JSON body. Transports that never need one (most
+    /// test fakes) keep the default, which refuses without sending anything.
+    async fn patch_json(
+        &self,
+        url: &str,
+        _headers: &[(String, String)],
+        _body: &[u8],
+    ) -> Result<HttpResponse, TransportError> {
+        Err(TransportError(format!("PATCH is not supported by this transport ({url})")))
+    }
 }
 
 /// Map a transport result onto the [`RampError`] taxonomy: transport error or
@@ -128,6 +139,30 @@ impl HttpTransport for ReqwestTransport {
             .iter()
             .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
         let mut req = self.client.post(url);
+        if !has_content_type {
+            req = req.header("content-type", "application/json");
+        }
+        for (k, v) in headers {
+            req = req.header(k.as_str(), v.as_str());
+        }
+        let resp = req
+            .body(body.to_vec())
+            .send()
+            .await
+            .map_err(|e| TransportError(e.to_string()))?;
+        into_http_response(resp).await
+    }
+
+    async fn patch_json(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<HttpResponse, TransportError> {
+        let has_content_type = headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
+        let mut req = self.client.patch(url);
         if !has_content_type {
             req = req.header("content-type", "application/json");
         }

@@ -25,6 +25,7 @@ members = [
     "crates/rago-graphql",
     "crates/rago-api",
     "crates/rago-jobs",
+    "crates/egress-guard",
 ]
 # `cargo build` at the root compiles the billing engine crates. The events-processor
 # (heavy rdkafka/librdkafka + OpenTelemetry build) is built explicitly with `-p rago`.
@@ -39,6 +40,7 @@ default-members = [
     "crates/rago-graphql",
     "crates/rago-api",
     "crates/rago-jobs",
+    "crates/egress-guard",
 ]
 
 [workspace.package]

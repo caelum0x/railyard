@@ -36,31 +36,23 @@ pub(crate) async fn deliver(state: &AppState, hook: &Webhook, event: &str, body:
     let mut last_error: Option<String> = None;
     let mut success = false;
 
-    // Re-validate the target at delivery time (defeats DNS rebinding between
-    // registration and delivery) and never follow redirects to another host.
-    let client = match validate_target(&hook.url).await {
-        Ok(()) => match reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(std::time::Duration::from_secs(15))
-            .build()
-        {
-            Ok(client) => Some(client),
-            Err(e) => {
-                last_error = Some(format!("http client unavailable: {e}"));
-                None
-            }
-        },
+    // Resolve the target once at delivery time, refuse any internal answer,
+    // and connect only to the validated addresses (no second lookup, so DNS
+    // rebinding between the check and the connect cannot reach an internal
+    // address). Redirects are never followed; retries reuse the same pin.
+    let target = match pinned_target(&hook.url, webhook_policy(), &egress_guard::SystemResolver).await {
+        Ok(target) => Some(target),
         Err(reason) => {
-            last_error = Some(format!("blocked target: {reason}"));
+            last_error = Some(reason);
             attempts = MAX_ATTEMPTS;
             None
         }
     };
 
-    while let Some(client) = client.as_ref().filter(|_| attempts < MAX_ATTEMPTS) {
+    while let Some((url, client)) = target.as_ref().filter(|_| attempts < MAX_ATTEMPTS) {
         attempts += 1;
         let result = client
-            .post(&hook.url)
+            .post(url.clone())
             .header(EVENT_HEADER, event)
             .header(SIGNATURE_HEADER, format!("sha256={signature}"))
             .header("content-type", "application/json")
@@ -102,6 +94,7 @@ pub(crate) async fn deliver(state: &AppState, hook: &Webhook, event: &str, body:
 
 /// Whether webhooks may target private/loopback networks
 /// (`RITHUB_WEBHOOK_ALLOW_PRIVATE=1`, for self-hosted/internal receivers).
+/// The connection is still pinned to the address resolved once.
 fn allow_private_targets() -> bool {
     matches!(
         std::env::var("RITHUB_WEBHOOK_ALLOW_PRIVATE").as_deref(),
@@ -109,64 +102,43 @@ fn allow_private_targets() -> bool {
     )
 }
 
-/// Whether an address is loopback, private, link-local, or otherwise internal.
-fn is_internal(ip: std::net::IpAddr) -> bool {
-    use std::net::IpAddr;
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                || v4.is_documentation()
-                || v4.octets()[0] == 0
-                // 100.64.0.0/10 carrier-grade NAT
-                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
-        }
-        IpAddr::V6(v6) => {
-            if let Some(mapped) = v6.to_ipv4_mapped() {
-                return is_internal(IpAddr::V4(mapped));
-            }
-            let seg0 = v6.segments()[0];
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || (seg0 & 0xfe00) == 0xfc00 // unique local
-                || (seg0 & 0xffc0) == 0xfe80 // link local
-        }
-    }
+/// `http`/`https`, no credentials, and (unless allowed) a public address
+/// (private, loopback, link-local, metadata, CGNAT, IPv4-mapped, ULA and
+/// other reserved ranges are refused; see `egress_guard::ip`).
+fn webhook_policy() -> egress_guard::Policy {
+    egress_guard::Policy { allow_http: true, allow_private: allow_private_targets() }
 }
 
-/// Validate a webhook target URL: `http`/`https` only, and (unless explicitly
-/// allowed) it must not resolve to an internal address — this is the SSRF guard
-/// applied both when a hook is saved and again before each delivery.
-pub(crate) async fn validate_target(raw: &str) -> Result<(), String> {
-    let url = reqwest::Url::parse(raw.trim()).map_err(|_| "not a valid URL".to_string())?;
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err("only http and https URLs are allowed".into());
-    }
-    if !url.username().is_empty() || url.password().is_some() {
-        return Err("URLs with embedded credentials are not allowed".into());
-    }
-    let host = url.host_str().ok_or_else(|| "URL has no host".to_string())?;
-    if allow_private_targets() {
-        return Ok(());
-    }
-    let port = url.port_or_known_default().unwrap_or(80);
-    let host_for_lookup = host.trim_start_matches('[').trim_end_matches(']');
-    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host_for_lookup, port))
+/// How long one delivery attempt may take.
+const DELIVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Resolves the target once, refuses internal answers, and returns the URL
+/// with a client pinned to the validated addresses (no redirects, no proxy).
+async fn pinned_target(
+    raw: &str,
+    policy: egress_guard::Policy,
+    resolver: &dyn egress_guard::Resolver,
+) -> Result<(egress_guard::Url, reqwest::Client), String> {
+    let pinned = egress_guard::resolve_pinned(raw, policy, resolver)
         .await
-        .map_err(|_| format!("cannot resolve host '{host}'"))?
-        .collect();
-    if addrs.is_empty() {
-        return Err(format!("cannot resolve host '{host}'"));
+        .map_err(|reason| format!("blocked target: {reason}"))?;
+    let client = egress_guard::pinned_client(&pinned, DELIVERY_TIMEOUT)
+        .map_err(|e| format!("http client unavailable: {e}"))?;
+    Ok((pinned.url, client))
+}
+
+/// Validate a webhook target URL when a hook is saved: `http`/`https` only,
+/// no credentials, and (unless explicitly allowed) every address it resolves
+/// to is public. Delivery checks again and pins what it checked.
+pub(crate) async fn validate_target(raw: &str) -> Result<(), String> {
+    let policy = webhook_policy();
+    if policy.allow_private {
+        return egress_guard::check_url(raw, policy).map(|_| ()).map_err(|e| e.to_string());
     }
-    if addrs.iter().any(|a| is_internal(a.ip())) {
-        return Err(format!(
-            "host '{host}' resolves to a private or loopback address"
-        ));
-    }
-    Ok(())
+    egress_guard::resolve_pinned(raw, policy, &egress_guard::SystemResolver)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Lowercase-hex HMAC-SHA256 of `body` under `secret`.
@@ -181,4 +153,125 @@ fn sign(secret: &str, body: &[u8]) -> String {
         let _ = write!(out, "{byte:02x}");
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use std::io;
+    use std::net::SocketAddr;
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use egress_guard::{Policy, Resolver};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::{pinned_target, validate_target};
+
+    const STRICT: Policy = Policy { allow_http: true, allow_private: false };
+    const LOCAL: Policy = Policy { allow_http: true, allow_private: true };
+
+    /// Answers each lookup with the next list (the last repeats), counting calls.
+    struct Script {
+        answers: Mutex<Vec<Vec<SocketAddr>>>,
+        calls: AtomicUsize,
+    }
+
+    impl Script {
+        fn new(answers: Vec<Vec<String>>) -> Self {
+            let answers = answers.into_iter().map(|a| a.into_iter().map(|s| s.parse().unwrap()).collect()).collect();
+            Self { answers: Mutex::new(answers), calls: AtomicUsize::new(0) }
+        }
+    }
+
+    impl Resolver for Script {
+        fn resolve<'a>(&'a self, _host: &'a str, _port: u16) -> Pin<Box<dyn Future<Output = io::Result<Vec<SocketAddr>>> + Send + 'a>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let mut answers = self.answers.lock().unwrap();
+            let next = if answers.len() > 1 { answers.remove(0) } else { answers[0].clone() };
+            Box::pin(async move { Ok(next) })
+        }
+    }
+
+    async fn server(status: &'static str, extra: String) -> (SocketAddr, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                counter.fetch_add(1, Ordering::SeqCst);
+                let extra = extra.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 8192];
+                    let mut seen = Vec::new();
+                    while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match sock.read(&mut buf).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => seen.extend_from_slice(&buf[..n]),
+                        }
+                    }
+                    let reply = format!("HTTP/1.1 {status}\r\ncontent-length: 2\r\nconnection: close\r\n{extra}\r\nok");
+                    let _ = sock.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+        (addr, hits)
+    }
+
+    #[tokio::test]
+    async fn internal_targets_in_any_spelling_are_refused_without_dns() {
+        for raw in [
+            "http://2130706433/hook",
+            "http://0177.0.0.1/hook",
+            "http://0x7f.1/hook",
+            "http://[::ffff:127.0.0.1]/hook",
+            "http://[::ffff:a9fe:a9fe]/latest/meta-data",
+            "http://169.254.169.254/latest/meta-data",
+            "http://100.64.0.1/hook",
+            "http://[fc00::1]/hook",
+            "http://[fe80::1]/hook",
+            "ftp://example.com/hook",
+            "https://user:pw@example.com/hook",
+        ] {
+            let dns = Script::new(vec![vec!["93.184.216.34:80".into()]]);
+            assert!(pinned_target(raw, STRICT, &dns).await.is_err(), "{raw}");
+            assert_eq!(dns.calls.load(Ordering::SeqCst), 0, "{raw}: judged without a lookup");
+        }
+        assert!(validate_target("http://0177.0.0.1/hook").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_host_answering_with_an_internal_address_is_refused() {
+        for answer in [vec!["10.0.0.7:443".to_owned()], vec!["93.184.216.34:443".to_owned(), "[::ffff:127.0.0.1]:443".to_owned()]] {
+            let dns = Script::new(vec![answer.clone()]);
+            assert!(pinned_target("https://hooks.example/x", STRICT, &dns).await.is_err(), "{answer:?}");
+        }
+    }
+
+    /// DNS rebinding: the host resolves once and the delivery connects to that
+    /// answer; `rebind.invalid` has no record anywhere, so reaching the server
+    /// proves no second lookup happened (and retries reuse the pin).
+    #[tokio::test]
+    async fn delivery_connects_only_to_the_address_checked() {
+        let (addr, hits) = server("200 OK", String::new()).await;
+        let dns = Script::new(vec![vec![addr.to_string()], vec!["10.9.9.9:1".into()]]);
+        let (url, client) = pinned_target(&format!("http://rebind.invalid:{}/hook", addr.port()), LOCAL, &dns).await.unwrap();
+        for _ in 0..2 {
+            assert_eq!(client.post(url.clone()).body("{}").send().await.unwrap().status().as_u16(), 200);
+        }
+        assert_eq!((hits.load(Ordering::SeqCst), dns.calls.load(Ordering::SeqCst)), (2, 1));
+    }
+
+    #[tokio::test]
+    async fn a_redirect_to_a_private_address_is_not_followed() {
+        let (inner, inner_hits) = server("200 OK", String::new()).await;
+        let (outer, _) = server("302 Found", format!("location: http://127.0.0.1:{}/admin\r\n", inner.port())).await;
+        let dns = Script::new(vec![vec![outer.to_string()]]);
+        let (url, client) = pinned_target(&format!("http://hooks.invalid:{}/hook", outer.port()), LOCAL, &dns).await.unwrap();
+        assert_eq!(client.post(url).body("{}").send().await.unwrap().status().as_u16(), 302);
+        assert_eq!(inner_hits.load(Ordering::SeqCst), 0);
+    }
 }
