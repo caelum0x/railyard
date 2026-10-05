@@ -14,7 +14,7 @@
 
 import { sign } from "../bridge/standard-webhooks.ts";
 import { ApiError, text } from "../replay/shared/console-guard.ts";
-import { allowPrivate, checkReachable, checkUrlShape, DestinationRefused } from "./net-guard.ts";
+import { allowPrivate, checkUrlShape, DestinationRefused } from "./net-guard.ts";
 import { DeliveryError, SEND_TIMEOUT_MS, type ExportedEvent } from "./runner.ts";
 import { newSigningSecret } from "./secrets.ts";
 
@@ -127,6 +127,7 @@ async function post(url: string, body: string, headers: Record<string, string>, 
   try {
     res = await fetchImpl(url, { method: "POST", redirect: "manual", signal: AbortSignal.timeout(SEND_TIMEOUT_MS), headers: { "content-type": "application/json", "user-agent": "railyard-product-analytics-export/1", ...headers }, body });
   } catch (err) {
+    if (err instanceof DestinationRefused) throw new DeliveryError(err.message.slice(0, 300));
     throw new DeliveryError(`The destination could not be reached: ${(err as Error).message}`.slice(0, 300));
   }
   await res.arrayBuffer().catch(() => undefined);
@@ -142,7 +143,6 @@ export async function sendCatalogue(kind: CatalogueKind, bundle: SecretBundle, e
     const inputs = hubspotInputs(events);
     if (inputs.length === 0) return { bytes: 0, status: null };
     const url = new URL(`${HUBSPOT_URL()}/crm/v3/objects/contacts/batch/upsert`);
-    await checkReachable(url);
     let bytes = 0;
     let status: number | null = null;
     for (let i = 0; i < inputs.length; i += HUBSPOT_BATCH) {
@@ -153,7 +153,6 @@ export async function sendCatalogue(kind: CatalogueKind, bundle: SecretBundle, e
     return { bytes, status };
   }
   const url = checkUrlShape(bundle.target, "The webhook address");
-  await checkReachable(url);
   const body = JSON.stringify(kind === "slack" ? slackBody(events) : discordBody(events));
   return { bytes: Buffer.byteLength(body), status: await post(url.toString(), body, signed(body), fetchImpl) };
 }

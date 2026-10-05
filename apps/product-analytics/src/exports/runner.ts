@@ -16,7 +16,8 @@ import type { Db } from "../db.ts";
 import type { Logger } from "../log.ts";
 import { S3ObjectStore } from "../replay/object-store.ts";
 import { toDestination, type Destination, type S3DestConfig, type WebhookConfig } from "./destinations.ts";
-import { checkReachable, checkUrlShape } from "./net-guard.ts";
+import { checkUrlShape, DestinationRefused } from "./net-guard.ts";
+import { guardedFetch } from "./guarded-fetch.ts";
 import { open } from "./secrets.ts";
 import { isCatalogue, openBundle, sendCatalogue, type SecretBundle } from "./catalogue.ts";
 
@@ -49,6 +50,7 @@ interface Row extends ExportedEvent {
 }
 
 export interface RunnerOptions {
+  /** Tests only; production uses guardedFetch (resolve once, pin the address, no redirects). */
   fetchImpl?: typeof fetch;
   log: Logger;
   batchSize?: number;
@@ -93,7 +95,6 @@ const exported = (r: Row): ExportedEvent => ({
 
 export async function sendWebhook(cfg: WebhookConfig, secret: string, body: string, messageId: string, now: Date, fetchImpl: typeof fetch): Promise<number> {
   const url = checkUrlShape(cfg.url, "The webhook URL");
-  await checkReachable(url);
   const ts = String(Math.floor(now.getTime() / 1000));
   let res: Response;
   try {
@@ -105,6 +106,7 @@ export async function sendWebhook(cfg: WebhookConfig, secret: string, body: stri
       body,
     });
   } catch (err) {
+    if (err instanceof DestinationRefused) throw new DeliveryError(err.message.slice(0, 300));
     throw new DeliveryError(`The webhook could not be reached: ${(err as Error).message}`.slice(0, 300));
   }
   await res.arrayBuffer().catch(() => undefined);
@@ -114,8 +116,7 @@ export async function sendWebhook(cfg: WebhookConfig, secret: string, body: stri
 
 async function sendS3(d: Destination, secret: string, rows: Row[], batchId: string, fetchImpl: typeof fetch): Promise<number> {
   const cfg = d.config as S3DestConfig;
-  const url = checkUrlShape(cfg.endpoint, "The endpoint");
-  await checkReachable(url);
+  checkUrlShape(cfg.endpoint, "The endpoint");
   const store = new S3ObjectStore({ endpoint: cfg.endpoint, bucket: cfg.bucket, region: cfg.region, accessKeyId: cfg.access_key_id, secretAccessKey: secret, prefix: cfg.prefix }, fetchImpl);
   const last = rows[rows.length - 1].inserted_at;
   const day = last.toISOString().slice(0, 10).split("-");
@@ -142,7 +143,8 @@ async function record(db: Db, d: Destination, started: Date, finished: Date, att
 /** Delivers what one destination has waiting (up to MAX_BATCHES_PER_RUN batches). Returns rows delivered. */
 export async function deliver(db: Db, raw: Record<string, unknown>, now: Date, opts: RunnerOptions): Promise<number> {
   const d: Destination & Cursor = { ...toDestination(raw), cursor_uuid: (raw.cursor_uuid as string | null) ?? null, cursor_text: (raw.cursor_text as string | null) ?? null };
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  // Every customer URL goes through the pinned, redirect-free transport.
+  const fetchImpl = opts.fetchImpl ?? guardedFetch;
   let secret: string;
   let bundle: SecretBundle | null = null;
   try {
