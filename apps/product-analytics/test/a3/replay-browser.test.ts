@@ -5,6 +5,7 @@
 // stored chunks; then the player page, opened through the signed link, plays
 // the recording in the same browser.
 import { before, test } from "node:test";
+import { sdkEsmPath } from "../sdk-deps.ts";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
@@ -19,7 +20,7 @@ import { api, SECRET, waitFor } from "./helpers.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG = join(HERE, "../../../../packages/analytics-js");
-const SDK_ESM = join(PKG, "node_modules/posthog-js/dist/module.mjs");
+const SDK_ESM = sdkEsmPath(PKG);
 const haveBrowser = existsSync(chromium.executablePath());
 const TYPED = "typed-in-recording@shop.example";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36";
