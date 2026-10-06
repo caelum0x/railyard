@@ -61,7 +61,9 @@ pub async fn update_subscription(
         .ok_or_else(|| ApiError::NotFound("subscription".into()))?;
     let plan = st.db.find_plan(updated.plan_id).await?;
     let ext = st.db.customer_external_id(updated.customer_id).await?.unwrap_or_default();
-    Ok(Json(json!({ "subscription": ser::subscription(&updated, &plan, &ext) })))
+    let out = ser::subscription(&updated, &plan, &ext);
+    crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::SubscriptionUpdated, out.clone()).await;
+    Ok(Json(json!({ "subscription": out })))
 }
 
 /// `GET /subscriptions/:external_id/lifetime_usage` — cumulative usage

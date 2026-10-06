@@ -238,7 +238,9 @@ pub async fn update_plan(
         )
         .await?
         .ok_or_else(|| ApiError::NotFound("plan".into()))?;
-    Ok(Json(json!({ "plan": plan_with_charges(&st, &plan).await? })))
+    let out = plan_with_charges(&st, &plan).await?;
+    crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::PlanUpdated, out.clone()).await;
+    Ok(Json(json!({ "plan": out })))
 }
 
 /// `DELETE /plans/:code` — soft-delete a plan.
@@ -254,6 +256,7 @@ pub async fn destroy_plan(
         .ok_or_else(|| ApiError::NotFound("plan".into()))?;
     let out = plan_with_charges(&st, &plan).await?;
     st.db.soft_delete_plan(plan.id).await?;
+    crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::PlanDeleted, out.clone()).await;
     Ok(Json(json!({ "plan": out })))
 }
 
@@ -451,7 +454,9 @@ pub async fn update_billable_metric(
         )
         .await?
         .ok_or_else(|| ApiError::NotFound("billable_metric".into()))?;
-    Ok(Json(json!({ "billable_metric": ser::billable_metric(&m) })))
+    let out = ser::billable_metric(&m);
+    crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::BillableMetricUpdated, out.clone()).await;
+    Ok(Json(json!({ "billable_metric": out })))
 }
 
 /// `DELETE /billable_metrics/:code`.
@@ -467,6 +472,7 @@ pub async fn destroy_billable_metric(
         .ok_or_else(|| ApiError::NotFound("billable_metric".into()))?;
     let out = ser::billable_metric(&m);
     st.db.soft_delete_billable_metric(m.id).await?;
+    crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::BillableMetricDeleted, out.clone()).await;
     Ok(Json(json!({ "billable_metric": out })))
 }
 
@@ -769,14 +775,24 @@ pub async fn update_wallet_realtime(
 /// `DELETE /wallets/:id` — terminate a wallet.
 pub async fn terminate_wallet(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let w = st.db.find_wallet(id).await?.ok_or_else(|| ApiError::NotFound("wallet".into()))?;
+    let w = st
+        .db
+        .find_wallet(id)
+        .await?
+        .filter(|w| w.organization_id == auth.organization.id)
+        .ok_or_else(|| ApiError::NotFound("wallet".into()))?;
+    let was_active = w.terminated_at.is_none();
     st.db.terminate_wallet(id).await?;
     let updated = st.db.find_wallet(id).await?.ok_or_else(|| ApiError::NotFound("wallet".into()))?;
     let ext = st.db.customer_external_id(w.customer_id).await?.unwrap_or_default();
-    Ok(Json(json!({ "wallet": ser::wallet(&updated, &ext) })))
+    let out = ser::wallet(&updated, &ext);
+    if was_active {
+        crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::WalletTerminated, out.clone()).await;
+    }
+    Ok(Json(json!({ "wallet": out })))
 }
 
 // ---- enum string → i32 helpers ---------------------------------------------

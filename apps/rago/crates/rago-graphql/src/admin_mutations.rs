@@ -169,6 +169,7 @@ impl AdminMutation {
         }
         // Re-validated against VIES only when the VAT number / country changed.
         rago_jobs::vies::enqueue_vies_check_logged(db(ctx), customer.id).await;
+        emit(db(ctx), org.id, WebhookKind::CustomerUpdated, crate::mutation::customer_object(&customer)).await;
         Ok(Customer(customer))
     }
 

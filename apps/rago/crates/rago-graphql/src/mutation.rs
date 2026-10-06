@@ -206,6 +206,7 @@ impl Mutation {
         // EU customers with a VAT number are validated against VIES
         // (`customer.vies_check`).
         rago_jobs::vies::enqueue_vies_check_logged(db(ctx), c.id).await;
+        emit(db(ctx), org.id, WebhookKind::CustomerCreated, customer_object(&c)).await;
         Ok(Customer(c))
     }
 
@@ -467,6 +468,22 @@ impl Mutation {
             updated_at: now(),
         };
         db(ctx).insert_wallet(&wallet).await?;
+        emit(
+            db(ctx),
+            org.id,
+            WebhookKind::WalletCreated,
+            json!({
+                "lago_id": wallet.id,
+                "lago_customer_id": customer.id,
+                "external_customer_id": customer.external_id,
+                "status": wallet.status.as_str(),
+                "currency": wallet.balance_currency,
+                "name": wallet.name,
+                "rate_amount": wallet.rate_amount.to_string(),
+                "created_at": wallet.created_at,
+            }),
+        )
+        .await;
 
         let granted = parse_dec(&input.granted_credits);
         let paid = parse_dec(&input.paid_credits);
@@ -947,4 +964,20 @@ async fn grant_wallet_credits(
     )
     .await;
     Ok((updated, tx))
+}
+
+/// The `customer` object of `customer.created` / `customer.updated`.
+pub(crate) fn customer_object(c: &m::Customer) -> serde_json::Value {
+    json!({
+        "lago_id": c.id,
+        "external_id": c.external_id,
+        "name": c.name,
+        "email": c.email,
+        "country": c.country,
+        "currency": c.currency,
+        "timezone": c.timezone,
+        "tax_identification_number": c.tax_identification_number,
+        "created_at": c.created_at,
+        "updated_at": c.updated_at,
+    })
 }

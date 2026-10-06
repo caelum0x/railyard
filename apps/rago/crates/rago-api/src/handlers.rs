@@ -244,7 +244,9 @@ pub async fn create_billable_metric(
         deleted_at: None,
     };
     st.db.insert_billable_metric(&m).await?;
-    Ok(Json(json!({ "billable_metric": ser::billable_metric(&m) })))
+    let out = ser::billable_metric(&m);
+    crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::BillableMetricCreated, out.clone()).await;
+    Ok(Json(json!({ "billable_metric": out })))
 }
 
 // ---- plans (with nested charges) -------------------------------------------
@@ -316,6 +318,7 @@ pub async fn create_plan(
 
     let mut plan_json = ser::plan(&plan);
     plan_json["charges"] = json!(charges.iter().map(ser::charge).collect::<Vec<_>>());
+    crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::PlanCreated, plan_json.clone()).await;
     Ok(Json(json!({ "plan": plan_json })))
 }
 
