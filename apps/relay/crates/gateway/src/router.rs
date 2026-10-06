@@ -405,6 +405,22 @@ pub async fn build_axum_router(
             crate::metering::spend_cap_middleware,
         ));
     }
+    // Guardrails (RELAY_GUARDRAILS_JSON / RELAY_GUARDRAILS_PATH) sit inside
+    // auth and outside spend caps, metering and billing: a refused prompt never
+    // opens a hold or reaches a provider, and a redacted one is what billing
+    // and the provider see.
+    let guardrails = relay_guardrails::Policy::from_env()
+        .map_err(|error| billing_config_error(format!("RELAY_GUARDRAILS: {error}")))?;
+    if let Some(policy) = guardrails.filter(relay_guardrails::Policy::is_active) {
+        tracing::info!(policy = ?policy, "Relay guardrails enabled");
+        router = router.layer(middleware::from_fn_with_state(
+            relay_guardrails::middleware::GuardrailsState {
+                policy: Arc::new(policy),
+                max_body_bytes: crate::billing::MAX_REQUEST_BODY_BYTES,
+            },
+            relay_guardrails::middleware::guardrails_middleware,
+        ));
+    }
     router = router
         .layer(Extension(relay_health))
         .layer(Extension(runtime_status));

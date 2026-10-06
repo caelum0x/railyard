@@ -3325,6 +3325,7 @@ dependencies = [
  "relay-catalog",
  "relay-contract",
  "relay-cost-feed",
+ "relay-guardrails",
  "relay-hedge",
  "relay-storage-postgres",
  "relay-traces",
@@ -6571,6 +6572,21 @@ dependencies = [
  "tokio",
  "ts-rs",
  "uuid",
+]
+
+[[package]]
+name = "relay-guardrails"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "http-body-util",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tracing",
 ]
 
 [[package]]

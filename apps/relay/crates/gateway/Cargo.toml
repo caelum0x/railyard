@@ -14,6 +14,7 @@ relay-billing = { path = "../relay-billing" }
 relay-catalog = { path = "../relay-catalog" }
 relay-contract = { path = "../relay-contract" }
 relay-cost-feed = { path = "../relay-cost-feed" }
+relay-guardrails = { path = "../relay-guardrails" }
 relay-hedge = { path = "../relay-hedge" }
 relay-storage-postgres = { path = "../relay-storage-postgres" }
 relay-traces = { path = "../relay-traces" }
