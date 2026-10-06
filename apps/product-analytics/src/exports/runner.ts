@@ -170,7 +170,7 @@ export async function deliver(db: Db, raw: Record<string, unknown>, now: Date, o
         bytes = Buffer.byteLength(body);
         httpStatus = await sendWebhook(d.config as WebhookConfig, secret, body, `msg_${batchId}`, now, fetchImpl);
       } else if (isCatalogue(d.kind) && bundle) {
-        const sent = await sendCatalogue(d.kind, bundle, rows.map(exported), `msg_${batchId}`, now, fetchImpl);
+        const sent = await sendCatalogue(d.kind, bundle, rows.map(exported), `msg_${batchId}`, now, fetchImpl, d.config as Record<string, unknown>);
         bytes = sent.bytes;
         httpStatus = sent.status;
       } else {

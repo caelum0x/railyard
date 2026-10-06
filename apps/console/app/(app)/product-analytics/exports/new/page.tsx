@@ -107,6 +107,40 @@ export default async function NewDestinationPage({ searchParams }: { searchParam
                   <input name="label" maxLength={80} placeholder="#growth" />
                 </label>
               </div>
+              <label>
+                <input type="radio" name="kind" value="clickhouse" /> A ClickHouse table (rows, created if missing)
+              </label>
+              <label>
+                <input type="radio" name="kind" value="bigquery" /> A BigQuery table (rows, created if missing)
+              </label>
+              <div className="row">
+                <label style={input}>
+                  <span className="muted">ClickHouse address</span>
+                  <input name="wh_url" placeholder="https://abc.eu-central-1.aws.clickhouse.cloud:8443" />
+                </label>
+                <label style={input}>
+                  <span className="muted">ClickHouse user</span>
+                  <input name="wh_user" placeholder="default" autoComplete="off" />
+                </label>
+                <label style={input}>
+                  <span className="muted">BigQuery project id</span>
+                  <input name="wh_project" placeholder="shop-analytics" />
+                </label>
+              </div>
+              <div className="row">
+                <label style={input}>
+                  <span className="muted">Database (ClickHouse) or dataset (BigQuery)</span>
+                  <input name="wh_database" placeholder="analytics" />
+                </label>
+                <label style={input}>
+                  <span className="muted">Table (optional)</span>
+                  <input name="wh_table" placeholder="railyard_events" />
+                </label>
+              </div>
+              <label style={input}>
+                <span className="muted">ClickHouse password, or the BigQuery service account key (JSON)</span>
+                <textarea name="wh_secret" rows={3} autoComplete="off" spellCheck={false} />
+              </label>
             </fieldset>
             <label style={input}>
               <span className="muted">Only these events, comma separated (leave empty for all)</span>

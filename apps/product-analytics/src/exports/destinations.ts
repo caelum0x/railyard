@@ -102,7 +102,7 @@ export function checkDestination(b: Record<string, unknown>): NewDestination {
     const { config, bundle } = checkCatalogue(b.kind, c, b.secret);
     return { name, kind: b.kind, config: config as CatalogueConfig, secret: sealBundle(bundle), signing: bundle.signing, events: events as string[] | null, start };
   }
-  throw new ApiError(400, "The destination kind must be webhook, s3, slack, discord or hubspot.");
+  throw new ApiError(400, "The destination kind must be webhook, s3, slack, discord, hubspot, clickhouse or bigquery.");
 }
 
 export async function createDestination(db: Db, projectId: string, d: NewDestination, now: Date): Promise<Destination> {

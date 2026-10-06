@@ -132,8 +132,21 @@ export interface FlagChange {
 export interface Destination {
   id: string;
   name: string;
-  kind: "webhook" | "s3" | "slack" | "discord" | "hubspot";
-  config: { url?: string; endpoint?: string; bucket?: string; region?: string; prefix?: string; access_key_id?: string; label?: string };
+  kind: "webhook" | "s3" | "slack" | "discord" | "hubspot" | "clickhouse" | "bigquery";
+  config: {
+    url?: string;
+    endpoint?: string;
+    bucket?: string;
+    region?: string;
+    prefix?: string;
+    access_key_id?: string;
+    label?: string;
+    database?: string;
+    table?: string;
+    user?: string;
+    project_id?: string;
+    dataset?: string;
+  };
   events: string[] | null;
   enabled: boolean;
   status: "ok" | "retrying" | "failing";
@@ -360,18 +373,46 @@ export function destinationFromForm(form: Record<string, string>): Record<string
     // QY1.4: the webhook address (Slack, Discord) or the private app token (HubSpot) is sealed by the service.
     return { ...common, kind: form.kind, config: { label: form.label ?? "" }, secret: form.target ?? "" };
   }
+  if (form.kind === "clickhouse") {
+    // A22: the ClickHouse password is sealed by the service; the rest is shown back.
+    return {
+      ...common,
+      kind: "clickhouse",
+      config: { url: form.wh_url ?? "", database: form.wh_database || "default", table: form.wh_table || "railyard_events", user: form.wh_user || "default", label: form.label ?? "" },
+      secret: form.wh_secret ?? "",
+    };
+  }
+  if (form.kind === "bigquery") {
+    // A22: the service account key (JSON) is sealed by the service.
+    return {
+      ...common,
+      kind: "bigquery",
+      config: { project_id: form.wh_project ?? "", dataset: form.wh_database ?? "", table: form.wh_table || "railyard_events", label: form.label ?? "" },
+      secret: form.wh_secret ?? "",
+    };
+  }
   if (form.kind === "s3") {
     return { ...common, kind: "s3", config: { endpoint: form.endpoint ?? "", bucket: form.bucket ?? "", region: form.region || "auto", prefix: form.prefix ?? "", access_key_id: form.access_key_id ?? "" }, secret: form.secret ?? "" };
   }
   return { ...common, kind: "webhook", config: { url: form.url ?? "" } };
 }
 
-export const KIND_TEXT: Record<Destination["kind"], string> = { webhook: "Webhook", s3: "S3 bucket", slack: "Slack", discord: "Discord", hubspot: "HubSpot contacts" };
+export const KIND_TEXT: Record<Destination["kind"], string> = {
+  webhook: "Webhook",
+  s3: "S3 bucket",
+  slack: "Slack",
+  discord: "Discord",
+  hubspot: "HubSpot contacts",
+  clickhouse: "ClickHouse table",
+  bigquery: "BigQuery table",
+};
 
 /** Where a destination sends, in words (never its secret). */
 export function destinationTarget(d: Pick<Destination, "kind" | "config">): string {
   if (d.kind === "webhook") return `Webhook ${d.config.url}`;
   if (d.kind === "s3") return `Bucket ${d.config.bucket} at ${d.config.endpoint}${d.config.prefix ? `, folder ${d.config.prefix}` : ""}`;
+  if (d.kind === "clickhouse") return `ClickHouse table ${d.config.database}.${d.config.table} at ${d.config.url}`;
+  if (d.kind === "bigquery") return `BigQuery table ${d.config.project_id}.${d.config.dataset}.${d.config.table}`;
   return `${KIND_TEXT[d.kind]}${d.config.label ? ` (${d.config.label})` : ""}`;
 }
 
