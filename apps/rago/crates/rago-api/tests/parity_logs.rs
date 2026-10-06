@@ -194,3 +194,25 @@ async fn document_requests_and_flat_quote_versions(pool: PgPool) {
     let xml = a.ok("POST", &format!("/api/v1/invoices/{iid}/download_xml"), None).await;
     assert!(xml["invoice"]["xml_url"].as_str().unwrap().ends_with("/download.xml"));
 }
+
+#[sqlx::test(migrator = "rago_db::MIGRATOR")]
+async fn v1_events_batch_and_post_download_aliases(pool: PgPool) {
+    let a = parity::api(pool).await;
+    instant_setup(&a).await;
+    a.ok(
+        "POST",
+        "/api/v1/events/batch",
+        Some(json!({ "events": [
+            { "transaction_id": "b1", "code": "tokens", "external_subscription_id": "sub-i", "properties": { "tokens": 1 } },
+            { "transaction_id": "b2", "code": "tokens", "external_subscription_id": "sub-i", "properties": { "tokens": 2 } },
+        ] })),
+    )
+    .await;
+    let v = a.ok("GET", "/api/v1/events_enriched?external_subscription_id=sub-i", None).await;
+    assert_eq!(v["meta"]["total_count"], 2, "{v}");
+    let inv = a
+        .ok("POST", "/api/v1/invoices", Some(json!({ "invoice": { "external_customer_id": "cust-i", "currency": "USD", "fees": [{ "name": "X", "unit_amount_cents": 100, "units": 1 }] } })))
+        .await;
+    let iid = inv["invoice"]["lago_id"].as_str().unwrap();
+    assert!(a.ok("POST", &format!("/api/v1/invoices/{iid}/download"), None).await["invoice"]["file_url"].is_string());
+}
