@@ -139,6 +139,11 @@ pub async fn recover_once(
                     "finished compensation for a failed settlement"
                 );
             }
+            // Another driver (a live request or another instance's sweep)
+            // holds the saga's lease: it is not stuck, leave it alone.
+            Err(LedgerlineError::InProgress) => {
+                tracing::debug!(request_id = %saga.request_id, "saga is being driven elsewhere");
+            }
             // A transient failure (Mint/store still unhealthy): leave the saga
             // durable and retry it on the next sweep.
             Err(error) => {

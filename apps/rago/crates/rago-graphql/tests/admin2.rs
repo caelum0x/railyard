@@ -437,3 +437,38 @@ async fn void_invoice_rejects_cross_org_id(pool: PgPool) {
     let resp = run(&schema, &org_a, void, json!({ "id": inv.id.to_string() })).await;
     assert_eq!(data(&resp)["voidInvoice"]["status"], "voided");
 }
+
+#[sqlx::test(migrator = "rago_db::MIGRATOR")]
+async fn regenerate_invoice_with_adjusted_fees_recomputes_totals(pool: PgPool) {
+    let (schema, db, org) = setup(pool).await;
+    let c = customer(org.id, "cust-r");
+    db.insert_customer(&c).await.unwrap();
+    let inv = draft_invoice(org.id, c.id, InvoiceStatus::Finalized);
+    db.insert_invoice(&inv).await.unwrap();
+    let keep = insert_fee(&db, org.id, inv.id, 1500, 3, 500).await;
+    let drop = insert_fee(&db, org.id, inv.id, 700, 1, 700).await;
+    let resp = run(&schema, &org, r#"mutation($id: ID!) { voidInvoice(id: $id) { status } }"#, json!({ "id": inv.id.to_string() })).await;
+    assert_eq!(data(&resp)["voidInvoice"]["status"], "voided");
+    let regen = r#"mutation($id: ID!, $fees: [RegenerateFeeInput!]) {
+        regenerateInvoice(voidedInvoiceId: $id, fees: $fees) { id feesAmountCents totalAmountCents } }"#;
+    // An unknown fee id is refused.
+    let resp = run(&schema, &org, regen, json!({ "id": inv.id.to_string(), "fees": [{ "id": Uuid::new_v4().to_string(), "units": "1" }] })).await;
+    assert_eq!(resp.errors[0].message, "fee_not_on_invoice");
+    let resp = run(
+        &schema,
+        &org,
+        regen,
+        json!({ "id": inv.id.to_string(), "fees": [
+            { "id": keep.to_string(), "units": "2", "unitAmountCents": 450 },
+            { "id": drop.to_string(), "units": "0" },
+        ] }),
+    )
+    .await;
+    let d = data(&resp);
+    assert_eq!(d["regenerateInvoice"]["feesAmountCents"], 900, "{d}");
+    assert_eq!(d["regenerateInvoice"]["totalAmountCents"], 900);
+    let new_id = Uuid::parse_str(d["regenerateInvoice"]["id"].as_str().unwrap()).unwrap();
+    let fees = db.fees_for_invoice(new_id).await.unwrap();
+    assert_eq!(fees.len(), 1);
+    assert_eq!((fees[0].amount_cents, fees[0].unit_amount_cents), (900, 450));
+}

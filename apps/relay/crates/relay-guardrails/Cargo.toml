@@ -1,0 +1,22 @@
+[package]
+name = "relay-guardrails"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Relay request guardrails: PII redaction or blocking and operator deny rules, before any hold or provider call."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+axum = { workspace = true }
+http-body-util = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tower = { version = "0.5.3", features = ["util"] }

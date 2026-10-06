@@ -17,8 +17,9 @@ import { ApiError, text } from "../replay/shared/console-guard.ts";
 import { allowPrivate, checkUrlShape, DestinationRefused } from "./net-guard.ts";
 import { DeliveryError, SEND_TIMEOUT_MS, type ExportedEvent } from "./runner.ts";
 import { newSigningSecret } from "./secrets.ts";
+import { checkWarehouse, describeWarehouse, isWarehouse, sendWarehouse } from "./warehouse.ts";
 
-export const CATALOGUE = ["slack", "discord", "hubspot"] as const;
+export const CATALOGUE = ["slack", "discord", "hubspot", "clickhouse", "bigquery", "snowflake"] as const;
 export type CatalogueKind = (typeof CATALOGUE)[number];
 export const isCatalogue = (k: string): k is CatalogueKind => (CATALOGUE as readonly string[]).includes(k);
 
@@ -52,6 +53,10 @@ function hostOnly(u: URL, hosts: string[], path: RegExp, what: string): void {
 /** Validates a catalogue destination's input. Returns what is kept in the clear and the sealed bundle. */
 export function checkCatalogue(kind: CatalogueKind, c: Record<string, unknown>, secretIn: unknown): { config: Record<string, string>; bundle: SecretBundle } {
   const signing = newSigningSecret();
+  if (isWarehouse(kind)) {
+    const { config, target } = checkWarehouse(kind, c, secretIn);
+    return { config, bundle: { target, signing } };
+  }
   const guard = (raw: string, what: string) => {
     try {
       return checkUrlShape(raw, what);
@@ -136,7 +141,16 @@ async function post(url: string, body: string, headers: Record<string, string>, 
 }
 
 /** Sends one batch to a catalogue destination. Returns the bytes sent (0 when nothing applied). */
-export async function sendCatalogue(kind: CatalogueKind, bundle: SecretBundle, events: ExportedEvent[], messageId: string, now: Date, fetchImpl: typeof fetch): Promise<{ bytes: number; status: number | null }> {
+export async function sendCatalogue(
+  kind: CatalogueKind,
+  bundle: SecretBundle,
+  events: ExportedEvent[],
+  messageId: string,
+  now: Date,
+  fetchImpl: typeof fetch,
+  config: Record<string, unknown> = {},
+): Promise<{ bytes: number; status: number | null }> {
+  if (isWarehouse(kind)) return sendWarehouse(kind, config, bundle.target, events, now, fetchImpl);
   const ts = String(Math.floor(now.getTime() / 1000));
   const signed = (body: string) => ({ "webhook-id": messageId, "webhook-timestamp": ts, "webhook-signature": sign(bundle.signing, messageId, ts, body) });
   if (kind === "hubspot") {
@@ -159,5 +173,6 @@ export async function sendCatalogue(kind: CatalogueKind, bundle: SecretBundle, e
 
 /** The clear-text view of where a catalogue destination sends (never the secret). */
 export function describeTarget(kind: CatalogueKind, config: Record<string, unknown>): string {
+  if (isWarehouse(kind)) return describeWarehouse(kind, config);
   return `${kind === "slack" ? "Slack" : kind === "discord" ? "Discord" : "HubSpot"}: ${String(config.label ?? "")}`;
 }

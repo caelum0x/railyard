@@ -103,6 +103,11 @@ pub trait SellerStore: Send + Sync {
     async fn upsert_seller(&self, record: SellerRecord) -> Result<(), MintError>;
     async fn get_seller(&self, product: &str, seller: &str) -> Result<Option<SellerRecord>, MintError>;
     async fn seller_by_account(&self, provider: &str, account_ref: &str) -> Result<Option<SellerRecord>, MintError>;
+    /// The seller revoked our access to this account (Stripe
+    /// `account.application.deauthorized`): forget the connection and the
+    /// products made on that account (their prices live there). Entitlement
+    /// history stays. Returns the seller it was, `None` when unknown.
+    async fn disconnect_account(&self, provider: &str, account_ref: &str) -> Result<Option<SellerRecord>, MintError>;
     /// Inserts; returns the existing record when the sku already exists.
     async fn put_product(&self, record: SellerProductRecord) -> Result<SellerProductRecord, MintError>;
     async fn get_product(&self, product: &str, seller: &str, sku: &str) -> Result<Option<SellerProductRecord>, MintError>;
@@ -178,6 +183,20 @@ impl SellerStore for MemorySellerStore {
     }
     async fn seller_by_account(&self, provider: &str, account_ref: &str) -> Result<Option<SellerRecord>, MintError> {
         Ok(lock(&self.inner)?.sellers.values().find(|s| s.provider == provider && s.account_ref.as_deref() == Some(account_ref)).cloned())
+    }
+    async fn disconnect_account(&self, provider: &str, account_ref: &str) -> Result<Option<SellerRecord>, MintError> {
+        let mut inner = lock(&self.inner)?;
+        let Some(key) = inner
+            .sellers
+            .iter()
+            .find(|(_, s)| s.provider == provider && s.account_ref.as_deref() == Some(account_ref))
+            .map(|(k, _)| k.clone())
+        else {
+            return Ok(None);
+        };
+        let record = inner.sellers.remove(&key);
+        inner.products.retain(|(p, s, _), _| !(p == &key.0 && s == &key.1));
+        Ok(record)
     }
     async fn put_product(&self, record: SellerProductRecord) -> Result<SellerProductRecord, MintError> {
         let mut inner = lock(&self.inner)?;

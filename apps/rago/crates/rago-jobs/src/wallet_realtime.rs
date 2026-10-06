@@ -121,7 +121,11 @@ pub async fn reserve_for_event<T: HttpTransport>(
             to.and_hms_opt(23, 59, 59).unwrap_or_default(),
         )
         .await?;
-    let cents = incremental_event_cost(&metric, &charges, sub, &period_events, event, plan.currency())
+    let mut filters = Vec::with_capacity(charges.len());
+    for c in &charges {
+        filters.push((c.id, db.charge_filter_specs(c.id).await?));
+    }
+    let cents = incremental_event_cost(&metric, &charges, &filters, sub, &period_events, event, plan.currency())
         .map_err(|e| JobError::Payment(format!("event pricing failed: {e}")))?;
     if cents <= 0 {
         return Ok(Reservation::Free);

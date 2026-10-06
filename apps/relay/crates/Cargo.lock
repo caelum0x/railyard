@@ -3325,7 +3325,9 @@ dependencies = [
  "relay-catalog",
  "relay-contract",
  "relay-cost-feed",
+ "relay-guardrails",
  "relay-hedge",
+ "relay-semantic-cache",
  "relay-storage-postgres",
  "relay-traces",
  "reqwest 0.13.3",
@@ -6574,6 +6576,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "relay-guardrails"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "http-body-util",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tracing",
+]
+
+[[package]]
 name = "relay-hedge"
 version = "0.1.0"
 dependencies = [
@@ -6607,6 +6624,24 @@ dependencies = [
  "tokio-util",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "relay-semantic-cache"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "http-body-util",
+ "reqwest 0.13.3",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tracing",
 ]
 
 [[package]]

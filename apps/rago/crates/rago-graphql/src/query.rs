@@ -279,19 +279,20 @@ impl Query {
         let mut amount_cents = 0i64;
         let mut charges_usage = Vec::new();
         for charge in &charges {
-            let Some(mid) = charge.billable_metric_id else { continue };
-            let metric = db(ctx).find_billable_metric(mid).await?;
-            let events = db(ctx)
-                .events_for_external_subscription(org.id, &sub.external_id, &metric.code, from, to)
-                .await?;
-            let fee = rago_billing::charge_to_fee(&metric, charge, &sub, &events, currency, None)
+            let Some(loaded) = db(ctx).load_charge_usage(org.id, &sub.external_id, charge, from, to, to).await? else {
+                continue;
+            };
+            // Priced like the invoice: every filter and pricing group line.
+            let fees = rago_billing::charge_fees::charge_fees(&loaded.usage(), &sub, currency, None)
                 .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-            amount_cents += fee.amount_cents;
+            let charge_amount: i64 = fees.iter().map(|f| f.amount_cents).sum();
+            let units: rust_decimal::Decimal = fees.iter().map(|f| f.units).sum();
+            amount_cents += charge_amount;
             charges_usage.push(ChargeUsage {
-                units: fee.units.to_string(),
-                amount_cents: fee.amount_cents,
-                billable_metric_code: metric.code.clone(),
-                billable_metric_name: metric.name.clone(),
+                units: units.to_string(),
+                amount_cents: charge_amount,
+                billable_metric_code: loaded.metric.code.clone(),
+                billable_metric_name: loaded.metric.name.clone(),
             });
         }
         Ok(CustomerUsage {

@@ -764,7 +764,8 @@ impl Db {
 
     pub async fn find_plan_by_code(&self, org: Uuid, code: &str) -> Result<Option<Plan>> {
         let row = sqlx::query(
-            "SELECT * FROM plans WHERE organization_id = $1 AND code = $2 AND deleted_at IS NULL",
+            // Override plans (parent_id set) share their parent's code; the code names the parent.
+            "SELECT * FROM plans WHERE organization_id = $1 AND code = $2 AND deleted_at IS NULL AND parent_id IS NULL",
         )
         .bind(org)
         .bind(code)
@@ -1016,13 +1017,13 @@ impl Db {
     }
 
     pub async fn list_plans(&self, org: Uuid, limit: i64, offset: i64) -> Result<Vec<Plan>> {
-        let rows = sqlx::query("SELECT * FROM plans WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $2 OFFSET $3")
+        let rows = sqlx::query("SELECT * FROM plans WHERE organization_id = $1 AND deleted_at IS NULL AND parent_id IS NULL ORDER BY created_at DESC LIMIT $2 OFFSET $3")
             .bind(org).bind(limit).bind(offset).fetch_all(&self.pool).await?;
         rows.iter().map(mapping::plan).collect()
     }
     pub async fn count_plans(&self, org: Uuid) -> Result<i64> {
         let row = sqlx::query(
-            "SELECT COUNT(*) AS n FROM plans WHERE organization_id = $1 AND deleted_at IS NULL",
+            "SELECT COUNT(*) AS n FROM plans WHERE organization_id = $1 AND deleted_at IS NULL AND parent_id IS NULL",
         )
         .bind(org)
         .fetch_one(&self.pool)
@@ -2302,10 +2303,24 @@ impl Db {
 
     /// Insert a webhook endpoint, returning its id.
     pub async fn insert_webhook_endpoint_returning(&self, org: Uuid, url: &str) -> Result<Uuid> {
+        self.insert_webhook_endpoint_with_algo(org, url, "hmac").await
+    }
+
+    /// Insert a webhook endpoint with its signature algorithm (`hmac`|`jwt`).
+    pub async fn insert_webhook_endpoint_with_algo(&self, org: Uuid, url: &str, algo: &str) -> Result<Uuid> {
         let id = Uuid::new_v4();
-        sqlx::query("INSERT INTO webhook_endpoints (id, organization_id, webhook_url, signature_algo, created_at, updated_at) VALUES ($1,$2,$3,'hmac',now(),now())")
-            .bind(id).bind(org).bind(url).execute(&self.pool).await?;
+        sqlx::query("INSERT INTO webhook_endpoints (id, organization_id, webhook_url, signature_algo, created_at, updated_at) VALUES ($1,$2,$3,$4,now(),now())")
+            .bind(id).bind(org).bind(url).bind(algo).execute(&self.pool).await?;
         Ok(id)
+    }
+
+    /// The signature algorithm of an org's endpoint by URL (`hmac` if unknown).
+    pub async fn webhook_endpoint_algo(&self, org: Uuid, url: &str) -> Result<String> {
+        let algo: Option<String> = sqlx::query_scalar(
+            "SELECT signature_algo FROM webhook_endpoints WHERE organization_id = $1 AND webhook_url = $2 ORDER BY created_at LIMIT 1",
+        )
+        .bind(org).bind(url).fetch_optional(&self.pool).await?;
+        Ok(algo.unwrap_or_else(|| "hmac".into()))
     }
 
     /// Webhook endpoints for an org `(id, webhook_url, signature_algo)`.

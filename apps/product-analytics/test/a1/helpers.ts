@@ -1,6 +1,7 @@
 // Test harness: a scratch Postgres cluster from initdb (never a hosted
 // database), the migrations, and the service on a random local port.
 
+import "../sdk-deps.ts";
 import { after } from "node:test";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";

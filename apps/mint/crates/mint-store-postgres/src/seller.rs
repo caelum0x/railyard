@@ -173,6 +173,31 @@ impl SellerStore for PgSeller {
         row.as_ref().map(seller).transpose()
     }
 
+    async fn disconnect_account(&self, provider: &str, account_ref: &str) -> Result<Option<SellerRecord>, MintError> {
+        let mut tx = self.pool.begin().await.map_err(storage)?;
+        let row = sqlx::query(&format!(
+            "SELECT {SELLER_COLS} FROM mint_seller_accounts WHERE provider = $1 AND account_ref = $2 FOR UPDATE"
+        ))
+        .bind(provider)
+        .bind(account_ref)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(storage)?;
+        let Some(record) = row.as_ref().map(seller).transpose()? else {
+            tx.rollback().await.map_err(storage)?;
+            return Ok(None);
+        };
+        // Products reference the account row, so they go first.
+        for sql in [
+            "DELETE FROM mint_seller_products WHERE product = $1 AND seller = $2",
+            "DELETE FROM mint_seller_accounts WHERE product = $1 AND seller = $2",
+        ] {
+            sqlx::query(sql).bind(&record.product).bind(&record.seller).execute(&mut *tx).await.map_err(storage)?;
+        }
+        tx.commit().await.map_err(storage)?;
+        Ok(Some(record))
+    }
+
     async fn put_product(&self, r: SellerProductRecord) -> Result<SellerProductRecord, MintError> {
         sqlx::query(&format!(
             "INSERT INTO mint_seller_products ({PRODUCT_COLS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \

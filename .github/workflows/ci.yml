@@ -1,7 +1,11 @@
 # CI for railyard on the self-hosted Mac runner (RY-CI1).
-# cargo test per deployed app: rago and mint (whole workspaces) and Relay's own
-# crates (the TensorZero upstream crates are tested upstream; relay-storage-postgres
-# needs a database and is covered by its own integration run).
+# cargo test per app workspace (Relay: its own crates; the TensorZero upstream
+# crates are tested upstream). Each Rust job gets a scratch Postgres
+# (scripts/ci/scratch-postgres.sh) so the live-database suites run too: rago's
+# pg-tests feature, mint's #[ignore] live suites, and every suite gated on
+# DATABASE_URL. The Node job runs the console, product analytics (all of a1,
+# a2, a3, qy on its own initdb scratch database), insights-edge, the SDK
+# packages and the Scribase bridge contract.
 # Pull requests run only when they come from this repository; the runner's job
 # guard (infra-box/ci/lib/guard-job.sh) refuses forks as a second layer.
 name: ci
@@ -38,15 +42,42 @@ jobs:
         include:
           - app: rago
             dir: apps/rago
-            args: --workspace
+            args: --workspace --features pg-tests
           - app: mint
             dir: apps/mint
             args: --workspace
+            # mint's live suites are #[ignore] (scratch database only).
+            live: -p mint-store-postgres -- --ignored
           - app: relay
             dir: apps/relay/crates
             args: >-
               -p relay-aitp -p relay-aitp-wire -p relay-billing -p relay-catalog
               -p relay-contract -p relay-cost-feed -p relay-hedge -p relay-sdk
+              -p relay-storage-postgres -p relay-traces -p relay-guardrails
+          - app: ledgerline
+            dir: apps/ledgerline
+            args: ""
+          - app: vend
+            dir: apps/vend
+            args: --workspace
+          - app: abacus
+            dir: apps/abacus
+            args: --workspace
+          - app: turnstile
+            dir: apps/turnstile
+            args: --workspace
+          - app: toolgate
+            dir: apps/toolgate
+            args: --workspace
+          - app: game-economy
+            dir: apps/game-economy
+            args: --workspace
+          - app: agent-runtime
+            dir: apps/agent-runtime
+            args: --workspace
+          - app: context-passport
+            dir: apps/context-passport
+            args: --workspace
     env:
       # Kept between runs so each job builds incrementally from the last one.
       CARGO_TARGET_DIR: ${{ github.workspace }}/../.cargo-target/${{ matrix.app }}
@@ -61,9 +92,23 @@ jobs:
           echo "free disk: ${free} GB"
           [ "$free" -ge "${CI_MAC_MIN_FREE_GB:-5}" ] || { echo "::error::the Mac has ${free} GB free"; exit 1; }
 
+      - name: Scratch Postgres
+        env:
+          APP: ${{ matrix.app }}
+        run: scripts/ci/scratch-postgres.sh "ci_${APP//-/_}"
+
       - name: cargo test
         working-directory: ${{ matrix.dir }}
         run: cargo test --locked ${{ matrix.args }}
+
+      - name: Live database suites
+        if: matrix.live != '' && env.DATABASE_URL != ''
+        working-directory: ${{ matrix.dir }}
+        run: cargo test --locked ${{ matrix.live }}
+
+      - name: Stop scratch Postgres
+        if: always()
+        run: scripts/ci/scratch-postgres-stop.sh
 
       - name: Trim the cargo cache when the Mac is low on disk
         if: always()
@@ -73,3 +118,45 @@ jobs:
             echo "free disk ${free} GB < 15 GB: removing $CARGO_TARGET_DIR"
             rm -rf "$CARGO_TARGET_DIR"
           fi
+
+  node:
+    name: node suites
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, railyard-ship]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install (workspace and product analytics)
+        run: |
+          pnpm install --frozen-lockfile
+          (cd apps/product-analytics && pnpm install --frozen-lockfile)
+
+      - name: Console
+        working-directory: apps/console
+        run: npm test
+
+      - name: Product analytics (a1, a2, a3, qy)
+        working-directory: apps/product-analytics
+        run: pnpm run test:all
+
+      - name: Insights edge
+        working-directory: apps/insights-edge
+        run: npm test
+
+      - name: SDK packages
+        run: |
+          # The SDK packages are in no installing workspace; they pin the same
+          # upstream SDK versions as product analytics, so they borrow its install.
+          for p in packages/analytics-js packages/analytics-node; do
+            [ -e "$p/node_modules" ] || ln -s ../../apps/product-analytics/node_modules "$p/node_modules"
+          done
+          for p in packages/*/; do
+            if [ -d "$p/test" ]; then (cd "$p" && node --test test/*.test.*) || exit 1; fi
+          done
+
+      - name: Scribase bridge contract
+        run: node --test tests/contract/*.test.ts
+

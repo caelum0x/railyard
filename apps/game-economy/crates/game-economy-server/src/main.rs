@@ -31,6 +31,7 @@
 //! - `GAME_SERVER_SECRET`      — game-backend credential (`X-Game-Server-Key`) for the server-to-server routes (optional; those routes answer 503 until set).
 //! - `GAME_ALLOW_LEGACY_TOKENS`— `true` to keep accepting non-expiring legacy tokens (default false).
 //! - `GAME_TOKEN_TTL_SECS`     — default lifetime of issued tokens (default 86400).
+//! - `GAME_RESERVATION_TTL_SECS` — how long a cosmetic/pass reservation of a purchase that never completed blocks other purchases of it before one may prove it abandoned on Mint and take it over (default 900).
 //! - `GAME_CATALOG_PATH`       — JSON catalog definition (SKUs, prices, drop tables, seasons) that SEEDS the persisted catalog on first boot. Required unless `GAME_CATALOG=demo` or a catalog is already persisted. After seeding, the operator console (`/admin` → Catalog) is the source of truth.
 //! - `GAME_CATALOG_RESEED`     — `true` to overwrite the persisted catalog from `GAME_CATALOG_PATH` at boot (archived SKUs still resolve only if the file keeps them).
 //! - `GAME_CATALOG_STATE_PATH` — JSON file the edited catalog persists to when no database is configured (default `./game-economy-catalog.json`).
@@ -94,7 +95,8 @@ async fn main() -> anyhow::Result<()> {
             revenue_account.clone(),
             game_state,
         )
-        .with_catalog_repository(catalog_repo, catalog_revision),
+        .with_catalog_repository(catalog_repo, catalog_revision)
+        .with_reservation_ttl(reservation_ttl()?),
     );
     spawn_catalog_refresh(Arc::clone(&store))?;
 
@@ -337,3 +339,16 @@ fn init_tracing() {
         .with(fmt::layer())
         .init();
 }
+
+/// `GAME_RESERVATION_TTL_SECS` (default 15 minutes).
+fn reservation_ttl() -> anyhow::Result<std::time::Duration> {
+    match std::env::var("GAME_RESERVATION_TTL_SECS") {
+        Ok(raw) if !raw.trim().is_empty() => {
+            let secs: u64 = raw.trim().parse().context("GAME_RESERVATION_TTL_SECS must be a whole number of seconds")?;
+            anyhow::ensure!(secs >= 60, "GAME_RESERVATION_TTL_SECS must be at least 60");
+            Ok(std::time::Duration::from_secs(secs))
+        }
+        _ => Ok(game_economy_core::DEFAULT_RESERVATION_TTL),
+    }
+}
+

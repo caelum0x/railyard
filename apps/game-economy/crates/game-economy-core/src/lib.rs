@@ -32,11 +32,11 @@ pub use pack::{content_item_id, derive_pack_contents, pack_is_openable, GrantedI
 pub use catalog_repo::{CatalogRepository, MemoryCatalog, StoredCatalog};
 pub use state::{
     completed_for, recent_of, reverse_in, summarize, CompletedPurchase, GameStateRepository, MemoryGameState,
-    PurchaseRecord, PurchaseReversal, PurchaseSummary, ReversalKind, ReverseOutcome,
+    PurchaseRecord, PurchaseReversal, PurchaseSummary, ReversalKind, ReverseOutcome, ReservationHolder,
 };
 pub use store::{
     entitlement_id, single_owner_key, AlwaysFulfill, Fulfiller, GameStore, PurchaseOutcome,
-    RefundOutcome,
+    RefundOutcome, DEFAULT_RESERVATION_TTL,
 };
 pub use transport::{
     AccountBalance, Capture, CaptureReceipt, Hold, HoldReceipt, MintTransport, Refund, RefundReceipt, Release,

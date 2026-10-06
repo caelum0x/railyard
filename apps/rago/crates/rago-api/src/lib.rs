@@ -23,6 +23,11 @@ pub mod crud;
 pub mod customer_lists;
 pub mod emit;
 pub mod error;
+pub mod lago_events;
+pub mod lago_logs;
+pub mod lago_plans;
+pub mod lago_wallets;
+pub mod fixed_charges;
 pub mod graphql;
 pub mod handlers;
 pub mod integration_hub;
@@ -79,7 +84,6 @@ pub fn router(state: AppState) -> Router {
         .route("/customers/:external_id", get(handlers::show_customer).delete(crud::destroy_customer))
         .route("/customers/:external_id/subscriptions", get(crud::customer_subscriptions))
         .route("/customers/:external_id/invoices", get(crud::customer_invoices))
-        .route("/customers/:external_id/wallets", get(crud::customer_wallets))
         .route("/customers/:external_id/portal_url", get(crud::customer_portal_url))
         .route("/customers/:external_id/portal_sessions", post(portal::create_session).delete(portal::revoke_sessions))
         .route("/customers/:external_id/checkout_url", post(crud::customer_checkout_url))
@@ -91,20 +95,61 @@ pub fn router(state: AppState) -> Router {
         .route("/billable_metrics/:code", get(crud::show_billable_metric).put(crud::update_billable_metric).delete(crud::destroy_billable_metric))
         .route("/plans", post(handlers::create_plan).get(crud::list_plans))
         .route("/plans/:code", get(crud::show_plan).put(crud::update_plan).delete(crud::destroy_plan))
-        .route("/plans/:code/entitlements", get(handlers::list_plan_entitlements))
-        .route("/plans/:code/charges", post(crud::create_plan_charge))
+        .route(
+            "/plans/:code/entitlements",
+            get(lago_plans::plan_entitlements).post(lago_plans::create_plan_entitlements).patch(lago_plans::patch_plan_entitlements),
+        )
+        .route("/plans/:code/entitlements/:feature", get(lago_plans::plan_entitlement).delete(lago_plans::destroy_plan_entitlement))
+        .route("/plans/:code/entitlements/:feature/privileges/:privilege", axum::routing::delete(lago_plans::destroy_plan_entitlement_privilege))
+        .route("/plans/:code/charges/:id/filters", get(lago_plans::plan_charge_filters).post(lago_plans::create_plan_charge_filter))
+        .route(
+            "/plans/:code/charges/:id/filters/:filter_id",
+            get(lago_plans::show_plan_charge_filter).put(lago_plans::update_plan_charge_filter).delete(lago_plans::destroy_plan_charge_filter),
+        )
+        .route("/plans/:code/charges", post(crud::create_plan_charge).get(crud::list_plan_charges))
+        .route("/plans/:code/fixed_charges", get(fixed_charges::index).post(fixed_charges::create))
+        .route(
+            "/plans/:code/fixed_charges/:fixed_charge_code",
+            get(fixed_charges::show).put(fixed_charges::update).delete(fixed_charges::destroy),
+        )
         .route("/plans/:code/usage_thresholds", get(thresholds::list_plan_thresholds).put(thresholds::replace_plan_thresholds))
-        .route("/plans/:code/charges/:id", put(crud::update_plan_charge).delete(crud::destroy_plan_charge))
+        .route("/plans/:code/charges/:id", get(crud::show_plan_charge).put(crud::update_plan_charge).delete(crud::destroy_plan_charge))
         .route("/entitlements", post(handlers::create_entitlement))
         .route("/subscriptions", post(handlers::create_subscription).get(breadth::list_subscriptions))
         .route("/subscriptions/:external_id", get(subs::show_subscription).put(subs::update_subscription).delete(handlers::terminate_subscription))
         .route("/subscriptions/:external_id/invoices", post(handlers::bill_subscription))
         .route("/subscriptions/:external_id/plan_change", get(plan_change::show).post(plan_change::create).delete(plan_change::destroy))
-        .route("/subscriptions/:external_id/lifetime_usage", get(subs::subscription_lifetime_usage))
+        .route("/subscriptions/:external_id/lifetime_usage", get(subs::subscription_lifetime_usage).put(subs::update_subscription_lifetime_usage))
         .route("/subscriptions/:external_id/usage_thresholds", get(thresholds::list_subscription_thresholds).put(thresholds::replace_subscription_thresholds))
         .route("/subscriptions/:external_id/usage_thresholds/check", post(thresholds::check_subscription_thresholds))
-        .route("/subscriptions/:external_id/entitlements", post(handlers::create_subscription_entitlement).get(handlers::resolve_subscription_entitlements))
-        .route("/subscriptions/:external_id/alerts", post(subs::create_alert).get(subs::list_alerts))
+        .route(
+            "/subscriptions/:external_id/entitlements",
+            post(handlers::create_subscription_entitlement).get(lago_plans::subscription_entitlements).patch(lago_plans::patch_subscription_entitlements),
+        )
+        .route("/subscriptions/:external_id/entitlements/:feature", axum::routing::delete(lago_plans::destroy_subscription_entitlement))
+        .route(
+            "/subscriptions/:external_id/entitlements/:feature/privileges/:privilege",
+            axum::routing::delete(lago_plans::destroy_subscription_entitlement_privilege),
+        )
+        .route("/subscriptions/:external_id/charges", get(lago_plans::subscription_charges))
+        .route("/subscriptions/:external_id/charges/:code", get(lago_plans::subscription_charge).put(lago_plans::update_subscription_charge))
+        .route(
+            "/subscriptions/:external_id/charges/:code/filters",
+            get(lago_plans::subscription_charge_filters).post(lago_plans::create_subscription_charge_filter),
+        )
+        .route(
+            "/subscriptions/:external_id/charges/:code/filters/:id",
+            get(lago_plans::show_subscription_charge_filter)
+                .put(lago_plans::update_subscription_charge_filter)
+                .delete(lago_plans::destroy_subscription_charge_filter),
+        )
+        .route("/subscriptions/:external_id/fixed_charges", get(lago_plans::subscription_fixed_charges))
+        .route(
+            "/subscriptions/:external_id/fixed_charges/:code",
+            get(lago_plans::subscription_fixed_charge).put(lago_plans::update_subscription_fixed_charge),
+        )
+        .route("/features/:code/privileges/:privilege", axum::routing::delete(lago_plans::destroy_feature_privilege))
+        .route("/subscriptions/:external_id/alerts", post(subs::create_alert).get(subs::list_alerts).delete(subs::destroy_all_alerts))
         .route("/subscriptions/:external_id/alerts/:code", get(subs::show_alert).put(subs::update_alert).delete(subs::destroy_alert))
         .route("/subscriptions/:external_id/usage_alerts", post(phase14::create_usage_alert).get(phase14::list_usage_alerts))
         .route("/customers/:external_customer_id/current_usage", get(usage::current_usage))
@@ -120,7 +165,7 @@ pub fn router(state: AppState) -> Router {
         .route("/quotes/:id", get(order_flow::show_quote))
         .route("/quotes/:id/accept", post(breadth::accept_quote))
         .route("/quotes/:id/void", post(order_flow::void_quote))
-        .route("/quotes/:id/versions", post(order_flow::create_version))
+        .route("/quotes/:id/versions", post(order_flow::create_version).get(lago_logs::list_quote_versions))
         .route("/quotes/:id/versions/:version_id", put(order_flow::update_version))
         .route("/quotes/:id/versions/:version_id/approve", post(order_flow::approve_version))
         .route("/quotes/:id/versions/:version_id/void", post(order_flow::void_version))
@@ -138,7 +183,7 @@ pub fn router(state: AppState) -> Router {
         .route("/data_exports/:id/download", get(breadth::download_data_export))
         .route("/emails", get(breadth::list_captured_emails))
         .route("/invoices/:id", get(handlers::show_invoice).put(sdk_parity::update_invoice).delete(payment_actions::delete_draft_invoice))
-        .route("/invoices/:id/download", get(handlers::download_invoice_pdf))
+        .route("/invoices/:id/download", get(handlers::download_invoice_pdf).post(lago_logs::invoice_download_pdf))
         .route("/invoices/:id/download.xml", get(handlers::download_invoice_xml))
         .route("/invoices/:id/apply_provider_taxes", post(integrations::apply_provider_taxes_to_invoice))
         .route("/invoices/:id/refund", post(refunds::refund_invoice))
@@ -169,7 +214,7 @@ pub fn router(state: AppState) -> Router {
         .route("/coupons/:code", get(crud::show_coupon).put(crud::update_coupon).delete(crud::destroy_coupon))
         .route("/applied_coupons", post(handlers::create_applied_coupon).get(customer_lists::list_applied_coupons))
         .route("/credit_notes/:id", get(handlers::show_credit_note).put(subs::update_credit_note))
-        .route("/credit_notes/:id/download", get(phase14::download_credit_note_pdf))
+        .route("/credit_notes/:id/download", get(phase14::download_credit_note_pdf).post(lago_logs::credit_note_download_pdf))
         .route("/credit_notes/:id/download_xml", post(subs::download_credit_note_xml))
         .route("/credit_notes/:id/void", put(subs::void_credit_note))
         .route("/credit_notes/:id/refund", post(refunds::refund_credit_note))
@@ -218,6 +263,75 @@ pub fn router(state: AppState) -> Router {
         .route("/payment_requests", post(payments::create_payment_request).get(payments::list_payment_requests))
         .route("/payment_requests/:id", get(payments::show_payment_request))
         .route("/payment_receipts", get(payments::list_payment_receipts))
+        .route("/payment_receipts/:id", get(payments::show_payment_receipt))
+        .route("/customers/:external_id/payment_requests", get(payments::customer_payment_requests))
+        // --- Lago REST parity (round 2): wallets, metadata, payment methods, wallet transactions
+        .route("/customers/:external_id/wallets", post(lago_wallets::create_customer_wallet).get(lago_wallets::list_customer_wallets))
+        .route(
+            "/customers/:external_id/wallets/:code",
+            get(lago_wallets::show_customer_wallet).put(lago_wallets::update_customer_wallet).delete(lago_wallets::terminate_customer_wallet),
+        )
+        .route(
+            "/customers/:external_id/wallets/:code/alerts",
+            post(lago_wallets::create_wallet_alert).get(lago_wallets::list_wallet_alerts).delete(lago_wallets::destroy_all_wallet_alerts),
+        )
+        .route(
+            "/customers/:external_id/wallets/:code/alerts/:alert_code",
+            get(lago_wallets::show_wallet_alert).put(lago_wallets::update_wallet_alert).delete(lago_wallets::destroy_wallet_alert),
+        )
+        .route(
+            "/customers/:external_id/wallets/:code/metadata",
+            post(lago_wallets::create_customer_wallet_metadata)
+                .put(lago_wallets::update_customer_wallet_metadata)
+                .delete(lago_wallets::destroy_customer_wallet_metadata),
+        )
+        .route("/customers/:external_id/wallets/:code/metadata/:key", axum::routing::delete(lago_wallets::destroy_customer_wallet_metadata_key))
+        .route("/customers/:external_id/payment_methods/:id", axum::routing::delete(lago_wallets::destroy_payment_method))
+        .route("/customers/:external_id/payment_methods/:id/set_as_default", put(lago_wallets::set_default_payment_method))
+        .route(
+            "/wallets/:id/metadata",
+            post(lago_wallets::create_wallet_metadata).put(lago_wallets::update_wallet_metadata).delete(lago_wallets::destroy_wallet_metadata),
+        )
+        .route("/wallets/:id/metadata/:key", axum::routing::delete(lago_wallets::destroy_wallet_metadata_key))
+        .route(
+            "/plans/:code/metadata",
+            post(lago_wallets::create_plan_metadata).put(lago_wallets::update_plan_metadata).delete(lago_wallets::destroy_plan_metadata),
+        )
+        .route("/plans/:code/metadata/:key", axum::routing::delete(lago_wallets::destroy_plan_metadata_key))
+        .route(
+            "/credit_notes/:id/metadata",
+            post(lago_wallets::create_credit_note_metadata)
+                .put(lago_wallets::update_credit_note_metadata)
+                .delete(lago_wallets::destroy_credit_note_metadata),
+        )
+        .route("/credit_notes/:id/metadata/:key", axum::routing::delete(lago_wallets::destroy_credit_note_metadata_key))
+        .route("/wallet_transactions/:id", get(lago_wallets::show_wallet_transaction))
+        .route("/wallet_transactions/:id/payment_url", post(lago_wallets::wallet_transaction_payment_url))
+        .route("/wallet_transactions/:id/consumptions", get(lago_wallets::wallet_transaction_consumptions))
+        .route("/wallet_transactions/:id/fundings", get(lago_wallets::wallet_transaction_fundings))
+        .route("/wallets/:id/wallet_transactions", get(lago_wallets::wallet_wallet_transactions))
+        .route("/events/estimate_instant_fees", post(lago_events::estimate_instant_fees))
+        .route("/events/batch_estimate_instant_fees", post(lago_events::batch_estimate_instant_fees))
+        .route("/events_enriched", get(lago_events::events_enriched))
+        .route("/events/batch", post(phase15::v2_events_batch))
+        .route("/activity_logs/:id", get(lago_logs::show_activity_log))
+        .route("/api_logs", get(lago_logs::list_api_logs))
+        .route("/api_logs/:request_id", get(lago_logs::show_api_log))
+        .route("/security_logs", get(lago_logs::list_security_logs))
+        .route("/security_logs/:id", get(lago_logs::show_security_log))
+        .route("/analytics/usage", get(lago_logs::usage_analytics))
+        .route("/organizations/grpc_token", get(lago_logs::grpc_token))
+        .route("/webhooks/public_key", get(resources::webhooks_public_key))
+        .route("/webhooks/json_public_key", get(resources::webhooks_json_public_key))
+        .route("/invoices/:id/download_pdf", post(lago_logs::invoice_download_pdf))
+        .route("/invoices/:id/download_xml", post(lago_logs::invoice_download_xml))
+        .route("/credit_notes/:id/download_pdf", post(lago_logs::credit_note_download_pdf))
+        .route("/order_forms/:id/mark_as_signed", post(order_flow::sign_order_form))
+        .route("/quote_versions/:id", get(lago_logs::show_quote_version))
+        .route("/quote_versions/:id/approve", post(lago_logs::approve_quote_version))
+        .route("/quote_versions/:id/void", post(lago_logs::void_quote_version))
+        .route("/quote_versions/:id/clone", post(lago_logs::clone_quote_version))
+        .route("/customers/:external_id/payment_methods", get(payments::customer_payment_methods))
         .route("/payment_receipts/:invoice_id/resend_email", post(payments::resend_payment_receipt))
         // --- v1 analytics (data API)
         .route("/analytics/gross_revenue", get(phase15::v2_gross_revenue))
@@ -245,8 +359,12 @@ pub fn router(state: AppState) -> Router {
         .route("/applied_rate_cards/:id/rate_phases", post(catalog_v2::create_rate_phase).get(catalog_v2::list_rate_phases));
 
     // Tenant isolation: reject any request referencing another org's record ids.
-    let v1 = v1.layer(axum::middleware::from_fn_with_state(state.clone(), tenancy::guard));
-    let v2 = v2.layer(axum::middleware::from_fn_with_state(state.clone(), tenancy::guard));
+    let v1 = v1
+        .layer(axum::middleware::from_fn_with_state(state.clone(), tenancy::guard))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), lago_logs::record_api_log));
+    let v2 = v2
+        .layer(axum::middleware::from_fn_with_state(state.clone(), tenancy::guard))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), lago_logs::record_api_log));
 
     Router::new()
         .route("/health", get(health))

@@ -29,6 +29,9 @@ struct Snapshot {
     /// as `inventories`, so check-and-reserve is atomic.
     #[serde(skip)]
     reservations: HashMap<(String, String), String>,
+    /// When each reservation was taken (process-local, like `reservations`).
+    #[serde(skip)]
+    reserved_at: HashMap<(String, String), std::time::Instant>,
 }
 
 pub struct JsonFileGameState {
@@ -202,6 +205,7 @@ impl GameStateRepository for JsonFileGameState {
             Some(_) => Err(GameError::AlreadyOwned(sku.to_string())),
             None => {
                 // Purely in-memory concurrency guard — no snapshot rewrite.
+                state.reserved_at.insert(key.clone(), std::time::Instant::now());
                 state.reservations.insert(key, idem_key.to_string());
                 Ok(())
             }
@@ -213,8 +217,49 @@ impl GameStateRepository for JsonFileGameState {
             let key = (player.to_string(), ownership_key.to_string());
             if state.reservations.get(&key).map(String::as_str) == Some(idem_key) {
                 state.reservations.remove(&key);
+                state.reserved_at.remove(&key);
             }
         }
+    }
+
+    fn single_owner_holder(
+        &self,
+        player: &str,
+        ownership_key: &str,
+    ) -> Result<Option<game_economy_core::ReservationHolder>, GameError> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
+        let key = (player.to_string(), ownership_key.to_string());
+        Ok(state.reservations.get(&key).map(|idem_key| game_economy_core::ReservationHolder {
+            idem_key: idem_key.clone(),
+            age_ms: state
+                .reserved_at
+                .get(&key)
+                .map(|t| i64::try_from(t.elapsed().as_millis()).unwrap_or(i64::MAX))
+                .unwrap_or(i64::MAX),
+        }))
+    }
+
+    fn take_over_single_owner(
+        &self,
+        player: &str,
+        ownership_key: &str,
+        from_idem: &str,
+        to_idem: &str,
+    ) -> Result<bool, GameError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
+        let key = (player.to_string(), ownership_key.to_string());
+        if state.reservations.get(&key).map(String::as_str) != Some(from_idem) {
+            return Ok(false);
+        }
+        state.reservations.insert(key.clone(), to_idem.to_string());
+        state.reserved_at.insert(key, std::time::Instant::now());
+        Ok(true)
     }
 
     fn update_inventory(

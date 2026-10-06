@@ -8,7 +8,7 @@
 
 use chrono::{NaiveDate, Utc};
 use rago_db::Db;
-use rago_integrations::webhooks::{deliver, Webhook};
+use rago_integrations::webhooks::{deliver_signed, JwtSigner, Signing, Webhook};
 use rago_integrations::HttpTransport;
 use serde_json::{json, Value};
 use std::str::FromStr;
@@ -305,7 +305,9 @@ pub async fn redeliver_due_webhooks<T: HttpTransport>(
             updated_at: Utc::now(),
         };
 
-        let retrying = deliver(transport, &mut webhook, &hmac_key).await;
+        let algo = db.webhook_endpoint_algo(w.organization_id, &w.endpoint).await?;
+        let signing = Signing::for_algo(&algo, &hmac_key, JwtSigner::global());
+        let retrying = deliver_signed(transport, &mut webhook, signing).await;
         let next_retry = retrying.then(|| backoff_secs(webhook.retries));
         db.update_webhook_retry(
             webhook.id,

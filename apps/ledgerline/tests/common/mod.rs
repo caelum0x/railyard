@@ -1,3 +1,5 @@
+#![allow(dead_code)] // each test binary uses part of the harness
+
 //! Shared harness for Ledgerline integration tests.
 //!
 //! Integration tests compile against the crate's public API only, so this in-
@@ -55,6 +57,11 @@ impl FakeState {
 #[derive(Default)]
 pub struct FakeMint {
     state: Mutex<FakeState>,
+    /// When set, the next `create_hold` call waits on it before touching Mint
+    /// state (a driver stalled mid-call); later calls pass straight through.
+    hold_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
+    /// Set once the gated call is waiting.
+    gated_waiting: std::sync::atomic::AtomicBool,
 }
 
 impl FakeMint {
@@ -62,6 +69,16 @@ impl FakeMint {
         let mint = Arc::new(Self::default());
         mint.state.lock().expect("lock").fail = ops.iter().copied().collect();
         mint
+    }
+    /// Stall the next `create_hold` until the returned notify fires.
+    pub fn gate_next_hold(&self) -> Arc<tokio::sync::Notify> {
+        let gate = Arc::new(tokio::sync::Notify::new());
+        *self.hold_gate.lock().expect("lock") = Some(gate.clone());
+        gate
+    }
+    /// Whether the gated `create_hold` call has started waiting.
+    pub fn gated_hold_waiting(&self) -> bool {
+        self.gated_waiting.load(std::sync::atomic::Ordering::SeqCst)
     }
     pub fn clear_failures(&self) {
         self.state.lock().expect("lock").fail.clear();
@@ -99,6 +116,12 @@ impl MintOps for FakeMint {
         event: &MeterEvent,
         idem_key: &str,
     ) -> Result<HoldRef, LedgerlineError> {
+        let gate = self.hold_gate.lock().expect("lock").take();
+        if let Some(gate) = gate {
+            self.gated_waiting
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            gate.notified().await;
+        }
         let mut state = self.state.lock().expect("lock");
         if let Some(prior) = state.applied.get(idem_key) {
             return Ok(HoldRef {

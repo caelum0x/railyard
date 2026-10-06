@@ -31,7 +31,10 @@ const got: Got[] = [];
 let failNext = 0;
 const site = makeSite({ name: "shop" });
 const other = makeSite({ name: "other" });
-let now = new Date("2026-10-05T12:00:00Z");
+// The runner compares its clock with inserted_at, which the database stamps
+// with its own clock, so the test clock starts at the real hour (a fixed date
+// made this test pass only on the day it was written).
+let now = new Date(Math.ceil(Date.now() / 3600_000) * 3600_000);
 const later = () => (now = new Date(now.getTime() + CURSOR_LAG_MS + 3600_000));
 
 before(async () => {

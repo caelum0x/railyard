@@ -5,8 +5,7 @@
 
 use async_graphql::{Context, InputObject, Json, Object, Result};
 use chrono::Utc;
-use rago_billing::aggregation::AggregationPeriod;
-use rago_billing::generate::{generate_subscription_invoice, ChargeInput};
+use rago_billing::generate::ChargeInput;
 use rago_billing::wallets::{build_transaction, increase_balance, WalletCredit};
 use rago_core::enums::*;
 use rago_core::models as m;
@@ -207,6 +206,7 @@ impl Mutation {
         // EU customers with a VAT number are validated against VIES
         // (`customer.vies_check`).
         rago_jobs::vies::enqueue_vies_check_logged(db(ctx), c.id).await;
+        emit(db(ctx), org.id, WebhookKind::CustomerCreated, customer_object(&c)).await;
         Ok(Customer(c))
     }
 
@@ -468,6 +468,22 @@ impl Mutation {
             updated_at: now(),
         };
         db(ctx).insert_wallet(&wallet).await?;
+        emit(
+            db(ctx),
+            org.id,
+            WebhookKind::WalletCreated,
+            json!({
+                "lago_id": wallet.id,
+                "lago_customer_id": customer.id,
+                "external_customer_id": customer.external_id,
+                "status": wallet.status.as_str(),
+                "currency": wallet.balance_currency,
+                "name": wallet.name,
+                "rate_amount": wallet.rate_amount.to_string(),
+                "created_at": wallet.created_at,
+            }),
+        )
+        .await;
 
         let granted = parse_dec(&input.granted_credits);
         let paid = parse_dec(&input.paid_credits);
@@ -630,32 +646,32 @@ impl Mutation {
         let from = dates.charges_window.from.and_hms_opt(0, 0, 0).unwrap_or_default();
         let to = dates.charges_window.to.and_hms_opt(23, 59, 59).unwrap_or_default();
 
-        let mut loaded: Vec<(m::BillableMetric, m::Charge, Vec<m::Event>, AggregationPeriod)> =
-            Vec::new();
+        let mut loaded: Vec<rago_db::LoadedCharge> = Vec::new();
         for charge in &charges {
             // Pay-in-advance charges were billed when their events were ingested.
             if charge.pay_in_advance {
                 continue;
             }
-            let Some(mid) = charge.billable_metric_id else { continue };
-            let metric = db(ctx).find_billable_metric(mid).await?;
-            let events = db(ctx)
-                .events_for_external_subscription(org.id, &sub.external_id, &metric.code, from, to)
-                .await?;
-            let carry_in = db(ctx)
-                .weighted_sum_carry_in(org.id, &sub.external_id, &metric, from)
-                .await?;
-            let period = AggregationPeriod::new(from, to).with_initial_value(carry_in);
-            loaded.push((metric, charge.clone(), events, period));
+            if let Some(c) = db(ctx).load_charge_usage(org.id, &sub.external_id, charge, from, to, to).await? {
+                loaded.push(c);
+            }
         }
-        let charge_inputs: Vec<ChargeInput> = loaded
-            .iter()
-            .map(|(m, c, e, p)| ChargeInput { metric: m, charge: c, events: e, period: Some(*p) })
-            .collect();
+        let charge_inputs: Vec<ChargeInput> = loaded.iter().map(rago_db::LoadedCharge::input).collect();
 
         let taxes = db(ctx).organization_taxes(org.id).await?;
         let mut invoice = blank_invoice(&sub, &currency);
-        let fees = generate_subscription_invoice(
+        let fixed = db(ctx).fixed_charge_specs(plan.id).await?;
+        let fixed_fees = rago_billing::fixed_charges::fixed_charge_fees(
+            &fixed,
+            plan.pay_in_advance,
+            &dates,
+            true,
+            &sub,
+            currency,
+            None,
+        )
+        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let (fees, _) = rago_billing::generate::generate_subscription_invoice_with_progressive(
             &mut invoice,
             &plan,
             &sub,
@@ -664,6 +680,8 @@ impl Mutation {
             &charge_inputs,
             &taxes,
             &[],
+            &[],
+            fixed_fees,
         )
         .map_err(|e| async_graphql::Error::new(e.to_string()))?;
         db(ctx).insert_numbered_invoice_with_fees(&mut invoice, &fees).await?;
@@ -753,6 +771,8 @@ impl Mutation {
             updated_at: now(),
         };
         db(ctx).insert_api_key(&key).await?;
+        let actor = crate::context::current_user(ctx).map(|u| u.id);
+        db(ctx).record_security_event(org.id, "api_key", "api_key.created", actor, Some(key.id), json!({ "name": key.name })).await;
         Ok(ApiKey {
             id: key.id.into(),
             name: key.name,
@@ -946,4 +966,20 @@ async fn grant_wallet_credits(
     )
     .await;
     Ok((updated, tx))
+}
+
+/// The `customer` object of `customer.created` / `customer.updated`.
+pub(crate) fn customer_object(c: &m::Customer) -> serde_json::Value {
+    json!({
+        "lago_id": c.id,
+        "external_id": c.external_id,
+        "name": c.name,
+        "email": c.email,
+        "country": c.country,
+        "currency": c.currency,
+        "timezone": c.timezone,
+        "tax_identification_number": c.tax_identification_number,
+        "created_at": c.created_at,
+        "updated_at": c.updated_at,
+    })
 }

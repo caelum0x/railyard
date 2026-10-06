@@ -8,7 +8,7 @@
 //! announced and collected — by [`crate::finalize`] otherwise.
 
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use rago_billing::generate::{generate_subscription_invoice, ChargeInput};
+use rago_billing::generate::ChargeInput;
 use rago_billing::subscription_fee::Proration;
 use rago_core::enums::{InvoiceStatus, InvoiceType, PaymentStatus};
 use rago_core::models::{Fee, Invoice};
@@ -61,12 +61,7 @@ pub async fn perform(
 
     // Load each charge's metric + events so the generation service can price
     // the flat subscription fee and one fee per usage charge together.
-    let mut loaded: Vec<(
-        rago_core::models::BillableMetric,
-        rago_core::models::Charge,
-        Vec<rago_core::models::Event>,
-        rago_billing::aggregation::AggregationPeriod,
-    )> = Vec::new();
+    let mut loaded: Vec<rago_db::LoadedCharge> = Vec::new();
     for charge in &charges {
         // Billed at event ingest (`pay_in_advance`), not at period end.
         if charge.pay_in_advance {
@@ -79,32 +74,37 @@ pub async fn perform(
         let events = db
             .events_in_period(subscription.id, &metric.code, from, to)
             .await?;
-        let carry_in = db
-            .weighted_sum_carry_in(
+        loaded.push(
+            db.complete_charge_usage(
                 subscription.organization_id,
                 &subscription.external_id,
-                &metric,
+                metric,
+                charge,
+                events,
                 from,
+                to,
             )
-            .await?;
-        let period =
-            rago_billing::aggregation::AggregationPeriod::new(from, to).with_initial_value(carry_in);
-        loaded.push((metric, charge.clone(), events, period));
+            .await?,
+        );
     }
 
-    let charge_inputs: Vec<ChargeInput> = loaded
-        .iter()
-        .map(|(metric, charge, events, period)| ChargeInput {
-            metric,
-            charge,
-            events,
-            period: Some(*period),
-        })
-        .collect();
+    let charge_inputs: Vec<ChargeInput> = loaded.iter().map(rago_db::LoadedCharge::input).collect();
+
+    // The plan's fixed charges for the window.
+    let fixed = db.fixed_charge_specs(plan.id).await?;
+    let fixed_fees = rago_billing::fixed_charges::fixed_charge_fees(
+        &fixed,
+        plan.pay_in_advance,
+        &period,
+        true,
+        &subscription,
+        currency,
+        None,
+    )?;
 
     // Full generation: subscription fee (interval-aware, prorated to the
-    // window) + charge fees + taxes (no coupons).
-    let mut fees = generate_subscription_invoice(
+    // window) + charge fees + fixed charges + taxes (no coupons).
+    let (mut fees, _) = rago_billing::generate::generate_subscription_invoice_with_progressive(
         &mut invoice,
         &plan,
         &subscription,
@@ -113,6 +113,8 @@ pub async fn perform(
         &charge_inputs,
         &taxes,
         &[],
+        &[],
+        fixed_fees,
     )?;
     if matches!(proration, Proration::Zero) {
         // No fee owed in the window (a trial covers it): no subscription line.

@@ -18,6 +18,8 @@ members = [
     "relay-catalog",
     "relay-contract",
     "relay-cost-feed",
+    "relay-guardrails",
+    "relay-semantic-cache",
     "relay-hedge",
     "relay-sdk",
     "relay-storage-postgres",

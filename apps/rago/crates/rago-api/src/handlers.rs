@@ -5,8 +5,7 @@
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use chrono::Utc;
-use rago_billing::aggregation::AggregationPeriod;
-use rago_billing::generate::{generate_subscription_invoice, ChargeInput};
+use rago_billing::generate::ChargeInput;
 use rago_billing::wallets::{build_transaction, increase_balance, WalletCredit};
 use rago_core::enums::*;
 use rago_core::models::*;
@@ -218,6 +217,15 @@ pub async fn create_billable_metric(
     {
         return Err(ApiError::validation("field_name", "value_is_mandatory"));
     }
+    if let Some(expression) = s(p, "expression").filter(|e| !e.trim().is_empty()) {
+        if !rago_billing::events::validate_expression(&expression) {
+            return Err(ApiError::validation("expression", "invalid_expression"));
+        }
+        // The result is written to `field_name`, so an expression needs one.
+        if s(p, "field_name").map_or(true, |f| f.trim().is_empty()) {
+            return Err(ApiError::validation("field_name", "value_is_mandatory"));
+        }
+    }
     let m = BillableMetric {
         id: Uuid::new_v4(),
         organization_id: auth.organization.id,
@@ -236,7 +244,9 @@ pub async fn create_billable_metric(
         deleted_at: None,
     };
     st.db.insert_billable_metric(&m).await?;
-    Ok(Json(json!({ "billable_metric": ser::billable_metric(&m) })))
+    let out = ser::billable_metric(&m);
+    crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::BillableMetricCreated, out.clone()).await;
+    Ok(Json(json!({ "billable_metric": out })))
 }
 
 // ---- plans (with nested charges) -------------------------------------------
@@ -308,6 +318,7 @@ pub async fn create_plan(
 
     let mut plan_json = ser::plan(&plan);
     plan_json["charges"] = json!(charges.iter().map(ser::charge).collect::<Vec<_>>());
+    crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::PlanCreated, plan_json.clone()).await;
     Ok(Json(json!({ "plan": plan_json })))
 }
 
@@ -1272,7 +1283,7 @@ pub async fn resolve_subscription_entitlements(
     Ok(Json(json!({ "external_subscription_id": external_id, "entitlements": entitlements })))
 }
 
-fn valid_privilege_value(value_type: &str, value: &str) -> bool {
+pub(crate) fn valid_privilege_value(value_type: &str, value: &str) -> bool {
     match value_type {
         "integer" => value.parse::<i64>().is_ok(),
         "boolean" => matches!(value, "true" | "false"),
@@ -1330,35 +1341,33 @@ pub(crate) async fn compute_subscription_invoice(
     let from = dates.charges_window.from.and_hms_opt(0, 0, 0).unwrap_or_default();
     let to = dates.charges_window.to.and_hms_opt(23, 59, 59).unwrap_or_default();
 
-    // Load metrics + events per charge.
-    let mut loaded: Vec<(BillableMetric, Charge, Vec<Event>, AggregationPeriod)> = Vec::new();
+    // Load metrics, filters and events per charge.
+    let mut loaded: Vec<rago_db::LoadedCharge> = Vec::new();
     for charge in &charges {
         // Pay-in-advance charges were billed when their events were ingested.
         if charge.pay_in_advance {
             continue;
         }
-        let Some(mid) = charge.billable_metric_id else { continue };
-        let metric = st.db.find_billable_metric(mid).await?;
-        let events = st
-            .db
-            .events_for_external_subscription(sub.organization_id, &sub.external_id, &metric.code, from, to)
-            .await?;
-        let carry_in = st
-            .db
-            .weighted_sum_carry_in(sub.organization_id, &sub.external_id, &metric, from)
-            .await?;
-        let period = AggregationPeriod::new(from, to).with_initial_value(carry_in);
-        loaded.push((metric, charge.clone(), events, period));
+        if let Some(c) = st.db.load_charge_usage(sub.organization_id, &sub.external_id, charge, from, to, to).await? {
+            loaded.push(c);
+        }
     }
-    let charge_inputs: Vec<ChargeInput> = loaded
-        .iter()
-        .map(|(m, c, e, p)| ChargeInput { metric: m, charge: c, events: e, period: Some(*p) })
-        .collect();
+    let charge_inputs: Vec<ChargeInput> = loaded.iter().map(rago_db::LoadedCharge::input).collect();
 
     // Organization taxes apply to the subscription + charge fees.
     let taxes = st.db.organization_taxes(sub.organization_id).await?;
     let mut invoice = blank_invoice(sub, &currency);
-    let fees = generate_subscription_invoice(
+    let fixed = st.db.fixed_charge_specs(plan.id).await?;
+    let fixed_fees = rago_billing::fixed_charges::fixed_charge_fees(
+        &fixed,
+        plan.pay_in_advance,
+        &dates,
+        true,
+        sub,
+        currency,
+        None,
+    )?;
+    let (fees, _) = rago_billing::generate::generate_subscription_invoice_with_progressive(
         &mut invoice,
         &plan,
         sub,
@@ -1367,6 +1376,8 @@ pub(crate) async fn compute_subscription_invoice(
         &charge_inputs,
         &taxes,
         &[],
+        &[],
+        fixed_fees,
     )?;
 
     Ok((invoice, fees))

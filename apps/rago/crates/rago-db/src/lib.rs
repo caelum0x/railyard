@@ -14,12 +14,14 @@
 
 pub mod billing_gaps;
 pub mod charge_filters;
+pub mod charge_usage;
 pub mod collection;
 pub mod credit_note_credits;
 pub mod customer_lifecycle;
 pub mod data_api;
 pub mod dunning;
 pub mod error;
+pub mod fixed_charges_rest;
 pub mod graphql_admin;
 pub mod graphql_admin2;
 pub mod graphql_admin3;
@@ -42,6 +44,7 @@ pub mod termination;
 pub mod receipts;
 pub mod refunds;
 pub mod rest_extras;
+pub mod rest_parity;
 pub mod secrets;
 pub mod sso_state;
 pub mod tenancy;
@@ -56,6 +59,7 @@ pub use dunning::{
 pub use billing_gaps::{CustomerAddress, HoldListRow, HoldTotals, ReversibleCapture};
 pub use collection::{PaymentAttemptState, ProviderCredentials, StoreSecretError};
 pub use credit_note_credits::{AppliedCreditNotes, InvoiceCreditNoteCredit};
+pub use charge_usage::LoadedCharge;
 pub use portal::PortalSession;
 pub use provider_checkouts::CheckoutPayment;
 pub use wallet_realtime::{RealtimeHold, RealtimeWallet};

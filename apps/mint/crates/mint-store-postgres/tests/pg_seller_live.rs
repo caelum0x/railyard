@@ -85,3 +85,40 @@ async fn sellers_products_tokens_and_the_entitlement_outbox() {
     assert!(!s.due(i64::MAX, 100).await.expect("due").iter().any(|d| d.record.id == "ent_live_1"));
     assert_eq!(s.list_entitlements("scribase", "live.shop.production", 10).await.expect("list").len(), 1);
 }
+
+#[tokio::test]
+#[ignore = "requires a live DATABASE_URL"]
+async fn a_deauthorized_stripe_account_is_forgotten_with_its_products() {
+    let Ok(url) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let store = PgStore::connect(&url, Arc::new(FixedSigner::new())).await.expect("connect");
+    store.run_migrations().await.expect("migrations");
+    for sql in [
+        "DELETE FROM mint_seller_products WHERE seller = 'deauth.check.production'",
+        "DELETE FROM mint_seller_accounts WHERE seller = 'deauth.check.production'",
+    ] {
+        sqlx::query(sql).execute(store.pool()).await.expect("clean");
+    }
+    let sellers = PgSeller::new(store.pool().clone());
+    sellers.upsert_seller(seller("deauth.check.production", Some("acct_deauth"))).await.unwrap();
+    sellers
+        .put_product(SellerProductRecord {
+            product: "scribase".into(),
+            seller: "deauth.check.production".into(),
+            sku: "pro".into(),
+            name: "Pro".into(),
+            price_cents: 900,
+            currency: "USD".into(),
+            interval: None,
+            provider_ref: "price_deauth".into(),
+            created_at_ms: 1,
+        })
+        .await
+        .unwrap();
+    let gone = sellers.disconnect_account("stripe", "acct_deauth").await.unwrap().expect("was connected");
+    assert_eq!(gone.seller, "deauth.check.production");
+    assert!(sellers.get_seller("scribase", "deauth.check.production").await.unwrap().is_none());
+    assert!(sellers.list_products("scribase", "deauth.check.production").await.unwrap().is_empty());
+    assert!(sellers.disconnect_account("stripe", "acct_deauth").await.unwrap().is_none(), "a replay is a no-op");
+}

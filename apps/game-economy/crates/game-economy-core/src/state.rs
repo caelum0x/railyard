@@ -123,6 +123,13 @@ pub enum PurchaseRecord {
     Completed(CompletedPurchase),
 }
 
+/// Who holds a single-owner reservation, and for how long.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReservationHolder {
+    pub idem_key: String,
+    pub age_ms: i64,
+}
+
 /// Atomic local projection required by [`crate::GameStore`]. Production
 /// adapters may use Postgres; the included JSON adapter lives in the sibling
 /// `game-economy-store` crate.
@@ -178,6 +185,24 @@ pub trait GameStateRepository: Send + Sync {
     /// same good can proceed). A no-op unless the reservation is currently held by
     /// this exact `idem_key`.
     fn release_single_owner(&self, player: &str, ownership_key: &str, idem_key: &str);
+
+    /// The current holder of a single-owner reservation, if any.
+    fn single_owner_holder(
+        &self,
+        player: &str,
+        ownership_key: &str,
+    ) -> Result<Option<ReservationHolder>, GameError>;
+
+    /// Move a reservation from `from_idem` to `to_idem` (restarting its age),
+    /// only if `from_idem` still holds it. Used after the store proved the old
+    /// holder's purchase can never charge (see `GameStore::purchase`).
+    fn take_over_single_owner(
+        &self,
+        player: &str,
+        ownership_key: &str,
+        from_idem: &str,
+        to_idem: &str,
+    ) -> Result<bool, GameError>;
 
     /// Atomic read-modify-write of one player's inventory. Transactional
     /// adapters (Postgres) row-lock the player for the duration of `apply`, so
@@ -242,6 +267,8 @@ struct MemorySnapshot {
     /// In-flight single-owner reservations: `(player, ownership_key) -> idem_key`.
     /// Guarded by the same mutex as `inventories`, so check-and-reserve is atomic.
     reservations: HashMap<(String, String), String>,
+    /// When each reservation was taken.
+    reserved_at: HashMap<(String, String), std::time::Instant>,
 }
 
 impl GameStateRepository for MemoryGameState {
@@ -359,6 +386,7 @@ impl GameStateRepository for MemoryGameState {
             Some(existing) if existing == idem_key => Ok(()),
             Some(_) => Err(GameError::AlreadyOwned(sku.to_string())),
             None => {
+                state.reserved_at.insert(key.clone(), std::time::Instant::now());
                 state.reservations.insert(key, idem_key.to_string());
                 Ok(())
             }
@@ -370,8 +398,49 @@ impl GameStateRepository for MemoryGameState {
             let key = (player.to_string(), ownership_key.to_string());
             if state.reservations.get(&key).map(String::as_str) == Some(idem_key) {
                 state.reservations.remove(&key);
+                state.reserved_at.remove(&key);
             }
         }
+    }
+
+    fn single_owner_holder(
+        &self,
+        player: &str,
+        ownership_key: &str,
+    ) -> Result<Option<ReservationHolder>, GameError> {
+        let state = self
+            .inner
+            .lock()
+            .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
+        let key = (player.to_string(), ownership_key.to_string());
+        Ok(state.reservations.get(&key).map(|idem_key| ReservationHolder {
+            idem_key: idem_key.clone(),
+            age_ms: state
+                .reserved_at
+                .get(&key)
+                .map(|t| i64::try_from(t.elapsed().as_millis()).unwrap_or(i64::MAX))
+                .unwrap_or(i64::MAX),
+        }))
+    }
+
+    fn take_over_single_owner(
+        &self,
+        player: &str,
+        ownership_key: &str,
+        from_idem: &str,
+        to_idem: &str,
+    ) -> Result<bool, GameError> {
+        let mut state = self
+            .inner
+            .lock()
+            .map_err(|_| GameError::Storage("game state lock poisoned".into()))?;
+        let key = (player.to_string(), ownership_key.to_string());
+        if state.reservations.get(&key).map(String::as_str) != Some(from_idem) {
+            return Ok(false);
+        }
+        state.reservations.insert(key.clone(), to_idem.to_string());
+        state.reserved_at.insert(key, std::time::Instant::now());
+        Ok(true)
     }
 
     fn reverse_purchase(

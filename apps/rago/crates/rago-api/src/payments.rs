@@ -346,6 +346,65 @@ pub async fn list_payment_receipts(
     Ok(Json(json!({ "payment_receipts": receipts })))
 }
 
+/// `GET /payment_receipts/:id` — one receipt.
+pub async fn show_payment_receipt(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let r = st
+        .db
+        .find_payment_receipt(auth.organization.id, id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("payment_receipt".into()))?;
+    Ok(Json(json!({ "payment_receipt": receipt_json(&r) })))
+}
+
+/// `GET /customers/:external_id/payment_requests` — the customer's payment
+/// requests (Lago `Customers::PaymentRequestsController#index`).
+pub async fn customer_payment_requests(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(external_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    st.db
+        .find_customer_by_external_id(auth.organization.id, &external_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("customer".into()))?;
+    let rows = st.db.list_payment_requests(auth.organization.id, &external_id).await?;
+    Ok(Json(json!({ "payment_requests": rows.iter().map(payment_request_json).collect::<Vec<_>>() })))
+}
+
+/// `GET /customers/:external_id/payment_methods` — the customer's saved
+/// payment methods (Lago `Customers::PaymentMethodsController#index`).
+pub async fn customer_payment_methods(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(external_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let customer = st
+        .db
+        .find_customer_by_external_id(auth.organization.id, &external_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("customer".into()))?;
+    let methods: Vec<Value> = st
+        .db
+        .list_payment_methods(customer.id)
+        .await?
+        .iter()
+        .map(|(id, customer_id, provider_method_id, is_default)| {
+            json!({
+                "lago_id": id,
+                "lago_customer_id": customer_id,
+                "external_customer_id": external_id,
+                "provider_method_id": provider_method_id,
+                "is_default": is_default,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "payment_methods": methods })))
+}
+
 fn receipt_json(r: &rago_db::receipts::PaymentReceiptRow) -> Value {
     json!({
         "lago_id": r.id,

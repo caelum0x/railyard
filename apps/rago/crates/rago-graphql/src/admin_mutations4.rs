@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::admin_inputs4::*;
 use crate::auth;
-use crate::context::{db, require_org};
+use crate::context::{current_user, db, require_org};
 use crate::types::ApiKey;
 use crate::types_admin::Tax;
 use crate::types_admin2::BillingEntity;
@@ -74,6 +74,7 @@ impl AdminMutation4 {
         let user_id = Uuid::new_v4();
         db(ctx).insert_user(user_id, &email, Some(&digest)).await?;
         db(ctx).insert_membership(Uuid::new_v4(), org.id, user_id, "admin", &json!([])).await?;
+        db(ctx).record_security_event(org.id, "user", "user.signed_up", Some(user_id), None, json!({ "email": email })).await;
         Ok(LoginPayload { token: auth::issue_jwt(user_id), user: User { id: user_id.into(), email } })
     }
 
@@ -108,6 +109,7 @@ impl AdminMutation4 {
         let id = Uuid::new_v4();
         let token = auth::random_token();
         db(ctx).insert_password_reset(id, user_id, &token).await?;
+        db(ctx).record_user_security_event(user_id, "user.password_reset_requested", json!({ "email": email })).await;
         Ok(id.into())
     }
 
@@ -121,6 +123,7 @@ impl AdminMutation4 {
         db(ctx).update_user_password(user_id, &digest).await?;
         db(ctx).delete_password_reset(reset_id).await?;
         let (_, email) = db(ctx).find_user(user_id).await?.ok_or_else(|| async_graphql::Error::new("user_not_found"))?;
+        db(ctx).record_user_security_event(user_id, "user.password_edited", json!({ "email": email })).await;
         Ok(LoginPayload { token: auth::issue_jwt(user_id), user: User { id: user_id.into(), email } })
     }
 
@@ -215,6 +218,10 @@ impl AdminMutation4 {
     async fn rotate_api_key(&self, ctx: &Context<'_>, id: ID, name: Option<String>) -> Result<ApiKey> {
         let org = require_org(ctx)?;
         let (new_id, value, name) = db(ctx).rotate_api_key(org.id, uuid(&id)?, name.as_deref()).await?.ok_or_else(|| async_graphql::Error::new("api_key_not_found"))?;
+        let actor = current_user(ctx).map(|u| u.id);
+        db(ctx)
+            .record_security_event(org.id, "api_key", "api_key.rotated", actor, Some(new_id), json!({ "rotated_from": id.to_string(), "name": name }))
+            .await;
         Ok(ApiKey { id: new_id.into(), name, value, created_at: Utc::now().to_rfc3339() })
     }
 
@@ -225,6 +232,8 @@ impl AdminMutation4 {
         if !db(ctx).destroy_api_key(org.id, uid).await? {
             return Err(async_graphql::Error::new("api_key_not_found"));
         }
+        let actor = current_user(ctx).map(|u| u.id);
+        db(ctx).record_security_event(org.id, "api_key", "api_key.deleted", actor, Some(uid), json!({})).await;
         Ok(uid.into())
     }
 

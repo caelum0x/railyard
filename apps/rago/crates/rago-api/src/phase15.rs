@@ -4,7 +4,7 @@
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
-use rago_billing::events::{build_event, validate_creation, EventParams};
+use rago_billing::events::{build_event, validate_creation, with_expression, EventParams};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -71,6 +71,18 @@ pub async fn v2_events_batch(
                 let mut event = build_event(org, &params, now());
                 event.customer_id = sub.as_ref().map(|s| s.customer_id);
                 event.subscription_id = sub.as_ref().map(|s| s.id);
+                // The metric's expression, as on single ingest.
+                let event = match with_expression(metric.as_ref(), event) {
+                    Ok(e) => e,
+                    Err(_) => {
+                        errors.push(json!({
+                            "index": idx,
+                            "transaction_id": params.transaction_id,
+                            "error": "expression_evaluation_failed",
+                        }));
+                        continue;
+                    }
+                };
                 // DB unique index is the authoritative guard; a lost race yields a
                 // no-op insert, reported as a duplicate rather than double-metered.
                 if st.db.insert_event(&event).await? {
@@ -337,16 +349,11 @@ pub(crate) async fn current_usage_amount(
     let to = Utc::now().naive_utc();
     let mut amount = 0i64;
     for charge in &charges {
-        let Some(mid) = charge.billable_metric_id else {
+        let Some(loaded) = st.db.load_charge_usage(org, &sub.external_id, charge, from, to, to).await? else {
             continue;
         };
-        let metric = st.db.find_billable_metric(mid).await?;
-        let events = st
-            .db
-            .events_for_external_subscription(org, &sub.external_id, &metric.code, from, to)
-            .await?;
-        let fee = rago_billing::charge_to_fee(&metric, charge, sub, &events, currency, None)?;
-        amount += fee.amount_cents;
+        let fees = rago_billing::charge_fees::charge_fees(&loaded.usage(), sub, currency, None)?;
+        amount += fees.iter().map(|f| f.amount_cents).sum::<i64>();
     }
     Ok(amount)
 }

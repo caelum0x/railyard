@@ -108,6 +108,7 @@ pub fn release_idem_key(hold_id: &str, reason: &str) -> String {
 pub fn incremental_event_cost(
     metric: &BillableMetric,
     charges: &[Charge],
+    filters: &[(uuid::Uuid, Vec<crate::charge_fees::FilterSpec>)],
     subscription: &Subscription,
     period_events: &[Event],
     event: &Event,
@@ -118,9 +119,29 @@ pub fn incremental_event_cost(
     with_event.push(event.clone());
     let mut total = 0i64;
     for charge in charges.iter().filter(|c| c.billable_metric_id == Some(metric.id)) {
-        let before = crate::charge_to_fee(metric, charge, subscription, period_events, currency, None)?;
-        let after = crate::charge_to_fee(metric, charge, subscription, &with_event, currency, None)?;
-        total = total.saturating_add((after.amount_cents - before.amount_cents).max(0));
+        // Filters and pricing groups price the event at its own line's rate.
+        let charge_filters: &[crate::charge_fees::FilterSpec] = filters
+            .iter()
+            .find(|(id, _)| *id == charge.id)
+            .map(|(_, f)| f.as_slice())
+            .unwrap_or(&[]);
+        let price = |events: &[Event]| -> Result<i64> {
+            let usage = crate::charge_fees::ChargeUsage {
+                metric,
+                charge,
+                filters: charge_filters,
+                events,
+                persisted_events: &[],
+                period: None,
+            };
+            Ok(crate::charge_fees::charge_fees_all(&usage, subscription, currency, None)?
+                .iter()
+                .map(|f| f.amount_cents)
+                .sum())
+        };
+        let before = price(period_events)?;
+        let after = price(&with_event)?;
+        total = total.saturating_add((after - before).max(0));
     }
     Ok(total)
 }

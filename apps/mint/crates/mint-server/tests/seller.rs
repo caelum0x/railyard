@@ -440,3 +440,73 @@ async fn a_seller_stops_and_switches_back_on_only_its_own_discounts() {
     }
     assert_eq!(fake.calls.lock().unwrap().len(), before, "no processor call for refused requests");
 }
+
+/// A seller who disconnects our platform in Stripe (`account.application.
+/// deauthorized`) is no longer connected: Mint forgets the account and the
+/// products made on it, so no checkout is attempted on a revoked account.
+#[tokio::test]
+async fn a_stripe_deauthorization_disconnects_the_seller() {
+    use hmac::{Hmac, Mac};
+    use mint_payments::seller::stripe::ConnectConfig;
+    use mint_store::{SellerProductRecord, SellerRecord, SellerStore};
+    use sha2::Sha256;
+
+    let store = Arc::new(MemorySellerStore::default());
+    store
+        .upsert_seller(SellerRecord {
+            product: "scribase".into(),
+            seller: SELLER.into(),
+            provider: "stripe".into(),
+            mode: "test".into(),
+            sealed_secret: "sealed".into(),
+            sealed_webhook_secret: None,
+            account_ref: Some("acct_123".into()),
+            connected_at_ms: NOW_MS,
+        })
+        .await
+        .unwrap();
+    store
+        .put_product(SellerProductRecord {
+            product: "scribase".into(),
+            seller: SELLER.into(),
+            sku: "pro".into(),
+            name: "Pro".into(),
+            price_cents: 900,
+            currency: "USD".into(),
+            interval: Some("month".into()),
+            provider_ref: "price_1".into(),
+            created_at_ms: NOW_MS,
+        })
+        .await
+        .unwrap();
+    let mut st = state(Arc::new(Fake::default()));
+    st.store = store.clone();
+    st.stripe = Some(ConnectConfig { client_id: "ca_test".into(), platform_secret: "sk_test_platform".into(), webhook_secret: "whsec_connect".into() });
+    let app = seller::router(st);
+
+    let ts = NOW_MS / 1000;
+    let signed = |body: Value| {
+        let raw = serde_json::to_vec(&body).unwrap();
+        let mut mac = Hmac::<Sha256>::new_from_slice(b"whsec_connect").unwrap();
+        mac.update(format!("{ts}.").as_bytes());
+        mac.update(&raw);
+        let sig = hex::encode(mac.finalize().into_bytes());
+        (raw, vec![("stripe-signature", format!("t={ts},v1={sig}"))])
+    };
+    let before = api(&app, "GET", &format!("/mint/v1/sellers/{SELLER}"), Some(SCRIBASE_KEY), Value::Null).await;
+    assert_eq!(before.1["connected"], true, "{}", before.1);
+
+    let (raw, headers) = signed(json!({"id":"evt_d","type":"account.application.deauthorized","account":"acct_123","created":ts,"data":{"object":{"id":"ca_test"}}}));
+    let (status, body) = send(&app, "POST", "/mint/webhooks/stripe-connect", None, "application/json", raw, &headers).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("\"disconnected\":true"), "{body}");
+
+    let after = api(&app, "GET", &format!("/mint/v1/sellers/{SELLER}"), Some(SCRIBASE_KEY), Value::Null).await;
+    assert_eq!(after.1["connected"], false, "{}", after.1);
+    assert!(store.list_products("scribase", SELLER).await.unwrap().is_empty());
+    // A replay (or an unknown account) changes nothing.
+    let (raw, headers) = signed(json!({"id":"evt_d","type":"account.application.deauthorized","account":"acct_123","created":ts,"data":{"object":{}}}));
+    let (status, body) = send(&app, "POST", "/mint/webhooks/stripe-connect", None, "application/json", raw, &headers).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("ignored"), "{body}");
+}

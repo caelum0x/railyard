@@ -137,7 +137,7 @@ balance, holds by event, top-ups, the Mint ledger, and a hosted top-up link
 
 All configuration is via environment variables — see [`.env.example`](.env.example).
 Key ones: `DATABASE_URL`, `RAGO_API_ADDR`, `RAGO_TICK_SECS`, `RAGO_BILLING_HOUR`,
-`RAGO_RATE_LIMIT`, `RUST_LOG`, and the `RAGO_*` / SMTP live-transport keys.
+`RAGO_RATE_LIMIT`, `RAGO_KEY_RATE_LIMIT`, `RUST_LOG`, and the `RAGO_*` / SMTP live-transport keys.
 
 ## API surface
 
@@ -180,7 +180,7 @@ announced together with that invoice.
   `rago_emails_sent_total`, `rago_usage_alerts_fired_total`,
   `rago_webhooks_enqueued_total`, response-class counters, `rago_rate_limited_total`).
 * **tracing** spans on every request (and the worker daemon).
-* Fixed-window **rate limiting** middleware (`RAGO_RATE_LIMIT`, default 6000/min).
+* Fixed-window **rate limiting** middleware: per credential (`RAGO_KEY_RATE_LIMIT`, default 3000/min, so one organization cannot exhaust the rest) and global (`RAGO_RATE_LIMIT`, default 6000/min); `429` with `Retry-After`.
 
 ## Workspace layout
 

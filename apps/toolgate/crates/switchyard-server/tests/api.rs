@@ -869,3 +869,51 @@ async fn postgres_backed_paid_call_and_chain_proof() {
     }
     sqlx::query(&format!("DROP DATABASE {db}")).execute(&mut conn).await.unwrap();
 }
+
+#[tokio::test]
+async fn cache_hits_pay_the_tools_cache_price() {
+    let h = harness_with_catalog(catalog_with(|t| {
+        if t.id == "rally.leads.search" {
+            t.price.cache_micros = 300;
+        }
+    }))
+    .await;
+    let input = json!({"kind": "companies", "filters": {"country": "FR"}, "limit": 2});
+    let first = call(&h, "rally.leads.search", input.clone()).await;
+    assert_eq!((first.body["meta"]["cache"].as_str(), first.body["meta"]["cost_micros"].as_i64()), (Some("miss"), Some(4000)), "{}", first.text);
+    let hit = call(&h, "rally.leads.search", input).await;
+    assert_eq!(hit.status, 200, "{}", hit.text);
+    assert_eq!(hit.body["meta"]["cache"], "hit");
+    assert_eq!(hit.body["meta"]["cost_micros"], 300);
+    assert!(hit.body["meta"]["receipt_id"].is_string());
+    assert_eq!(h.mint.available(ACCOUNT), 10_000_000 - 4000 - 300);
+    assert_eq!(h.mint.available(REVENUE), 4300);
+    // Both calls reach Rago through the outbox, the hit at its cache price.
+    assert_eq!(drain(&h).await.delivered, 2);
+    let costs: Vec<i64> = h.rago.events().iter().map(|e| e["properties"]["cost_micros"].as_i64().unwrap()).collect();
+    assert_eq!(costs, vec![4000, 300]);
+}
+
+#[tokio::test]
+async fn a_cache_hit_without_funds_is_refused_and_free_hits_stay_free() {
+    let h = harness_with_catalog(catalog_with(|t| {
+        if t.id == "rally.leads.search" {
+            t.price.cache_micros = 300;
+        }
+    }))
+    .await;
+    let input = json!({"kind": "companies", "filters": {"country": "IT"}, "limit": 1});
+    assert_eq!(call(&h, "rally.leads.search", input.clone()).await.status, 200);
+    // Drain the account to below the cache price.
+    let left = h.mint.available(ACCOUNT);
+    h.mint.fund(ACCOUNT, -(left - 100));
+    let hit = call(&h, "rally.leads.search", input).await;
+    assert_eq!(hit.status, 402, "{}", hit.text);
+    // The default catalog prices hits at zero: no hold at all.
+    let plain = harness().await;
+    let q = json!({"lat": 1.0, "lon": 2.0});
+    call(&plain, "weather.forecast", q.clone()).await;
+    let r = call(&plain, "weather.forecast", q).await;
+    assert_eq!((r.body["meta"]["cache"].as_str(), r.body["meta"]["cost_micros"].as_i64()), (Some("hit"), Some(0)));
+    assert_eq!(plain.mint.holds().len(), 0);
+}

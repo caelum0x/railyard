@@ -108,15 +108,14 @@ fn invoice_object(row: &sqlx::postgres::PgRow) -> serde_json::Value {
     })
 }
 
-/// `Clock::RefreshDraftInvoicesJob` → `Invoices::RefreshDraftService`. Recomputes
-/// each draft invoice's monetary totals from its persisted fees, so a draft
-/// reflects the latest usage before finalization. Only drafts whose totals
-/// actually changed are written, and only those emit `invoice.drafted` (the
-/// draft itself announced `invoice.drafted` when it was created), so a
-/// multi-day grace window does not re-fire the webhook every five minutes.
-/// Returns the count refreshed.
+/// `Clock::RefreshDraftInvoicesJob` → `Invoices::RefreshDraftService`. Re-prices
+/// each draft invoice's usage from the events of its window (late events in a
+/// grace period are billed), see [`crate::refresh_draft`]. Only drafts whose
+/// totals actually changed emit `invoice.drafted` again (the draft announced
+/// it when it was created), so a multi-day grace window does not re-fire the
+/// webhook every five minutes. Returns the count whose totals changed.
 pub async fn refresh_draft_invoices(db: &Db) -> Result<u64, JobError> {
-    let refreshed = db.refresh_changed_drafts().await?;
+    let refreshed = crate::refresh_draft::refresh_all_drafts(db).await?;
     for invoice in &refreshed {
         record_webhook(
             db,

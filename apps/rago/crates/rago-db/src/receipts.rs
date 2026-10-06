@@ -90,6 +90,16 @@ impl Db {
     }
 
     /// Receipts of an organization, newest first (paginated).
+    /// One receipt of the organization.
+    pub async fn find_payment_receipt(&self, org: Uuid, id: Uuid) -> Result<Option<PaymentReceiptRow>> {
+        let row = sqlx::query("SELECT * FROM payment_receipts WHERE organization_id = $1 AND id = $2")
+            .bind(org)
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.as_ref().map(receipt_row).transpose()
+    }
+
     pub async fn list_payment_receipts_for_org(
         &self,
         org: Uuid,

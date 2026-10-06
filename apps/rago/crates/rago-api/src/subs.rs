@@ -61,7 +61,9 @@ pub async fn update_subscription(
         .ok_or_else(|| ApiError::NotFound("subscription".into()))?;
     let plan = st.db.find_plan(updated.plan_id).await?;
     let ext = st.db.customer_external_id(updated.customer_id).await?.unwrap_or_default();
-    Ok(Json(json!({ "subscription": ser::subscription(&updated, &plan, &ext) })))
+    let out = ser::subscription(&updated, &plan, &ext);
+    crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::SubscriptionUpdated, out.clone()).await;
+    Ok(Json(json!({ "subscription": out })))
 }
 
 /// `GET /subscriptions/:external_id/lifetime_usage` — cumulative usage
@@ -77,23 +79,50 @@ pub async fn subscription_lifetime_usage(
         .find_subscription_by_external_id(org, &external_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("subscription".into()))?;
+    Ok(Json(json!({ "lifetime_usage": lifetime_usage_json(&st, org, &sub).await? })))
+}
+
+/// The lifetime usage of a subscription: invoiced + current + carried in.
+async fn lifetime_usage_json(st: &AppState, org: Uuid, sub: &rago_core::models::Subscription) -> ApiResult<Value> {
     let invoiced = st.db.subscription_invoiced_usage(org, &sub.external_id).await?;
-    let current = crate::phase15::current_usage_amount(&st, org, &sub).await?;
-    let total = invoiced + current;
+    let current = crate::phase15::current_usage_amount(st, org, sub).await?;
     st.db.upsert_lifetime_usage(org, &sub.external_id, invoiced, current).await?;
-    Ok(Json(json!({
-        "lifetime_usage": {
-            "external_subscription_id": sub.external_id,
-            "invoiced_usage_amount_cents": invoiced,
-            "current_usage_amount_cents": current,
-            "total_usage_amount_cents": total,
-        }
-    })))
+    let historical = st.db.historical_usage(org, &sub.external_id).await?;
+    Ok(json!({
+        "external_subscription_id": sub.external_id,
+        "external_historical_usage_amount_cents": historical,
+        "invoiced_usage_amount_cents": invoiced,
+        "current_usage_amount_cents": current,
+        "total_usage_amount_cents": invoiced + current + historical,
+    }))
+}
+
+/// `PUT /subscriptions/:external_id/lifetime_usage` — set the usage carried in
+/// from before Rago (`external_historical_usage_amount_cents`).
+pub async fn update_subscription_lifetime_usage(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(external_id): Path<String>,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let org = auth.organization.id;
+    let sub = st
+        .db
+        .find_subscription_by_external_id(org, &external_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("subscription".into()))?;
+    let p = wrapped(&body, "lifetime_usage");
+    let cents = match i64_of(p, "external_historical_usage_amount_cents") {
+        Some(v) if v >= 0 => v,
+        _ => return Err(ApiError::validation("external_historical_usage_amount_cents", "value_is_invalid")),
+    };
+    st.db.set_historical_usage(org, &sub.external_id, cents).await?;
+    Ok(Json(json!({ "lifetime_usage": lifetime_usage_json(&st, org, &sub).await? })))
 }
 
 // ---- subscription alerts CRUD (canonical `alerts` model) -------------------
 
-fn alert_json(a: &rago_db::AlertRow, thresholds: &[rago_db::AlertThresholdRow]) -> Value {
+pub(crate) fn alert_json(a: &rago_db::AlertRow, thresholds: &[rago_db::AlertThresholdRow]) -> Value {
     json!({
         "lago_id": a.id,
         "alertable_type": a.alertable_type,
@@ -206,6 +235,23 @@ pub async fn update_alert(
     Ok(Json(json!({ "alert": alert_json(&row, &th) })))
 }
 
+/// `DELETE /subscriptions/:external_id/alerts` — every alert of the subscription.
+pub async fn destroy_all_alerts(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(external_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let org = auth.organization.id;
+    let sub = st.db.find_subscription_by_external_id(org, &external_id).await?.ok_or_else(|| ApiError::NotFound("subscription".into()))?;
+    let mut out = Vec::new();
+    for a in st.db.alerts_for("Subscription", sub.id).await? {
+        let th = st.db.alert_thresholds(a.id).await?;
+        out.push(alert_json(&a, &th));
+        st.db.soft_delete_alert(a.id).await?;
+    }
+    Ok(Json(json!({ "alerts": out })))
+}
+
 /// `DELETE /subscriptions/:external_id/alerts/:code`.
 pub async fn destroy_alert(
     State(st): State<AppState>,
@@ -221,7 +267,7 @@ pub async fn destroy_alert(
     Ok(Json(json!({ "alert": out })))
 }
 
-fn parse_thresholds(p: &Value) -> Vec<(Option<String>, Decimal, bool)> {
+pub(crate) fn parse_thresholds(p: &Value) -> Vec<(Option<String>, Decimal, bool)> {
     p.get("thresholds")
         .and_then(Value::as_array)
         .map(|arr| {
@@ -456,13 +502,20 @@ pub async fn finalize_invoice(
     Ok(Json(body))
 }
 
-/// `PUT /invoices/:id/refresh` — recompute the invoice totals from its fees.
+/// `PUT /invoices/:id/refresh` — `Invoices::RefreshDraftService`: a draft's
+/// usage is re-priced from the events of its window; any other invoice is
+/// returned unchanged.
 pub async fn refresh_invoice(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let inv = st.db.refresh_invoice_totals(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
+    let (_, inv) = rago_jobs::refresh_draft::refresh_draft_invoice(&st.db, id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let inv = inv
+        .filter(|i| i.organization_id == auth.organization.id)
+        .ok_or_else(|| ApiError::NotFound("invoice".into()))?;
     Ok(Json(invoice_response(&st, inv).await?))
 }
 

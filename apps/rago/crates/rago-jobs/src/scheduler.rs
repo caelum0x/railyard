@@ -8,7 +8,6 @@
 //! provider, and emit the payment-status webhook.
 
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Utc};
-use rago_billing::aggregation::AggregationPeriod;
 use rago_billing::dates::{due_for_billing, Interval};
 use rago_billing::proration::{InvoicePeriod, SubscriptionSpan};
 use rago_billing::generate::{generate_subscription_invoice_with_progressive, ChargeInput};
@@ -403,14 +402,9 @@ pub async fn leaves_at_boundary(
         .is_some_and(|at| at.date_naive() <= billing_date))
 }
 
-/// A usage charge loaded for billing: metric, charge, the period's events and
-/// the aggregation period (with the weighted-sum carry-in for recurring metrics).
-pub(crate) type LoadedCharge = (
-    rago_core::models::BillableMetric,
-    rago_core::models::Charge,
-    Vec<rago_core::models::Event>,
-    AggregationPeriod,
-);
+/// A usage charge loaded for billing: metric, charge, filters, the period's
+/// events, the carried-in events and the aggregation period.
+pub(crate) type LoadedCharge = rago_db::LoadedCharge;
 
 /// Load every usage charge of `plan` with the subscription's events in
 /// `[from, events_to]`, aggregated over the full period `[from, to]`.
@@ -430,27 +424,12 @@ pub(crate) async fn load_charges(
         if charge.pay_in_advance {
             continue;
         }
-        let Some(mid) = charge.billable_metric_id else { continue };
-        let metric = db.find_billable_metric(mid).await?;
-        let events = db
-            .events_for_external_subscription(
-                subscription.organization_id,
-                &subscription.external_id,
-                &metric.code,
-                from,
-                events_to,
-            )
-            .await?;
-        let carry_in = db
-            .weighted_sum_carry_in(
-                subscription.organization_id,
-                &subscription.external_id,
-                &metric,
-                from,
-            )
-            .await?;
-        let period = AggregationPeriod::new(from, to).with_initial_value(carry_in);
-        loaded.push((metric, charge, events, period));
+        if let Some(c) = db
+            .load_charge_usage(subscription.organization_id, &subscription.external_id, &charge, from, to, events_to)
+            .await?
+        {
+            loaded.push(c);
+        }
     }
     Ok(loaded)
 }
@@ -602,11 +581,26 @@ async fn bill_scope(
             uncredited_progressive_invoices(db, subscription.id, period_from, charges_to).await?;
         (loaded, row_ids, progressive)
     };
-    let charge_inputs: Vec<ChargeInput> = loaded
-        .iter()
-        .map(|(m, c, e, p)| ChargeInput { metric: m, charge: c, events: e, period: Some(*p) })
-        .collect();
-    if optional && charge_inputs.is_empty() && progressive.is_empty() {
+    let charge_inputs: Vec<ChargeInput> = loaded.iter().map(LoadedCharge::input).collect();
+    // Fixed charges: upfront ones with the fee ahead (unless this invoice bills
+    // no fee ahead: a closing invoice, or a final one whose fee was paid
+    // upfront), the others with the closed period.
+    let upfront_billed = match scope {
+        InvoiceScope::Periodic => true,
+        InvoiceScope::ClosingCharges => false,
+        InvoiceScope::Terminating { fee_paid_upfront, .. } => !fee_paid_upfront,
+    };
+    let fixed = db.fixed_charge_specs(plan.id).await?;
+    let fixed_fees = rago_billing::fixed_charges::fixed_charge_fees(
+        &fixed,
+        plan.pay_in_advance,
+        &period,
+        upfront_billed,
+        subscription,
+        currency,
+        None,
+    )?;
+    if optional && charge_inputs.is_empty() && progressive.is_empty() && fixed_fees.is_empty() {
         return Ok(None);
     }
 
@@ -637,6 +631,7 @@ async fn bill_scope(
         &taxes,
         &[],
         &progressive,
+        fixed_fees,
     )?;
     if fee_less {
         // No subscription line (its amount is zero, so the totals are unchanged).
@@ -644,6 +639,28 @@ async fn bill_scope(
     }
     if optional && invoice.fees_amount_cents <= 0 && progressive.is_empty() {
         return Ok(None);
+    }
+    if !period.charges_window.is_empty() {
+        // `Fees::ChargeService` records the charges boundaries on each usage
+        // line; a draft refresh re-prices the same window from them.
+        let charges_to = match scope {
+            InvoiceScope::Terminating { end, .. } => {
+                end.min(period.charges_window.to.and_hms_opt(23, 59, 59).unwrap_or_default())
+            }
+            _ => period.charges_window.to.and_hms_opt(23, 59, 59).unwrap_or_default(),
+        };
+        let bounds = charges_boundaries(
+            period.charges_window.from.and_hms_opt(0, 0, 0).unwrap_or_default(),
+            charges_to,
+            period.charges_period.days(),
+        );
+        for fee in fees.iter_mut().filter(|f| matches!(f.fee_type, Some(rago_core::enums::FeeType::Charge))) {
+            let mut props = fee.properties.as_object().cloned().unwrap_or_default();
+            for (k, v) in bounds.as_object().into_iter().flatten() {
+                props.insert(k.clone(), v.clone());
+            }
+            fee.properties = serde_json::Value::Object(props);
+        }
     }
     if let Some(fee) = fees
         .iter_mut()
@@ -696,6 +713,15 @@ async fn bill_scope(
     }
 }
 
+
+/// The charges boundaries a usage fee records (Lago fee `properties`).
+pub(crate) fn charges_boundaries(from: NaiveDateTime, to: NaiveDateTime, duration_days: i64) -> serde_json::Value {
+    json!({
+        "charges_from_datetime": from.and_utc().to_rfc3339(),
+        "charges_to_datetime": to.and_utc().to_rfc3339(),
+        "charges_duration": duration_days,
+    })
+}
 
 fn plan_interval(interval: &Option<PlanInterval>) -> Interval {
     match interval {

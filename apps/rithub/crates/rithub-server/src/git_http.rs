@@ -77,11 +77,39 @@ pub async fn git_get(
         };
     }
 
+    if let Some(oid) = path.strip_prefix("info/lfs/objects/") {
+        return crate::lfs::download(&state, &meta, caller.as_ref(), oid).await;
+    }
+
     // Everything else is a dumb read resource.
     if let Err(r) = authorize_read(&state, &meta, caller.as_ref()).await {
         return r;
     }
     dumb_resource(&state, &owner, repo_name, &path)
+}
+
+/// `PUT /{owner}/{repo}.git/info/lfs/objects/{oid}` — an LFS upload.
+pub async fn git_put(
+    State(state): State<AppState>,
+    Path((owner, repo, path)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let Some(repo_name) = repo.strip_suffix(".git") else {
+        return status(StatusCode::NOT_FOUND);
+    };
+    let Some(oid) = path.strip_prefix("info/lfs/objects/") else {
+        return status(StatusCode::METHOD_NOT_ALLOWED);
+    };
+    let meta = match lookup(&state, &owner, repo_name).await {
+        Ok(meta) => meta,
+        Err(response) => return response,
+    };
+    let caller = match authenticate(&state, &headers).await {
+        Ok(caller) => caller,
+        Err(response) => return response,
+    };
+    crate::lfs::upload(&state, &meta, caller.as_ref(), oid, &body).await
 }
 
 /// `POST /{owner}/{repo}.git/{*path}` — smart RPC (`git-upload-pack` fetch,
@@ -105,6 +133,9 @@ pub async fn git_post(
     };
 
     match path.as_str() {
+        "info/lfs/objects/batch" => {
+            crate::lfs::batch(&state, &owner, repo_name, &meta, caller.as_ref(), &headers, &body).await
+        }
         "git-upload-pack" => {
             if let Err(r) = authorize_read(&state, &meta, caller.as_ref()).await {
                 return r;

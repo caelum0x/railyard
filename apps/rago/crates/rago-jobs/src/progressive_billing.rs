@@ -90,19 +90,11 @@ pub async fn check_usage_thresholds(
     let currency = plan.currency();
     let loaded = load_charges(db, subscription, &plan, from, to, events_to).await?;
     let mut current: Vec<Fee> = Vec::with_capacity(loaded.len());
-    for (metric, charge, events, period) in &loaded {
-        if !charge.invoiceable {
+    for c in &loaded {
+        if !c.charge.invoiceable {
             continue;
         }
-        current.push(rago_billing::charge_to_fee_in_period(
-            metric,
-            charge,
-            subscription,
-            events,
-            currency,
-            None,
-            Some(period),
-        )?);
+        current.extend(rago_billing::charge_fees::charge_fees(&c.usage(), subscription, currency, None)?);
     }
     let current_usage: i64 = current.iter().map(|f| f.amount_cents).sum();
 

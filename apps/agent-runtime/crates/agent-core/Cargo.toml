@@ -13,6 +13,9 @@ aitp-client.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
+# The capture journal (JSON lines).
+serde.workspace = true
+serde_json.workspace = true
 hex.workspace = true
 async-stream.workspace = true
 futures-util.workspace = true

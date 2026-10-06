@@ -23,6 +23,10 @@ pub enum LedgerlineError {
     Unauthorized,
     #[error("forbidden: {0}")]
     Forbidden(String),
+    /// Another worker holds this settlement's lease (or took it over); retry
+    /// later. No money moved on this call.
+    #[error("settlement is in progress elsewhere; retry later")]
+    InProgress,
 }
 
 impl LedgerlineError {
@@ -36,13 +40,14 @@ impl LedgerlineError {
             Self::Storage(_) => "storage_unavailable",
             Self::Unauthorized => "unauthorized",
             Self::Forbidden(_) => "forbidden",
+            Self::InProgress => "settlement_in_progress",
         }
     }
 
     pub const fn status(&self) -> StatusCode {
         match self {
             Self::Invalid(_) | Self::Overflow => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::IdempotencyConflict => StatusCode::CONFLICT,
+            Self::IdempotencyConflict | Self::InProgress => StatusCode::CONFLICT,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,

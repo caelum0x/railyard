@@ -109,7 +109,7 @@ fn assert_holds_sum_to_period_fee(m: &BillableMetric, c: &Charge, values: &[i64]
     let mut held = 0i64;
     for v in values {
         let e = event(*v);
-        held += incremental_event_cost(m, std::slice::from_ref(c), &sub, &seen, &e, usd).unwrap();
+        held += incremental_event_cost(m, std::slice::from_ref(c), &[], &sub, &seen, &e, usd).unwrap();
         seen.push(e);
     }
     let period = rago_billing::charge_to_fee(m, c, &sub, &seen, usd, None).unwrap();
@@ -121,7 +121,7 @@ fn standard_model_holds_the_unit_price_per_event() {
     let m = metric(AggregationType::SumAgg);
     let c = charge(m.id, ChargeModel::Standard, json!({ "amount": "0.25" }));
     let sub = subscription();
-    let cost = incremental_event_cost(&m, std::slice::from_ref(&c), &sub, &[], &event(4), Currency::new("USD")).unwrap();
+    let cost = incremental_event_cost(&m, std::slice::from_ref(&c), &[], &sub, &[], &event(4), Currency::new("USD")).unwrap();
     assert_eq!(cost, 100);
     assert_holds_sum_to_period_fee(&m, &c, &[4, 1, 7, 3]);
 }
@@ -151,9 +151,9 @@ fn package_model_only_holds_when_a_new_package_starts() {
     let sub = subscription();
     let usd = Currency::new("USD");
     let first = event(50);
-    assert_eq!(incremental_event_cost(&m, std::slice::from_ref(&c), &sub, &[], &first, usd).unwrap(), 1_000);
+    assert_eq!(incremental_event_cost(&m, std::slice::from_ref(&c), &[], &sub, &[], &first, usd).unwrap(), 1_000);
     // Still inside the first package: nothing more to hold.
-    assert_eq!(incremental_event_cost(&m, std::slice::from_ref(&c), &sub, std::slice::from_ref(&first), &event(30), usd).unwrap(), 0);
+    assert_eq!(incremental_event_cost(&m, std::slice::from_ref(&c), &[], &sub, std::slice::from_ref(&first), &event(30), usd).unwrap(), 0);
     assert_holds_sum_to_period_fee(&m, &c, &[50, 30, 40, 90]);
 }
 
@@ -161,7 +161,7 @@ fn package_model_only_holds_when_a_new_package_starts() {
 fn charges_on_other_metrics_are_ignored() {
     let m = metric(AggregationType::SumAgg);
     let other = charge(Uuid::new_v4(), ChargeModel::Standard, json!({ "amount": "5" }));
-    let cost = incremental_event_cost(&m, &[other], &subscription(), &[], &event(3), Currency::new("USD")).unwrap();
+    let cost = incremental_event_cost(&m, &[other], &[], &subscription(), &[], &event(3), Currency::new("USD")).unwrap();
     assert_eq!(cost, 0);
 }
 

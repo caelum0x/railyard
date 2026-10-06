@@ -640,6 +640,18 @@ async fn stripe_webhook(State(state): State<SellerState>, headers: HeaderMap, bo
         Ok(v) => v,
         Err(e) => return webhook_problem(e),
     };
+    if verified.deauthorized {
+        // The seller disconnected us in Stripe: the account can sell nothing
+        // through Mint anymore, so the connection and its products go.
+        return match state.store.disconnect_account("stripe", &verified.account).await {
+            Ok(Some(r)) => {
+                tracing::info!(product = %r.product, seller = %r.seller, "seller: Stripe account deauthorized");
+                Json(json!({ "disconnected": true })).into_response()
+            }
+            Ok(None) => Json(json!({ "ignored": true })).into_response(),
+            Err(_) => storage(),
+        };
+    }
     let Ok(Some(record)) = state.store.seller_by_account("stripe", &verified.account).await else {
         return Json(json!({ "ignored": true })).into_response();
     };

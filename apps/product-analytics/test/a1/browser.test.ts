@@ -4,6 +4,7 @@
 // analytics host and stores nothing; after consent the page view, a custom
 // event and an autocaptured click are stored; typed input never leaves.
 import { before, test } from "node:test";
+import { sdkEsmPath } from "../sdk-deps.ts";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
@@ -15,7 +16,7 @@ import { makeSite, migratedPg, skipNoPg, sleep, startService, type Running, type
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG = join(HERE, "../../../../packages/analytics-js");
-const SDK_ESM = join(PKG, "node_modules/posthog-js/dist/module.mjs");
+const SDK_ESM = sdkEsmPath(PKG);
 const haveBrowser = existsSync(chromium.executablePath()) || existsSync(chromium.executablePath().replace("chromium-", "chromium_headless_shell-"));
 
 let pg: ScratchPg;

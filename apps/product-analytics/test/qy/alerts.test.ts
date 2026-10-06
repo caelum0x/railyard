@@ -228,4 +228,24 @@ test("console forms map to what the service takes", async () => {
   assert.deepEqual(subscriptionFromForm({ dashboard_id: "d1", weekday: "3", hour_utc: "9", recipients: "a@b.example, c@d.example" }), { dashboard_id: "d1", weekday: 3, hour_utc: 9, recipients: ["a@b.example", "c@d.example"] });
   assert.deepEqual(destinationFromForm({ name: "Team", kind: "slack", target: "https://hooks.slack.com/services/x", label: "#growth" }), { name: "Team", start: "now", kind: "slack", config: { label: "#growth" }, secret: "https://hooks.slack.com/services/x" });
   assert.equal(destinationTarget({ kind: "hubspot", config: { label: "Sales" } }), "HubSpot contacts (Sales)");
+  // A22: warehouse destinations from the form; the password and the key go only in `secret`.
+  assert.deepEqual(destinationFromForm({ name: "Lake", kind: "clickhouse", wh_url: "https://ch.example:8443", wh_user: "writer", wh_database: "analytics", wh_secret: "pw" }), {
+    name: "Lake",
+    start: "now",
+    kind: "clickhouse",
+    config: { url: "https://ch.example:8443", database: "analytics", table: "railyard_events", user: "writer", label: "" },
+    secret: "pw",
+  });
+  assert.deepEqual(destinationFromForm({ name: "BQ", kind: "bigquery", wh_project: "shop-analytics", wh_database: "events", wh_table: "raw", wh_secret: "{}", start: "all" }), {
+    name: "BQ",
+    start: "all",
+    kind: "bigquery",
+    config: { project_id: "shop-analytics", dataset: "events", table: "raw", label: "" },
+    secret: "{}",
+  });
+  assert.equal(destinationTarget({ kind: "bigquery", config: { project_id: "p", dataset: "d", table: "t" } }), "BigQuery table p.d.t");
+  // A23: the transform field is parsed as JSON (and passed through when it is not JSON).
+  assert.deepEqual(destinationFromForm({ name: "T", kind: "webhook", url: "https://h.example/x", transform: '{"drop":["email"]}' }).transform, { drop: ["email"] });
+  assert.equal(destinationFromForm({ name: "T", kind: "webhook", url: "https://h.example/x", transform: "not json" }).transform, "not json");
+  assert.equal("transform" in destinationFromForm({ name: "T", kind: "webhook", url: "https://h.example/x", transform: "  " }), false);
 });

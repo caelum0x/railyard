@@ -211,3 +211,115 @@ pub fn numeric_field_for(metric: &BillableMetric) -> Option<&str> {
         _ => None,
     }
 }
+
+/// `Events::CalculateExpressionService` — when the event's billable metric has
+/// an `expression`, evaluate it on `{ code, timestamp, properties }` and write
+/// the result to `properties[field_name]` (as text, like the Kafka path), so
+/// every aggregation reads the computed value. A metric without an expression
+/// (or without a field name to write to) leaves the event unchanged.
+pub fn with_expression(
+    metric: Option<&BillableMetric>,
+    event: Event,
+) -> Result<Event, crate::expression::ExprError> {
+    let Some(metric) = metric else { return Ok(event) };
+    let (Some(source), Some(field)) = (
+        metric.expression.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+        metric.field_name.as_deref().filter(|f| !f.is_empty()),
+    ) else {
+        return Ok(event);
+    };
+    let expr = crate::expression::Expression::parse(source)?;
+    let timestamp = event.timestamp.map(|t| t.and_utc().timestamp()).unwrap_or_else(|| event.created_at.timestamp());
+    let input = serde_json::json!({ "code": event.code, "timestamp": timestamp, "properties": event.properties });
+    let value = expr.evaluate(&input)?.to_string();
+    let mut properties = match &event.properties {
+        Value::Object(m) => m.clone(),
+        _ => serde_json::Map::new(),
+    };
+    properties.insert(field.to_string(), Value::String(value));
+    Ok(Event { properties: Value::Object(properties), ..event })
+}
+
+/// Whether `expression` is valid for a billable metric (`validate_expression`).
+pub fn validate_expression(expression: &str) -> bool {
+    crate::expression::Expression::parse(expression.trim()).is_ok()
+}
+
+#[cfg(test)]
+mod expression_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn metric(expression: Option<&str>, field: Option<&str>) -> BillableMetric {
+        let now = Utc::now();
+        BillableMetric {
+            id: Uuid::new_v4(),
+            organization_id: Uuid::nil(),
+            name: "m".into(),
+            code: "compute".into(),
+            description: None,
+            aggregation_type: AggregationType::SumAgg,
+            field_name: field.map(str::to_string),
+            recurring: false,
+            expression: expression.map(str::to_string),
+            rounding_function: None,
+            rounding_precision: None,
+            custom_aggregator: None,
+            created_at: now,
+            updated_at: now,
+            deleted_at: None,
+        }
+    }
+
+    fn event(props: Value) -> Event {
+        let params = EventParams {
+            code: "compute".into(),
+            transaction_id: "t".into(),
+            external_subscription_id: "s".into(),
+            properties: props,
+            timestamp: Some(1_700_000_000.0),
+            precise_total_amount_cents: None,
+        };
+        build_event(Uuid::nil(), &params, Utc::now())
+    }
+
+    #[test]
+    fn the_expression_result_is_written_to_the_field() {
+        let m = metric(
+            Some("round((event.properties.ended_at - event.properties.started_at) * event.properties.units / 3600, 2)"),
+            Some("hours"),
+        );
+        let e = with_expression(Some(&m), event(json!({ "started_at": 0, "ended_at": 5400, "units": 2 }))).unwrap();
+        assert_eq!(e.properties["hours"], json!("3"));
+        assert_eq!(e.field_value("hours"), rust_decimal::Decimal::from(3));
+        // The event's own properties are kept.
+        assert_eq!(e.properties["units"], json!(2));
+    }
+
+    #[test]
+    fn the_event_timestamp_is_readable() {
+        let m = metric(Some("event.timestamp"), Some("at"));
+        let e = with_expression(Some(&m), event(json!({}))).unwrap();
+        assert_eq!(e.properties["at"], json!("1700000000"));
+    }
+
+    #[test]
+    fn no_expression_or_no_field_leaves_the_event_alone() {
+        let raw = json!({ "units": 2 });
+        assert_eq!(with_expression(Some(&metric(None, Some("x"))), event(raw.clone())).unwrap().properties, raw);
+        assert_eq!(with_expression(Some(&metric(Some("event.properties.units * 2"), None)), event(raw.clone())).unwrap().properties, raw);
+        assert_eq!(with_expression(None, event(raw.clone())).unwrap().properties, raw);
+    }
+
+    #[test]
+    fn a_missing_property_is_an_error() {
+        let m = metric(Some("event.properties.units * event.properties.price"), Some("cost"));
+        assert!(with_expression(Some(&m), event(json!({ "units": 2 }))).is_err());
+    }
+
+    #[test]
+    fn expressions_are_validated() {
+        assert!(validate_expression("ceil(event.properties.units / 10)"));
+        assert!(!validate_expression("event.properties.units *"));
+    }
+}

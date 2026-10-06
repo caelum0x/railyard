@@ -167,7 +167,48 @@ async fn plan_with_charges(st: &AppState, plan: &Plan) -> ApiResult<Value> {
     let charges = st.db.charges_for_plan(plan.id).await?;
     let mut plan_json = ser::plan(plan);
     plan_json["charges"] = json!(crate::charge_filters::charges_json(st, &charges).await?);
+    let fixed = st.db.plan_fixed_charges(plan.id).await?;
+    plan_json["fixed_charges"] = json!(fixed.iter().map(crate::fixed_charges::fixed_charge_json).collect::<Vec<_>>());
     Ok(plan_json)
+}
+
+/// `GET /plans/:code/charges` — the plan's charges (with their filters).
+pub async fn list_plan_charges(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(code): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let plan = st
+        .db
+        .find_plan_by_code(auth.organization.id, &code)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("plan".into()))?;
+    let charges = st.db.charges_for_plan(plan.id).await?;
+    let total = charges.len() as i64;
+    Ok(Json(json!({
+        "charges": crate::charge_filters::charges_json(&st, &charges).await?,
+        "meta": pagination::meta(1, total.max(1), total),
+    })))
+}
+
+/// `GET /plans/:code/charges/:id` — one charge, by id or by code.
+pub async fn show_plan_charge(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path((code, key)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let plan = st
+        .db
+        .find_plan_by_code(auth.organization.id, &code)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("plan".into()))?;
+    let charges = st.db.charges_for_plan(plan.id).await?;
+    let by_id = key.parse::<Uuid>().ok();
+    let charge = charges
+        .iter()
+        .find(|c| Some(c.id) == by_id || c.code == key)
+        .ok_or_else(|| ApiError::NotFound("charge".into()))?;
+    Ok(Json(json!({ "charge": crate::charge_filters::charge_json(&st, charge).await? })))
 }
 
 /// `GET /plans/:code` — a plan with its charges (and their filters).
@@ -185,7 +226,7 @@ pub async fn show_plan(
 }
 
 /// `min_amount_cents` of a charge payload: a non-negative integer.
-fn min_amount_of(cp: &Value) -> ApiResult<Option<i64>> {
+pub(crate) fn min_amount_of(cp: &Value) -> ApiResult<Option<i64>> {
     match cp.get("min_amount_cents") {
         None | Some(Value::Null) => Ok(None),
         Some(_) => match i64_of(cp, "min_amount_cents") {
@@ -238,7 +279,9 @@ pub async fn update_plan(
         )
         .await?
         .ok_or_else(|| ApiError::NotFound("plan".into()))?;
-    Ok(Json(json!({ "plan": plan_with_charges(&st, &plan).await? })))
+    let out = plan_with_charges(&st, &plan).await?;
+    crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::PlanUpdated, out.clone()).await;
+    Ok(Json(json!({ "plan": out })))
 }
 
 /// `DELETE /plans/:code` — soft-delete a plan.
@@ -254,6 +297,7 @@ pub async fn destroy_plan(
         .ok_or_else(|| ApiError::NotFound("plan".into()))?;
     let out = plan_with_charges(&st, &plan).await?;
     st.db.soft_delete_plan(plan.id).await?;
+    crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::PlanDeleted, out.clone()).await;
     Ok(Json(json!({ "plan": out })))
 }
 
@@ -420,6 +464,15 @@ pub async fn update_billable_metric(
         rago_billing::aggregation::validate_custom_aggregator(src)
             .map_err(|_| ApiError::validation("custom_aggregator", "invalid_expression"))?;
     }
+    if let Some(expression) = s(p, "expression").filter(|e| !e.trim().is_empty()) {
+        if !rago_billing::events::validate_expression(&expression) {
+            return Err(ApiError::validation("expression", "invalid_expression"));
+        }
+        let field = s(p, "field_name").or_else(|| existing.field_name.clone());
+        if field.map_or(true, |f| f.trim().is_empty()) {
+            return Err(ApiError::validation("field_name", "value_is_mandatory"));
+        }
+    }
     let becomes_custom = agg == Some(AggregationType::CustomAgg.as_i32())
         || (agg.is_none() && matches!(existing.aggregation_type, AggregationType::CustomAgg));
     if becomes_custom
@@ -442,7 +495,9 @@ pub async fn update_billable_metric(
         )
         .await?
         .ok_or_else(|| ApiError::NotFound("billable_metric".into()))?;
-    Ok(Json(json!({ "billable_metric": ser::billable_metric(&m) })))
+    let out = ser::billable_metric(&m);
+    crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::BillableMetricUpdated, out.clone()).await;
+    Ok(Json(json!({ "billable_metric": out })))
 }
 
 /// `DELETE /billable_metrics/:code`.
@@ -458,6 +513,7 @@ pub async fn destroy_billable_metric(
         .ok_or_else(|| ApiError::NotFound("billable_metric".into()))?;
     let out = ser::billable_metric(&m);
     st.db.soft_delete_billable_metric(m.id).await?;
+    crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::BillableMetricDeleted, out.clone()).await;
     Ok(Json(json!({ "billable_metric": out })))
 }
 
@@ -760,14 +816,24 @@ pub async fn update_wallet_realtime(
 /// `DELETE /wallets/:id` — terminate a wallet.
 pub async fn terminate_wallet(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let w = st.db.find_wallet(id).await?.ok_or_else(|| ApiError::NotFound("wallet".into()))?;
+    let w = st
+        .db
+        .find_wallet(id)
+        .await?
+        .filter(|w| w.organization_id == auth.organization.id)
+        .ok_or_else(|| ApiError::NotFound("wallet".into()))?;
+    let was_active = w.terminated_at.is_none();
     st.db.terminate_wallet(id).await?;
     let updated = st.db.find_wallet(id).await?.ok_or_else(|| ApiError::NotFound("wallet".into()))?;
     let ext = st.db.customer_external_id(w.customer_id).await?.unwrap_or_default();
-    Ok(Json(json!({ "wallet": ser::wallet(&updated, &ext) })))
+    let out = ser::wallet(&updated, &ext);
+    if was_active {
+        crate::emit::webhook(&st.db, auth.organization.id, rago_integrations::webhooks::WebhookKind::WalletTerminated, out.clone()).await;
+    }
+    Ok(Json(json!({ "wallet": out })))
 }
 
 // ---- enum string → i32 helpers ---------------------------------------------
