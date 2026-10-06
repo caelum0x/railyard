@@ -6,6 +6,9 @@ license.workspace = true
 rust-version.workspace = true
 description = "axum HTTP service: the forge JSON API plus a smart + dumb HTTP git server (clone, fetch, push) that hosts rit-backed repositories."
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "rithub-server"
 path = "src/main.rs"
@@ -49,3 +52,5 @@ lettre = { version = "0.11", default-features = false, features = [
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util"] }
+tower = { workspace = true, features = ["util"] }
+rithub-runner = { path = "../rithub-runner" }
