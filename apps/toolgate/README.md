@@ -111,7 +111,7 @@ first-class with their schemas and safety annotations.
 - Relay keys are validated by querying Relay's key table directly (same SHA-256
   scheme as `tensorzero-auth`) rather than a path dependency on that crate,
   whose workspace-inherited manifest cannot build outside Relay's workspace.
-- Cache hits are free; `cache_micros` is parsed but not charged yet.
+- Cache hits are charged at the tool's `cache_micros` (0 in the shipped catalog).
 - Oversized responses fail (16 MiB cap) instead of streaming to Scribase storage.
-- `POST /v1/credentials/oauth/{provider}/connect` is not built (no MVP tool needs it).
+- `POST /v1/credentials/oauth/{provider}/connect` works for providers whose manifest has an `oauth` block and whose app is in `SWITCHYARD_OAUTH_CLIENTS`; none ship one yet.
 - One project cap covers tools only; sharing Relay's budget ledger is phase 2.

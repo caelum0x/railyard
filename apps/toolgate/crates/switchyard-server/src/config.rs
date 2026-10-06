@@ -22,6 +22,30 @@ pub struct Settings {
     pub platform_credentials: BTreeMap<String, String>,
     pub cache_bytes: usize,
     pub idempotency_hours: i64,
+    /// OAuth app credentials by provider id, for connecting a team's own
+    /// account (`SWITCHYARD_OAUTH_CLIENTS` = `{"github": {"client_id": "...", "client_secret": "..."}}`).
+    pub oauth_clients: BTreeMap<String, OAuthClient>,
+}
+
+/// One OAuth app registration.
+#[derive(Clone, serde::Deserialize)]
+pub struct OAuthClient {
+    pub client_id: String,
+    pub client_secret: String,
+}
+
+impl std::fmt::Debug for OAuthClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuthClient").field("client_id", &self.client_id).finish_non_exhaustive()
+    }
+}
+
+/// Parse `SWITCHYARD_OAUTH_CLIENTS`; a malformed value is an error, not silence.
+pub fn parse_oauth_clients(raw: Option<&str>) -> Result<BTreeMap<String, OAuthClient>, String> {
+    match raw {
+        None => Ok(BTreeMap::new()),
+        Some(v) => serde_json::from_str(v).map_err(|e| format!("SWITCHYARD_OAUTH_CLIENTS is not valid JSON: {e}")),
+    }
 }
 
 impl Settings {
@@ -37,6 +61,7 @@ impl Settings {
             platform_credentials: BTreeMap::new(),
             cache_bytes: 32 * 1024 * 1024,
             idempotency_hours: 24,
+            oauth_clients: BTreeMap::new(),
         }
     }
 }
@@ -85,6 +110,10 @@ impl Settings {
             platform_credentials,
             cache_bytes: env("SWITCHYARD_CACHE_MB").and_then(|v| v.parse::<usize>().ok()).unwrap_or(32) * 1024 * 1024,
             idempotency_hours: 24,
+            oauth_clients: parse_oauth_clients(env("SWITCHYARD_OAUTH_CLIENTS").as_deref()).unwrap_or_else(|e| {
+                tracing::error!(error = %e, "OAuth connect disabled");
+                BTreeMap::new()
+            }),
         }
     }
 }
