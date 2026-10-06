@@ -19,7 +19,7 @@ import { DeliveryError, SEND_TIMEOUT_MS, type ExportedEvent } from "./runner.ts"
 import { newSigningSecret } from "./secrets.ts";
 import { checkWarehouse, describeWarehouse, isWarehouse, sendWarehouse } from "./warehouse.ts";
 
-export const CATALOGUE = ["slack", "discord", "hubspot", "clickhouse", "bigquery"] as const;
+export const CATALOGUE = ["slack", "discord", "hubspot", "clickhouse", "bigquery", "snowflake"] as const;
 export type CatalogueKind = (typeof CATALOGUE)[number];
 export const isCatalogue = (k: string): k is CatalogueKind => (CATALOGUE as readonly string[]).includes(k);
 

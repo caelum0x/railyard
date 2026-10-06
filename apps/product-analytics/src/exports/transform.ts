@@ -1,6 +1,6 @@
 // Destination transforms (A23): what a destination receives, declared per
 // destination and applied by the exports runner before any send, the same for
-// every kind (webhook, S3, Slack, Discord, HubSpot, ClickHouse, BigQuery).
+// every kind (webhook, S3, Slack, Discord, HubSpot, ClickHouse, BigQuery, Snowflake).
 //
 //   { "where":  [{ "property": "plan", "op": "eq", "value": "pro" }, ...],
 //     "drop":   ["$ip", "email"],

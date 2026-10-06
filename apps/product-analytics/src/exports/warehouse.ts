@@ -12,19 +12,30 @@
 // (sealed) signs a 1-hour RS256 assertion exchanged for an access token; each
 // row carries the event uuid as insertId (BigQuery's own retry dedupe), and a
 // missing table is created with the event schema once.
+//
+// Snowflake (SQL API v2, key-pair auth): the customer's user private key
+// (sealed) signs a short-lived RS256 JWT whose issuer carries the public key's
+// SHA-256 fingerprint. The table is created when missing; rows go in with one
+// array-bound INSERT, under a requestId derived from the batch's event uuids,
+// so a retried batch is not executed twice (`retry=true`).
 
-import { createSign } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, createSign } from "node:crypto";
 import { ApiError, text } from "../replay/shared/console-guard.ts";
 import { allowPrivate, checkUrlShape, DestinationRefused } from "./net-guard.ts";
 import { DeliveryError, SEND_TIMEOUT_MS, type ExportedEvent } from "./runner.ts";
 
-export const WAREHOUSES = ["clickhouse", "bigquery"] as const;
+export const WAREHOUSES = ["clickhouse", "bigquery", "snowflake"] as const;
 export type WarehouseKind = (typeof WAREHOUSES)[number];
 export const isWarehouse = (k: string): k is WarehouseKind => (WAREHOUSES as readonly string[]).includes(k);
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const BQ_PROJECT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
 export const BIGQUERY_URL = () => (process.env.PA_BIGQUERY_URL?.trim() || "https://bigquery.googleapis.com").replace(/\/$/, "");
+const SF_ACCOUNT = /^[A-Za-z0-9][A-Za-z0-9_.-]{1,99}$/;
+const SF_IDENT = /^[A-Za-z_][A-Za-z0-9_$]{0,254}$/;
+/** The SQL API base for an account (`PA_SNOWFLAKE_URL` points tests at a fake). */
+export const SNOWFLAKE_URL = (account: string) =>
+  (process.env.PA_SNOWFLAKE_URL?.trim() || `https://${account.toLowerCase()}.snowflakecomputing.com`).replace(/\/$/, "");
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const BQ_SCOPE = "https://www.googleapis.com/auth/bigquery.insertdata https://www.googleapis.com/auth/bigquery";
 
@@ -85,6 +96,7 @@ export function checkWarehouse(kind: WarehouseKind, c: Record<string, unknown>, 
     const password = text(secretIn, "The ClickHouse password", 500, false) ?? "";
     return { config: { url: u.origin + u.pathname.replace(/\/$/, ""), database, table, user, label: text(c.label, "The label", 80, false) ?? "ClickHouse" }, target: JSON.stringify({ password }) };
   }
+  if (kind === "snowflake") return checkSnowflake(c, secretIn);
   const project = text(c.project_id, "The BigQuery project", 30)!;
   if (!BQ_PROJECT.test(project)) throw new ApiError(400, "The BigQuery project id is not valid.");
   const dataset = text(c.dataset, "The BigQuery dataset", 1024)!;
@@ -97,7 +109,56 @@ export function checkWarehouse(kind: WarehouseKind, c: Record<string, unknown>, 
   return { config: { project_id: project, dataset, table, label: text(c.label, "The label", 80, false) ?? "BigQuery" }, target: key };
 }
 
+function checkSnowflake(c: Record<string, unknown>, secretIn: unknown): { config: Record<string, string>; target: string } {
+  const account = text(c.account, "The Snowflake account", 100)!;
+  if (!SF_ACCOUNT.test(account)) throw new ApiError(400, "The Snowflake account identifier is not valid.");
+  const fields: Record<string, string> = { account };
+  for (const [key, what, fallback] of [
+    ["user", "user", null],
+    ["warehouse", "warehouse", null],
+    ["database", "database", null],
+    ["schema", "schema", "PUBLIC"],
+    ["table", "table", "RAILYARD_EVENTS"],
+    ["role", "role", ""],
+  ] as const) {
+    const v = text(c[key], `The Snowflake ${what}`, 255, fallback === null) ?? fallback ?? "";
+    if (v !== "" && !SF_IDENT.test(v)) throw new ApiError(400, `The Snowflake ${what} may use letters, digits, _ and $ only.`);
+    fields[key] = v;
+  }
+  const key = text(secretIn, "The Snowflake private key", 20_000)!;
+  snowflakeKey(key);
+  return { config: { ...fields, label: text(c.label, "The label", 80, false) ?? "Snowflake" }, target: key };
+}
+
+/** The user's private key and its public key fingerprint (`SHA256:<base64>`). */
+function snowflakeKey(pem: string): { key: ReturnType<typeof createPrivateKey>; fingerprint: string } {
+  let key: ReturnType<typeof createPrivateKey>;
+  try {
+    key = createPrivateKey(pem);
+  } catch {
+    throw new ApiError(400, "The Snowflake private key must be an unencrypted PEM key.");
+  }
+  if (key.asymmetricKeyType !== "rsa") throw new ApiError(400, "The Snowflake private key must be an RSA key.");
+  const der = createPublicKey(key).export({ type: "spki", format: "der" });
+  return { key, fingerprint: `SHA256:${createHash("sha256").update(der).digest("base64")}` };
+}
+
+/** Snowflake's key-pair JWT: `iss` = ACCOUNT.USER.SHA256:<fp>, `sub` = ACCOUNT.USER, 59 minutes. */
+export function snowflakeJwt(account: string, user: string, pem: string, now: Date): string {
+  const { key, fingerprint } = snowflakeKey(pem);
+  // The account part of the identifier, uppercased, without region/cloud suffixes.
+  const acct = account.split(".")[0].toUpperCase();
+  const qualified = `${acct}.${user.toUpperCase()}`;
+  const iat = Math.floor(now.getTime() / 1000);
+  const head = b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const claims = b64url(JSON.stringify({ iss: `${qualified}.${fingerprint}`, sub: qualified, iat, exp: iat + 59 * 60 }));
+  const signer = createSign("RSA-SHA256");
+  signer.update(`${head}.${claims}`);
+  return `${head}.${claims}.${b64url(signer.sign(key))}`;
+}
+
 export function describeWarehouse(kind: WarehouseKind, config: Record<string, unknown>): string {
+  if (kind === "snowflake") return `Snowflake: ${String(config.database ?? "")}.${String(config.schema ?? "")}.${String(config.table ?? "")}`;
   return kind === "clickhouse"
     ? `ClickHouse: ${String(config.database ?? "")}.${String(config.table ?? "")}`
     : `BigQuery: ${String(config.project_id ?? "")}.${String(config.dataset ?? "")}.${String(config.table ?? "")}`;
@@ -210,6 +271,66 @@ async function sendBigQuery(config: Record<string, unknown>, key: string, events
   return { bytes: Buffer.byteLength(body), status: sent.status };
 }
 
+const SF_COLUMNS = ["UUID", "EVENT", "DISTINCT_ID", "PERSON_ID", "TIMESTAMP", "PROPERTIES", "ELEMENTS_CHAIN", "SESSION_ID"] as const;
+const SF_POLLS = 10;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** A stable UUID for a batch: a retry of the same events reuses it. */
+export function batchRequestId(events: ExportedEvent[]): string {
+  const h = createHash("sha256").update(events.map((e) => e.uuid).join(",")).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
+/** Snowflake: create the table when missing, then one array-bound INSERT. */
+async function sendSnowflake(config: Record<string, unknown>, pem: string, events: ExportedEvent[], now: Date, fetchImpl: typeof fetch, pollMs = 1000): Promise<{ bytes: number; status: number }> {
+  const [account, user, warehouse, database, schema, table, role] = ["account", "user", "warehouse", "database", "schema", "table", "role"].map((k) => String(config[k] ?? ""));
+  if (!SF_ACCOUNT.test(account) || ![user, warehouse, database, schema, table].every((v) => SF_IDENT.test(v)) || (role !== "" && !SF_IDENT.test(role))) {
+    throw new DeliveryError("The Snowflake destination settings are not valid.");
+  }
+  let jwt: string;
+  try {
+    jwt = snowflakeJwt(account, user, pem, now);
+  } catch {
+    throw new DeliveryError("The Snowflake private key could not be read on this deployment.");
+  }
+  const base = SNOWFLAKE_URL(account);
+  const headers = {
+    authorization: `Bearer ${jwt}`,
+    "x-snowflake-authorization-token-type": "KEYPAIR_JWT",
+    "content-type": "application/json",
+    accept: "application/json",
+  };
+  const fq = `"${database}"."${schema}"."${table}"`;
+  const statement = async (sql: string, requestId: string, bindings?: Record<string, { type: string; value: (string | null)[] }>) => {
+    const body = JSON.stringify({ statement: sql, timeout: 60, database, schema, warehouse, ...(role ? { role } : {}), ...(bindings ? { bindings } : {}) });
+    let r = await call(fetchImpl, `${base}/api/v2/statements?requestId=${requestId}&retry=true`, { method: "POST", headers, body });
+    // 202: still running; poll its handle until it settles.
+    for (let i = 0; r.status === 202 && i < SF_POLLS; i++) {
+      let handle = "";
+      try {
+        handle = String(JSON.parse(r.body).statementHandle ?? "");
+      } catch {
+        handle = "";
+      }
+      if (!/^[A-Za-z0-9-]{1,100}$/.test(handle)) break;
+      await sleep(pollMs);
+      r = await call(fetchImpl, `${base}/api/v2/statements/${handle}`, { method: "GET", headers });
+    }
+    if (r.status !== 200) fail("Snowflake", r);
+    return { bytes: Buffer.byteLength(body), status: r.status };
+  };
+  const ddl =
+    `CREATE TABLE IF NOT EXISTS ${fq} ("UUID" VARCHAR NOT NULL, "EVENT" VARCHAR NOT NULL, "DISTINCT_ID" VARCHAR NOT NULL, "PERSON_ID" VARCHAR, ` +
+    `"TIMESTAMP" TIMESTAMP_TZ NOT NULL, "PROPERTIES" VARCHAR, "ELEMENTS_CHAIN" VARCHAR, "SESSION_ID" VARCHAR)`;
+  const batchId = batchRequestId(events);
+  await statement(ddl, batchRequestId([{ uuid: `ddl:${fq}:${batchId}` } as ExportedEvent]));
+  const rows = events.map(warehouseRow);
+  const keys = ["uuid", "event", "distinct_id", "person_id", "timestamp", "properties", "elements_chain", "session_id"] as const;
+  const bindings = Object.fromEntries(keys.map((k, i) => [String(i + 1), { type: "TEXT", value: rows.map((r) => r[k]) }]));
+  const insert = `INSERT INTO ${fq} (${SF_COLUMNS.map((c) => `"${c}"`).join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`;
+  return statement(insert, batchId, bindings);
+}
+
 /** Sends one batch to a warehouse destination. */
 export async function sendWarehouse(kind: WarehouseKind, config: Record<string, unknown>, target: string, events: ExportedEvent[], now: Date, fetchImpl: typeof fetch): Promise<{ bytes: number; status: number | null }> {
   if (events.length === 0) return { bytes: 0, status: null };
@@ -222,5 +343,6 @@ export async function sendWarehouse(kind: WarehouseKind, config: Record<string, 
     }
     return sendClickHouse(config, password, events, fetchImpl);
   }
+  if (kind === "snowflake") return sendSnowflake(config, target, events, now, fetchImpl, Number(process.env.PA_SNOWFLAKE_POLL_MS ?? 1000));
   return sendBigQuery(config, target, events, now, fetchImpl);
 }
