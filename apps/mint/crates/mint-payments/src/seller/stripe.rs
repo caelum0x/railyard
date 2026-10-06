@@ -162,6 +162,9 @@ pub async fn create_checkout(
 pub struct ConnectEvent {
     pub account: String,
     pub event: Option<EntitlementEvent>,
+    /// `account.application.deauthorized`: the seller disconnected our
+    /// platform from their Stripe account; nothing can be sold on it anymore.
+    pub deauthorized: bool,
 }
 
 /// Verifies one Connect delivery (the platform's endpoint secret) and maps it.
@@ -192,6 +195,9 @@ pub async fn verify_event<H: Headers>(
     let v: Value = serde_json::from_slice(raw).map_err(|_| WebhookError::Malformed("not JSON".into()))?;
     let account = v["account"].as_str().filter(|a| valid_account(a)).ok_or_else(|| WebhookError::Malformed("not a Connect event".into()))?.to_owned();
     let object = &v["data"]["object"];
+    if v["type"].as_str() == Some("account.application.deauthorized") {
+        return Ok(ConnectEvent { account, event: None, deauthorized: true });
+    }
     let (kind, reason, meta) = match v["type"].as_str().unwrap_or("") {
         "checkout.session.completed" if matches!(object["payment_status"].as_str(), Some("paid" | "no_payment_required")) => {
             (EntitlementKind::Granted, None, object["metadata"].clone())
@@ -213,7 +219,7 @@ pub async fn verify_event<H: Headers>(
             let reason = if kind == "charge.refunded" { RevokeReason::Refund } else { RevokeReason::Dispute };
             (EntitlementKind::Revoked, Some(reason), intent["metadata"].clone())
         }
-        _ => return Ok(ConnectEvent { account, event: None }),
+        _ => return Ok(ConnectEvent { account, event: None, deauthorized: false }),
     };
     let event = meta_from(&meta).map(|(seller_key, buyer_ref, sku)| EntitlementEvent {
         kind,
@@ -225,7 +231,7 @@ pub async fn verify_event<H: Headers>(
         occurred_at_ms: v["created"].as_i64().unwrap_or(ts) * 1000,
         expires_at_ms: object["lines"]["data"][0]["period"]["end"].as_i64().map(|s| s * 1000),
     });
-    Ok(ConnectEvent { account, event })
+    Ok(ConnectEvent { account, event, deauthorized: false })
 }
 
 #[cfg(test)]
@@ -322,5 +328,20 @@ mod tests {
         let (h, raw) = signed(&json!({"id":"evt_4","type":"checkout.session.completed","data":{"object":{}}}), now);
         assert!(verify_event(&fake, &cfg(), &h, &raw, now).await.is_err(), "not a Connect event");
         assert!(!format!("{:?}", cfg()).contains("sk_test_platform"));
+    }
+
+    #[tokio::test]
+    async fn a_deauthorization_names_the_account_and_no_entitlement() {
+        let fake = Fake::default();
+        let now = 1_790_683_200;
+        let (h, raw) = signed(
+            &json!({"id":"evt_9","type":"account.application.deauthorized","account":"acct_123","created":now,"data":{"object":{"id":"ca_test"}}}),
+            now,
+        );
+        let e = verify_event(&fake, &cfg(), &h, &raw, now).await.unwrap();
+        assert!(e.deauthorized);
+        assert_eq!(e.account, "acct_123");
+        assert!(e.event.is_none());
+        assert!(fake.calls.lock().unwrap().is_empty(), "no lookup on the revoked account");
     }
 }
