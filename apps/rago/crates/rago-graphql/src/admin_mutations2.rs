@@ -177,10 +177,17 @@ impl AdminMutation2 {
     }
 
     /// `RegenerateInvoice` (`Mutations::Invoices::RegenerateFromVoided`) —
-    /// re-issue a VOIDED invoice as a fresh finalized invoice carrying a copy
-    /// of every fee, so the new invoice's totals are backed by its line items.
+    /// re-issue a VOIDED invoice as a fresh finalized invoice. Without `fees`
+    /// every fee is copied; with `fees` each listed source fee takes new
+    /// `units` / `unitAmountCents` (zero units leaves it out), its amount and
+    /// taxes are recomputed and the invoice totals are rebuilt from the fees.
     /// Emits `invoice.created` + `invoice.generated`.
-    async fn regenerate_invoice(&self, ctx: &Context<'_>, voided_invoice_id: ID) -> Result<Invoice> {
+    async fn regenerate_invoice(
+        &self,
+        ctx: &Context<'_>,
+        voided_invoice_id: ID,
+        fees: Option<Vec<RegenerateFeeInput>>,
+    ) -> Result<Invoice> {
         let org = require_org(ctx)?;
         let src = db(ctx)
             .find_invoice(uuid(&voided_invoice_id)?)
@@ -194,6 +201,17 @@ impl AdminMutation2 {
         if src_fees.is_empty() {
             return Err(async_graphql::Error::new("invoice_has_no_fees_to_regenerate"));
         }
+        let adjustments = fees
+            .unwrap_or_default()
+            .into_iter()
+            .map(|f| {
+                let units = match f.units.as_deref() {
+                    Some(raw) => Some(raw.trim().parse::<rust_decimal::Decimal>().map_err(|_| async_graphql::Error::new("invalid_units"))?),
+                    None => None,
+                };
+                Ok(rago_billing::regenerate::FeeAdjustment { fee_id: uuid(&f.id)?, units, unit_amount_cents: f.unit_amount_cents })
+            })
+            .collect::<Result<Vec<_>>>()?;
         let now = Utc::now();
         let mut clone = src.clone();
         clone.id = Uuid::new_v4();
@@ -205,15 +223,11 @@ impl AdminMutation2 {
         clone.issuing_date = Some(now.date_naive());
         clone.created_at = now;
         clone.updated_at = now;
-        let copies: Vec<m::Fee> = src_fees
-            .iter()
-            .map(|fee| {
-                let mut copy = fee.clone();
-                copy.id = Uuid::new_v4();
-                copy.invoice_id = Some(clone.id);
-                copy
-            })
-            .collect();
+        let copies = rago_billing::regenerate::regenerate_fees(&src_fees, &adjustments, clone.id)
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        if !adjustments.is_empty() {
+            rago_billing::regenerate::retotal(&mut clone, &copies);
+        }
         db(ctx).insert_numbered_invoice_with_fees(&mut clone, &copies).await?;
         let object = serde_json::json!({
             "lago_id": clone.id,

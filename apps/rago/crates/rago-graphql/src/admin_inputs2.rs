@@ -6,6 +6,16 @@ use async_graphql::{InputObject, Json, ID};
 
 // ---- one-off invoices ------------------------------------------------------
 
+/// A change to one fee of a voided invoice being re-issued.
+#[derive(InputObject)]
+pub struct RegenerateFeeInput {
+    /// The voided invoice's fee.
+    pub id: ID,
+    /// New units (decimal string); `"0"` leaves the fee out.
+    pub units: Option<String>,
+    pub unit_amount_cents: Option<i64>,
+}
+
 #[derive(InputObject)]
 pub struct OneOffFeeInput {
     pub add_on_id: Option<ID>,
