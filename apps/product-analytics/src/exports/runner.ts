@@ -20,6 +20,7 @@ import { checkUrlShape, DestinationRefused } from "./net-guard.ts";
 import { guardedFetch } from "./guarded-fetch.ts";
 import { open } from "./secrets.ts";
 import { isCatalogue, openBundle, sendCatalogue, type SecretBundle } from "./catalogue.ts";
+import { applyTransform, type Transform } from "./transform.ts";
 
 export const BATCH_SIZE = 500;
 export const MAX_BATCHES_PER_RUN = 20;
@@ -164,17 +165,22 @@ export async function deliver(db: Db, raw: Record<string, unknown>, now: Date, o
     const started = now;
     let bytes = 0;
     let httpStatus: number | null = null;
+    // A23: the destination's transform filters and reshapes what it receives;
+    // the cursor still moves past every row read.
+    const out = applyTransform((d.config as { transform?: Transform }).transform, rows);
     try {
-      if (d.kind === "webhook") {
-        const body = JSON.stringify({ type: "events", project_id: d.project_id, batch_id: batchId, events: rows.map(exported) });
+      if (out.length === 0) {
+        // Nothing of this batch is for this destination.
+      } else if (d.kind === "webhook") {
+        const body = JSON.stringify({ type: "events", project_id: d.project_id, batch_id: batchId, events: out.map(exported) });
         bytes = Buffer.byteLength(body);
         httpStatus = await sendWebhook(d.config as WebhookConfig, secret, body, `msg_${batchId}`, now, fetchImpl);
       } else if (isCatalogue(d.kind) && bundle) {
-        const sent = await sendCatalogue(d.kind, bundle, rows.map(exported), `msg_${batchId}`, now, fetchImpl, d.config as Record<string, unknown>);
+        const sent = await sendCatalogue(d.kind, bundle, out.map(exported), `msg_${batchId}`, now, fetchImpl, d.config as Record<string, unknown>);
         bytes = sent.bytes;
         httpStatus = sent.status;
       } else {
-        bytes = await sendS3(d, secret, rows, batchId, fetchImpl);
+        bytes = await sendS3(d, secret, out, batchId, fetchImpl);
       }
     } catch (err) {
       const e = err instanceof DeliveryError ? err : new DeliveryError((err as Error).message.slice(0, 300));

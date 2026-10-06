@@ -30,3 +30,9 @@ export function sdkEsmPath(pkgDir: string): string {
   const own = join(pkgDir, "node_modules/posthog-js/dist/module.mjs");
   return existsSync(own) ? own : join(SERVICE_ROOT, "node_modules/posthog-js/dist/module.mjs");
 }
+
+/** An upstream SDK package's directory: the package's own install, else this service's. */
+export function sdkPackageDir(pkgDir: string, name: string): string {
+  const own = join(pkgDir, "node_modules", name);
+  return existsSync(own) ? own : join(SERVICE_ROOT, "node_modules", name);
+}

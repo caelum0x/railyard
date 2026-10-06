@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { sdkPackageDir } from "../sdk-deps.ts";
 
 const SVC = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const sha = (p: string) => createHash("sha256").update(readFileSync(join(SVC, p))).digest("hex").slice(0, 16);
@@ -32,9 +33,13 @@ test("vendored files are unchanged and keep their licences", () => {
   for (const n of ["public/player/NOTICE", "src/replay/NOTICE", "src/experiments/NOTICE"]) assert.ok(existsSync(join(SVC, n)), n);
 });
 
-test("the SDK parts served at /static/ are the wrapper's SDK version", { skip: existsSync(join(SVC, "../../packages/analytics-js/node_modules/posthog-js/package.json")) ? false : "wrapper dependencies not installed" }, () => {
-  const wrapper = join(SVC, "../../packages/analytics-js/node_modules/posthog-js");
+test("the SDK parts served at /static/ are the wrapper's SDK version", () => {
+  const pkg = join(SVC, "../../packages/analytics-js");
+  const declared = JSON.parse(readFileSync(join(pkg, "package.json"), "utf8")).dependencies["posthog-js"];
+  // The wrapper's own install, else this service's pin of the same version.
+  const wrapper = sdkPackageDir(pkg, "posthog-js");
   const version = JSON.parse(readFileSync(join(wrapper, "package.json"), "utf8")).version;
+  assert.equal(version, declared, "the installed SDK is the wrapper's pinned version");
   assert.equal(JSON.parse(readFileSync(join(SVC, "public/player/sdk/package.json"), "utf8")).version, version);
   for (const f of ["lazy-recorder.js", "surveys.js", "dead-clicks-autocapture.js"]) assert.ok(readFileSync(join(wrapper, "dist", f)).equals(readFileSync(join(SVC, "public/player/sdk", f))), f);
 });

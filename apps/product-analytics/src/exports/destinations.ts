@@ -13,6 +13,7 @@ import { ApiError, text } from "../replay/shared/console-guard.ts";
 import { checkUrlShape, DestinationRefused } from "./net-guard.ts";
 import { newSigningSecret, seal, SecretsUnavailable } from "./secrets.ts";
 import { checkCatalogue, isCatalogue, sealBundle, type CatalogueKind } from "./catalogue.ts";
+import { checkTransform, type Transform } from "./transform.ts";
 
 /** Destinations per project (target, copy-source: apps/product-analytics/src/exports/destinations.ts). */
 export const MAX_DESTINATIONS = 6;
@@ -27,7 +28,7 @@ export interface Destination {
   project_id: string;
   name: string;
   kind: "webhook" | "s3" | CatalogueKind;
-  config: WebhookConfig | S3DestConfig | CatalogueConfig;
+  config: (WebhookConfig | S3DestConfig | CatalogueConfig) & { transform?: Transform };
   events: string[] | null;
   enabled: boolean;
   status: "ok" | "retrying" | "failing";
@@ -54,7 +55,7 @@ export const toDestination = (r: Record<string, unknown>): Destination => ({
 export interface NewDestination {
   name: string;
   kind: "webhook" | "s3" | CatalogueKind;
-  config: WebhookConfig | S3DestConfig | CatalogueConfig;
+  config: (WebhookConfig | S3DestConfig | CatalogueConfig) & { transform?: Transform };
   /** What is sealed: the signing secret, the S3 key, or a catalogue bundle (JSON). */
   secret: string;
   /** The signing secret shown once (webhook and catalogue kinds). */
@@ -72,7 +73,14 @@ function guard<T>(fn: () => T): T {
   }
 }
 
+/** Validates a new destination, its kind's settings and its transform (A23). */
 export function checkDestination(b: Record<string, unknown>): NewDestination {
+  const transform = checkTransform(b.transform);
+  const d = checkKind(b);
+  return transform ? { ...d, config: { ...d.config, transform } } : d;
+}
+
+function checkKind(b: Record<string, unknown>): NewDestination {
   const name = text(b.name, "Name", 200)!;
   const events = b.events === undefined || b.events === null ? null : b.events;
   if (events !== null && (!Array.isArray(events) || events.length === 0 || events.length > MAX_EVENT_FILTER || !events.every((e) => typeof e === "string" && e.length >= 1 && e.length <= 200))) {
@@ -145,11 +153,17 @@ export async function updateDestination(db: Db, projectId: string, id: string, b
   return db.asProject(projectId, async (c) => {
     await getDestination(c, projectId, id);
     if (b.enabled !== undefined && typeof b.enabled !== "boolean") throw new ApiError(400, "enabled must be true or false.");
+    // A23: `transform` replaces the destination's transform; null removes it.
+    const changeTransform = Object.prototype.hasOwnProperty.call(b, "transform");
+    const transform = changeTransform ? checkTransform(b.transform) : null;
     const r = await c.query(
       `update pa.export_destinations set enabled = coalesce($3, enabled),
-         next_attempt_at = case when $4 then null else next_attempt_at end, updated_at = $5
+         next_attempt_at = case when $4 then null else next_attempt_at end, updated_at = $5,
+         config = case when not $6 then config
+                       when $7::jsonb is null then config - 'transform'
+                       else jsonb_set(config, '{transform}', $7::jsonb) end
        where project_id = $1 and id = $2 returning ${COLS}`,
-      [projectId, id, b.enabled ?? null, b.retry_now === true, now.toISOString()],
+      [projectId, id, b.enabled ?? null, b.retry_now === true, now.toISOString(), changeTransform, transform ? JSON.stringify(transform) : null],
     );
     return toDestination(r.rows[0]);
   });

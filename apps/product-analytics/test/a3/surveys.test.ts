@@ -17,6 +17,7 @@ import { surveyTargetingAnswers } from "../../src/surveys/targeting.ts";
 import { targetingFlagKey } from "../../src/surveys/model.ts";
 import { makeSite, migratedPg, skipNoPg, startService, type Running, type ScratchPg } from "../a1/helpers.ts";
 import { api, insertEvents, SECRET, waitFor, type Row } from "./helpers.ts";
+import { sdkEsmPath, sdkPackageDir } from "../sdk-deps.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG = join(HERE, "../../../../packages/analytics-js");
@@ -183,7 +184,7 @@ test("web example: the survey shows on the targeted page in Chromium and its ans
 </script></body></html>`;
   const files: Record<string, [string, string]> = {
     "/checkout": [page, "text/html"],
-    "/vendor/sdk.mjs": [readFileSync(join(PKG, "node_modules/posthog-js/dist/module.mjs"), "utf8"), "text/javascript"],
+    "/vendor/sdk.mjs": [readFileSync(sdkEsmPath(PKG), "utf8"), "text/javascript"],
     "/pkg/index.mjs": [readFileSync(join(PKG, "src/index.mjs"), "utf8"), "text/javascript"],
     "/pkg/env.mjs": [readFileSync(join(PKG, "src/env.mjs"), "utf8"), "text/javascript"],
   };
@@ -254,7 +255,7 @@ test("Expo example: the React Native SDK reads the survey, matches it on the dev
   let surveys: Record<string, unknown>[] = [];
   assert.ok(await waitFor(async () => (surveys = await client.getSurveys()).length === 2, 15_000, 200), "the SDK read the surveys from the app's config");
   assert.deepEqual(surveys.map((x) => x.id).sort(), [s.id, web.id].sort());
-  const rnRequire = createRequire(join(PKG, "node_modules/posthog-react-native/package.json"));
+  const rnRequire = createRequire(join(sdkPackageDir(PKG, "posthog-react-native"), "package.json"));
   const { getActiveMatchingSurveys } = rnRequire("./dist/surveys/getActiveMatchingSurveys.js");
   const active = getActiveMatchingSurveys(surveys, {}, [], new Set());
   assert.deepEqual(active.map((x: { id: string }) => x.id), [s.id], "the page-address survey is web only");

@@ -147,6 +147,15 @@ export default async function NewDestinationPage({ searchParams }: { searchParam
               <input name="events" placeholder="signup, purchase" />
             </label>
             <label style={input}>
+              <span className="muted">Transform (JSON, optional): where, keep or drop, rename, set</span>
+              <textarea
+                name="transform"
+                rows={3}
+                spellCheck={false}
+                placeholder='{"where":[{"property":"plan","op":"eq","value":"pro"}],"drop":["email"]}'
+              />
+            </label>
+            <label style={input}>
               <span className="muted">Start with</span>
               <select name="start" defaultValue="now">
                 <option value="now">Events from now on</option>

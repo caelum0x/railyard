@@ -244,4 +244,8 @@ test("console forms map to what the service takes", async () => {
     secret: "{}",
   });
   assert.equal(destinationTarget({ kind: "bigquery", config: { project_id: "p", dataset: "d", table: "t" } }), "BigQuery table p.d.t");
+  // A23: the transform field is parsed as JSON (and passed through when it is not JSON).
+  assert.deepEqual(destinationFromForm({ name: "T", kind: "webhook", url: "https://h.example/x", transform: '{"drop":["email"]}' }).transform, { drop: ["email"] });
+  assert.equal(destinationFromForm({ name: "T", kind: "webhook", url: "https://h.example/x", transform: "not json" }).transform, "not json");
+  assert.equal("transform" in destinationFromForm({ name: "T", kind: "webhook", url: "https://h.example/x", transform: "  " }), false);
 });

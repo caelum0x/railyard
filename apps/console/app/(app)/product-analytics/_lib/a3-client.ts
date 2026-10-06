@@ -363,12 +363,26 @@ export function experimentFromForm(form: Record<string, string>): Record<string,
   };
 }
 
+/**
+ * A23: the optional transform typed as JSON. Text that is not JSON is passed
+ * through as-is, so the service answers with its own message (400).
+ */
+function transformFromForm(raw: string | undefined): { transform?: unknown } {
+  const t = (raw ?? "").trim();
+  if (!t) return {};
+  try {
+    return { transform: JSON.parse(t) };
+  } catch {
+    return { transform: t };
+  }
+}
+
 export function destinationFromForm(form: Record<string, string>): Record<string, unknown> {
   const events = (form.events ?? "")
     .split(/[\n,]/)
     .map((s) => s.trim())
     .filter(Boolean);
-  const common = { name: form.name ?? "", start: form.start === "all" ? "all" : "now", ...(events.length ? { events } : {}) };
+  const common = { name: form.name ?? "", start: form.start === "all" ? "all" : "now", ...(events.length ? { events } : {}), ...transformFromForm(form.transform) };
   if (form.kind === "slack" || form.kind === "discord" || form.kind === "hubspot") {
     // QY1.4: the webhook address (Slack, Discord) or the private app token (HubSpot) is sealed by the service.
     return { ...common, kind: form.kind, config: { label: form.label ?? "" }, secret: form.target ?? "" };
