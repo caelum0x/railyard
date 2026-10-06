@@ -31,7 +31,7 @@ pub fn validate_name(kind: &'static str, name: &str) -> Result<(), CoreError> {
     if name.starts_with('.') || name.starts_with('-') {
         return Err(invalid(name));
     }
-    if name.ends_with(".git") || name.ends_with(".lock") {
+    if name.ends_with(".git") || name.ends_with(".lock") || name.ends_with(".wiki") {
         return Err(invalid(name));
     }
     let charset_ok = name

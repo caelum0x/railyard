@@ -231,7 +231,8 @@ git push "http://ada:$TOKEN@localhost:8099/acme/widgets.git" HEAD:main   # authe
 | **Automation** | webhook durable retry/DLQ, email notifications, jobs/outbox worker, CI runners | partial (in-app notifications + API/push webhooks + retry + audit) |
 | **Markup / assets** | syntax highlighting (blobs shown escaped), richer/safer markdown, binary release assets, code (grep-style) search | not yet |
 | **CI runner + LFS** | `rithub-runner` executes `.rithub/workflows/*.yml` jobs and reports check runs; Git LFS batch API + basic transfer (sha256-verified, RBAC-scoped); live-Postgres test harness (`RITHUB_TEST_DATABASE_URL`) | **done** |
-| **Big-ticket products** | packages/pages, projects/wikis/discussions, gists, SPA | not yet |
+| **Packages + wiki** | per-repo package registry: npm, generic files and OCI images (`/v2/`), content-addressed, repo permissions; git-backed markdown wiki (`{repo}.wiki.git`) with history, optimistic locking and repo permissions | **done** |
+| **Big-ticket products** | pages, projects/discussions, gists, SPA | not yet |
 
 Known limitations (not faked): the git server is now **fully `rit`-native** — the
 `rit upload-pack`/`receive-pack` CLIs and the merge engine use **no `git` binary**
