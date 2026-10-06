@@ -53,7 +53,7 @@ jobs:
             args: >-
               -p relay-aitp -p relay-aitp-wire -p relay-billing -p relay-catalog
               -p relay-contract -p relay-cost-feed -p relay-hedge -p relay-sdk
-              -p relay-storage-postgres -p relay-traces
+              -p relay-storage-postgres -p relay-traces -p relay-guardrails
           - app: ledgerline
             dir: apps/ledgerline
             args: ""
