@@ -182,7 +182,7 @@ pub async fn call(st: &AppState, p: &Principal, target: &str, input: Value, opts
                 receipt_id: None,
                 units: None,
             };
-            record_shadow(st, p, target, &req_hash, &ex, side).await?;
+            let ex = serve_cached(st, p, &plan, target, &req_hash, ex, side).await?;
             return Ok(to_outcome(ex));
         }
         if cache_mode == "only" {
@@ -195,7 +195,7 @@ pub async fn call(st: &AppState, p: &Principal, target: &str, input: Value, opts
         let ex = res?;
         if deduped {
             let mine = Executed { call_id: new_id("call"), cost_micros: 0, cache: "dedupe", hold_id: None, receipt_id: None, ..ex };
-            record_shadow(st, p, target, &req_hash, &mine, side).await?;
+            let mine = serve_cached(st, p, &plan, target, &req_hash, mine, side).await?;
             return Ok(to_outcome(mine));
         }
         return Ok(to_outcome(ex));
@@ -255,8 +255,42 @@ async fn replay(st: &AppState, p: &Principal, target: &str, req_hash: &str, key:
     Ok(Outcome { body, call_id, provider, cost_micros: 0 })
 }
 
-/// Audit row for a zero-cost cache hit or single-flight follower.
-async fn record_shadow(st: &AppState, p: &Principal, target: &str, req_hash: &str, ex: &Executed, side: SideEffect) -> Result<(), ApiError> {
+/// The cache-hit price a caller pays for a stored answer of `tool_id`: the
+/// tool's `cache_micros` when this caller is metered for it, else zero (own
+/// credentials and free tools never pay for a cache hit).
+pub fn cache_hit_price(plan: &Plan, tool_id: &str) -> i64 {
+    plan.candidates
+        .iter()
+        .find(|c| c.tool.id == tool_id)
+        .filter(|c| c.metered)
+        .map(|c| c.tool.price.cache_micros.max(0))
+        .unwrap_or(0)
+}
+
+/// Serve a stored answer (cache hit or single-flight follower): charge the
+/// tool's cache price when it has one (caps, then a hold captured at once,
+/// then a Rago event through the outbox), and write the audit row.
+async fn serve_cached(st: &AppState, p: &Principal, plan: &Plan, target: &str, req_hash: &str, ex: Executed, side: SideEffect) -> Result<Executed, ApiError> {
+    let price = cache_hit_price(plan, &ex.tool_id);
+    if price == 0 {
+        record_shadow(st, p, target, req_hash, &ex, side, Vec::new()).await?;
+        return Ok(ex);
+    }
+    let scope = CapScope { money: true, tools: tool_cap_scope(st, p, plan), sends: 0 };
+    let _guard = st.caps.check_scope(st.store.as_ref(), &p.project, &p.key, &scope, price, Utc::now()).await?;
+    let hold = place_hold(st, p, price, &ex.call_id).await?;
+    let mut outbox = Vec::new();
+    let receipt = settle_hold(st, &hold, price, &ex.call_id, &mut outbox).await;
+    if let Some(ev) = rago_event(p, &ex.call_id, &ex.tool_id, &ex.provider, price) {
+        outbox.push(ev);
+    }
+    let charged = Executed { cost_micros: price, hold_id: Some(hold), receipt_id: receipt.filter(|r| !r.is_empty()), ..ex };
+    record_shadow(st, p, target, req_hash, &charged, side, outbox).await?;
+    Ok(charged)
+}
+
+/// Audit row for a cache hit or single-flight follower (with its charge, if any).
+async fn record_shadow(st: &AppState, p: &Principal, target: &str, req_hash: &str, ex: &Executed, side: SideEffect, outbox: Vec<OutboxItem>) -> Result<(), ApiError> {
     st.store
         .record_call(
             NewCall {
@@ -273,16 +307,16 @@ async fn record_shadow(st: &AppState, p: &Principal, target: &str, req_hash: &st
                 status: "ok".into(),
                 http_status: 200,
                 latency_ms: 0,
-                cost_micros: 0,
+                cost_micros: ex.cost_micros,
                 price_basis: ex.cache.into(),
-                mint_hold_id: None,
-                mint_receipt: None,
-                rago_event_id: None,
+                mint_hold_id: ex.hold_id.clone(),
+                mint_receipt: ex.receipt_id.clone(),
+                rago_event_id: (ex.cost_micros > 0 && p.org.rago_subscription_id.is_some()).then(|| ex.call_id.clone()),
                 cache: ex.cache.into(),
                 fallback_chain: json!([]),
                 created_at: Utc::now(),
             },
-            vec![],
+            outbox,
             None,
         )
         .await

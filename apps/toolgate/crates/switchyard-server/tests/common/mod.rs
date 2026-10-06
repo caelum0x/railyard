@@ -59,6 +59,35 @@ pub async fn harness() -> H {
 }
 
 pub async fn harness_with(store: Arc<dyn Store>, mem: Option<Arc<MemStore>>) -> H {
+    harness_full(store, mem, fixtures::catalog()).await
+}
+
+/// The shipped catalog with `edit` applied to every tool manifest.
+pub fn catalog_with(edit: impl Fn(&mut switchyard_core::ToolManifest)) -> switchyard_catalog::Catalog {
+    let base = fixtures::catalog();
+    let tools = base
+        .tools()
+        .cloned()
+        .map(|mut t| {
+            edit(&mut t);
+            t
+        })
+        .collect();
+    switchyard_catalog::Catalog::from_parts(
+        base.capabilities().cloned().collect(),
+        base.providers().cloned().collect(),
+        tools,
+        base.bundles().cloned().collect(),
+    )
+    .expect("edited catalog verifies")
+}
+
+pub async fn harness_with_catalog(catalog: switchyard_catalog::Catalog) -> H {
+    let mem = Arc::new(MemStore::new());
+    harness_full(mem.clone(), Some(mem), catalog).await
+}
+
+pub async fn harness_full(store: Arc<dyn Store>, mem: Option<Arc<MemStore>>, catalog: switchyard_catalog::Catalog) -> H {
     let mut settings = Settings::for_tests(BASE);
     settings.adapter_config = fixtures::test_config();
     settings.platform_credentials.insert("rally".into(), "platform-rally-token".into());
@@ -71,7 +100,7 @@ pub async fn harness_with(store: Arc<dyn Store>, mem: Option<Arc<MemStore>>) -> 
     let rago = FakeRago::new();
     let st = AppState::new(Deps {
         settings,
-        catalog: fixtures::catalog(),
+        catalog,
         store: store.clone(),
         keys: keys.clone(),
         identity: Arc::new(StaticIdentity::new(&[("sess-alice", "u_alice", "alice@acme.test"), ("sess-mallory", "u_mallory", "m@evil.test")])),
