@@ -13,6 +13,18 @@ use mint_receipts::FixedSigner;
 use mint_store::{LedgerStore, TransferCommit};
 use mint_store_postgres::PgStore;
 
+/// Idempotency keys are global in the ledger, so each run gets its own (a
+/// re-run on the same scratch database replays nothing from the last one).
+fn run_key(tag: &str) -> String {
+    static RUN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let run = RUN.get_or_init(|| {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
+        format!("{nanos:x}-{}", std::process::id())
+    });
+    format!("{tag}:{run}")
+}
+
+
 async fn connect() -> Option<PgStore> {
     let url = std::env::var("DATABASE_URL").ok()?;
     let store = PgStore::connect(&url, Arc::new(FixedSigner::new()))
@@ -56,8 +68,8 @@ async fn transfer_conserves_and_rebuild_matches_live() {
         .commit_mint(mint_store::MintCommit {
             to: a.clone(),
             amount,
-            deposit_ref: "dep-1".into(),
-            idem_key: "mint:dep-1".into(),
+            deposit_ref: run_key("dep-1"),
+            idem_key: run_key("mint:dep-1"),
             op_hash: mint_hash,
         })
         .await
@@ -72,7 +84,7 @@ async fn transfer_conserves_and_rebuild_matches_live() {
             from: a.clone(),
             to: b.clone(),
             amount: xfer_amount,
-            idem_key: "xfer-1".into(),
+            idem_key: run_key("xfer-1"),
             op_hash,
             ref_: None,
         })
@@ -87,7 +99,7 @@ async fn transfer_conserves_and_rebuild_matches_live() {
             from: a.clone(),
             to: b.clone(),
             amount: xfer_amount,
-            idem_key: "xfer-1".into(),
+            idem_key: run_key("xfer-1"),
             op_hash,
             ref_: None,
         })

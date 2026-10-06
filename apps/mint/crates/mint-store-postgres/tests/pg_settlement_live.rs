@@ -24,6 +24,20 @@ use mint_store::{
 };
 use mint_store_postgres::PgStore;
 
+/// Idempotency keys are global in the ledger, so each run gets its own (a
+/// re-run on the same scratch database replays nothing from the last one).
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn run_key(tag: &str) -> String {
+    static RUN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let run = RUN.get_or_init(|| {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
+        format!("{nanos:x}-{}", std::process::id())
+    });
+    format!("{tag}:{run}")
+}
+
+
 async fn connect() -> Option<PgStore> {
     let url = std::env::var("DATABASE_URL").ok()?;
     let store = PgStore::connect(&url, Arc::new(FixedSigner::new()))
@@ -64,7 +78,7 @@ async fn fund(store: &PgStore, to: &AccountId, micros: i64, nonce: &str) {
             to: to.clone(),
             amount: amt(micros),
             deposit_ref: format!("dep-{nonce}"),
-            idem_key: format!("mint:{nonce}"),
+            idem_key: run_key(&format!("mint:{nonce}")),
             op_hash: oph("mint", nonce),
         })
         .await
@@ -81,6 +95,9 @@ async fn hold_full_capture_conserves_and_capture_is_exactly_once() {
     let Some(store) = connect().await else {
         return;
     };
+    // The reserve is global: these tests assert it unchanged, so they run one
+    // at a time (a parallel test's funding would move it).
+    let _serial = SERIAL.lock().await;
     let holder = store.create_account(AccountKind::User, None).await.unwrap();
     let payee = store.create_account(AccountKind::Model, None).await.unwrap();
     let ids = [holder.clone(), payee.clone()];
@@ -94,7 +111,7 @@ async fn hold_full_capture_conserves_and_capture_is_exactly_once() {
         .commit_hold_create(HoldCreateCommit {
             from: holder.clone(),
             amount: amt(4_000_000),
-            idem_key: "hfc:open".into(),
+            idem_key: run_key("hfc:open"),
             op_hash: oph("hold.create", "hfc"),
             ref_: None,
             expires_at_ms: None,
@@ -113,7 +130,7 @@ async fn hold_full_capture_conserves_and_capture_is_exactly_once() {
             hold_id: open.hold_id.clone(),
             amount: amt(4_000_000),
             to: payee.clone(),
-            idem_key: "hfc:cap".into(),
+            idem_key: run_key("hfc:cap"),
             op_hash: cap_op,
             ref_: None,
         })
@@ -134,7 +151,7 @@ async fn hold_full_capture_conserves_and_capture_is_exactly_once() {
             hold_id: open.hold_id.clone(),
             amount: amt(4_000_000),
             to: payee.clone(),
-            idem_key: "hfc:cap".into(),
+            idem_key: run_key("hfc:cap"),
             op_hash: cap_op,
             ref_: None,
         })
@@ -150,7 +167,7 @@ async fn hold_full_capture_conserves_and_capture_is_exactly_once() {
             hold_id: open.hold_id.clone(),
             amount: amt(4_000_000),
             to: payee.clone(),
-            idem_key: "hfc:cap2".into(),
+            idem_key: run_key("hfc:cap2"),
             op_hash: oph("hold.capture", "hfc2"),
             ref_: None,
         })
@@ -174,6 +191,9 @@ async fn hold_partial_capture_returns_remainder_and_closes() {
     let Some(store) = connect().await else {
         return;
     };
+    // The reserve is global: these tests assert it unchanged, so they run one
+    // at a time (a parallel test's funding would move it).
+    let _serial = SERIAL.lock().await;
     let holder = store.create_account(AccountKind::User, None).await.unwrap();
     let payee = store.create_account(AccountKind::Model, None).await.unwrap();
     let ids = [holder.clone(), payee.clone()];
@@ -185,7 +205,7 @@ async fn hold_partial_capture_returns_remainder_and_closes() {
         .commit_hold_create(HoldCreateCommit {
             from: holder.clone(),
             amount: amt(4_000_000),
-            idem_key: "hpc:open".into(),
+            idem_key: run_key("hpc:open"),
             op_hash: oph("hold.create", "hpc"),
             ref_: None,
             expires_at_ms: None,
@@ -201,7 +221,7 @@ async fn hold_partial_capture_returns_remainder_and_closes() {
             hold_id: open.hold_id.clone(),
             amount: amt(1_000_000),
             to: payee.clone(),
-            idem_key: "hpc:cap".into(),
+            idem_key: run_key("hpc:cap"),
             op_hash: oph("hold.capture", "hpc"),
             ref_: None,
         })
@@ -219,7 +239,7 @@ async fn hold_partial_capture_returns_remainder_and_closes() {
     let rel = store
         .commit_hold_release(HoldReleaseCommit {
             hold_id: open.hold_id.clone(),
-            idem_key: "hpc:rel".into(),
+            idem_key: run_key("hpc:rel"),
             op_hash: oph("hold.release", "hpc"),
             ref_: None,
         })
@@ -240,6 +260,9 @@ async fn hold_release_returns_full_and_is_idempotent() {
     let Some(store) = connect().await else {
         return;
     };
+    // The reserve is global: these tests assert it unchanged, so they run one
+    // at a time (a parallel test's funding would move it).
+    let _serial = SERIAL.lock().await;
     let holder = store.create_account(AccountKind::User, None).await.unwrap();
     let ids = [holder.clone()];
 
@@ -250,7 +273,7 @@ async fn hold_release_returns_full_and_is_idempotent() {
         .commit_hold_create(HoldCreateCommit {
             from: holder.clone(),
             amount: amt(3_000_000),
-            idem_key: "hr:open".into(),
+            idem_key: run_key("hr:open"),
             op_hash: oph("hold.create", "hr"),
             ref_: None,
             expires_at_ms: None,
@@ -264,7 +287,7 @@ async fn hold_release_returns_full_and_is_idempotent() {
     store
         .commit_hold_release(HoldReleaseCommit {
             hold_id: open.hold_id.clone(),
-            idem_key: "hr:rel".into(),
+            idem_key: run_key("hr:rel"),
             op_hash: rel_op,
             ref_: None,
         })
@@ -279,7 +302,7 @@ async fn hold_release_returns_full_and_is_idempotent() {
     let replay = store
         .commit_hold_release(HoldReleaseCommit {
             hold_id: open.hold_id.clone(),
-            idem_key: "hr:rel".into(),
+            idem_key: run_key("hr:rel"),
             op_hash: rel_op,
             ref_: None,
         })
@@ -292,7 +315,7 @@ async fn hold_release_returns_full_and_is_idempotent() {
     let again = store
         .commit_hold_release(HoldReleaseCommit {
             hold_id: open.hold_id.clone(),
-            idem_key: "hr:rel2".into(),
+            idem_key: run_key("hr:rel2"),
             op_hash: oph("hold.release", "hr2"),
             ref_: None,
         })
@@ -307,6 +330,9 @@ async fn concurrent_double_capture_exactly_one_wins_and_conserves() {
     let Some(store) = connect().await else {
         return;
     };
+    // The reserve is global: these tests assert it unchanged, so they run one
+    // at a time (a parallel test's funding would move it).
+    let _serial = SERIAL.lock().await;
     let store = Arc::new(store);
     let holder = store.create_account(AccountKind::User, None).await.unwrap();
     let payee = store.create_account(AccountKind::Model, None).await.unwrap();
@@ -319,7 +345,7 @@ async fn concurrent_double_capture_exactly_one_wins_and_conserves() {
         .commit_hold_create(HoldCreateCommit {
             from: holder.clone(),
             amount: amt(4_000_000),
-            idem_key: "cc:open".into(),
+            idem_key: run_key("cc:open"),
             op_hash: oph("hold.create", "cc"),
             ref_: None,
             expires_at_ms: None,
@@ -341,7 +367,7 @@ async fn concurrent_double_capture_exactly_one_wins_and_conserves() {
                     hold_id,
                     amount: amt(4_000_000),
                     to: payee,
-                    idem_key: key.into(),
+                    idem_key: run_key(key),
                     op_hash: oph("hold.capture", key),
                     ref_: None,
                 })
@@ -375,6 +401,9 @@ async fn stream_tick_accrues_and_close_settles_once() {
     let Some(store) = connect().await else {
         return;
     };
+    // The reserve is global: these tests assert it unchanged, so they run one
+    // at a time (a parallel test's funding would move it).
+    let _serial = SERIAL.lock().await;
     let payer = store.create_account(AccountKind::User, None).await.unwrap();
     let payee = store.create_account(AccountKind::Model, None).await.unwrap();
     let ids = [payer.clone(), payee.clone()];
@@ -390,7 +419,7 @@ async fn stream_tick_accrues_and_close_settles_once() {
             rate: amt(1_000_000),
             cap: amt(5_000_000),
             unit: StreamUnit::Unit,
-            idem_key: "st:open".into(),
+            idem_key: run_key("st:open"),
             op_hash: oph("stream.open", "st"),
             ref_: None,
         })
@@ -405,7 +434,7 @@ async fn stream_tick_accrues_and_close_settles_once() {
             stream_id: open.stream_id.clone(),
             units: 2,
             seq: 1,
-            idem_key: "st:t1".into(),
+            idem_key: run_key("st:t1"),
             op_hash: tick_op,
             ref_: None,
         })
@@ -422,7 +451,7 @@ async fn stream_tick_accrues_and_close_settles_once() {
             stream_id: open.stream_id.clone(),
             units: 2,
             seq: 1,
-            idem_key: "st:t1".into(),
+            idem_key: run_key("st:t1"),
             op_hash: tick_op,
             ref_: None,
         })
@@ -439,7 +468,7 @@ async fn stream_tick_accrues_and_close_settles_once() {
             stream_id: open.stream_id.clone(),
             units: 0,
             seq: 0,
-            idem_key: "st:close".into(),
+            idem_key: run_key("st:close"),
             op_hash: close_op,
             ref_: None,
         })
@@ -458,7 +487,7 @@ async fn stream_tick_accrues_and_close_settles_once() {
             stream_id: open.stream_id.clone(),
             units: 0,
             seq: 0,
-            idem_key: "st:close".into(),
+            idem_key: run_key("st:close"),
             op_hash: close_op,
             ref_: None,
         })
@@ -473,7 +502,7 @@ async fn stream_tick_accrues_and_close_settles_once() {
             stream_id: open.stream_id.clone(),
             units: 1,
             seq: 2,
-            idem_key: "st:t2".into(),
+            idem_key: run_key("st:t2"),
             op_hash: oph("stream.tick", "st2"),
             ref_: None,
         })
@@ -497,6 +526,9 @@ async fn allowance_spend_enforces_budget_and_projection_matches() {
     let Some(store) = connect().await else {
         return;
     };
+    // The reserve is global: these tests assert it unchanged, so they run one
+    // at a time (a parallel test's funding would move it).
+    let _serial = SERIAL.lock().await;
     let granter = store.create_account(AccountKind::User, None).await.unwrap();
     let payee = store.create_account(AccountKind::Model, None).await.unwrap();
     let ids = [granter.clone(), payee.clone()];
@@ -511,7 +543,7 @@ async fn allowance_spend_enforces_budget_and_projection_matches() {
             limit: amt(5_000_000),
             window: AllowanceWindow::PerCall,
             scope: None,
-            idem_key: "al:grant".into(),
+            idem_key: run_key("al:grant"),
             op_hash: oph("allowance.grant", "al"),
         })
         .await
@@ -526,7 +558,7 @@ async fn allowance_spend_enforces_budget_and_projection_matches() {
             to: payee.clone(),
             scheme: AllowanceScheme::Transfer,
             ref_: None,
-            idem_key: "al:s1".into(),
+            idem_key: run_key("al:s1"),
             op_hash: oph("allowance.spend", "al1"),
         })
         .await
@@ -544,7 +576,7 @@ async fn allowance_spend_enforces_budget_and_projection_matches() {
             to: payee.clone(),
             scheme: AllowanceScheme::Transfer,
             ref_: None,
-            idem_key: "al:s2".into(),
+            idem_key: run_key("al:s2"),
             op_hash: oph("allowance.spend", "al2"),
         })
         .await;
@@ -560,7 +592,7 @@ async fn allowance_spend_enforces_budget_and_projection_matches() {
             to: payee.clone(),
             scheme: AllowanceScheme::Transfer,
             ref_: None,
-            idem_key: "al:s3".into(),
+            idem_key: run_key("al:s3"),
             op_hash: oph("allowance.spend", "al3"),
         })
         .await
