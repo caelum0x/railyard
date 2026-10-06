@@ -533,17 +533,21 @@ async fn invoice_finalize_update_refresh_dispute(pool: PgPool) {
     .await
     .unwrap();
 
-    // finalize
-    let resp = run(&schema, &org, r#"mutation($id: ID!) { finalizeInvoice(id: $id) { status } }"#, json!({ "id": inv.id.to_string() })).await;
-    assert_eq!(data(&resp)["finalizeInvoice"]["status"], "finalized");
-    assert_eq!(db.find_invoice(inv.id).await.unwrap().unwrap().status, InvoiceStatus::Finalized);
-
-    // refresh totals from fees
+    // refresh the draft (a line without a recorded usage window: totals re-summed)
     let resp = run(&schema, &org, r#"mutation($id: ID!) { refreshInvoice(id: $id) { feesAmountCents taxesAmountCents totalAmountCents } }"#, json!({ "id": inv.id.to_string() })).await;
     let d = data(&resp);
     assert_eq!(d["refreshInvoice"]["feesAmountCents"], 1500);
     assert_eq!(d["refreshInvoice"]["taxesAmountCents"], 150);
     assert_eq!(d["refreshInvoice"]["totalAmountCents"], 1650);
+
+    // finalize
+    let resp = run(&schema, &org, r#"mutation($id: ID!) { finalizeInvoice(id: $id) { status } }"#, json!({ "id": inv.id.to_string() })).await;
+    assert_eq!(data(&resp)["finalizeInvoice"]["status"], "finalized");
+    assert_eq!(db.find_invoice(inv.id).await.unwrap().unwrap().status, InvoiceStatus::Finalized);
+
+    // A finalized invoice is not refreshed (Lago RefreshDraftService: drafts only).
+    let resp = run(&schema, &org, r#"mutation($id: ID!) { refreshInvoice(id: $id) { totalAmountCents } }"#, json!({ "id": inv.id.to_string() })).await;
+    assert_eq!(data(&resp)["refreshInvoice"]["totalAmountCents"], 1650);
 
     // update payment status
     let resp = run(&schema, &org, r#"mutation($id: ID!) { updateInvoice(input: { id: $id, paymentStatus: "succeeded" }) { paymentStatus } }"#, json!({ "id": inv.id.to_string() })).await;

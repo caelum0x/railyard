@@ -458,13 +458,20 @@ pub async fn finalize_invoice(
     Ok(Json(body))
 }
 
-/// `PUT /invoices/:id/refresh` — recompute the invoice totals from its fees.
+/// `PUT /invoices/:id/refresh` — `Invoices::RefreshDraftService`: a draft's
+/// usage is re-priced from the events of its window; any other invoice is
+/// returned unchanged.
 pub async fn refresh_invoice(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let inv = st.db.refresh_invoice_totals(id).await?.ok_or_else(|| ApiError::NotFound("invoice".into()))?;
+    let (_, inv) = rago_jobs::refresh_draft::refresh_draft_invoice(&st.db, id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let inv = inv
+        .filter(|i| i.organization_id == auth.organization.id)
+        .ok_or_else(|| ApiError::NotFound("invoice".into()))?;
     Ok(Json(invoice_response(&st, inv).await?))
 }
 

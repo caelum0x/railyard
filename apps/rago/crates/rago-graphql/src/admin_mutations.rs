@@ -574,13 +574,16 @@ impl AdminMutation {
         load_invoice(ctx, invoice).await
     }
 
-    /// `RefreshInvoice` (`Mutations::Invoices::Refresh`) — recomputes the
-    /// invoice's monetary rollups from its persisted fees.
+    /// `RefreshInvoice` (`Mutations::Invoices::Refresh`) — a draft's usage is
+    /// re-priced from the events of its window (`rago_jobs::refresh_draft`);
+    /// any other invoice is returned unchanged.
     async fn refresh_invoice(&self, ctx: &Context<'_>, id: ID) -> Result<Invoice> {
-        require_org(ctx)?;
-        let invoice = db(ctx)
-            .refresh_invoice_totals(uuid(&id)?)
-            .await?
+        let org = require_org(ctx)?;
+        let (_, invoice) = rago_jobs::refresh_draft::refresh_draft_invoice(db(ctx), uuid(&id)?)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("refresh_failed: {e}")))?;
+        let invoice = invoice
+            .filter(|i| i.organization_id == org.id)
             .ok_or_else(|| async_graphql::Error::new("invoice_not_found"))?;
         load_invoice(ctx, invoice).await
     }

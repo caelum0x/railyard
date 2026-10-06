@@ -438,3 +438,46 @@ async fn fixed_charges_are_billed_in_arrears_prorated_and_upfront(pool: PgPool) 
     .unwrap();
     assert_eq!(rows, vec![(2_100,)], "billed once, upfront for June");
 }
+
+#[sqlx::test(migrations = "../rago-db/migrations")]
+async fn a_draft_refresh_bills_late_events_of_its_window(pool: PgPool) {
+    let w = world(pool).await;
+    let m = w.metric("emails", AggregationType::SumAgg, Some("value"), false).await;
+    let plan = w.plan().await;
+    w.charge(&plan, &m, json!({ "amount": "0.25" }), false, false).await;
+    // A 3-day grace period keeps the June 1 invoice a draft.
+    w.db.update_customer_invoice_grace_period(w.customer, Some(3)).await.unwrap();
+    let sub = w.subscription(&plan, "sub-draft", d(2026, 5, 1)).await;
+    w.event(&sub, "emails", d(2026, 5, 10), json!({ "value": 100 })).await;
+    run_billing_cycle(&w.db, &MockTransport::always(500, "{}"), &no_charge(), d(2026, 6, 1), false).await.unwrap();
+    let draft: Uuid = sqlx::query_scalar(
+        "SELECT i.id FROM invoices i JOIN invoice_subscriptions s ON s.invoice_id = i.id WHERE s.subscription_id = $1",
+    )
+    .bind(sub.id)
+    .fetch_one(&w.db.pool)
+    .await
+    .unwrap();
+    assert_eq!(w.db.find_invoice(draft).await.unwrap().unwrap().fees_amount_cents, 2_500);
+
+    // A May event arrives during the grace period; another one for June does not count.
+    w.event(&sub, "emails", d(2026, 5, 31), json!({ "value": 20 })).await;
+    w.event(&sub, "emails", d(2026, 6, 2), json!({ "value": 999 })).await;
+    let changed = rago_jobs::clock::invoices::refresh_draft_invoices(&w.db).await.unwrap();
+    assert_eq!(changed, 1);
+    let inv = w.db.find_invoice(draft).await.unwrap().unwrap();
+    assert_eq!(inv.fees_amount_cents, 3_000, "late May usage billed, June usage not");
+    assert_eq!(inv.total_amount_cents, 3_000);
+    let usage = w.usage_fees(&sub).await;
+    assert_eq!(usage.len(), 1);
+    assert_eq!(usage[0].units, 120.into());
+
+    // Nothing new: the next sweep changes nothing.
+    assert_eq!(rago_jobs::clock::invoices::refresh_draft_invoices(&w.db).await.unwrap(), 0);
+
+    // A finalized invoice is never re-priced.
+    sqlx::query("UPDATE invoices SET status = 1 WHERE id = $1").bind(draft).execute(&w.db.pool).await.unwrap();
+    w.event(&sub, "emails", d(2026, 5, 30), json!({ "value": 40 })).await;
+    let (outcome, after) = rago_jobs::refresh_draft::refresh_draft_invoice(&w.db, draft).await.unwrap();
+    assert_eq!(outcome, rago_jobs::refresh_draft::Refresh::NotDraft);
+    assert_eq!(after.unwrap().fees_amount_cents, 3_000);
+}

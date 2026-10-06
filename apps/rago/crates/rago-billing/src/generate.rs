@@ -125,23 +125,7 @@ pub fn generate_subscription_invoice_with_progressive(
         if !input.charge.invoiceable {
             continue;
         }
-        let usage = input.usage();
-        let charge_fees = charge_fees_all(&usage, subscription, currency, Some(invoice.id))?;
-        let true_up = charge_fees
-            .iter()
-            .find(|f| f.charge_filter_id.is_none())
-            .and_then(|parent| {
-                charge_true_up_fee(parent, &charge_fees, input.charge, subscription, dates, currency)
-            });
-        let parent_id = true_up.as_ref().map(|_| {
-            charge_fees
-                .iter()
-                .find(|f| f.charge_filter_id.is_none())
-                .map(|f| f.id)
-                .unwrap_or_default()
-        });
-        fees.extend(retain_used(&usage, charge_fees, parent_id));
-        fees.extend(true_up);
+        fees.extend(charge_lines(input, subscription, dates, currency, Some(invoice.id))?);
     }
 
     // Fixed charges (seats, platform units) of this invoice.
@@ -163,6 +147,26 @@ pub fn generate_subscription_invoice_with_progressive(
     };
 
     Ok((fees, progressive_results))
+}
+
+/// Every fee line one usage charge bills for the period: one per filter and
+/// pricing group that has usage, plus the minimum-commitment true-up over all
+/// of them (on the default bucket's fee).
+pub fn charge_lines(
+    input: &ChargeInput<'_>,
+    subscription: &Subscription,
+    dates: &dyn FeeDates,
+    currency: Currency,
+    invoice_id: Option<uuid::Uuid>,
+) -> Result<Vec<Fee>> {
+    let usage = input.usage();
+    let charge_fees = charge_fees_all(&usage, subscription, currency, invoice_id)?;
+    let parent = charge_fees.iter().find(|f| f.charge_filter_id.is_none());
+    let true_up = parent.and_then(|p| charge_true_up_fee(p, &charge_fees, input.charge, subscription, dates, currency));
+    let parent_id = true_up.as_ref().and(parent.map(|p| p.id));
+    let mut out = retain_used(&usage, charge_fees, parent_id);
+    out.extend(true_up);
+    Ok(out)
 }
 
 /// `Fees::CreateTrueUpService` — when a charge carries a `min_amount_cents` and

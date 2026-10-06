@@ -403,3 +403,73 @@ impl Db {
         Ok(())
     }
 }
+
+impl Db {
+    /// Replace a draft invoice's usage lines and totals in one transaction
+    /// (`Invoices::RefreshDraftService`). `remove` are the old usage fee ids;
+    /// `insert` the re-priced lines; `update` the other lines whose tax
+    /// columns were recomputed. Only applies while the invoice is still a
+    /// draft (`false` otherwise: it was finalized meanwhile, nothing written).
+    pub async fn replace_draft_usage(
+        &self,
+        invoice: &Invoice,
+        remove: &[Uuid],
+        insert: &[rago_core::models::Fee],
+        update: &[rago_core::models::Fee],
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let draft: Option<i32> = sqlx::query_scalar("SELECT status FROM invoices WHERE id = $1 FOR UPDATE")
+            .bind(invoice.id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if draft != Some(rago_core::enums::InvoiceStatus::Draft.as_i32()) {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        sqlx::query("DELETE FROM fees WHERE invoice_id = $1 AND id = ANY($2)")
+            .bind(invoice.id)
+            .bind(remove)
+            .execute(&mut *tx)
+            .await?;
+        for fee in insert {
+            crate::repo::insert_fee_exec(&mut *tx, fee).await?;
+        }
+        for fee in update {
+            sqlx::query(
+                "UPDATE fees SET taxes_amount_cents = $2, taxes_precise_amount_cents = $3, taxes_rate = $4, \
+                 updated_at = now() WHERE id = $1",
+            )
+            .bind(fee.id)
+            .bind(fee.taxes_amount_cents)
+            .bind(fee.taxes_precise_amount_cents)
+            .bind(fee.taxes_rate)
+            .execute(&mut *tx)
+            .await?;
+        }
+        sqlx::query(
+            "UPDATE invoices SET fees_amount_cents = $2, sub_total_excluding_taxes_amount_cents = $3, \
+             taxes_amount_cents = $4, taxes_rate = $5, sub_total_including_taxes_amount_cents = $6, \
+             total_amount_cents = $7, payment_status = $8, updated_at = now() WHERE id = $1",
+        )
+        .bind(invoice.id)
+        .bind(invoice.fees_amount_cents)
+        .bind(invoice.sub_total_excluding_taxes_amount_cents)
+        .bind(invoice.taxes_amount_cents)
+        .bind(invoice.taxes_rate)
+        .bind(invoice.sub_total_including_taxes_amount_cents)
+        .bind(invoice.total_amount_cents)
+        .bind(invoice.payment_status.as_i32())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Ids of every draft invoice.
+    pub async fn draft_invoice_ids(&self) -> Result<Vec<Uuid>> {
+        Ok(sqlx::query_scalar("SELECT id FROM invoices WHERE status = $1 ORDER BY created_at")
+            .bind(rago_core::enums::InvoiceStatus::Draft.as_i32())
+            .fetch_all(&self.pool)
+            .await?)
+    }
+}

@@ -640,6 +640,28 @@ async fn bill_scope(
     if optional && invoice.fees_amount_cents <= 0 && progressive.is_empty() {
         return Ok(None);
     }
+    if !period.charges_window.is_empty() {
+        // `Fees::ChargeService` records the charges boundaries on each usage
+        // line; a draft refresh re-prices the same window from them.
+        let charges_to = match scope {
+            InvoiceScope::Terminating { end, .. } => {
+                end.min(period.charges_window.to.and_hms_opt(23, 59, 59).unwrap_or_default())
+            }
+            _ => period.charges_window.to.and_hms_opt(23, 59, 59).unwrap_or_default(),
+        };
+        let bounds = charges_boundaries(
+            period.charges_window.from.and_hms_opt(0, 0, 0).unwrap_or_default(),
+            charges_to,
+            period.charges_period.days(),
+        );
+        for fee in fees.iter_mut().filter(|f| matches!(f.fee_type, Some(rago_core::enums::FeeType::Charge))) {
+            let mut props = fee.properties.as_object().cloned().unwrap_or_default();
+            for (k, v) in bounds.as_object().into_iter().flatten() {
+                props.insert(k.clone(), v.clone());
+            }
+            fee.properties = serde_json::Value::Object(props);
+        }
+    }
     if let Some(fee) = fees
         .iter_mut()
         .find(|f| matches!(f.fee_type, Some(rago_core::enums::FeeType::Subscription)))
@@ -691,6 +713,15 @@ async fn bill_scope(
     }
 }
 
+
+/// The charges boundaries a usage fee records (Lago fee `properties`).
+pub(crate) fn charges_boundaries(from: NaiveDateTime, to: NaiveDateTime, duration_days: i64) -> serde_json::Value {
+    json!({
+        "charges_from_datetime": from.and_utc().to_rfc3339(),
+        "charges_to_datetime": to.and_utc().to_rfc3339(),
+        "charges_duration": duration_days,
+    })
+}
 
 fn plan_interval(interval: &Option<PlanInterval>) -> Interval {
     match interval {
