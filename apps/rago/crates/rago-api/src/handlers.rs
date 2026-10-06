@@ -1283,7 +1283,7 @@ pub async fn resolve_subscription_entitlements(
     Ok(Json(json!({ "external_subscription_id": external_id, "entitlements": entitlements })))
 }
 
-fn valid_privilege_value(value_type: &str, value: &str) -> bool {
+pub(crate) fn valid_privilege_value(value_type: &str, value: &str) -> bool {
     match value_type {
         "integer" => value.parse::<i64>().is_ok(),
         "boolean" => matches!(value, "true" | "false"),

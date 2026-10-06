@@ -23,6 +23,7 @@ pub mod crud;
 pub mod customer_lists;
 pub mod emit;
 pub mod error;
+pub mod lago_plans;
 pub mod lago_wallets;
 pub mod fixed_charges;
 pub mod graphql;
@@ -92,7 +93,17 @@ pub fn router(state: AppState) -> Router {
         .route("/billable_metrics/:code", get(crud::show_billable_metric).put(crud::update_billable_metric).delete(crud::destroy_billable_metric))
         .route("/plans", post(handlers::create_plan).get(crud::list_plans))
         .route("/plans/:code", get(crud::show_plan).put(crud::update_plan).delete(crud::destroy_plan))
-        .route("/plans/:code/entitlements", get(handlers::list_plan_entitlements))
+        .route(
+            "/plans/:code/entitlements",
+            get(lago_plans::plan_entitlements).post(lago_plans::create_plan_entitlements).patch(lago_plans::patch_plan_entitlements),
+        )
+        .route("/plans/:code/entitlements/:feature", get(lago_plans::plan_entitlement).delete(lago_plans::destroy_plan_entitlement))
+        .route("/plans/:code/entitlements/:feature/privileges/:privilege", axum::routing::delete(lago_plans::destroy_plan_entitlement_privilege))
+        .route("/plans/:code/charges/:id/filters", get(lago_plans::plan_charge_filters).post(lago_plans::create_plan_charge_filter))
+        .route(
+            "/plans/:code/charges/:id/filters/:filter_id",
+            get(lago_plans::show_plan_charge_filter).put(lago_plans::update_plan_charge_filter).delete(lago_plans::destroy_plan_charge_filter),
+        )
         .route("/plans/:code/charges", post(crud::create_plan_charge).get(crud::list_plan_charges))
         .route("/plans/:code/fixed_charges", get(fixed_charges::index).post(fixed_charges::create))
         .route(
@@ -106,11 +117,37 @@ pub fn router(state: AppState) -> Router {
         .route("/subscriptions/:external_id", get(subs::show_subscription).put(subs::update_subscription).delete(handlers::terminate_subscription))
         .route("/subscriptions/:external_id/invoices", post(handlers::bill_subscription))
         .route("/subscriptions/:external_id/plan_change", get(plan_change::show).post(plan_change::create).delete(plan_change::destroy))
-        .route("/subscriptions/:external_id/lifetime_usage", get(subs::subscription_lifetime_usage))
+        .route("/subscriptions/:external_id/lifetime_usage", get(subs::subscription_lifetime_usage).put(subs::update_subscription_lifetime_usage))
         .route("/subscriptions/:external_id/usage_thresholds", get(thresholds::list_subscription_thresholds).put(thresholds::replace_subscription_thresholds))
         .route("/subscriptions/:external_id/usage_thresholds/check", post(thresholds::check_subscription_thresholds))
-        .route("/subscriptions/:external_id/entitlements", post(handlers::create_subscription_entitlement).get(handlers::resolve_subscription_entitlements))
-        .route("/subscriptions/:external_id/alerts", post(subs::create_alert).get(subs::list_alerts))
+        .route(
+            "/subscriptions/:external_id/entitlements",
+            post(handlers::create_subscription_entitlement).get(lago_plans::subscription_entitlements).patch(lago_plans::patch_subscription_entitlements),
+        )
+        .route("/subscriptions/:external_id/entitlements/:feature", axum::routing::delete(lago_plans::destroy_subscription_entitlement))
+        .route(
+            "/subscriptions/:external_id/entitlements/:feature/privileges/:privilege",
+            axum::routing::delete(lago_plans::destroy_subscription_entitlement_privilege),
+        )
+        .route("/subscriptions/:external_id/charges", get(lago_plans::subscription_charges))
+        .route("/subscriptions/:external_id/charges/:code", get(lago_plans::subscription_charge).put(lago_plans::update_subscription_charge))
+        .route(
+            "/subscriptions/:external_id/charges/:code/filters",
+            get(lago_plans::subscription_charge_filters).post(lago_plans::create_subscription_charge_filter),
+        )
+        .route(
+            "/subscriptions/:external_id/charges/:code/filters/:id",
+            get(lago_plans::show_subscription_charge_filter)
+                .put(lago_plans::update_subscription_charge_filter)
+                .delete(lago_plans::destroy_subscription_charge_filter),
+        )
+        .route("/subscriptions/:external_id/fixed_charges", get(lago_plans::subscription_fixed_charges))
+        .route(
+            "/subscriptions/:external_id/fixed_charges/:code",
+            get(lago_plans::subscription_fixed_charge).put(lago_plans::update_subscription_fixed_charge),
+        )
+        .route("/features/:code/privileges/:privilege", axum::routing::delete(lago_plans::destroy_feature_privilege))
+        .route("/subscriptions/:external_id/alerts", post(subs::create_alert).get(subs::list_alerts).delete(subs::destroy_all_alerts))
         .route("/subscriptions/:external_id/alerts/:code", get(subs::show_alert).put(subs::update_alert).delete(subs::destroy_alert))
         .route("/subscriptions/:external_id/usage_alerts", post(phase14::create_usage_alert).get(phase14::list_usage_alerts))
         .route("/customers/:external_customer_id/current_usage", get(usage::current_usage))

@@ -79,18 +79,45 @@ pub async fn subscription_lifetime_usage(
         .find_subscription_by_external_id(org, &external_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("subscription".into()))?;
+    Ok(Json(json!({ "lifetime_usage": lifetime_usage_json(&st, org, &sub).await? })))
+}
+
+/// The lifetime usage of a subscription: invoiced + current + carried in.
+async fn lifetime_usage_json(st: &AppState, org: Uuid, sub: &rago_core::models::Subscription) -> ApiResult<Value> {
     let invoiced = st.db.subscription_invoiced_usage(org, &sub.external_id).await?;
-    let current = crate::phase15::current_usage_amount(&st, org, &sub).await?;
-    let total = invoiced + current;
+    let current = crate::phase15::current_usage_amount(st, org, sub).await?;
     st.db.upsert_lifetime_usage(org, &sub.external_id, invoiced, current).await?;
-    Ok(Json(json!({
-        "lifetime_usage": {
-            "external_subscription_id": sub.external_id,
-            "invoiced_usage_amount_cents": invoiced,
-            "current_usage_amount_cents": current,
-            "total_usage_amount_cents": total,
-        }
-    })))
+    let historical = st.db.historical_usage(org, &sub.external_id).await?;
+    Ok(json!({
+        "external_subscription_id": sub.external_id,
+        "external_historical_usage_amount_cents": historical,
+        "invoiced_usage_amount_cents": invoiced,
+        "current_usage_amount_cents": current,
+        "total_usage_amount_cents": invoiced + current + historical,
+    }))
+}
+
+/// `PUT /subscriptions/:external_id/lifetime_usage` — set the usage carried in
+/// from before Rago (`external_historical_usage_amount_cents`).
+pub async fn update_subscription_lifetime_usage(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(external_id): Path<String>,
+    Json(body): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let org = auth.organization.id;
+    let sub = st
+        .db
+        .find_subscription_by_external_id(org, &external_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("subscription".into()))?;
+    let p = wrapped(&body, "lifetime_usage");
+    let cents = match i64_of(p, "external_historical_usage_amount_cents") {
+        Some(v) if v >= 0 => v,
+        _ => return Err(ApiError::validation("external_historical_usage_amount_cents", "value_is_invalid")),
+    };
+    st.db.set_historical_usage(org, &sub.external_id, cents).await?;
+    Ok(Json(json!({ "lifetime_usage": lifetime_usage_json(&st, org, &sub).await? })))
 }
 
 // ---- subscription alerts CRUD (canonical `alerts` model) -------------------
@@ -206,6 +233,23 @@ pub async fn update_alert(
     let row = st.db.find_alert(a.id).await?.ok_or_else(|| ApiError::NotFound("alert".into()))?;
     let th = st.db.alert_thresholds(a.id).await?;
     Ok(Json(json!({ "alert": alert_json(&row, &th) })))
+}
+
+/// `DELETE /subscriptions/:external_id/alerts` — every alert of the subscription.
+pub async fn destroy_all_alerts(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(external_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let org = auth.organization.id;
+    let sub = st.db.find_subscription_by_external_id(org, &external_id).await?.ok_or_else(|| ApiError::NotFound("subscription".into()))?;
+    let mut out = Vec::new();
+    for a in st.db.alerts_for("Subscription", sub.id).await? {
+        let th = st.db.alert_thresholds(a.id).await?;
+        out.push(alert_json(&a, &th));
+        st.db.soft_delete_alert(a.id).await?;
+    }
+    Ok(Json(json!({ "alerts": out })))
 }
 
 /// `DELETE /subscriptions/:external_id/alerts/:code`.

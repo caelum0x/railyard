@@ -226,7 +226,7 @@ pub async fn show_plan(
 }
 
 /// `min_amount_cents` of a charge payload: a non-negative integer.
-fn min_amount_of(cp: &Value) -> ApiResult<Option<i64>> {
+pub(crate) fn min_amount_of(cp: &Value) -> ApiResult<Option<i64>> {
     match cp.get("min_amount_cents") {
         None | Some(Value::Null) => Ok(None),
         Some(_) => match i64_of(cp, "min_amount_cents") {

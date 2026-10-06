@@ -544,6 +544,67 @@ impl Db {
         Ok(new_plan)
     }
 
+    // ---- single charge filters --------------------------------------------
+
+    /// Add one filter to a charge; returns its id.
+    pub async fn add_charge_filter(
+        &self,
+        org: Uuid,
+        charge_id: Uuid,
+        spec: &crate::charge_filters::ChargeFilterSpec,
+    ) -> Result<Uuid> {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO charge_filters (id, organization_id, charge_id, invoice_display_name, properties, \"values\", created_at, updated_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,now(),now())",
+        )
+        .bind(id)
+        .bind(org)
+        .bind(charge_id)
+        .bind(spec.invoice_display_name.as_deref())
+        .bind(&spec.properties)
+        .bind(&spec.values)
+        .execute(&self.pool)
+        .await?;
+        Ok(id)
+    }
+
+    /// Change one live filter of a charge (`None` keeps a field); `false` when missing.
+    pub async fn change_charge_filter(
+        &self,
+        charge_id: Uuid,
+        id: Uuid,
+        invoice_display_name: Option<&str>,
+        properties: Option<&Value>,
+        values: Option<&Value>,
+    ) -> Result<bool> {
+        let done = sqlx::query(
+            "UPDATE charge_filters SET invoice_display_name = COALESCE($3, invoice_display_name), \
+             properties = COALESCE($4, properties), \"values\" = COALESCE($5, \"values\"), updated_at = now() \
+             WHERE charge_id = $1 AND id = $2 AND deleted_at IS NULL",
+        )
+        .bind(charge_id)
+        .bind(id)
+        .bind(invoice_display_name)
+        .bind(properties)
+        .bind(values)
+        .execute(&self.pool)
+        .await?;
+        Ok(done.rows_affected() > 0)
+    }
+
+    /// Remove one live filter of a charge; `false` when missing.
+    pub async fn remove_charge_filter(&self, charge_id: Uuid, id: Uuid) -> Result<bool> {
+        let done = sqlx::query(
+            "UPDATE charge_filters SET deleted_at = now(), updated_at = now() WHERE charge_id = $1 AND id = $2 AND deleted_at IS NULL",
+        )
+        .bind(charge_id)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(done.rows_affected() > 0)
+    }
+
     // ---- wallet transactions ---------------------------------------------
 
     /// One wallet transaction of the organization.
