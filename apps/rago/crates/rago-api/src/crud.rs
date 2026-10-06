@@ -420,6 +420,15 @@ pub async fn update_billable_metric(
         rago_billing::aggregation::validate_custom_aggregator(src)
             .map_err(|_| ApiError::validation("custom_aggregator", "invalid_expression"))?;
     }
+    if let Some(expression) = s(p, "expression").filter(|e| !e.trim().is_empty()) {
+        if !rago_billing::events::validate_expression(&expression) {
+            return Err(ApiError::validation("expression", "invalid_expression"));
+        }
+        let field = s(p, "field_name").or_else(|| existing.field_name.clone());
+        if field.map_or(true, |f| f.trim().is_empty()) {
+            return Err(ApiError::validation("field_name", "value_is_mandatory"));
+        }
+    }
     let becomes_custom = agg == Some(AggregationType::CustomAgg.as_i32())
         || (agg.is_none() && matches!(existing.aggregation_type, AggregationType::CustomAgg));
     if becomes_custom

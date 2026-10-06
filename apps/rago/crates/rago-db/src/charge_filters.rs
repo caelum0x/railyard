@@ -26,6 +26,7 @@ pub struct ChargeFilterSpec {
 pub struct ChargeFilterRow {
     pub id: Uuid,
     pub spec: ChargeFilterSpec,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl Db {
@@ -62,22 +63,35 @@ impl Db {
     /// A charge's live filters, oldest first.
     pub async fn charge_filter_rows(&self, charge_id: Uuid) -> Result<Vec<ChargeFilterRow>> {
         let rows = sqlx::query(
-            "SELECT id, invoice_display_name, properties, \"values\" FROM charge_filters \
+            "SELECT id, invoice_display_name, properties, \"values\", created_at FROM charge_filters \
              WHERE charge_id = $1 AND deleted_at IS NULL ORDER BY created_at, id",
         )
         .bind(charge_id)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
-            .iter()
-            .map(|r| ChargeFilterRow {
-                id: r.get("id"),
-                spec: ChargeFilterSpec {
-                    invoice_display_name: r.get("invoice_display_name"),
-                    properties: r.get("properties"),
-                    values: r.get("values"),
-                },
+        rows.iter()
+            .map(|r| {
+                Ok(ChargeFilterRow {
+                    id: r.try_get("id")?,
+                    spec: ChargeFilterSpec {
+                        invoice_display_name: r.try_get("invoice_display_name")?,
+                        properties: r.try_get("properties")?,
+                        values: r.try_get("values")?,
+                    },
+                    // `charge_filters.created_at` is a timestamp without zone (UTC).
+                    created_at: r.try_get::<chrono::NaiveDateTime, _>("created_at")?.and_utc(),
+                })
             })
+            .collect()
+    }
+
+    /// A charge's live filters as billing reads them (oldest first).
+    pub async fn charge_filter_specs(&self, charge_id: Uuid) -> Result<Vec<rago_billing::charge_fees::FilterSpec>> {
+        Ok(self
+            .charge_filter_rows(charge_id)
+            .await?
+            .into_iter()
+            .map(|r| rago_billing::charge_fees::FilterSpec::from_parts(r.id, r.spec.properties, &r.spec.values, r.created_at))
             .collect())
     }
 }

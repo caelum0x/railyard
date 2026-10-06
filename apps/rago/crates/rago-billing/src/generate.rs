@@ -9,7 +9,7 @@ use rago_core::models::{BillableMetric, Charge, Event, Fee, Invoice, Plan, Subsc
 use rago_core::money::Currency;
 
 use crate::aggregation::AggregationPeriod;
-use crate::charge_to_fee_in_period;
+use crate::charge_fees::{charge_fees_all, retain_used, ChargeUsage, FilterSpec};
 use crate::commitments::charge_true_up;
 use crate::proration::FeeDates;
 use crate::error::Result;
@@ -19,13 +19,33 @@ use crate::progressive_billing::{
 };
 use crate::subscription_fee::{build_subscription_fee, Proration};
 
-/// One usage charge to bill: its metric, charge config, and period events.
+/// One usage charge to bill: its metric, charge config, filters and events.
 pub struct ChargeInput<'a> {
     pub metric: &'a BillableMetric,
     pub charge: &'a Charge,
+    /// The charge's live filters (empty when it has none).
+    pub filters: &'a [FilterSpec],
     pub events: &'a [Event],
-    /// Billing period the events belong to (needed by `weighted_sum_agg`).
+    /// The metric's events before the period, read by prorated charges on
+    /// recurring metrics (see [`crate::charge_fees::needs_persisted_events`]).
+    pub persisted_events: &'a [Event],
+    /// Billing period the events belong to (needed by `weighted_sum_agg` and
+    /// prorated charges).
     pub period: Option<AggregationPeriod>,
+}
+
+impl<'a> ChargeInput<'a> {
+    /// The billing engine's view of this input.
+    pub fn usage(&'a self) -> ChargeUsage<'a> {
+        ChargeUsage {
+            metric: self.metric,
+            charge: self.charge,
+            filters: self.filters,
+            events: self.events,
+            persisted_events: self.persisted_events,
+            period: self.period.as_ref(),
+        }
+    }
 }
 
 /// Generate a subscription invoice end-to-end and mutate `invoice` with the
@@ -95,22 +115,28 @@ pub fn generate_subscription_invoice_with_progressive(
         proration,
     ));
 
-    // Usage charge fees.
+    // Usage charge fees: one per filter and pricing group (`init_fees`), the
+    // minimum-commitment true-up over all of them on the default bucket's fee.
     for input in charges {
         if !input.charge.invoiceable {
             continue;
         }
-        let fee = charge_to_fee_in_period(
-            input.metric,
-            input.charge,
-            subscription,
-            input.events,
-            currency,
-            Some(invoice.id),
-            input.period.as_ref(),
-        )?;
-        let true_up = charge_true_up_fee(&fee, input.charge, subscription, dates, currency);
-        fees.push(fee);
+        let usage = input.usage();
+        let charge_fees = charge_fees_all(&usage, subscription, currency, Some(invoice.id))?;
+        let true_up = charge_fees
+            .iter()
+            .find(|f| f.charge_filter_id.is_none())
+            .and_then(|parent| {
+                charge_true_up_fee(parent, &charge_fees, input.charge, subscription, dates, currency)
+            });
+        let parent_id = true_up.as_ref().map(|_| {
+            charge_fees
+                .iter()
+                .find(|f| f.charge_filter_id.is_none())
+                .map(|f| f.id)
+                .unwrap_or_default()
+        });
+        fees.extend(retain_used(&usage, charge_fees, parent_id));
         fees.extend(true_up);
     }
 
@@ -133,11 +159,13 @@ pub fn generate_subscription_invoice_with_progressive(
 }
 
 /// `Fees::CreateTrueUpService` — when a charge carries a `min_amount_cents` and
-/// its usage fee for the period is below the (prorated) minimum, a true-up fee
-/// bills the shortfall. The minimum is prorated over the days the subscription
-/// was active in the charges period.
+/// its usage fees for the period (every filter and group) are below the
+/// (prorated) minimum, a true-up fee on `fee` (the default bucket's) bills the
+/// shortfall. The minimum is prorated over the days the subscription was active
+/// in the charges period.
 fn charge_true_up_fee(
     fee: &Fee,
+    charge_fees: &[Fee],
     charge: &Charge,
     subscription: &Subscription,
     dates: &dyn FeeDates,
@@ -154,12 +182,15 @@ fn charge_true_up_fee(
     if days_to_bill <= 0 {
         return None;
     }
+    let used_amount_cents: i64 = charge_fees.iter().map(|f| f.amount_cents).sum();
+    let used_precise_amount_cents: rust_decimal::Decimal =
+        charge_fees.iter().map(|f| f.precise_amount_cents).sum();
     let tu = charge_true_up(
         charge.min_amount_cents,
         dates.charges_duration_in_days(),
         days_to_bill,
-        fee.amount_cents,
-        fee.precise_amount_cents,
+        used_amount_cents,
+        used_precise_amount_cents,
         currency,
     )?;
     if tu.amount_cents <= 0 {
@@ -178,6 +209,8 @@ fn charge_true_up_fee(
     out.taxes_precise_amount_cents = rust_decimal::Decimal::ZERO;
     out.applied_taxes = Vec::new();
     out.amount_details = serde_json::json!({});
+    out.charge_filter_id = None;
+    out.grouped_by = serde_json::json!({});
     out.properties = serde_json::json!({
         "true_up_parent_fee_id": fee.id,
         "min_amount_cents": charge.min_amount_cents,

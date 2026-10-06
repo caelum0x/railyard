@@ -5,7 +5,6 @@
 
 use async_graphql::{Context, InputObject, Json, Object, Result};
 use chrono::Utc;
-use rago_billing::aggregation::AggregationPeriod;
 use rago_billing::generate::{generate_subscription_invoice, ChargeInput};
 use rago_billing::wallets::{build_transaction, increase_balance, WalletCredit};
 use rago_core::enums::*;
@@ -630,28 +629,17 @@ impl Mutation {
         let from = dates.charges_window.from.and_hms_opt(0, 0, 0).unwrap_or_default();
         let to = dates.charges_window.to.and_hms_opt(23, 59, 59).unwrap_or_default();
 
-        let mut loaded: Vec<(m::BillableMetric, m::Charge, Vec<m::Event>, AggregationPeriod)> =
-            Vec::new();
+        let mut loaded: Vec<rago_db::LoadedCharge> = Vec::new();
         for charge in &charges {
             // Pay-in-advance charges were billed when their events were ingested.
             if charge.pay_in_advance {
                 continue;
             }
-            let Some(mid) = charge.billable_metric_id else { continue };
-            let metric = db(ctx).find_billable_metric(mid).await?;
-            let events = db(ctx)
-                .events_for_external_subscription(org.id, &sub.external_id, &metric.code, from, to)
-                .await?;
-            let carry_in = db(ctx)
-                .weighted_sum_carry_in(org.id, &sub.external_id, &metric, from)
-                .await?;
-            let period = AggregationPeriod::new(from, to).with_initial_value(carry_in);
-            loaded.push((metric, charge.clone(), events, period));
+            if let Some(c) = db(ctx).load_charge_usage(org.id, &sub.external_id, charge, from, to, to).await? {
+                loaded.push(c);
+            }
         }
-        let charge_inputs: Vec<ChargeInput> = loaded
-            .iter()
-            .map(|(m, c, e, p)| ChargeInput { metric: m, charge: c, events: e, period: Some(*p) })
-            .collect();
+        let charge_inputs: Vec<ChargeInput> = loaded.iter().map(rago_db::LoadedCharge::input).collect();
 
         let taxes = db(ctx).organization_taxes(org.id).await?;
         let mut invoice = blank_invoice(&sub, &currency);

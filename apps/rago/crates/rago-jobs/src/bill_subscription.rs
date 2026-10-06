@@ -61,12 +61,7 @@ pub async fn perform(
 
     // Load each charge's metric + events so the generation service can price
     // the flat subscription fee and one fee per usage charge together.
-    let mut loaded: Vec<(
-        rago_core::models::BillableMetric,
-        rago_core::models::Charge,
-        Vec<rago_core::models::Event>,
-        rago_billing::aggregation::AggregationPeriod,
-    )> = Vec::new();
+    let mut loaded: Vec<rago_db::LoadedCharge> = Vec::new();
     for charge in &charges {
         // Billed at event ingest (`pay_in_advance`), not at period end.
         if charge.pay_in_advance {
@@ -79,28 +74,21 @@ pub async fn perform(
         let events = db
             .events_in_period(subscription.id, &metric.code, from, to)
             .await?;
-        let carry_in = db
-            .weighted_sum_carry_in(
+        loaded.push(
+            db.complete_charge_usage(
                 subscription.organization_id,
                 &subscription.external_id,
-                &metric,
+                metric,
+                charge,
+                events,
                 from,
+                to,
             )
-            .await?;
-        let period =
-            rago_billing::aggregation::AggregationPeriod::new(from, to).with_initial_value(carry_in);
-        loaded.push((metric, charge.clone(), events, period));
+            .await?,
+        );
     }
 
-    let charge_inputs: Vec<ChargeInput> = loaded
-        .iter()
-        .map(|(metric, charge, events, period)| ChargeInput {
-            metric,
-            charge,
-            events,
-            period: Some(*period),
-        })
-        .collect();
+    let charge_inputs: Vec<ChargeInput> = loaded.iter().map(rago_db::LoadedCharge::input).collect();
 
     // Full generation: subscription fee (interval-aware, prorated to the
     // window) + charge fees + taxes (no coupons).

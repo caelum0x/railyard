@@ -5,7 +5,6 @@
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use chrono::Utc;
-use rago_billing::aggregation::AggregationPeriod;
 use rago_billing::generate::{generate_subscription_invoice, ChargeInput};
 use rago_billing::wallets::{build_transaction, increase_balance, WalletCredit};
 use rago_core::enums::*;
@@ -217,6 +216,15 @@ pub async fn create_billable_metric(
         && s(p, "field_name").map_or(true, |f| f.trim().is_empty())
     {
         return Err(ApiError::validation("field_name", "value_is_mandatory"));
+    }
+    if let Some(expression) = s(p, "expression").filter(|e| !e.trim().is_empty()) {
+        if !rago_billing::events::validate_expression(&expression) {
+            return Err(ApiError::validation("expression", "invalid_expression"));
+        }
+        // The result is written to `field_name`, so an expression needs one.
+        if s(p, "field_name").map_or(true, |f| f.trim().is_empty()) {
+            return Err(ApiError::validation("field_name", "value_is_mandatory"));
+        }
     }
     let m = BillableMetric {
         id: Uuid::new_v4(),
@@ -1330,30 +1338,18 @@ pub(crate) async fn compute_subscription_invoice(
     let from = dates.charges_window.from.and_hms_opt(0, 0, 0).unwrap_or_default();
     let to = dates.charges_window.to.and_hms_opt(23, 59, 59).unwrap_or_default();
 
-    // Load metrics + events per charge.
-    let mut loaded: Vec<(BillableMetric, Charge, Vec<Event>, AggregationPeriod)> = Vec::new();
+    // Load metrics, filters and events per charge.
+    let mut loaded: Vec<rago_db::LoadedCharge> = Vec::new();
     for charge in &charges {
         // Pay-in-advance charges were billed when their events were ingested.
         if charge.pay_in_advance {
             continue;
         }
-        let Some(mid) = charge.billable_metric_id else { continue };
-        let metric = st.db.find_billable_metric(mid).await?;
-        let events = st
-            .db
-            .events_for_external_subscription(sub.organization_id, &sub.external_id, &metric.code, from, to)
-            .await?;
-        let carry_in = st
-            .db
-            .weighted_sum_carry_in(sub.organization_id, &sub.external_id, &metric, from)
-            .await?;
-        let period = AggregationPeriod::new(from, to).with_initial_value(carry_in);
-        loaded.push((metric, charge.clone(), events, period));
+        if let Some(c) = st.db.load_charge_usage(sub.organization_id, &sub.external_id, charge, from, to, to).await? {
+            loaded.push(c);
+        }
     }
-    let charge_inputs: Vec<ChargeInput> = loaded
-        .iter()
-        .map(|(m, c, e, p)| ChargeInput { metric: m, charge: c, events: e, period: Some(*p) })
-        .collect();
+    let charge_inputs: Vec<ChargeInput> = loaded.iter().map(rago_db::LoadedCharge::input).collect();
 
     // Organization taxes apply to the subscription + charge fees.
     let taxes = st.db.organization_taxes(sub.organization_id).await?;

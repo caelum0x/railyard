@@ -14,6 +14,7 @@
 
 pub mod billing_gaps;
 pub mod charge_filters;
+pub mod charge_usage;
 pub mod collection;
 pub mod credit_note_credits;
 pub mod customer_lifecycle;
@@ -56,6 +57,7 @@ pub use dunning::{
 pub use billing_gaps::{CustomerAddress, HoldListRow, HoldTotals, ReversibleCapture};
 pub use collection::{PaymentAttemptState, ProviderCredentials, StoreSecretError};
 pub use credit_note_credits::{AppliedCreditNotes, InvoiceCreditNoteCredit};
+pub use charge_usage::LoadedCharge;
 pub use portal::PortalSession;
 pub use provider_checkouts::CheckoutPayment;
 pub use wallet_realtime::{RealtimeHold, RealtimeWallet};

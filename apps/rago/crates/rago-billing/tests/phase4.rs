@@ -344,6 +344,8 @@ fn terminate_mid_period_prorated_invoice() {
 
     let invoice = blank_invoice();
     let charges = [ChargeInput {
+        filters: &[],
+        persisted_events: &[],
         metric: &m,
         charge: &ch,
         events: &evs,

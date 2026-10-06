@@ -524,6 +524,8 @@ fn full_subscription_invoice_generation() {
 
     let mut invoice = blank_invoice();
     let charges = [ChargeInput {
+        filters: &[],
+        persisted_events: &[],
         metric: &metric,
         charge: &ch,
         events: &evs,

@@ -23,7 +23,7 @@
 //! the public `POST /events` ingest. `render_id` is the idempotency key, so a
 //! render reported twice never double-bills.
 
-use rago_billing::events::{build_event, validate_creation, EventParams, EventValidationError};
+use rago_billing::events::{build_event, validate_creation, with_expression, EventParams, EventValidationError};
 use rago_core::models::Event;
 use rago_db::Db;
 use rago_integrations::webhooks::WebhookKind;
@@ -204,6 +204,28 @@ pub(crate) async fn ingest_event(
     let mut event = build_event(org, &params, crate::handlers::now());
     event.customer_id = sub.as_ref().map(|s| s.customer_id);
     event.subscription_id = sub.as_ref().map(|s| s.id);
+    // `Events::CalculateExpressionService`: a metric with an expression bills
+    // the computed value, written to its field before the event is stored.
+    let event = match with_expression(metric.as_ref(), event) {
+        Ok(e) => e,
+        Err(e) => {
+            webhook(
+                &st.db,
+                org,
+                WebhookKind::EventError,
+                json!({
+                    "transaction_id": params.transaction_id,
+                    "lago_customer_id": sub.as_ref().map(|s| s.customer_id),
+                    "external_subscription_id": params.external_subscription_id,
+                    "code": params.code,
+                    "error": format!("expression_evaluation_failed: {e}"),
+                    "status": 422,
+                }),
+            )
+            .await;
+            return Err(ApiError::Validation(json!({ "expression": ["expression_evaluation_failed"] })));
+        }
+    };
 
     // Real-time prepaid wallet: price the event now and reserve it on the
     // customer's Mint account before accepting it.

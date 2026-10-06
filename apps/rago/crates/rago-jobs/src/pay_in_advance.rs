@@ -8,6 +8,7 @@
 //! The invoice is issued immediately and queued for collection; the period-end
 //! run skips these charges (see `scheduler::load_charges`).
 
+use rago_billing::charge_fees::charge_fees_all;
 use chrono::Utc;
 use rago_billing::invoices::assemble_invoice;
 use rago_core::enums::{InvoiceStatus, InvoiceType, PaymentStatus};
@@ -103,42 +104,45 @@ pub async fn bill_event_in_advance(db: &Db, event_id: Uuid) -> Result<Option<Inv
             )
             .await?;
         let without: Vec<Event> = with.iter().filter(|e| e.id != event.id).cloned().collect();
-        let carry_in = db
-            .weighted_sum_carry_in(subscription.organization_id, &subscription.external_id, &metric, from)
+        let loaded_with = db
+            .complete_charge_usage(subscription.organization_id, &subscription.external_id, metric, &charge, with, from, to)
             .await?;
-        let period = rago_billing::AggregationPeriod::new(from, to).with_initial_value(carry_in);
+        let loaded_without = loaded_with.with_events(without);
 
-        let fee_with = rago_billing::charge_to_fee_in_period(
-            &metric, &charge, &subscription, &with, currency, None, Some(&period),
-        )?;
-        let fee_without = rago_billing::charge_to_fee_in_period(
-            &metric, &charge, &subscription, &without, currency, None, Some(&period),
-        )?;
-        let delta = fee_with.amount_cents - fee_without.amount_cents;
+        // The event's line (its filter and pricing group) is the only one whose
+        // amount moves; every other line prices the same with or without it.
+        let fees_with = charge_fees_all(&loaded_with.usage(), &subscription, currency, None)?;
+        let fees_without = charge_fees_all(&loaded_without.usage(), &subscription, currency, None)?;
         charge_ids.push(charge.id);
-        if delta <= 0 {
-            continue;
+        for fee_with in fees_with {
+            let before = fees_without
+                .iter()
+                .find(|f| f.charge_filter_id == fee_with.charge_filter_id && f.grouped_by == fee_with.grouped_by);
+            let delta = fee_with.amount_cents - before.map_or(0, |f| f.amount_cents);
+            if delta <= 0 {
+                continue;
+            }
+            let units = fee_with.units - before.map_or(Decimal::ZERO, |f| f.units);
+            fees.push(Fee {
+                id: Uuid::new_v4(),
+                invoice_id: Some(invoice_id),
+                amount_cents: delta,
+                precise_amount_cents: Decimal::from(delta),
+                units,
+                events_count: Some(1),
+                unit_amount_cents: if units.is_zero() {
+                    delta
+                } else {
+                    (Decimal::from(delta) / units).round().try_into().unwrap_or(delta)
+                },
+                precise_unit_amount: if units.is_zero() {
+                    Decimal::from(delta)
+                } else {
+                    Decimal::from(delta) / units
+                },
+                ..fee_with
+            });
         }
-        let units = fee_with.units - fee_without.units;
-        fees.push(Fee {
-            id: Uuid::new_v4(),
-            invoice_id: Some(invoice_id),
-            amount_cents: delta,
-            precise_amount_cents: Decimal::from(delta),
-            units,
-            events_count: Some(1),
-            unit_amount_cents: if units.is_zero() {
-                delta
-            } else {
-                (Decimal::from(delta) / units).round().try_into().unwrap_or(delta)
-            },
-            precise_unit_amount: if units.is_zero() {
-                Decimal::from(delta)
-            } else {
-                Decimal::from(delta) / units
-            },
-            ..fee_with
-        });
     }
     if charge_ids.is_empty() || fees.is_empty() {
         return Ok(None);

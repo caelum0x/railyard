@@ -20,6 +20,7 @@
 //! semantics (ties away from zero).
 
 pub mod aggregation;
+pub mod charge_fees;
 pub mod charge_models;
 pub mod charges;
 pub mod commitments;
@@ -55,8 +56,9 @@ use crate::error::Result;
 /// End-to-end charge → fee for one charge in arrears: aggregate the events,
 /// apply the charge model, and build the fee (without taxes).
 ///
-/// This is the spine of `Fees::ChargeService#call` for the common
-/// (non-filtered, in-arrears) path.
+/// One fee over every event with the charge's own properties: charge filters,
+/// pricing groups and proration are not applied. Billing and usage go through
+/// [`charge_fees::charge_fees`], which does.
 pub fn charge_to_fee(
     metric: &BillableMetric,
     charge: &Charge,

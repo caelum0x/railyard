@@ -4,7 +4,8 @@
 //! * `current_usage` ports `Invoices::CustomerUsageService` (read path):
 //!   aggregate the current period's events per charge, apply the charge model,
 //!   return per-charge units + amount. Reuses the exact same engine
-//!   (`charge_to_fee`) the billing run uses — no invoice is persisted.
+//!   (`charge_fees`: every filter and pricing group line) the billing run
+//!   uses — no invoice is persisted.
 //! * `projected_usage` extends that with Lago's `calculate_projected_usage`
 //!   run-rate projection (`Fees::ProjectionService`): scale the elapsed-period
 //!   usage up to the full period by the elapsed/total day ratio (recurring
@@ -15,7 +16,7 @@
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use chrono::{NaiveDate, NaiveDateTime, Utc};
-use rago_billing::charge_to_fee;
+use rago_billing::charge_fees::charge_fees;
 use rago_core::enums::WalletStatus;
 use rago_core::models::{Fee, Subscription, Wallet};
 use rust_decimal::Decimal;
@@ -41,6 +42,10 @@ struct ChargeUsage {
     units: Decimal,
     events_count: i64,
     amount_cents: i64,
+    /// One entry per charge filter line (Lago `charges_usage[].filters`).
+    filters: Vec<Value>,
+    /// One entry per pricing group (Lago `charges_usage[].grouped_usage`).
+    grouped_usage: Vec<Value>,
 }
 
 /// Aggregate + price every charge on the subscription's plan for the window
@@ -57,21 +62,56 @@ async fn compute_charges_usage(
     let charges = st.db.charges_for_plan(plan.id).await?;
     let mut out = Vec::new();
     for charge in &charges {
-        let Some(mid) = charge.billable_metric_id else { continue };
-        let metric = st.db.find_billable_metric(mid).await?;
-        let events = st
-            .db
-            .events_for_external_subscription(org, &sub.external_id, &metric.code, from, to)
-            .await?;
-        let fee: Fee = charge_to_fee(&metric, charge, sub, &events, currency, None)?;
+        let Some(loaded) = st.db.load_charge_usage(org, &sub.external_id, charge, from, to, to).await? else {
+            continue;
+        };
+        // Priced like the invoice: one line per filter and pricing group.
+        let fees: Vec<Fee> = charge_fees(&loaded.usage(), sub, currency, None)?;
+        let metric = &loaded.metric;
+        let filter_values = |id: uuid::Uuid| {
+            loaded
+                .filters
+                .iter()
+                .find(|f| f.id == id)
+                .map(|f| json!(f.values))
+                .unwrap_or(Value::Null)
+        };
+        let filters: Vec<Value> = fees
+            .iter()
+            .filter_map(|f| {
+                let id = f.charge_filter_id?;
+                Some(json!({
+                    "lago_charge_filter_id": id,
+                    "values": filter_values(id),
+                    "units": f.units.to_string(),
+                    "events_count": f.events_count.unwrap_or(0),
+                    "amount_cents": f.amount_cents,
+                }))
+            })
+            .collect();
+        let grouped_usage: Vec<Value> = fees
+            .iter()
+            .filter(|f| f.grouped_by.as_object().is_some_and(|o| !o.is_empty()))
+            .map(|f| {
+                json!({
+                    "grouped_by": f.grouped_by,
+                    "lago_charge_filter_id": f.charge_filter_id,
+                    "units": f.units.to_string(),
+                    "events_count": f.events_count.unwrap_or(0),
+                    "amount_cents": f.amount_cents,
+                })
+            })
+            .collect();
         out.push(ChargeUsage {
             charge_json: json!({ "lago_id": charge.id, "charge_model": charge.charge_model.as_str() }),
             metric_json: json!({ "lago_id": metric.id, "code": metric.code, "name": metric.name, "aggregation_type": metric.aggregation_type.as_str() }),
             metric_code: metric.code.clone(),
             recurring: metric.recurring,
-            units: fee.units,
-            events_count: fee.events_count.unwrap_or(0) as i64,
-            amount_cents: fee.amount_cents,
+            units: fees.iter().map(|f| f.units).sum(),
+            events_count: fees.iter().map(|f| f.events_count.unwrap_or(0) as i64).sum(),
+            amount_cents: fees.iter().map(|f| f.amount_cents).sum(),
+            filters,
+            grouped_usage,
         });
     }
     Ok(out)
@@ -164,6 +204,8 @@ pub async fn current_usage(
             "amount_currency": currency.code(),
             "charge": u.charge_json,
             "billable_metric": u.metric_json,
+            "filters": u.filters,
+            "grouped_usage": u.grouped_usage,
         }));
     }
 
@@ -227,6 +269,8 @@ pub async fn projected_usage(
             "projected_amount_cents": proj_amount,
             "charge": u.charge_json,
             "billable_metric": u.metric_json,
+            "filters": u.filters,
+            "grouped_usage": u.grouped_usage,
         }));
     }
 
