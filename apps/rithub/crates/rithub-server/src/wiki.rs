@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn page_names_map_to_flat_markdown_files() {
-        assert_eq!(page_file("Getting Started").unwrap(), "Getting-Started.md");
+        assert_eq!(page_file("Getting Started").ok().as_deref(), Some("Getting-Started.md"));
         assert!(page_file("../etc/passwd").is_err());
         assert!(page_file(".hidden").is_err());
         assert!(page_file("  ").is_err());
