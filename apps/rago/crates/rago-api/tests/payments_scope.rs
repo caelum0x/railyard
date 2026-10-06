@@ -296,3 +296,36 @@ async fn show_payment_request_rejects_cross_org_id(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(resp["payment_request"]["amount_cents"], 1000);
 }
+
+#[sqlx::test(migrator = "rago_db::MIGRATOR")]
+async fn receipt_show_and_customer_payment_lists(pool: PgPool) {
+    let (app, db, a, _b, inv) = setup(pool).await;
+    let body = json!({ "payment": { "invoice_id": inv.id, "amount_cents": 1000, "amount_currency": "USD", "status": "succeeded" } });
+    let (status, _) = call(&app, TOKEN_A, "POST", "/api/v1/payments", Some(body)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, list) = call(&app, TOKEN_A, "GET", &format!("/api/v1/payment_receipts?invoice_id={}", inv.id), None).await;
+    let receipt_id = list["payment_receipts"][0]["lago_id"].as_str().unwrap().to_string();
+
+    // GET /payment_receipts/:id, org-scoped.
+    let uri = format!("/api/v1/payment_receipts/{receipt_id}");
+    let (status, resp) = call(&app, TOKEN_A, "GET", &uri, None).await;
+    assert_eq!(status, StatusCode::OK, "{resp:?}");
+    assert_eq!(resp["payment_receipt"]["amount_cents"], 1000);
+    assert_eq!(call(&app, TOKEN_B, "GET", &uri, None).await.0, StatusCode::NOT_FOUND);
+    let unknown = format!("/api/v1/payment_receipts/{}", Uuid::new_v4());
+    assert_eq!(call(&app, TOKEN_A, "GET", &unknown, None).await.0, StatusCode::NOT_FOUND);
+
+    // GET /customers/:id/payment_methods and /payment_requests.
+    let cust = db.find_customer_by_external_id(a.id, "cust-a").await.unwrap().unwrap();
+    db.insert_payment_method(Uuid::new_v4(), a.id, cust.id, Some("pm_123"), true).await.unwrap();
+    let (status, resp) = call(&app, TOKEN_A, "GET", "/api/v1/customers/cust-a/payment_methods", None).await;
+    assert_eq!(status, StatusCode::OK, "{resp:?}");
+    assert_eq!(resp["payment_methods"][0]["provider_method_id"], "pm_123");
+    assert_eq!(resp["payment_methods"][0]["is_default"], true);
+    let (status, resp) = call(&app, TOKEN_A, "GET", "/api/v1/customers/cust-a/payment_requests", None).await;
+    assert_eq!(status, StatusCode::OK, "{resp:?}");
+    assert!(resp["payment_requests"].as_array().unwrap().is_empty());
+    // Another organization does not see this customer.
+    assert_eq!(call(&app, TOKEN_B, "GET", "/api/v1/customers/cust-a/payment_methods", None).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(call(&app, TOKEN_B, "GET", "/api/v1/customers/cust-a/payment_requests", None).await.0, StatusCode::NOT_FOUND);
+}
