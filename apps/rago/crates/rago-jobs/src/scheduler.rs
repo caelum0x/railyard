@@ -582,7 +582,25 @@ async fn bill_scope(
         (loaded, row_ids, progressive)
     };
     let charge_inputs: Vec<ChargeInput> = loaded.iter().map(LoadedCharge::input).collect();
-    if optional && charge_inputs.is_empty() && progressive.is_empty() {
+    // Fixed charges: upfront ones with the fee ahead (unless this invoice bills
+    // no fee ahead: a closing invoice, or a final one whose fee was paid
+    // upfront), the others with the closed period.
+    let upfront_billed = match scope {
+        InvoiceScope::Periodic => true,
+        InvoiceScope::ClosingCharges => false,
+        InvoiceScope::Terminating { fee_paid_upfront, .. } => !fee_paid_upfront,
+    };
+    let fixed = db.fixed_charge_specs(plan.id).await?;
+    let fixed_fees = rago_billing::fixed_charges::fixed_charge_fees(
+        &fixed,
+        plan.pay_in_advance,
+        &period,
+        upfront_billed,
+        subscription,
+        currency,
+        None,
+    )?;
+    if optional && charge_inputs.is_empty() && progressive.is_empty() && fixed_fees.is_empty() {
         return Ok(None);
     }
 
@@ -613,6 +631,7 @@ async fn bill_scope(
         &taxes,
         &[],
         &progressive,
+        fixed_fees,
     )?;
     if fee_less {
         // No subscription line (its amount is zero, so the totals are unchanged).

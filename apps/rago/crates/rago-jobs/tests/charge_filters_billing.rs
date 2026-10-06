@@ -390,3 +390,51 @@ async fn a_pay_in_advance_event_is_billed_at_its_filter_price(pool: PgPool) {
     let fee = w.db.fees_for_invoice(b.id).await.unwrap();
     assert!(fee[0].charge_filter_id.is_some());
 }
+
+#[sqlx::test(migrations = "../rago-db/migrations")]
+async fn fixed_charges_are_billed_in_arrears_prorated_and_upfront(pool: PgPool) {
+    let w = world(pool).await;
+    // Pay in arrears: 5 seats at $12, prorated, from May 17 (15 of 31 days),
+    // and a $50 platform unit, not prorated.
+    let plan = w.plan().await;
+    let seats = Uuid::new_v4();
+    w.db.insert_fixed_charge(seats, w.org, plan.id, None, 0, &json!({ "amount": "12" }), 5.into(), false, true, Some("Seats"))
+        .await
+        .unwrap();
+    let platform = Uuid::new_v4();
+    w.db.insert_fixed_charge(platform, w.org, plan.id, None, 0, &json!({ "amount": "50" }), 1.into(), false, false, None)
+        .await
+        .unwrap();
+    let sub = w.subscription(&plan, "sub-fc", d(2026, 5, 17)).await;
+    run_billing_cycle(&w.db, &MockTransport::always(500, "{}"), &no_charge(), d(2026, 6, 1), false).await.unwrap();
+    let fees = w.usage_fees(&sub).await;
+    let of = |id: Uuid| fees.iter().find(|f| f.invoiceable_id == Some(id)).unwrap_or_else(|| panic!("{fees:?}"));
+    // $60 * 15/31 = 29.03; units show the 5 seats.
+    assert_eq!(of(seats).amount_cents, 2_903);
+    assert_eq!(of(seats).units, 5.into());
+    assert!(matches!(of(seats).fee_type, Some(FeeType::FixedCharge)));
+    assert_eq!(of(platform).amount_cents, 5_000);
+
+    // Pay in advance: an upfront fixed charge is billed with the fee for the
+    // period ahead; a re-run bills nothing again.
+    let ahead = w.plan().await;
+    sqlx::query("UPDATE plans SET pay_in_advance = true WHERE id = $1").bind(ahead.id).execute(&w.db.pool).await.unwrap();
+    let licence = Uuid::new_v4();
+    w.db.insert_fixed_charge(licence, w.org, ahead.id, None, 0, &json!({ "amount": "7" }), 3.into(), true, false, None)
+        .await
+        .unwrap();
+    let sub2 = w.subscription(&ahead, "sub-fc2", d(2026, 6, 1)).await;
+    for _ in 0..2 {
+        run_billing_cycle(&w.db, &MockTransport::always(500, "{}"), &no_charge(), d(2026, 6, 1), false).await.unwrap();
+    }
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        "SELECT f.amount_cents FROM fees f JOIN invoice_subscriptions s ON s.invoice_id = f.invoice_id \
+         WHERE s.subscription_id = $1 AND f.invoiceable_id = $2",
+    )
+    .bind(sub2.id)
+    .bind(licence)
+    .fetch_all(&w.db.pool)
+    .await
+    .unwrap();
+    assert_eq!(rows, vec![(2_100,)], "billed once, upfront for June");
+}

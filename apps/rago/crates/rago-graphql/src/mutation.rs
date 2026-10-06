@@ -5,7 +5,7 @@
 
 use async_graphql::{Context, InputObject, Json, Object, Result};
 use chrono::Utc;
-use rago_billing::generate::{generate_subscription_invoice, ChargeInput};
+use rago_billing::generate::ChargeInput;
 use rago_billing::wallets::{build_transaction, increase_balance, WalletCredit};
 use rago_core::enums::*;
 use rago_core::models as m;
@@ -643,7 +643,18 @@ impl Mutation {
 
         let taxes = db(ctx).organization_taxes(org.id).await?;
         let mut invoice = blank_invoice(&sub, &currency);
-        let fees = generate_subscription_invoice(
+        let fixed = db(ctx).fixed_charge_specs(plan.id).await?;
+        let fixed_fees = rago_billing::fixed_charges::fixed_charge_fees(
+            &fixed,
+            plan.pay_in_advance,
+            &dates,
+            true,
+            &sub,
+            currency,
+            None,
+        )
+        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let (fees, _) = rago_billing::generate::generate_subscription_invoice_with_progressive(
             &mut invoice,
             &plan,
             &sub,
@@ -652,6 +663,8 @@ impl Mutation {
             &charge_inputs,
             &taxes,
             &[],
+            &[],
+            fixed_fees,
         )
         .map_err(|e| async_graphql::Error::new(e.to_string()))?;
         db(ctx).insert_numbered_invoice_with_fees(&mut invoice, &fees).await?;

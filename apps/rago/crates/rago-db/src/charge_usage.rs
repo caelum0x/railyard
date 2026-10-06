@@ -157,4 +157,18 @@ impl Db {
         .await?;
         rows.iter().map(mapping::event).collect()
     }
+
+    /// A plan's live fixed charges as billing reads them. A row whose charge
+    /// model cannot be read is an error, never a silently unbilled charge.
+    pub async fn fixed_charge_specs(&self, plan_id: Uuid) -> Result<Vec<rago_billing::fixed_charges::FixedChargeSpec>> {
+        self.fixed_charges_for_plan(plan_id)
+            .await?
+            .iter()
+            .map(|r| {
+                r.spec().ok_or_else(|| {
+                    crate::error::DbError::Enum(format!("fixed charge {} has charge_model {}", r.id, r.charge_model))
+                })
+            })
+            .collect()
+    }
 }

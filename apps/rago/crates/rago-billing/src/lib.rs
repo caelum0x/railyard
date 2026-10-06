@@ -32,6 +32,7 @@ pub mod error;
 pub mod events;
 pub mod expression;
 pub mod fees;
+pub mod fixed_charges;
 pub mod generate;
 pub mod invoices;
 mod json;

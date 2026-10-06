@@ -5,7 +5,7 @@
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use chrono::Utc;
-use rago_billing::generate::{generate_subscription_invoice, ChargeInput};
+use rago_billing::generate::ChargeInput;
 use rago_billing::wallets::{build_transaction, increase_balance, WalletCredit};
 use rago_core::enums::*;
 use rago_core::models::*;
@@ -1354,7 +1354,17 @@ pub(crate) async fn compute_subscription_invoice(
     // Organization taxes apply to the subscription + charge fees.
     let taxes = st.db.organization_taxes(sub.organization_id).await?;
     let mut invoice = blank_invoice(sub, &currency);
-    let fees = generate_subscription_invoice(
+    let fixed = st.db.fixed_charge_specs(plan.id).await?;
+    let fixed_fees = rago_billing::fixed_charges::fixed_charge_fees(
+        &fixed,
+        plan.pay_in_advance,
+        &dates,
+        true,
+        sub,
+        currency,
+        None,
+    )?;
+    let (fees, _) = rago_billing::generate::generate_subscription_invoice_with_progressive(
         &mut invoice,
         &plan,
         sub,
@@ -1363,6 +1373,8 @@ pub(crate) async fn compute_subscription_invoice(
         &charge_inputs,
         &taxes,
         &[],
+        &[],
+        fixed_fees,
     )?;
 
     Ok((invoice, fees))

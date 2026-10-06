@@ -97,10 +97,28 @@ pub struct FixedChargeRow {
     pub plan_id: Uuid,
     pub add_on_id: Option<Uuid>,
     pub charge_model: i32,
+    /// Charge-model configuration (`amount`, `graduated_ranges`, ...).
+    pub properties: Value,
     pub units: Decimal,
     pub pay_in_advance: bool,
     pub prorated: bool,
     pub invoice_display_name: Option<String>,
+}
+
+impl FixedChargeRow {
+    /// As billing reads it; `None` for a charge model Rago does not know.
+    pub fn spec(&self) -> Option<rago_billing::fixed_charges::FixedChargeSpec> {
+        Some(rago_billing::fixed_charges::FixedChargeSpec {
+            id: self.id,
+            add_on_id: self.add_on_id,
+            charge_model: rago_core::enums::ChargeModel::try_from(self.charge_model).ok()?,
+            properties: self.properties.clone(),
+            units: self.units,
+            pay_in_advance: self.pay_in_advance,
+            prorated: self.prorated,
+            invoice_display_name: self.invoice_display_name.clone(),
+        })
+    }
 }
 
 fn fixed_charge_row(r: &sqlx::postgres::PgRow) -> FixedChargeRow {
@@ -109,6 +127,7 @@ fn fixed_charge_row(r: &sqlx::postgres::PgRow) -> FixedChargeRow {
         plan_id: r.get("plan_id"),
         add_on_id: r.get("add_on_id"),
         charge_model: r.get("charge_model"),
+        properties: r.get("properties"),
         units: r.get("units"),
         pay_in_advance: r.get("pay_in_advance"),
         prorated: r.get("prorated"),

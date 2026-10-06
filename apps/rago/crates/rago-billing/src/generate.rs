@@ -76,6 +76,7 @@ pub fn generate_subscription_invoice(
         taxes,
         coupons,
         &[],
+        Vec::new(),
     )
     .map(|(fees, _)| fees)
 }
@@ -86,6 +87,8 @@ pub fn generate_subscription_invoice(
 /// so the customer is never billed twice for the same usage. Returns the fees
 /// and one credit result per progressive invoice (true-up credit notes to issue
 /// when a progressive invoice billed more than the period's final usage).
+/// `fixed_charge_fees` (see [`crate::fixed_charges`]) join the invoice before
+/// coupons and taxes.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_subscription_invoice_with_progressive(
     invoice: &mut Invoice,
@@ -97,6 +100,7 @@ pub fn generate_subscription_invoice_with_progressive(
     taxes: &[Tax],
     coupons: &[CouponApplication],
     progressive: &[ProgressiveBillingInvoice],
+    fixed_charge_fees: Vec<Fee>,
 ) -> Result<(Vec<Fee>, Vec<ProgressiveCreditResult>)> {
     let currency = plan.currency();
     let billing_entity_id = subscription
@@ -139,6 +143,9 @@ pub fn generate_subscription_invoice_with_progressive(
         fees.extend(retain_used(&usage, charge_fees, parent_id));
         fees.extend(true_up);
     }
+
+    // Fixed charges (seats, platform units) of this invoice.
+    fees.extend(fixed_charge_fees.into_iter().map(|f| Fee { invoice_id: Some(invoice.id), ..f }));
 
     // Credit back usage already billed progressively this period (before taxes).
     let progressive_results: Vec<ProgressiveCreditResult> = progressive

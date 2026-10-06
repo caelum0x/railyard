@@ -8,7 +8,7 @@
 //! announced and collected — by [`crate::finalize`] otherwise.
 
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use rago_billing::generate::{generate_subscription_invoice, ChargeInput};
+use rago_billing::generate::ChargeInput;
 use rago_billing::subscription_fee::Proration;
 use rago_core::enums::{InvoiceStatus, InvoiceType, PaymentStatus};
 use rago_core::models::{Fee, Invoice};
@@ -90,9 +90,21 @@ pub async fn perform(
 
     let charge_inputs: Vec<ChargeInput> = loaded.iter().map(rago_db::LoadedCharge::input).collect();
 
+    // The plan's fixed charges for the window.
+    let fixed = db.fixed_charge_specs(plan.id).await?;
+    let fixed_fees = rago_billing::fixed_charges::fixed_charge_fees(
+        &fixed,
+        plan.pay_in_advance,
+        &period,
+        true,
+        &subscription,
+        currency,
+        None,
+    )?;
+
     // Full generation: subscription fee (interval-aware, prorated to the
-    // window) + charge fees + taxes (no coupons).
-    let mut fees = generate_subscription_invoice(
+    // window) + charge fees + fixed charges + taxes (no coupons).
+    let (mut fees, _) = rago_billing::generate::generate_subscription_invoice_with_progressive(
         &mut invoice,
         &plan,
         &subscription,
@@ -101,6 +113,8 @@ pub async fn perform(
         &charge_inputs,
         &taxes,
         &[],
+        &[],
+        fixed_fees,
     )?;
     if matches!(proration, Proration::Zero) {
         // No fee owed in the window (a trial covers it): no subscription line.
