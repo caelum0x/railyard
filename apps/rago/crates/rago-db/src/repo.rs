@@ -764,7 +764,8 @@ impl Db {
 
     pub async fn find_plan_by_code(&self, org: Uuid, code: &str) -> Result<Option<Plan>> {
         let row = sqlx::query(
-            "SELECT * FROM plans WHERE organization_id = $1 AND code = $2 AND deleted_at IS NULL",
+            // Override plans (parent_id set) share their parent's code; the code names the parent.
+            "SELECT * FROM plans WHERE organization_id = $1 AND code = $2 AND deleted_at IS NULL AND parent_id IS NULL",
         )
         .bind(org)
         .bind(code)
@@ -1016,13 +1017,13 @@ impl Db {
     }
 
     pub async fn list_plans(&self, org: Uuid, limit: i64, offset: i64) -> Result<Vec<Plan>> {
-        let rows = sqlx::query("SELECT * FROM plans WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $2 OFFSET $3")
+        let rows = sqlx::query("SELECT * FROM plans WHERE organization_id = $1 AND deleted_at IS NULL AND parent_id IS NULL ORDER BY created_at DESC LIMIT $2 OFFSET $3")
             .bind(org).bind(limit).bind(offset).fetch_all(&self.pool).await?;
         rows.iter().map(mapping::plan).collect()
     }
     pub async fn count_plans(&self, org: Uuid) -> Result<i64> {
         let row = sqlx::query(
-            "SELECT COUNT(*) AS n FROM plans WHERE organization_id = $1 AND deleted_at IS NULL",
+            "SELECT COUNT(*) AS n FROM plans WHERE organization_id = $1 AND deleted_at IS NULL AND parent_id IS NULL",
         )
         .bind(org)
         .fetch_one(&self.pool)

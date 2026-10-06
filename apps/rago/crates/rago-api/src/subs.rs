@@ -95,7 +95,7 @@ pub async fn subscription_lifetime_usage(
 
 // ---- subscription alerts CRUD (canonical `alerts` model) -------------------
 
-fn alert_json(a: &rago_db::AlertRow, thresholds: &[rago_db::AlertThresholdRow]) -> Value {
+pub(crate) fn alert_json(a: &rago_db::AlertRow, thresholds: &[rago_db::AlertThresholdRow]) -> Value {
     json!({
         "lago_id": a.id,
         "alertable_type": a.alertable_type,
@@ -223,7 +223,7 @@ pub async fn destroy_alert(
     Ok(Json(json!({ "alert": out })))
 }
 
-fn parse_thresholds(p: &Value) -> Vec<(Option<String>, Decimal, bool)> {
+pub(crate) fn parse_thresholds(p: &Value) -> Vec<(Option<String>, Decimal, bool)> {
     p.get("thresholds")
         .and_then(Value::as_array)
         .map(|arr| {

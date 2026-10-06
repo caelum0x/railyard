@@ -44,6 +44,7 @@ pub mod termination;
 pub mod receipts;
 pub mod refunds;
 pub mod rest_extras;
+pub mod rest_parity;
 pub mod secrets;
 pub mod sso_state;
 pub mod tenancy;

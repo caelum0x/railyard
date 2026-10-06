@@ -23,6 +23,7 @@ pub mod crud;
 pub mod customer_lists;
 pub mod emit;
 pub mod error;
+pub mod lago_wallets;
 pub mod fixed_charges;
 pub mod graphql;
 pub mod handlers;
@@ -80,7 +81,6 @@ pub fn router(state: AppState) -> Router {
         .route("/customers/:external_id", get(handlers::show_customer).delete(crud::destroy_customer))
         .route("/customers/:external_id/subscriptions", get(crud::customer_subscriptions))
         .route("/customers/:external_id/invoices", get(crud::customer_invoices))
-        .route("/customers/:external_id/wallets", get(crud::customer_wallets))
         .route("/customers/:external_id/portal_url", get(crud::customer_portal_url))
         .route("/customers/:external_id/portal_sessions", post(portal::create_session).delete(portal::revoke_sessions))
         .route("/customers/:external_id/checkout_url", post(crud::customer_checkout_url))
@@ -226,6 +226,51 @@ pub fn router(state: AppState) -> Router {
         .route("/payment_receipts", get(payments::list_payment_receipts))
         .route("/payment_receipts/:id", get(payments::show_payment_receipt))
         .route("/customers/:external_id/payment_requests", get(payments::customer_payment_requests))
+        // --- Lago REST parity (round 2): wallets, metadata, payment methods, wallet transactions
+        .route("/customers/:external_id/wallets", post(lago_wallets::create_customer_wallet).get(lago_wallets::list_customer_wallets))
+        .route(
+            "/customers/:external_id/wallets/:code",
+            get(lago_wallets::show_customer_wallet).put(lago_wallets::update_customer_wallet).delete(lago_wallets::terminate_customer_wallet),
+        )
+        .route(
+            "/customers/:external_id/wallets/:code/alerts",
+            post(lago_wallets::create_wallet_alert).get(lago_wallets::list_wallet_alerts).delete(lago_wallets::destroy_all_wallet_alerts),
+        )
+        .route(
+            "/customers/:external_id/wallets/:code/alerts/:alert_code",
+            get(lago_wallets::show_wallet_alert).put(lago_wallets::update_wallet_alert).delete(lago_wallets::destroy_wallet_alert),
+        )
+        .route(
+            "/customers/:external_id/wallets/:code/metadata",
+            post(lago_wallets::create_customer_wallet_metadata)
+                .put(lago_wallets::update_customer_wallet_metadata)
+                .delete(lago_wallets::destroy_customer_wallet_metadata),
+        )
+        .route("/customers/:external_id/wallets/:code/metadata/:key", axum::routing::delete(lago_wallets::destroy_customer_wallet_metadata_key))
+        .route("/customers/:external_id/payment_methods/:id", axum::routing::delete(lago_wallets::destroy_payment_method))
+        .route("/customers/:external_id/payment_methods/:id/set_as_default", put(lago_wallets::set_default_payment_method))
+        .route(
+            "/wallets/:id/metadata",
+            post(lago_wallets::create_wallet_metadata).put(lago_wallets::update_wallet_metadata).delete(lago_wallets::destroy_wallet_metadata),
+        )
+        .route("/wallets/:id/metadata/:key", axum::routing::delete(lago_wallets::destroy_wallet_metadata_key))
+        .route(
+            "/plans/:code/metadata",
+            post(lago_wallets::create_plan_metadata).put(lago_wallets::update_plan_metadata).delete(lago_wallets::destroy_plan_metadata),
+        )
+        .route("/plans/:code/metadata/:key", axum::routing::delete(lago_wallets::destroy_plan_metadata_key))
+        .route(
+            "/credit_notes/:id/metadata",
+            post(lago_wallets::create_credit_note_metadata)
+                .put(lago_wallets::update_credit_note_metadata)
+                .delete(lago_wallets::destroy_credit_note_metadata),
+        )
+        .route("/credit_notes/:id/metadata/:key", axum::routing::delete(lago_wallets::destroy_credit_note_metadata_key))
+        .route("/wallet_transactions/:id", get(lago_wallets::show_wallet_transaction))
+        .route("/wallet_transactions/:id/payment_url", post(lago_wallets::wallet_transaction_payment_url))
+        .route("/wallet_transactions/:id/consumptions", get(lago_wallets::wallet_transaction_consumptions))
+        .route("/wallet_transactions/:id/fundings", get(lago_wallets::wallet_transaction_fundings))
+        .route("/wallets/:id/wallet_transactions", get(lago_wallets::wallet_wallet_transactions))
         .route("/customers/:external_id/payment_methods", get(payments::customer_payment_methods))
         .route("/payment_receipts/:invoice_id/resend_email", post(payments::resend_payment_receipt))
         // --- v1 analytics (data API)
