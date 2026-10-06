@@ -12,21 +12,24 @@
 //! until Mint confirms the capture or the record is explicitly **dead-lettered**
 //! (retained + logged, never silently dropped).
 //!
-//! ## Honest durability boundary
+//! ## Durability
 //!
-//! This queue is **in-process only** — an [`Arc<Mutex<..>>`], exactly like the
-//! Relay path's `EvidenceState`. It survives dropped streams, cancelled tasks,
-//! and hosts without a Tokio runtime (via [`CaptureReconciler::reconcile_now`]),
-//! but it does **not** survive a process crash. Wiring a crash-durable store
-//! (a DB row / WAL) would replace the [`Mutex`] state behind this same API; the
-//! seam is deliberately small so that swap is local. Nothing here fabricates
-//! cross-restart durability.
+//! The queue lives in memory, and with a journal
+//! ([`CaptureReconciler::with_journal`], e.g. [`crate::journal::FileCaptureJournal`])
+//! every change is recorded durably first: after a crash the reconciler
+//! reopens with every capture still owed (and the gateway's hold context, so
+//! it can still settle them) and [`CaptureReconciler::resume`] restarts their
+//! retry loops. Without a journal ([`CaptureReconciler::new`]) the queue
+//! survives dropped streams, cancelled tasks and hosts without a Tokio
+//! runtime, but not a process crash.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use aitp_client::{AmountMicros, HoldRef, PayError, PaymentGateway};
+
+use crate::journal::{CaptureJournal, JournalEntry, JournalError};
 
 /// Tunables for the [`CaptureReconciler`] background retry loop.
 #[derive(Debug, Clone)]
@@ -107,6 +110,7 @@ pub struct CaptureReconciler<P> {
     gateway: Arc<P>,
     config: ReconcilerConfig,
     state: Mutex<ReconcilerState>,
+    journal: Option<Arc<dyn CaptureJournal>>,
 }
 
 impl<P> CaptureReconciler<P>
@@ -119,6 +123,57 @@ where
             gateway,
             config,
             state: Mutex::new(ReconcilerState::default()),
+            journal: None,
+        }
+    }
+
+    /// A reconciler whose queue is recorded in `journal`, reopened with every
+    /// capture the journal still owes (their gateway hold contexts restored)
+    /// and every dead letter. Call [`resume`](Self::resume) to restart the
+    /// owed captures' retry loops.
+    pub fn with_journal(
+        gateway: Arc<P>,
+        config: ReconcilerConfig,
+        journal: Arc<dyn CaptureJournal>,
+    ) -> Result<Self, JournalError> {
+        let recovered = journal.load()?;
+        let mut state = ReconcilerState::default();
+        for p in recovered.pending {
+            if let Some(context) = &p.context {
+                if let Err(error) = gateway.restore_hold_context(&p.hold, context) {
+                    tracing::error!(hold = ?p.hold, %error, "could not restore the hold context of an owed capture");
+                }
+            }
+            state.pending.insert(
+                p.hold.0.clone(),
+                PendingRecord { hold: p.hold, amount: p.amount, attempts: p.attempts, reconciling: false },
+            );
+        }
+        state.dead_letters = recovered
+            .dead_letters
+            .into_iter()
+            .map(|d| DeadLetteredCapture { hold: d.hold, amount: d.amount, attempts: d.attempts, last_error: d.error })
+            .collect();
+        Ok(Self { gateway, config, state: Mutex::new(state), journal: Some(journal) })
+    }
+
+    /// Restart the retry loops of every owed capture (after
+    /// [`with_journal`](Self::with_journal)); returns how many.
+    pub fn resume(self: &Arc<Self>) -> usize {
+        let keys: Vec<String> = self.lock().pending.keys().cloned().collect();
+        for key in &keys {
+            self.spawn_background(key.clone());
+        }
+        keys.len()
+    }
+
+    /// Record `entry` in the journal, if any. A journal failure is logged
+    /// loudly; the in-memory queue still holds the capture.
+    fn record(&self, entry: JournalEntry) {
+        if let Some(journal) = &self.journal {
+            if let Err(error) = journal.append(&entry) {
+                tracing::error!(?entry, %error, "AITP-402 capture journal write failed; the capture is only held in memory");
+            }
         }
     }
 
@@ -141,14 +196,20 @@ where
     /// [`reconcile_now`](Self::reconcile_now).
     pub fn enqueue(self: &Arc<Self>, hold: HoldRef, amount: AmountMicros) {
         let key = hold.0.clone();
-        {
+        let fresh = {
             let mut state = self.lock();
-            state.pending.entry(key.clone()).or_insert(PendingRecord {
-                hold,
-                amount,
-                attempts: 0,
-                reconciling: false,
-            });
+            let fresh = !state.pending.contains_key(&key);
+            if fresh {
+                state.pending.insert(
+                    key.clone(),
+                    PendingRecord { hold: hold.clone(), amount, attempts: 0, reconciling: false },
+                );
+            }
+            fresh
+        };
+        if fresh {
+            let context = self.gateway.hold_context(&hold);
+            self.record(JournalEntry::Enqueued { hold: key.clone(), amount: amount.0, context });
         }
         self.spawn_background(key);
     }
@@ -262,7 +323,9 @@ where
     }
 
     fn mark_complete(&self, key: &str) {
-        self.lock().pending.remove(key);
+        if self.lock().pending.remove(key).is_some() {
+            self.record(JournalEntry::Settled { hold: key.to_string() });
+        }
     }
 
     fn mark_retryable(&self, key: &str) {
@@ -272,12 +335,26 @@ where
     }
 
     fn bump_attempt(&self, key: &str, attempt: usize) {
-        if let Some(record) = self.lock().pending.get_mut(key) {
-            record.attempts = attempt;
+        let known = match self.lock().pending.get_mut(key) {
+            Some(record) => {
+                record.attempts = attempt;
+                true
+            }
+            None => false,
+        };
+        if known {
+            self.record(JournalEntry::Attempted { hold: key.to_string(), attempts: attempt });
         }
     }
 
     fn dead_letter(&self, key: &str, last_error: String) {
+        let journaled = {
+            let state = self.lock();
+            state.pending.get(key).map(|r| r.attempts)
+        };
+        if let Some(attempts) = journaled {
+            self.record(JournalEntry::DeadLettered { hold: key.to_string(), attempts, error: last_error.clone() });
+        }
         let mut state = self.lock();
         if let Some(record) = state.pending.remove(key) {
             tracing::error!(
@@ -469,6 +546,95 @@ mod tests {
         assert_eq!(settled, 1);
         assert_eq!(reconciler.pending_len(), 0);
         assert_eq!(reconciler.dead_letter_len(), 0);
+    }
+
+    fn journal_path(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("agent-reconcile-{name}-{nanos}.jsonl"))
+    }
+
+    /// Owed captures survive a crash: a reconciler reopened on the journal
+    /// settles them, and a settled capture is not owed again.
+    #[test]
+    fn owed_captures_survive_a_restart_through_the_journal() {
+        use crate::journal::FileCaptureJournal;
+        let path = journal_path("restart");
+        {
+            // No Tokio runtime here: the captures stay queued, then "crash".
+            let gateway = Arc::new(FlakyCaptureGateway::new(usize::MAX));
+            let journal = Arc::new(FileCaptureJournal::open(&path).unwrap());
+            let r = Arc::new(CaptureReconciler::with_journal(gateway, ReconcilerConfig::default(), journal).unwrap());
+            r.enqueue(HoldRef("hold_a".into()), AmountMicros(1000));
+            r.enqueue(HoldRef("hold_b".into()), AmountMicros(2500));
+            assert_eq!(r.pending_len(), 2);
+        }
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let gateway = Arc::new(FlakyCaptureGateway::new(0));
+            let journal = Arc::new(FileCaptureJournal::open(&path).unwrap());
+            let r = Arc::new(CaptureReconciler::with_journal(gateway.clone(), ReconcilerConfig::default(), journal).unwrap());
+            assert_eq!(r.pending_len(), 2, "both captures are still owed after the restart");
+            assert_eq!(r.reconcile_now().await.unwrap(), 2);
+            gateway.inner.with_calls(|c| assert_eq!(c.captured.len(), 2));
+        });
+        let gateway = Arc::new(FlakyCaptureGateway::new(0));
+        let journal = Arc::new(FileCaptureJournal::open(&path).unwrap());
+        let r = CaptureReconciler::with_journal(gateway, ReconcilerConfig::default(), journal).unwrap();
+        assert_eq!(r.pending_len(), 0, "settled captures are not owed again");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A dead letter (money owed, settled out of band) stays visible across
+    /// restarts, and a resumed reconciler retries what is still owed.
+    #[tokio::test]
+    async fn dead_letters_persist_and_resume_restarts_loops() {
+        use crate::journal::FileCaptureJournal;
+        let path = journal_path("dead");
+        {
+            let gateway = Arc::new(FlakyCaptureGateway::new(usize::MAX));
+            let journal = Arc::new(FileCaptureJournal::open(&path).unwrap());
+            let r = Arc::new(
+                CaptureReconciler::with_journal(
+                    gateway,
+                    ReconcilerConfig { max_attempts: 2, base_delay: Duration::from_millis(1), max_delay: Duration::from_millis(1) },
+                    journal,
+                )
+                .unwrap(),
+            );
+            r.enqueue(HoldRef("hold_dead".into()), AmountMicros(700));
+            for _ in 0..2_000 {
+                if r.dead_letter_len() == 1 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            assert_eq!(r.dead_letter_len(), 1);
+            // Queued but not yet retried when the process stops.
+            {
+                let mut state = r.lock();
+                state.pending.insert(
+                    "hold_owed".into(),
+                    PendingRecord { hold: HoldRef("hold_owed".into()), amount: AmountMicros(300), attempts: 0, reconciling: true },
+                );
+            }
+            r.record(JournalEntry::Enqueued { hold: "hold_owed".into(), amount: 300, context: None });
+        }
+        let gateway = Arc::new(FlakyCaptureGateway::new(0));
+        let journal = Arc::new(FileCaptureJournal::open(&path).unwrap());
+        let r = Arc::new(CaptureReconciler::with_journal(gateway.clone(), ReconcilerConfig::default(), journal).unwrap());
+        let dead = r.dead_letters();
+        assert_eq!(dead.len(), 1);
+        assert_eq!((dead[0].hold.0.as_str(), dead[0].amount, dead[0].attempts), ("hold_dead", AmountMicros(700), 2));
+        assert_eq!(r.resume(), 1);
+        for _ in 0..2_000 {
+            if r.pending_len() == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert_eq!(r.pending_len(), 0);
+        gateway.inner.with_calls(|c| assert_eq!(c.captured.len(), 1));
+        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]

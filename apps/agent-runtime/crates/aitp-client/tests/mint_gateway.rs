@@ -265,3 +265,31 @@ async fn transfer_scheme_settles_immediately_with_no_hold() {
     let authorized = gw.authorize(&challenge).await.unwrap();
     assert!(authorized.hold.is_none());
 }
+
+/// A hold's capture context survives a restart: exported from the gateway
+/// that authorized it, restored into a fresh one, which then captures with the
+/// same payee and the same deterministic idempotency key.
+#[tokio::test]
+async fn a_restored_hold_context_captures_like_the_original() {
+    let first = FakeTransport::new(vec![verify_hold_ok()]);
+    let gw = MintPaymentGateway::new(PAYER, API_KEY, first.clone(), signer());
+    let auth = gw.authorize(&hold_challenge()).await.unwrap();
+    let hold = auth.hold.unwrap();
+    let context = gw.hold_context(&hold).expect("a hold has a context");
+    assert_eq!(context["payee"], PAYEE);
+
+    // "Restart": a new gateway knows nothing about the hold until restored.
+    let second = FakeTransport::new(vec![
+        HttpResponse::new(200, br#"{"success":true,"data":{"account_id":"acct_provider_01"}}"#.to_vec()),
+        HttpResponse::new(200, br#"{"success":true,"data":{}}"#.to_vec()),
+    ]);
+    let restarted = MintPaymentGateway::new(PAYER, API_KEY, second.clone(), signer());
+    assert!(restarted.capture(&hold, AmountMicros(4200)).await.is_err(), "no context, no capture");
+    restarted.restore_hold_context(&hold, &context).unwrap();
+    let _ = restarted.capture(&hold, AmountMicros(4200)).await;
+    let reqs = second.requests();
+    let capture = reqs.iter().find(|r| r.path.ends_with("/capture")).expect("capture sent");
+    let body: serde_json::Value = serde_json::from_slice(&capture.body).unwrap();
+    assert_eq!(body["to"], "acct_provider_01");
+    assert!(body["idem_key"].as_str().unwrap().ends_with(":capture"));
+}

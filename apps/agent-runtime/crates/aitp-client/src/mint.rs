@@ -48,7 +48,7 @@ const HEADER_API_KEY: &str = "x-api-key";
 
 /// What the gateway must remember from `authorize` to later `capture`/`release`
 /// a hold (the trait threads only a [`HoldRef`], not the payee or idem key).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct HoldContext {
     /// The provider `ait1…` address to resolve into a `to` `AccountId`.
     payee: String,
@@ -164,6 +164,17 @@ impl MintPaymentGateway {
 
 #[async_trait]
 impl PaymentGateway for MintPaymentGateway {
+    fn hold_context(&self, hold: &HoldRef) -> Option<serde_json::Value> {
+        self.context_for(&hold.0).and_then(|c| serde_json::to_value(c).ok())
+    }
+
+    fn restore_hold_context(&self, hold: &HoldRef, context: &serde_json::Value) -> Result<(), PayError> {
+        let ctx: HoldContext =
+            serde_json::from_value(context.clone()).map_err(|e| PayError::Codec(format!("hold context: {e}")))?;
+        self.holds.lock().unwrap_or_else(|e| e.into_inner()).insert(hold.0.clone(), ctx);
+        Ok(())
+    }
+
     async fn authorize(&self, challenge: &PaymentChallenge) -> Result<Authorized, PayError> {
         let authorization = self.build_authorization(challenge);
 

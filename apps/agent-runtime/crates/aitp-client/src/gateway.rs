@@ -34,6 +34,19 @@ pub trait PaymentGateway: Send + Sync {
     /// Release a hold without settling — the failure path where the agent
     /// pays nothing (SPEC `hold.release`).
     async fn release(&self, hold: &HoldRef) -> Result<(), PayError>;
+
+    /// What this gateway remembers about `hold` between `authorize` and
+    /// `capture`/`release`, as JSON, so a durable capture journal can settle
+    /// the hold after a restart. `None` when there is nothing to remember.
+    fn hold_context(&self, _hold: &HoldRef) -> Option<serde_json::Value> {
+        None
+    }
+
+    /// Restore a context saved by [`PaymentGateway::hold_context`] (after a
+    /// restart, before settling the hold).
+    fn restore_hold_context(&self, _hold: &HoldRef, _context: &serde_json::Value) -> Result<(), PayError> {
+        Ok(())
+    }
 }
 
 /// Result of [`PaymentGateway::authorize`]: the header payload to send and,

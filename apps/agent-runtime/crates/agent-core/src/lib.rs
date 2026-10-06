@@ -12,6 +12,7 @@
 
 pub mod agent;
 pub mod paid;
+pub mod journal;
 pub mod reconcile;
 pub mod runtime;
 
