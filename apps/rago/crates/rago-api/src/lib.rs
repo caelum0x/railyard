@@ -23,6 +23,7 @@ pub mod crud;
 pub mod customer_lists;
 pub mod emit;
 pub mod error;
+pub mod fixed_charges;
 pub mod graphql;
 pub mod handlers;
 pub mod integration_hub;
@@ -92,9 +93,14 @@ pub fn router(state: AppState) -> Router {
         .route("/plans", post(handlers::create_plan).get(crud::list_plans))
         .route("/plans/:code", get(crud::show_plan).put(crud::update_plan).delete(crud::destroy_plan))
         .route("/plans/:code/entitlements", get(handlers::list_plan_entitlements))
-        .route("/plans/:code/charges", post(crud::create_plan_charge))
+        .route("/plans/:code/charges", post(crud::create_plan_charge).get(crud::list_plan_charges))
+        .route("/plans/:code/fixed_charges", get(fixed_charges::index).post(fixed_charges::create))
+        .route(
+            "/plans/:code/fixed_charges/:fixed_charge_code",
+            get(fixed_charges::show).put(fixed_charges::update).delete(fixed_charges::destroy),
+        )
         .route("/plans/:code/usage_thresholds", get(thresholds::list_plan_thresholds).put(thresholds::replace_plan_thresholds))
-        .route("/plans/:code/charges/:id", put(crud::update_plan_charge).delete(crud::destroy_plan_charge))
+        .route("/plans/:code/charges/:id", get(crud::show_plan_charge).put(crud::update_plan_charge).delete(crud::destroy_plan_charge))
         .route("/entitlements", post(handlers::create_entitlement))
         .route("/subscriptions", post(handlers::create_subscription).get(breadth::list_subscriptions))
         .route("/subscriptions/:external_id", get(subs::show_subscription).put(subs::update_subscription).delete(handlers::terminate_subscription))

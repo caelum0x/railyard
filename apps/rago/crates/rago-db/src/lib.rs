@@ -21,6 +21,7 @@ pub mod customer_lifecycle;
 pub mod data_api;
 pub mod dunning;
 pub mod error;
+pub mod fixed_charges_rest;
 pub mod graphql_admin;
 pub mod graphql_admin2;
 pub mod graphql_admin3;

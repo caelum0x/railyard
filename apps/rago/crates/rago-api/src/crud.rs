@@ -167,7 +167,48 @@ async fn plan_with_charges(st: &AppState, plan: &Plan) -> ApiResult<Value> {
     let charges = st.db.charges_for_plan(plan.id).await?;
     let mut plan_json = ser::plan(plan);
     plan_json["charges"] = json!(crate::charge_filters::charges_json(st, &charges).await?);
+    let fixed = st.db.plan_fixed_charges(plan.id).await?;
+    plan_json["fixed_charges"] = json!(fixed.iter().map(crate::fixed_charges::fixed_charge_json).collect::<Vec<_>>());
     Ok(plan_json)
+}
+
+/// `GET /plans/:code/charges` — the plan's charges (with their filters).
+pub async fn list_plan_charges(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path(code): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let plan = st
+        .db
+        .find_plan_by_code(auth.organization.id, &code)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("plan".into()))?;
+    let charges = st.db.charges_for_plan(plan.id).await?;
+    let total = charges.len() as i64;
+    Ok(Json(json!({
+        "charges": crate::charge_filters::charges_json(&st, &charges).await?,
+        "meta": pagination::meta(1, total.max(1), total),
+    })))
+}
+
+/// `GET /plans/:code/charges/:id` — one charge, by id or by code.
+pub async fn show_plan_charge(
+    State(st): State<AppState>,
+    auth: Authed,
+    Path((code, key)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let plan = st
+        .db
+        .find_plan_by_code(auth.organization.id, &code)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("plan".into()))?;
+    let charges = st.db.charges_for_plan(plan.id).await?;
+    let by_id = key.parse::<Uuid>().ok();
+    let charge = charges
+        .iter()
+        .find(|c| Some(c.id) == by_id || c.code == key)
+        .ok_or_else(|| ApiError::NotFound("charge".into()))?;
+    Ok(Json(json!({ "charge": crate::charge_filters::charge_json(&st, charge).await? })))
 }
 
 /// `GET /plans/:code` — a plan with its charges (and their filters).

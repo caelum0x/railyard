@@ -592,8 +592,8 @@ impl Db {
         invoice_display_name: Option<&str>,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO fixed_charges (id, organization_id, plan_id, add_on_id, charge_model, properties, units, pay_in_advance, prorated, invoice_display_name, created_at, updated_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),now())",
+            "INSERT INTO fixed_charges (id, organization_id, plan_id, add_on_id, charge_model, properties, units, pay_in_advance, prorated, invoice_display_name, code, created_at, updated_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$1::text,now(),now())",
         )
         .bind(id)
         .bind(org)
