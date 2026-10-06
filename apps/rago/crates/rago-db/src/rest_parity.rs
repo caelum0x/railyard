@@ -729,6 +729,43 @@ impl Db {
         Ok(())
     }
 
+    /// Record a security event (Lago `Utils::SecurityLog.produce`). A failed
+    /// write never fails the action it audits; it is logged instead.
+    pub async fn record_security_event(
+        &self,
+        org: Uuid,
+        log_type: &str,
+        log_event: &str,
+        user_id: Option<Uuid>,
+        api_key_id: Option<Uuid>,
+        resources: Value,
+    ) {
+        let device = serde_json::json!({});
+        if let Err(e) = self
+            .insert_security_log(org, log_type, log_event, user_id, api_key_id, &resources, &device)
+            .await
+        {
+            tracing::warn!(error = %e, org = %org, log_event, "security log write failed");
+        }
+    }
+
+    /// Record a user security event in every organization the user is an
+    /// active member of (password events are not scoped to one org).
+    pub async fn record_user_security_event(&self, user_id: Uuid, log_event: &str, resources: Value) {
+        let done = sqlx::query(
+            "INSERT INTO security_logs (organization_id, log_type, log_event, user_id, resources, device_info) \
+             SELECT organization_id, 'user', $2, $1, $3, '{}'::jsonb FROM memberships WHERE user_id = $1 AND status = 'active'",
+        )
+        .bind(user_id)
+        .bind(log_event)
+        .bind(&resources)
+        .execute(&self.pool)
+        .await;
+        if let Err(e) = done {
+            tracing::warn!(error = %e, user = %user_id, log_event, "security log write failed");
+        }
+    }
+
     pub async fn list_security_logs(&self, org: Uuid, limit: i64, offset: i64) -> Result<(Vec<SecurityLogRow>, i64)> {
         let rows = sqlx::query(
             "SELECT * FROM security_logs WHERE organization_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",

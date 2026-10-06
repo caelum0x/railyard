@@ -34,6 +34,7 @@ pub mod expression;
 pub mod fees;
 pub mod fixed_charges;
 pub mod generate;
+pub mod instant;
 pub mod invoices;
 mod json;
 pub mod prepaid;

@@ -125,6 +125,32 @@ fn webhook_endpoint_json(id: Uuid, url: &str, algo: &str) -> Value {
     })
 }
 
+/// A requested `signature_algo`: `hmac`, or `jwt` when the deployment has an
+/// RSA key (`RAGO_RSA_PRIVATE_KEY`) to sign with.
+fn signature_algo(requested: Option<&str>) -> ApiResult<Option<&'static str>> {
+    match requested {
+        None => Ok(None),
+        Some("hmac") => Ok(Some("hmac")),
+        Some("jwt") if rago_integrations::webhooks::JwtSigner::global().is_some() => Ok(Some("jwt")),
+        Some("jwt") => Err(ApiError::Validation(json!({ "signature_algo": ["jwt_signing_not_configured"] }))),
+        Some(_) => Err(ApiError::Validation(json!({ "signature_algo": ["value_is_invalid"] }))),
+    }
+}
+
+/// `GET /webhooks/public_key` — base64 of the RS256 public key PEM (Lago's
+/// shape), so receivers can verify `jwt` signatures. 404 without a key.
+pub async fn webhooks_public_key(_auth: Authed) -> ApiResult<String> {
+    rago_integrations::webhooks::JwtSigner::global()
+        .map(|s| s.public_key_base64())
+        .ok_or_else(|| ApiError::NotFound("public_key".into()))
+}
+
+/// `GET /webhooks/json_public_key` — the same key as `{ webhook: { public_key } }`.
+pub async fn webhooks_json_public_key(auth: Authed) -> ApiResult<Json<Value>> {
+    let key = webhooks_public_key(auth).await?;
+    Ok(Json(json!({ "webhook": { "public_key": key } })))
+}
+
 /// `POST /webhook_endpoints` — register an outbound webhook endpoint.
 pub async fn create_webhook_endpoint(
     State(st): State<AppState>,
@@ -133,8 +159,11 @@ pub async fn create_webhook_endpoint(
 ) -> ApiResult<Json<Value>> {
     let p = wrapped(&body, "webhook_endpoint");
     let url = req_s(p, "webhook_url")?;
-    let id = st.db.insert_webhook_endpoint_returning(auth.organization.id, &url).await?;
-    let algo = s(p, "signature_algo").unwrap_or_else(|| "jwt".into());
+    let algo = signature_algo(s(p, "signature_algo").as_deref())?.unwrap_or("hmac");
+    let id = st.db.insert_webhook_endpoint_with_algo(auth.organization.id, &url, algo).await?;
+    st.db
+        .record_security_event(auth.organization.id, "webhook_endpoint", "webhook_endpoint.created", None, Some(auth.api_key.id), json!({ "webhook_url": url, "signature_algo": algo }))
+        .await;
     Ok(Json(json!({ "webhook_endpoint": webhook_endpoint_json(id, &url, &algo) })))
 }
 
@@ -162,23 +191,26 @@ pub async fn show_webhook_endpoint(
 /// `PUT /webhook_endpoints/:id` — update the URL / signature algorithm.
 pub async fn update_webhook_endpoint(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Path(id): Path<Uuid>,
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
     let p = wrapped(&body, "webhook_endpoint");
     let (id, url, algo) = st
         .db
-        .update_webhook_endpoint(id, s(p, "webhook_url").as_deref(), s(p, "signature_algo").as_deref())
+        .update_webhook_endpoint(id, s(p, "webhook_url").as_deref(), signature_algo(s(p, "signature_algo").as_deref())?)
         .await?
         .ok_or_else(|| ApiError::NotFound("webhook_endpoint".into()))?;
+    st.db
+        .record_security_event(auth.organization.id, "webhook_endpoint", "webhook_endpoint.updated", None, Some(auth.api_key.id), json!({ "webhook_url": url, "signature_algo": algo }))
+        .await;
     Ok(Json(json!({ "webhook_endpoint": webhook_endpoint_json(id, &url, &algo) })))
 }
 
 /// `DELETE /webhook_endpoints/:id` — remove an endpoint.
 pub async fn destroy_webhook_endpoint(
     State(st): State<AppState>,
-    _auth: Authed,
+    auth: Authed,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
     let (id, url, algo) = st
@@ -187,6 +219,9 @@ pub async fn destroy_webhook_endpoint(
         .await?
         .ok_or_else(|| ApiError::NotFound("webhook_endpoint".into()))?;
     st.db.delete_webhook_endpoint(id).await?;
+    st.db
+        .record_security_event(auth.organization.id, "webhook_endpoint", "webhook_endpoint.deleted", None, Some(auth.api_key.id), json!({ "webhook_url": url }))
+        .await;
     Ok(Json(json!({ "webhook_endpoint": webhook_endpoint_json(id, &url, &algo) })))
 }
 

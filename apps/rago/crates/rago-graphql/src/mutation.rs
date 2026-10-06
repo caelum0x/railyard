@@ -771,6 +771,8 @@ impl Mutation {
             updated_at: now(),
         };
         db(ctx).insert_api_key(&key).await?;
+        let actor = crate::context::current_user(ctx).map(|u| u.id);
+        db(ctx).record_security_event(org.id, "api_key", "api_key.created", actor, Some(key.id), json!({ "name": key.name })).await;
         Ok(ApiKey {
             id: key.id.into(),
             name: key.name,

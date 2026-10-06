@@ -24,7 +24,30 @@ use uuid::Uuid;
 use crate::transport::HttpTransport;
 
 pub mod catalog;
+pub mod jwt;
 pub mod payloads;
+
+pub use jwt::JwtSigner;
+
+impl Signing<'_> {
+    /// The signing for an endpoint's stored `signature_algo`: `jwt` uses the
+    /// deployment key when one is configured, everything else HMAC.
+    pub fn for_algo<'a>(algo: &str, hmac_key: &'a str, signer: Option<&'a JwtSigner>) -> Signing<'a> {
+        match (algo, signer) {
+            ("jwt", Some(s)) => Signing::Jwt(s),
+            _ => Signing::Hmac(hmac_key),
+        }
+    }
+}
+
+/// How an endpoint's deliveries are signed (`webhook_endpoints.signature_algo`).
+#[derive(Debug, Clone, Copy)]
+pub enum Signing<'a> {
+    /// `base64(HMAC-SHA256(org.hmac_key, payload))`.
+    Hmac(&'a str),
+    /// RS256 JWT over `{data, iss}` with the deployment key.
+    Jwt(&'a JwtSigner),
+}
 
 pub use catalog::WebhookKind;
 
@@ -114,10 +137,21 @@ impl Webhook {
 
     /// `Webhook#generate_headers`.
     pub fn headers(&self, hmac_key: &str) -> Vec<(String, String)> {
+        self.signed_headers(Signing::Hmac(hmac_key))
+    }
+
+    /// `Webhook#generate_headers` for either signature algorithm.
+    pub fn signed_headers(&self, signing: Signing<'_>) -> Vec<(String, String)> {
+        let (signature, algo) = match signing {
+            Signing::Hmac(key) => (self.hmac_signature(key), "hmac"),
+            Signing::Jwt(signer) => {
+                (signer.sign(&serde_json::to_string(&self.payload).unwrap_or_default()), "jwt")
+            }
+        };
         vec![
             ("Content-Type".into(), "application/json".into()),
-            ("X-Lago-Signature".into(), self.hmac_signature(hmac_key)),
-            ("X-Lago-Signature-Algorithm".into(), "hmac".into()),
+            ("X-Lago-Signature".into(), signature),
+            ("X-Lago-Signature-Algorithm".into(), algo.into()),
             ("X-Lago-Unique-Key".into(), self.id.to_string()),
         ]
     }
@@ -176,11 +210,20 @@ pub async fn deliver<T: HttpTransport>(
     webhook: &mut Webhook,
     hmac_key: &str,
 ) -> bool {
+    deliver_signed(transport, webhook, Signing::Hmac(hmac_key)).await
+}
+
+/// [`deliver`] with the endpoint's chosen signature algorithm.
+pub async fn deliver_signed<T: HttpTransport>(
+    transport: &T,
+    webhook: &mut Webhook,
+    signing: Signing<'_>,
+) -> bool {
     if let Err(refused) = egress_guard::check_url(&webhook.endpoint, webhook_policy()) {
         webhook.mark_unsuccessful(None, format!("blocked target: {refused}"), false);
         return false;
     }
-    let headers = webhook.headers(hmac_key);
+    let headers = webhook.signed_headers(signing);
     let body = serde_json::to_string(&webhook.payload).unwrap_or_default();
 
     match transport.post_external(&webhook.endpoint, &headers, body).await {

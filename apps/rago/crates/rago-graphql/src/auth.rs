@@ -94,6 +94,13 @@ pub fn issue_sso_jwt(user_id: Uuid, organization_id: Uuid, provider: &str) -> St
     }))
 }
 
+/// Lago `Auth::GrpcTokenService`: an organization-scoped HS256 token for the
+/// event-processing gRPC side channel. It carries no `sub`, so it can never be
+/// accepted as a dashboard session by [`verify_jwt_claims`].
+pub fn issue_grpc_jwt(organization_id: Uuid) -> String {
+    sign_jwt(serde_json::json!({ "organization_id": organization_id.to_string(), "aud": "rago-grpc" }))
+}
+
 fn sign_jwt(mut claims: serde_json::Value) -> String {
     let header = b64url(br#"{"alg":"HS256","typ":"JWT"}"#);
     let exp = (Utc::now() + Duration::days(1)).timestamp();

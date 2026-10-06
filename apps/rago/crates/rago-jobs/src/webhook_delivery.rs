@@ -3,7 +3,7 @@
 
 use chrono::Utc;
 use rago_db::Db;
-use rago_integrations::webhooks::{deliver, Webhook, WebhookStatus};
+use rago_integrations::webhooks::{deliver_signed, JwtSigner, Signing, Webhook, WebhookStatus};
 use rago_integrations::HttpTransport;
 use serde_json::Value;
 use uuid::Uuid;
@@ -29,8 +29,10 @@ pub async fn emit_webhook<T: HttpTransport>(
     // Deliver, retrying on transient failures. The backoff is short-circuited to
     // an immediate re-attempt here (the schedule is unit-tested separately); a
     // production worker re-enqueues after `backoff_seconds`.
+    let algo = db.webhook_endpoint_algo(organization_id, endpoint).await?;
+    let signing = Signing::for_algo(&algo, hmac_key, JwtSigner::global());
     loop {
-        let should_retry = deliver(transport, &mut webhook, hmac_key).await;
+        let should_retry = deliver_signed(transport, &mut webhook, signing).await;
         if !should_retry {
             break;
         }

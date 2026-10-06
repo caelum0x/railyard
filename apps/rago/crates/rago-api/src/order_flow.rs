@@ -60,7 +60,7 @@ fn quote_json(q: &QuoteDetail) -> Value {
     })
 }
 
-fn version_json(v: &QuoteVersionDetail) -> Value {
+pub(crate) fn version_json(v: &QuoteVersionDetail) -> Value {
     json!({
         "lago_id": v.id,
         "lago_quote_id": v.quote_id,

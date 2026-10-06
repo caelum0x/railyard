@@ -23,6 +23,8 @@ pub mod crud;
 pub mod customer_lists;
 pub mod emit;
 pub mod error;
+pub mod lago_events;
+pub mod lago_logs;
 pub mod lago_plans;
 pub mod lago_wallets;
 pub mod fixed_charges;
@@ -163,7 +165,7 @@ pub fn router(state: AppState) -> Router {
         .route("/quotes/:id", get(order_flow::show_quote))
         .route("/quotes/:id/accept", post(breadth::accept_quote))
         .route("/quotes/:id/void", post(order_flow::void_quote))
-        .route("/quotes/:id/versions", post(order_flow::create_version))
+        .route("/quotes/:id/versions", post(order_flow::create_version).get(lago_logs::list_quote_versions))
         .route("/quotes/:id/versions/:version_id", put(order_flow::update_version))
         .route("/quotes/:id/versions/:version_id/approve", post(order_flow::approve_version))
         .route("/quotes/:id/versions/:version_id/void", post(order_flow::void_version))
@@ -308,6 +310,26 @@ pub fn router(state: AppState) -> Router {
         .route("/wallet_transactions/:id/consumptions", get(lago_wallets::wallet_transaction_consumptions))
         .route("/wallet_transactions/:id/fundings", get(lago_wallets::wallet_transaction_fundings))
         .route("/wallets/:id/wallet_transactions", get(lago_wallets::wallet_wallet_transactions))
+        .route("/events/estimate_instant_fees", post(lago_events::estimate_instant_fees))
+        .route("/events/batch_estimate_instant_fees", post(lago_events::batch_estimate_instant_fees))
+        .route("/events_enriched", get(lago_events::events_enriched))
+        .route("/activity_logs/:id", get(lago_logs::show_activity_log))
+        .route("/api_logs", get(lago_logs::list_api_logs))
+        .route("/api_logs/:request_id", get(lago_logs::show_api_log))
+        .route("/security_logs", get(lago_logs::list_security_logs))
+        .route("/security_logs/:id", get(lago_logs::show_security_log))
+        .route("/analytics/usage", get(lago_logs::usage_analytics))
+        .route("/organizations/grpc_token", get(lago_logs::grpc_token))
+        .route("/webhooks/public_key", get(resources::webhooks_public_key))
+        .route("/webhooks/json_public_key", get(resources::webhooks_json_public_key))
+        .route("/invoices/:id/download_pdf", post(lago_logs::invoice_download_pdf))
+        .route("/invoices/:id/download_xml", post(lago_logs::invoice_download_xml))
+        .route("/credit_notes/:id/download_pdf", post(lago_logs::credit_note_download_pdf))
+        .route("/order_forms/:id/mark_as_signed", post(order_flow::sign_order_form))
+        .route("/quote_versions/:id", get(lago_logs::show_quote_version))
+        .route("/quote_versions/:id/approve", post(lago_logs::approve_quote_version))
+        .route("/quote_versions/:id/void", post(lago_logs::void_quote_version))
+        .route("/quote_versions/:id/clone", post(lago_logs::clone_quote_version))
         .route("/customers/:external_id/payment_methods", get(payments::customer_payment_methods))
         .route("/payment_receipts/:invoice_id/resend_email", post(payments::resend_payment_receipt))
         // --- v1 analytics (data API)
@@ -336,8 +358,12 @@ pub fn router(state: AppState) -> Router {
         .route("/applied_rate_cards/:id/rate_phases", post(catalog_v2::create_rate_phase).get(catalog_v2::list_rate_phases));
 
     // Tenant isolation: reject any request referencing another org's record ids.
-    let v1 = v1.layer(axum::middleware::from_fn_with_state(state.clone(), tenancy::guard));
-    let v2 = v2.layer(axum::middleware::from_fn_with_state(state.clone(), tenancy::guard));
+    let v1 = v1
+        .layer(axum::middleware::from_fn_with_state(state.clone(), tenancy::guard))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), lago_logs::record_api_log));
+    let v2 = v2
+        .layer(axum::middleware::from_fn_with_state(state.clone(), tenancy::guard))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), lago_logs::record_api_log));
 
     Router::new()
         .route("/health", get(health))
