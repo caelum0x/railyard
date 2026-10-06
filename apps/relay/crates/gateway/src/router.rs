@@ -397,12 +397,35 @@ pub async fn build_axum_router(
     // Per-key spend caps wrap the billing/metering layer (outer) but stay
     // inside auth, so the capped principal is already resolved and a capped key
     // never reaches AITP, Mint, or a provider.
+    let semantic_cache_pool = postgres_pool.clone();
     if let (true, Some(pool)) = (runtime_status.budgets_enforced, postgres_pool) {
         router = router.layer(middleware::from_fn_with_state(
             crate::metering::SpendCapState::new(
                 relay_storage_postgres::PostgresKeyBudgetStore::new(pool),
             ),
             crate::metering::spend_cap_middleware,
+        ));
+    }
+    // Semantic cache (RELAY_SEMANTIC_CACHE=memory|pgvector) sits inside
+    // guardrails and outside spend caps, metering and billing: it embeds the
+    // already-redacted prompt, and a hit answers without a hold, a charge or a
+    // provider call. Entries are isolated per organization/workspace.
+    let semantic_cache = relay_semantic_cache::setup::Settings::from_lookup(|k| std::env::var(k).ok())
+        .map_err(|error| billing_config_error(format!("RELAY_SEMANTIC_CACHE: {error}")))?;
+    if let Some(settings) = semantic_cache {
+        tracing::info!(store = ?settings.store, threshold = settings.config.threshold, "Relay semantic cache enabled");
+        let tenant: relay_semantic_cache::middleware::TenantFn = Arc::new(|request: &axum::extract::Request| {
+            request
+                .extensions()
+                .get::<tensorzero_auth::middleware::RequestApiKeyExtension>()
+                .map(|ext| format!("{}/{}", ext.key_info.organization, ext.key_info.workspace))
+        });
+        let state = relay_semantic_cache::setup::build(settings, semantic_cache_pool, tenant)
+            .await
+            .map_err(|error| billing_config_error(format!("RELAY_SEMANTIC_CACHE: {error}")))?;
+        router = router.layer(middleware::from_fn_with_state(
+            state,
+            relay_semantic_cache::middleware::semantic_cache_middleware,
         ));
     }
     // Guardrails (RELAY_GUARDRAILS_JSON / RELAY_GUARDRAILS_PATH) sit inside

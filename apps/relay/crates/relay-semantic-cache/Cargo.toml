@@ -1,0 +1,25 @@
+[package]
+name = "relay-semantic-cache"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Relay semantic response cache: embeddings (local or over Relay's own embeddings route), a pluggable vector store (memory or pgvector), TTL and per-tenant isolation."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+async-trait = { workspace = true }
+axum = { workspace = true }
+http-body-util = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tower = { version = "0.5.3", features = ["util"] }
