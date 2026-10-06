@@ -22,7 +22,7 @@ use chrono::{DateTime, Utc};
 use crate::domain::{EventOutcome, MeterEvent, SettlementRefs};
 use crate::error::LedgerlineError;
 use crate::mint::{MintOps, MintSettlement};
-use crate::outbox::{OutboxStore, SagaState, SettlementSaga, StepState};
+use crate::outbox::{Claim, OutboxStore, SagaState, SettlementSaga, StepState};
 
 /// Injected time source, so saga timestamps are deterministic under test.
 pub trait Clock: Send + Sync {
@@ -39,40 +39,92 @@ impl Clock for SystemClock {
     }
 }
 
+/// How long a driver's lease on a saga lasts without renewal. Every Mint step
+/// renews it first, so only a driver stalled longer than this loses the saga.
+pub const DEFAULT_LEASE: chrono::Duration = chrono::Duration::seconds(120);
+
 /// Deterministic settlement coordinator over injectable Mint ops, a durable
 /// outbox, and a clock.
+///
+/// One saga has one driver at a time: `settle` claims the saga's lease in the
+/// outbox (another instance or the recovery sweep gets
+/// [`LedgerlineError::InProgress`] and moves no money), renews it before every
+/// Mint call, and every write is fenced on it, so a driver that lost the lease
+/// stops before its next Mint call and can never overwrite newer progress.
 #[derive(Clone)]
 pub struct SettlementCoordinator {
     ops: Arc<dyn MintOps>,
     outbox: Arc<dyn OutboxStore>,
     clock: Arc<dyn Clock>,
+    lease: chrono::Duration,
+}
+
+/// A unique lease owner for one `settle` call.
+fn owner_token() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    format!("{}-{nanos:x}-{n}", std::process::id())
 }
 
 impl SettlementCoordinator {
     pub fn new(ops: Arc<dyn MintOps>, outbox: Arc<dyn OutboxStore>, clock: Arc<dyn Clock>) -> Self {
-        Self { ops, outbox, clock }
+        Self {
+            ops,
+            outbox,
+            clock,
+            lease: DEFAULT_LEASE,
+        }
+    }
+
+    /// A coordinator whose saga leases last `lease` without renewal.
+    pub fn with_lease(self, lease: chrono::Duration) -> Self {
+        Self { lease, ..self }
+    }
+
+    /// Persist progress and renew the lease; fails with `InProgress` when the
+    /// lease was taken over.
+    async fn persist(&self, saga: &mut SettlementSaga, owner: &str) -> Result<(), LedgerlineError> {
+        let now = self.clock.now();
+        saga.updated_at = now;
+        self.outbox.save(saga, owner, now + self.lease).await
+    }
+
+    /// Renew the lease before a Mint call without recording progress
+    /// (`updated_at` keeps meaning "last step taken", which the recovery
+    /// sweep's staleness window reads).
+    async fn renew(&self, saga: &SettlementSaga, owner: &str) -> Result<(), LedgerlineError> {
+        self.outbox
+            .save(saga, owner, self.clock.now() + self.lease)
+            .await
     }
 
     async fn run_forward(
         &self,
         saga: &mut SettlementSaga,
         event: &MeterEvent,
+        owner: &str,
     ) -> Result<SettlementRefs, LedgerlineError> {
         if saga.hold_state != StepState::Committed {
+            self.renew(saga, owner).await?;
             let key = step_key(&saga.request_id, saga.attempt, StepKey::Hold);
             match self.ops.create_hold(event, &key).await {
                 Ok(hold) => {
                     saga.hold_id = Some(hold.hold_id);
                     saga.hold_seq = Some(hold.first_seq);
                     saga.hold_state = StepState::Committed;
-                    saga.updated_at = self.clock.now();
-                    self.outbox.upsert(saga).await?;
+                    self.persist(saga, owner).await?;
                 }
-                Err(cause) => return self.begin_compensation(saga, event, cause).await,
+                Err(cause) => return self.begin_compensation(saga, event, cause, owner).await,
             }
         }
 
         if saga.capture_state != StepState::Committed {
+            self.renew(saga, owner).await?;
             let hold_id = saga.hold_id.clone().ok_or_else(|| {
                 LedgerlineError::Storage("capture step reached without a hold id".into())
             })?;
@@ -81,29 +133,27 @@ impl SettlementCoordinator {
                 Ok(seq) => {
                     saga.revenue_seq = Some(seq);
                     saga.capture_state = StepState::Committed;
-                    saga.updated_at = self.clock.now();
-                    self.outbox.upsert(saga).await?;
+                    self.persist(saga, owner).await?;
                 }
-                Err(cause) => return self.begin_compensation(saga, event, cause).await,
+                Err(cause) => return self.begin_compensation(saga, event, cause, owner).await,
             }
         }
 
         if saga.cogs_state != StepState::Committed {
+            self.renew(saga, owner).await?;
             let key = step_key(&saga.request_id, saga.attempt, StepKey::Cogs);
             match self.ops.transfer_cogs(event, &key).await {
                 Ok(seq) => {
                     saga.cogs_seq = Some(seq);
                     saga.cogs_state = StepState::Committed;
-                    saga.updated_at = self.clock.now();
-                    self.outbox.upsert(saga).await?;
+                    self.persist(saga, owner).await?;
                 }
-                Err(cause) => return self.begin_compensation(saga, event, cause).await,
+                Err(cause) => return self.begin_compensation(saga, event, cause, owner).await,
             }
         }
 
         saga.state = SagaState::Settled;
-        saga.updated_at = self.clock.now();
-        self.outbox.upsert(saga).await?;
+        self.persist(saga, owner).await?;
         Ok(saga.refs())
     }
 
@@ -115,11 +165,11 @@ impl SettlementCoordinator {
         saga: &mut SettlementSaga,
         event: &MeterEvent,
         cause: LedgerlineError,
+        owner: &str,
     ) -> Result<SettlementRefs, LedgerlineError> {
         saga.state = SagaState::Compensating;
-        saga.updated_at = self.clock.now();
-        self.outbox.upsert(saga).await?;
-        self.run_compensation(saga, event).await?;
+        self.persist(saga, owner).await?;
+        self.run_compensation(saga, event, owner).await?;
         Err(cause)
     }
 
@@ -130,21 +180,22 @@ impl SettlementCoordinator {
         &self,
         saga: &mut SettlementSaga,
         event: &MeterEvent,
+        owner: &str,
     ) -> Result<(), LedgerlineError> {
         if saga.cogs_state == StepState::Committed {
+            self.renew(saga, owner).await?;
             let key = step_key(&saga.request_id, saga.attempt, StepKey::CogsReverse);
             self.ops.reverse_cogs(event, &key).await?;
             saga.cogs_state = StepState::Compensated;
-            saga.updated_at = self.clock.now();
-            self.outbox.upsert(saga).await?;
+            self.persist(saga, owner).await?;
         }
 
         if saga.capture_state == StepState::Committed {
+            self.renew(saga, owner).await?;
             let key = step_key(&saga.request_id, saga.attempt, StepKey::RevenueReverse);
             self.ops.reverse_revenue(event, &key).await?;
             saga.capture_state = StepState::Compensated;
-            saga.updated_at = self.clock.now();
-            self.outbox.upsert(saga).await?;
+            self.persist(saga, owner).await?;
         }
 
         if saga.hold_state == StepState::Committed {
@@ -157,6 +208,7 @@ impl SettlementCoordinator {
             // be released to net to zero.
             let was_captured = saga.capture_state != StepState::Pending;
             if !was_captured {
+                self.renew(saga, owner).await?;
                 let hold_id = saga.hold_id.clone().ok_or_else(|| {
                     LedgerlineError::Storage("hold release reached without a hold id".into())
                 })?;
@@ -164,14 +216,78 @@ impl SettlementCoordinator {
                 self.ops.release_hold(&hold_id, event, &key).await?;
             }
             saga.hold_state = StepState::Compensated;
-            saga.updated_at = self.clock.now();
-            self.outbox.upsert(saga).await?;
+            self.persist(saga, owner).await?;
         }
 
         saga.state = SagaState::Compensated;
-        saga.updated_at = self.clock.now();
-        self.outbox.upsert(saga).await?;
+        self.persist(saga, owner).await?;
         Ok(())
+    }
+
+    /// Take the saga's lease (creating the saga when it is new). `None` when
+    /// another driver holds it.
+    async fn claim(
+        &self,
+        event: &MeterEvent,
+        event_json: &str,
+        owner: &str,
+    ) -> Result<Option<SettlementSaga>, LedgerlineError> {
+        // Two rounds: a lost create race is followed by a claim of the winner's row.
+        for _ in 0..2 {
+            let now = self.clock.now();
+            match self
+                .outbox
+                .claim(&event.request_id, owner, now, now + self.lease)
+                .await?
+            {
+                Claim::Claimed(saga) => return Ok(Some(saga)),
+                Claim::Busy => return Ok(None),
+                Claim::Missing => {
+                    let saga = SettlementSaga::new(&event.request_id, event_json, now);
+                    if self
+                        .outbox
+                        .insert_claimed(&saga, owner, now + self.lease)
+                        .await?
+                    {
+                        return Ok(Some(saga));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// The body of `settle` while holding the lease.
+    async fn drive(
+        &self,
+        existing: SettlementSaga,
+        event: &MeterEvent,
+        event_json: &str,
+        owner: &str,
+    ) -> Result<SettlementRefs, LedgerlineError> {
+        if existing.event_json != event_json {
+            return Err(LedgerlineError::IdempotencyConflict);
+        }
+        let mut saga = match existing.state {
+            // Already fully settled: idempotent replay, no new Mint calls.
+            SagaState::Settled => return Ok(existing.refs()),
+            // A prior attempt failed mid-reversal: finish it, then report.
+            SagaState::Compensating => {
+                let mut resumed = existing;
+                self.run_compensation(&mut resumed, event, owner).await?;
+                return Err(LedgerlineError::Mint(
+                    "settlement was compensated after a prior failure".into(),
+                ));
+            }
+            // Prior attempt cleanly rolled back: retry on a fresh attempt. Only
+            // the lease holder gets here, so no older attempt is still running.
+            SagaState::Compensated => existing.next_attempt(self.clock.now()),
+            // Prior attempt crashed mid-flight (or is brand new): resume it.
+            SagaState::Pending => existing,
+        };
+        saga.state = SagaState::Pending;
+        self.persist(&mut saga, owner).await?;
+        self.run_forward(&mut saga, event, owner).await
     }
 }
 
@@ -186,35 +302,16 @@ impl MintSettlement for SettlementCoordinator {
         let event_json = serde_json::to_string(event).map_err(|error| {
             LedgerlineError::Storage(format!("serializing event binding: {error}"))
         })?;
-        let mut saga = match self.outbox.load(&event.request_id).await? {
-            Some(existing) => {
-                if existing.event_json != event_json {
-                    return Err(LedgerlineError::IdempotencyConflict);
-                }
-                match existing.state {
-                    // Already fully settled: idempotent replay, no new Mint calls.
-                    SagaState::Settled => return Ok(existing.refs()),
-                    // A prior attempt failed mid-reversal: finish it, then report.
-                    SagaState::Compensating => {
-                        let mut resumed = existing;
-                        self.run_compensation(&mut resumed, event).await?;
-                        return Err(LedgerlineError::Mint(
-                            "settlement was compensated after a prior failure".into(),
-                        ));
-                    }
-                    // Prior attempt cleanly rolled back: retry on a fresh attempt.
-                    SagaState::Compensated => existing.next_attempt(self.clock.now()),
-                    // Prior attempt crashed mid-flight: resume the same attempt.
-                    SagaState::Pending => existing,
-                }
-            }
-            None => SettlementSaga::new(&event.request_id, event_json, self.clock.now()),
+        let owner = owner_token();
+        let Some(existing) = self.claim(event, &event_json, &owner).await? else {
+            return Err(LedgerlineError::InProgress);
         };
-
-        saga.state = SagaState::Pending;
-        saga.updated_at = self.clock.now();
-        self.outbox.upsert(&saga).await?;
-        self.run_forward(&mut saga, event).await
+        let result = self.drive(existing, event, &event_json, &owner).await;
+        if let Err(error) = self.outbox.release(&event.request_id, &owner).await {
+            // The lease simply expires; nothing else depends on the release.
+            tracing::warn!(request_id = %event.request_id, %error, "could not release settlement lease");
+        }
+        result
     }
 }
 

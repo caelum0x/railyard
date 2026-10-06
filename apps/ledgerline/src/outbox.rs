@@ -123,14 +123,62 @@ impl SettlementSaga {
     }
 }
 
+/// The answer to a lease claim on one request's saga.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Claim {
+    /// The caller now drives the saga (as stored when claimed).
+    Claimed(SettlementSaga),
+    /// Another owner holds a live lease.
+    Busy,
+    /// No saga exists for the request yet.
+    Missing,
+}
+
 /// Persistence port for the settlement outbox.
+///
+/// A saga has at most one driver: [`OutboxStore::claim`] /
+/// [`OutboxStore::insert_claimed`] take its lease, [`OutboxStore::save`] is
+/// fenced on it (and renews it), [`OutboxStore::release`] gives it back. An
+/// expired lease (its driver crashed) can be claimed by anyone.
 #[async_trait]
 pub trait OutboxStore: Send + Sync {
     /// Load the saga for a request, if one exists.
     async fn load(&self, request_id: &str) -> Result<Option<SettlementSaga>, LedgerlineError>;
 
-    /// Create or replace the saga for a request. Idempotent by `request_id`.
+    /// Create or replace the saga for a request without a lease check: for
+    /// seeding and operator repair only. Drivers use [`OutboxStore::save`].
     async fn upsert(&self, saga: &SettlementSaga) -> Result<(), LedgerlineError>;
+
+    /// Take the lease of an existing saga when it is free, expired at `now`,
+    /// or already `owner`'s; it runs until `lease_until`.
+    async fn claim(
+        &self,
+        request_id: &str,
+        owner: &str,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+    ) -> Result<Claim, LedgerlineError>;
+
+    /// Create a new saga already leased to `owner`. `false` when a saga for the
+    /// request already exists (another caller created it first).
+    async fn insert_claimed(
+        &self,
+        saga: &SettlementSaga,
+        owner: &str,
+        lease_until: DateTime<Utc>,
+    ) -> Result<bool, LedgerlineError>;
+
+    /// Write the saga's progress and renew the lease, only while `owner` holds
+    /// it: [`LedgerlineError::InProgress`] when another owner took it over.
+    async fn save(
+        &self,
+        saga: &SettlementSaga,
+        owner: &str,
+        lease_until: DateTime<Utc>,
+    ) -> Result<(), LedgerlineError>;
+
+    /// Give the lease back (no-op unless `owner` holds it).
+    async fn release(&self, request_id: &str, owner: &str) -> Result<(), LedgerlineError>;
 
     /// List incomplete sagas — those still `Pending` (crashed mid-forward) or
     /// `Compensating` (crashed mid-reversal) — that have not been touched since
@@ -170,10 +218,18 @@ pub trait OutboxStore: Send + Sync {
     ) -> Result<Vec<SettlementSaga>, LedgerlineError>;
 }
 
+/// A lease on a saga row.
+#[derive(Clone, Debug)]
+struct Lease {
+    owner: String,
+    until: DateTime<Utc>,
+}
+
 /// In-process outbox for tests and single-node runs.
 #[derive(Default)]
 pub struct MemoryOutbox {
     sagas: RwLock<HashMap<String, SettlementSaga>>,
+    leases: RwLock<HashMap<String, Lease>>,
 }
 
 impl MemoryOutbox {
@@ -198,6 +254,89 @@ impl OutboxStore for MemoryOutbox {
             .write()
             .map_err(|_| LedgerlineError::Storage("outbox lock poisoned".into()))?
             .insert(saga.request_id.clone(), saga.clone());
+        Ok(())
+    }
+
+    async fn claim(
+        &self,
+        request_id: &str,
+        owner: &str,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+    ) -> Result<Claim, LedgerlineError> {
+        // Lock order: sagas, then leases (every method keeps it).
+        let sagas = self.sagas.read().map_err(|_| poisoned())?;
+        let Some(saga) = sagas.get(request_id).cloned() else {
+            return Ok(Claim::Missing);
+        };
+        let mut leases = self.leases.write().map_err(|_| poisoned())?;
+        let free = leases
+            .get(request_id)
+            .is_none_or(|l| l.owner == owner || l.until <= now);
+        if !free {
+            return Ok(Claim::Busy);
+        }
+        leases.insert(
+            request_id.to_string(),
+            Lease {
+                owner: owner.to_string(),
+                until: lease_until,
+            },
+        );
+        Ok(Claim::Claimed(saga))
+    }
+
+    async fn insert_claimed(
+        &self,
+        saga: &SettlementSaga,
+        owner: &str,
+        lease_until: DateTime<Utc>,
+    ) -> Result<bool, LedgerlineError> {
+        let mut sagas = self.sagas.write().map_err(|_| poisoned())?;
+        if sagas.contains_key(&saga.request_id) {
+            return Ok(false);
+        }
+        let mut leases = self.leases.write().map_err(|_| poisoned())?;
+        sagas.insert(saga.request_id.clone(), saga.clone());
+        leases.insert(
+            saga.request_id.clone(),
+            Lease {
+                owner: owner.to_string(),
+                until: lease_until,
+            },
+        );
+        Ok(true)
+    }
+
+    async fn save(
+        &self,
+        saga: &SettlementSaga,
+        owner: &str,
+        lease_until: DateTime<Utc>,
+    ) -> Result<(), LedgerlineError> {
+        let mut sagas = self.sagas.write().map_err(|_| poisoned())?;
+        let mut leases = self.leases.write().map_err(|_| poisoned())?;
+        match leases.get(&saga.request_id) {
+            Some(l) if l.owner == owner => {}
+            _ => return Err(LedgerlineError::InProgress),
+        }
+        leases.insert(
+            saga.request_id.clone(),
+            Lease {
+                owner: owner.to_string(),
+                until: lease_until,
+            },
+        );
+        sagas.insert(saga.request_id.clone(), saga.clone());
+        Ok(())
+    }
+
+    async fn release(&self, request_id: &str, owner: &str) -> Result<(), LedgerlineError> {
+        let _sagas = self.sagas.read().map_err(|_| poisoned())?;
+        let mut leases = self.leases.write().map_err(|_| poisoned())?;
+        if leases.get(request_id).is_some_and(|l| l.owner == owner) {
+            leases.remove(request_id);
+        }
         Ok(())
     }
 
@@ -250,6 +389,10 @@ impl OutboxStore for MemoryOutbox {
     }
 }
 
+fn poisoned() -> LedgerlineError {
+    LedgerlineError::Storage("outbox lock poisoned".into())
+}
+
 /// Production outbox backed by the same Postgres database as margin events.
 #[derive(Clone)]
 pub struct PostgresOutbox {
@@ -297,6 +440,125 @@ impl OutboxStore for PostgresOutbox {
         .bind(step_state_str(saga.cogs_state))
         .bind(saga.cogs_seq)
         .bind(saga.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(storage_error)?;
+        Ok(())
+    }
+
+    async fn claim(
+        &self,
+        request_id: &str,
+        owner: &str,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+    ) -> Result<Claim, LedgerlineError> {
+        // One statement: the row lock makes concurrent claims serialize, and
+        // only one of them sees the lease free.
+        let row = sqlx::query(
+            "UPDATE settlement_outbox SET lease_owner = $2, lease_until = $3 \
+             WHERE request_id = $1 \
+               AND (lease_owner IS NULL OR lease_owner = $2 OR lease_until IS NULL OR lease_until <= $4) \
+             RETURNING *",
+        )
+        .bind(request_id)
+        .bind(owner)
+        .bind(lease_until)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage_error)?;
+        if let Some(row) = row {
+            return Ok(Claim::Claimed(row_to_saga(&row)?));
+        }
+        let exists: Option<i32> =
+            sqlx::query_scalar("SELECT 1 FROM settlement_outbox WHERE request_id = $1")
+                .bind(request_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(storage_error)?;
+        Ok(if exists.is_some() {
+            Claim::Busy
+        } else {
+            Claim::Missing
+        })
+    }
+
+    async fn insert_claimed(
+        &self,
+        saga: &SettlementSaga,
+        owner: &str,
+        lease_until: DateTime<Utc>,
+    ) -> Result<bool, LedgerlineError> {
+        let done = sqlx::query(
+            "INSERT INTO settlement_outbox (request_id, event_json, attempt, state, hold_state, hold_id, \
+             hold_seq, capture_state, revenue_seq, cogs_state, cogs_seq, updated_at, lease_owner, lease_until) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) \
+             ON CONFLICT (request_id) DO NOTHING",
+        )
+        .bind(&saga.request_id)
+        .bind(&saga.event_json)
+        .bind(i64::from(saga.attempt))
+        .bind(saga_state_str(saga.state))
+        .bind(step_state_str(saga.hold_state))
+        .bind(&saga.hold_id)
+        .bind(saga.hold_seq)
+        .bind(step_state_str(saga.capture_state))
+        .bind(saga.revenue_seq)
+        .bind(step_state_str(saga.cogs_state))
+        .bind(saga.cogs_seq)
+        .bind(saga.updated_at)
+        .bind(owner)
+        .bind(lease_until)
+        .execute(&self.pool)
+        .await
+        .map_err(storage_error)?;
+        Ok(done.rows_affected() == 1)
+    }
+
+    async fn save(
+        &self,
+        saga: &SettlementSaga,
+        owner: &str,
+        lease_until: DateTime<Utc>,
+    ) -> Result<(), LedgerlineError> {
+        let done = sqlx::query(
+            "UPDATE settlement_outbox SET event_json = $2, attempt = $3, state = $4, hold_state = $5, \
+             hold_id = $6, hold_seq = $7, capture_state = $8, revenue_seq = $9, cogs_state = $10, \
+             cogs_seq = $11, updated_at = $12, lease_until = $14 \
+             WHERE request_id = $1 AND lease_owner = $13",
+        )
+        .bind(&saga.request_id)
+        .bind(&saga.event_json)
+        .bind(i64::from(saga.attempt))
+        .bind(saga_state_str(saga.state))
+        .bind(step_state_str(saga.hold_state))
+        .bind(&saga.hold_id)
+        .bind(saga.hold_seq)
+        .bind(step_state_str(saga.capture_state))
+        .bind(saga.revenue_seq)
+        .bind(step_state_str(saga.cogs_state))
+        .bind(saga.cogs_seq)
+        .bind(saga.updated_at)
+        .bind(owner)
+        .bind(lease_until)
+        .execute(&self.pool)
+        .await
+        .map_err(storage_error)?;
+        if done.rows_affected() == 1 {
+            Ok(())
+        } else {
+            Err(LedgerlineError::InProgress)
+        }
+    }
+
+    async fn release(&self, request_id: &str, owner: &str) -> Result<(), LedgerlineError> {
+        sqlx::query(
+            "UPDATE settlement_outbox SET lease_owner = NULL, lease_until = NULL \
+             WHERE request_id = $1 AND lease_owner = $2",
+        )
+        .bind(request_id)
+        .bind(owner)
         .execute(&self.pool)
         .await
         .map_err(storage_error)?;
