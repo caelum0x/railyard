@@ -394,6 +394,54 @@ impl GameStateRepository for PostgresGameState {
         }
     }
 
+    fn single_owner_holder(
+        &self,
+        player: &str,
+        ownership_key: &str,
+    ) -> Result<Option<game_economy_core::ReservationHolder>, GameError> {
+        self.run(async {
+            let row = sqlx::query(
+                "SELECT idem_key, (EXTRACT(EPOCH FROM (now() - created_at)) * 1000)::bigint AS age_ms \
+                 FROM game_reservations WHERE player = $1 AND ownership_key = $2",
+            )
+            .bind(player)
+            .bind(ownership_key)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(storage)?;
+            row.map(|r| {
+                Ok(game_economy_core::ReservationHolder {
+                    idem_key: r.try_get("idem_key").map_err(storage)?,
+                    age_ms: r.try_get("age_ms").map_err(storage)?,
+                })
+            })
+            .transpose()
+        })
+    }
+
+    fn take_over_single_owner(
+        &self,
+        player: &str,
+        ownership_key: &str,
+        from_idem: &str,
+        to_idem: &str,
+    ) -> Result<bool, GameError> {
+        self.run(async {
+            let moved = sqlx::query(
+                "UPDATE game_reservations SET idem_key = $4, created_at = now() \
+                 WHERE player = $1 AND ownership_key = $2 AND idem_key = $3",
+            )
+            .bind(player)
+            .bind(ownership_key)
+            .bind(from_idem)
+            .bind(to_idem)
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+            Ok(moved.rows_affected() == 1)
+        })
+    }
+
     fn reverse_purchase(
         &self,
         player: &str,

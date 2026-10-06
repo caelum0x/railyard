@@ -306,6 +306,24 @@ impl GameStateRepository for FailFirstCommit {
         self.inner
             .release_single_owner(player, ownership_key, idem_key)
     }
+
+    fn single_owner_holder(
+        &self,
+        player: &str,
+        ownership_key: &str,
+    ) -> Result<Option<game_economy_core::ReservationHolder>, GameError> {
+        self.inner.single_owner_holder(player, ownership_key)
+    }
+
+    fn take_over_single_owner(
+        &self,
+        player: &str,
+        ownership_key: &str,
+        from_idem: &str,
+        to_idem: &str,
+    ) -> Result<bool, GameError> {
+        self.inner.take_over_single_owner(player, ownership_key, from_idem, to_idem)
+    }
 }
 
 #[tokio::test]

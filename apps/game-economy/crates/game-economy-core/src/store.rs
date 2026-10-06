@@ -132,7 +132,14 @@ pub struct GameStore<M: MintTransport, F: Fulfiller = AlwaysFulfill> {
     /// Those are read-modify-write over the state port; without this two
     /// concurrent opens of the same pack could both pass the `is_opened` check.
     inventory_lock: std::sync::Mutex<()>,
+    /// How long a single-owner reservation may sit without a completed
+    /// purchase before another purchase may prove it abandoned and take it.
+    reservation_ttl: std::time::Duration,
 }
+
+/// The default [`GameStore::with_reservation_ttl`]: well past any live
+/// purchase (Mint calls time out in seconds).
+pub const DEFAULT_RESERVATION_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 impl<M: MintTransport> GameStore<M, AlwaysFulfill> {
     /// A store with the default always-succeeds fulfiller.
@@ -158,6 +165,7 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             revenue_account: revenue_account.into(),
             state: Arc::new(MemoryGameState::default()),
             inventory_lock: std::sync::Mutex::new(()),
+            reservation_ttl: DEFAULT_RESERVATION_TTL,
         }
     }
 
@@ -179,7 +187,15 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
             revenue_account: revenue_account.into(),
             state,
             inventory_lock: std::sync::Mutex::new(()),
+            reservation_ttl: DEFAULT_RESERVATION_TTL,
         }
+    }
+
+    /// How old a single-owner reservation must be (with its purchase never
+    /// completed) before a new purchase may take it over.
+    pub fn with_reservation_ttl(mut self, ttl: std::time::Duration) -> Self {
+        self.reservation_ttl = ttl;
+        self
     }
 
     /// Persist catalog edits through `repo`. `revision` is the revision the
@@ -411,8 +427,8 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
         // consumable, so they never reserve.
         let reservation = single_owner_key(&product);
         if let Some((ref ownership_key, ref sku)) = reservation {
-            self.state
-                .reserve_single_owner(player, ownership_key, sku, idem_key)?;
+            self.reserve_or_recover(player, ownership_key, sku, idem_key, price)
+                .await?;
         }
 
         // 1. Reserve the price. Insufficient funds fails here — no hold, no grant.
@@ -737,6 +753,74 @@ impl<M: MintTransport, F: Fulfiller> GameStore<M, F> {
 
     /// Reject a purchase of a single-owner good the player already holds, BEFORE
     /// any hold is opened (so a duplicate is never charged).
+    /// Take the single-owner reservation, or take it over from an abandoned
+    /// purchase.
+    ///
+    /// A reservation outlives its purchase when the purchase failed and the
+    /// release did not land (a storage error), or the process died mid-way;
+    /// before, that player could never buy the good again. A reservation held
+    /// longer than the TTL by a purchase that never completed is taken over
+    /// only after Mint proves the old purchase can never charge: its hold
+    /// (opened now under the old key if it never was) is released under the
+    /// old key. If that hold was already captured, the old purchase paid and
+    /// is still to be completed (a same-key retry replays it), so the good
+    /// stays reserved.
+    async fn reserve_or_recover(
+        &self,
+        player: &str,
+        ownership_key: &str,
+        sku: &str,
+        idem_key: &str,
+        price: i64,
+    ) -> Result<(), GameError> {
+        match self.state.reserve_single_owner(player, ownership_key, sku, idem_key) {
+            Err(GameError::AlreadyOwned(_)) => {}
+            other => return other,
+        }
+        let Some(holder) = self.state.single_owner_holder(player, ownership_key)? else {
+            // Released in between: take it now.
+            return self.state.reserve_single_owner(player, ownership_key, sku, idem_key);
+        };
+        let ttl_ms = i64::try_from(self.reservation_ttl.as_millis()).unwrap_or(i64::MAX);
+        let abandoned = holder.idem_key != idem_key
+            && holder.age_ms >= ttl_ms
+            && !matches!(self.state.purchase(&holder.idem_key)?, Some(PurchaseRecord::Completed(_)));
+        if !abandoned {
+            return Err(GameError::AlreadyOwned(sku.to_string()));
+        }
+        let hold = self
+            .mint
+            .create_hold(Hold {
+                account_id: player.to_string(),
+                amount_micros: price,
+                idem_key: format!("{}:hold", holder.idem_key),
+            })
+            .await?;
+        match self
+            .mint
+            .release_hold(
+                &hold.hold_id,
+                Release {
+                    idem_key: format!("{}:release", holder.idem_key),
+                },
+            )
+            .await
+        {
+            Ok(_) => {}
+            // Terminal and not released under the old key: it was captured.
+            Err(GameError::HoldNotFound) => return Err(GameError::AlreadyOwned(sku.to_string())),
+            Err(other) => return Err(other),
+        }
+        if self
+            .state
+            .take_over_single_owner(player, ownership_key, &holder.idem_key, idem_key)?
+        {
+            Ok(())
+        } else {
+            Err(GameError::AlreadyOwned(sku.to_string()))
+        }
+    }
+
     fn reject_if_already_owned(&self, player: &str, product: &Product) -> Result<(), GameError> {
         let inv = self.state.inventory(player)?;
         match product {
