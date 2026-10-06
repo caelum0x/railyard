@@ -43,6 +43,8 @@ pub fn router(st: AppState) -> Router {
         .route("/v1/keys/:id/revoke", post(account::revoke_key))
         .route("/v1/credentials", get(account::list_credentials).post(account::create_credential))
         .route("/v1/credentials/:id", delete(account::delete_credential))
+        .route("/v1/credentials/oauth/:provider/connect", post(routes::oauth_connect::connect))
+        .route("/v1/credentials/oauth/:provider/callback", get(routes::oauth_connect::callback))
         .route("/v1/bundles", get(account::list_bundles).post(account::push_bundle))
         .route("/v1/bundles/:id/skill.md", get(account::bundle_skill))
         .route("/v1/project", get(account::get_project).patch(account::patch_project))

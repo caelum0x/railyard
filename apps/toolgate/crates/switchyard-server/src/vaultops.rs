@@ -80,7 +80,10 @@ pub async fn resolve(st: &AppState, org_id: &str, tool: &ToolManifest) -> Result
     let team = match tool.auth {
         AuthMode::None | AuthMode::CallerKey => None,
         _ => match st.store.find_credential(org_id, &tool.provider).await {
-            Ok(Some(row)) => Some(open(st, &row).await.map_err(|e| e.message)?),
+            Ok(Some(row)) => {
+                let cred = open(st, &row).await.map_err(|e| e.message)?;
+                Some(crate::routes::oauth_connect::refresh_if_due(st, org_id, cred).await?)
+            }
             Ok(None) => None,
             Err(e) => return Err(format!("credential lookup failed: {e}")),
         },

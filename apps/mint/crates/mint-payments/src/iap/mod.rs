@@ -1,4 +1,5 @@
-//! Mobile IAP aggregators: RevenueCat, Adapty.
+//! Mobile IAP: RevenueCat and Adapty (aggregators), and the App Store direct
+//! ([`appstore`], Apple-signed JWS; no shared secret).
 //!
 //! These are webhook-ONLY on-ramps (the purchase happens SDK-side, so there is
 //! no server checkout route). Webhook authenticity is an `Authorization`
@@ -7,9 +8,12 @@
 //! `ProviderUnavailable`.
 
 pub mod adapty;
+pub mod apple_jws;
+pub mod appstore;
 pub mod revenuecat;
 
 pub use adapty::AdaptyRamp;
+pub use appstore::AppStoreRamp;
 pub use revenuecat::RevenueCatRamp;
 
 use serde_json::Value;

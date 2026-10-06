@@ -88,10 +88,30 @@ pub async fn harness_with_catalog(catalog: switchyard_catalog::Catalog) -> H {
 }
 
 pub async fn harness_full(store: Arc<dyn Store>, mem: Option<Arc<MemStore>>, catalog: switchyard_catalog::Catalog) -> H {
+    harness_configured(store, mem, catalog, |_| {}).await
+}
+
+/// The shipped catalog with `edit` applied to every provider manifest.
+pub fn catalog_with_providers(edit: impl Fn(&mut switchyard_core::ProviderManifest)) -> switchyard_catalog::Catalog {
+    let base = fixtures::catalog();
+    let providers = base
+        .providers()
+        .cloned()
+        .map(|mut p| {
+            edit(&mut p);
+            p
+        })
+        .collect();
+    switchyard_catalog::Catalog::from_parts(base.capabilities().cloned().collect(), providers, base.tools().cloned().collect(), base.bundles().cloned().collect())
+        .expect("edited catalog verifies")
+}
+
+pub async fn harness_configured(store: Arc<dyn Store>, mem: Option<Arc<MemStore>>, catalog: switchyard_catalog::Catalog, configure: impl FnOnce(&mut Settings)) -> H {
     let mut settings = Settings::for_tests(BASE);
     settings.adapter_config = fixtures::test_config();
     settings.platform_credentials.insert("rally".into(), "platform-rally-token".into());
     settings.platform_credentials.insert("menivor".into(), "platform-menivor-token".into());
+    configure(&mut settings);
     let keys = Arc::new(MemRelayKeys::new());
     let http = FakeHttp::new();
     fixtures::install_all(&http);

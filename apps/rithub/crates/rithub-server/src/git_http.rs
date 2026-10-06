@@ -318,6 +318,13 @@ pub(crate) async fn post_push(
 
 /// Look up repository metadata (visibility + owning org) or map a miss to 404.
 async fn lookup(state: &AppState, owner: &str, repo: &str) -> Result<RepoMeta, Response> {
+    // `{repo}.wiki` is the repository's wiki: same permissions, its own git dir.
+    if let Some(base) = repo.strip_suffix(".wiki") {
+        if !state.host.exists(owner, repo).unwrap_or(false) {
+            return Err(status(StatusCode::NOT_FOUND));
+        }
+        return state.store.get_repo(owner, base).await.map_err(|_| status(StatusCode::NOT_FOUND));
+    }
     state
         .store
         .get_repo(owner, repo)

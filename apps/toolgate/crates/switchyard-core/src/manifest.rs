@@ -129,6 +129,19 @@ pub struct ProviderManifest {
     pub credential: Option<CredentialPlacement>,
     #[serde(default)]
     pub docs_url: Option<String>,
+    /// OAuth 2 endpoints for connecting a team's own account
+    /// (`POST /v1/credentials/oauth/{provider}/connect`).
+    #[serde(default)]
+    pub oauth: Option<OAuthSpec>,
+}
+
+/// A provider's OAuth 2 authorization-code endpoints (PKCE S256 is always used).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OAuthSpec {
+    pub authorize_url: String,
+    pub token_url: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

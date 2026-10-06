@@ -29,8 +29,11 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 # Seller credentials sealed at rest (Wave P PY2.3). Already in Cargo.lock via rustls.
 ring = "0.17"
+# App Store JWS: x5c chain parsing and signature checks (ring backend).
+x509-parser = { version = "0.18", features = ["verify"] }
 
 [dev-dependencies]
+rcgen = "0.14"
 tokio = { workspace = true, features = ["full"] }
 wiremock = "0.6"
 serde_json = { workspace = true }

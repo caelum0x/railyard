@@ -28,6 +28,8 @@ pub mod state;
 pub mod web;
 pub mod webhooks;
 pub mod lfs;
+pub mod packages;
+pub mod wiki;
 
 use axum::extract::{DefaultBodyLimit, Request};
 use axum::http::{header, Method, StatusCode};
@@ -343,6 +345,33 @@ pub fn build_router(state: AppState) -> Router {
             get(graphql::graphiql).post(graphql::graphql_handler),
         )
         .route("/graphql/schema", get(graphql::graphql_schema))
+        // --- package registry (npm, generic, OCI) ---
+        .route("/api/packages/{org}/{repo}", get(packages::list_packages))
+        .route(
+            "/api/packages/{org}/{repo}/generic/{name}/{version}/{file}",
+            get(packages::generic::download).put(packages::generic::upload).delete(packages::generic::delete),
+        )
+        .route(
+            "/api/packages/{org}/{repo}/npm/{*rest}",
+            get(packages::npm::get).put(packages::npm::put),
+        )
+        .route("/v2/", get(packages::oci::ping))
+        .route(
+            "/v2/{*rest}",
+            get(packages::oci::dispatch)
+                .head(packages::oci::dispatch)
+                .post(packages::oci::dispatch)
+                .put(packages::oci::dispatch)
+                .patch(packages::oci::dispatch)
+                .delete(packages::oci::dispatch),
+        )
+        // --- wiki (git-backed markdown pages) ---
+        .route("/api/orgs/{org}/repos/{repo}/wiki", get(wiki::list_pages))
+        .route(
+            "/api/orgs/{org}/repos/{repo}/wiki/{page}",
+            get(wiki::get_page).put(wiki::put_page).delete(wiki::delete_page),
+        )
+        .route("/api/orgs/{org}/repos/{repo}/wiki/{page}/history", get(wiki::page_history))
         // Git smart + dumb HTTP: one catch-all per method.
         .route(
             "/{owner}/{repo}/{*path}",

@@ -1,0 +1,7 @@
+name: railyard_analytics
+description: Flutter and Dart client for Railyard product analytics (capture, screens, identify, groups, feature flags).
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"

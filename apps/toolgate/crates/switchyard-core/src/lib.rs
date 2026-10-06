@@ -20,7 +20,7 @@ pub mod price;
 pub use adapter::{Acceptance, Adapter, AdapterError, AdapterOutput, CallCtx, Credential, CredentialKind, ErrorClass};
 pub use error::ApiError;
 pub use http::{EgressError, HttpRequest, HttpResponse, HttpTransport};
-pub use manifest::{AuthMode, CapabilityManifest, ProviderKind, ProviderManifest, SideEffect, ToolManifest};
+pub use manifest::{AuthMode, CapabilityManifest, OAuthSpec, ProviderKind, ProviderManifest, SideEffect, ToolManifest};
 pub use price::{Price, PriceBasis};
 
 /// A fresh ULID string with a type prefix, e.g. `call_01J...`.

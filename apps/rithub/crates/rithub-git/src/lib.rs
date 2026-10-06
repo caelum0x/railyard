@@ -37,6 +37,7 @@ use rit::{
 pub mod browse;
 pub mod collab;
 pub mod error;
+pub mod wiki;
 pub use browse::{BlobContent, TreeItem};
 pub use collab::{
     CommitInfo, DiffResult, FileDiff, MergeAnalysis, MergeResult, MergeStatus, MergeStrategy,
