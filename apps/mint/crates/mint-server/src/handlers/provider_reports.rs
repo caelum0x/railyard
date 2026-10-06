@@ -101,7 +101,7 @@ const DATE_COLS: &[&str] = &[
 #[derive(Debug, Deserialize)]
 pub struct ImportReq {
     /// Provider tag (`stripe`, `paypal`, `creem`, `dodo`, `polar`, `revenuecat`,
-    /// `adapty`, `usdc`, `iyzico`).
+    /// `adapty`, `usdc`, `iyzico`, `appstore`).
     pub provider: String,
     /// Label shown in the console (usually the file name).
     #[serde(default)]
@@ -136,6 +136,7 @@ const KNOWN_PROVIDERS: &[&str] = &[
     "adapty",
     "usdc",
     "iyzico",
+    "appstore",
 ];
 
 #[derive(Clone, Copy)]

@@ -109,7 +109,7 @@ pub async fn create<S: LedgerStore + 'static>(
         .as_ref()
         .ok_or_else(|| ApiError::BadRequest("checkout providers are not configured".into()))?;
     if !payments.is_active(provider)
-        || matches!(provider, ProviderId::RevenueCat | ProviderId::Adapty)
+        || matches!(provider, ProviderId::RevenueCat | ProviderId::Adapty | ProviderId::AppStore)
     {
         return Err(ApiError::BadRequest(format!(
             "checkout provider {} is not active",

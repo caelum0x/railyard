@@ -155,6 +155,17 @@ impl PaymentsConfig {
                 .with_api_key(g("REVENUECAT_API_KEY"))
                 .with_webhook_secret(g("REVENUECAT_WEBHOOK_AUTH")),
         );
+        // App Store direct: the bundle id doubles as the webhook "secret" (the
+        // notification is authenticated by Apple's signature chain, not a secret).
+        providers.insert(
+            ProviderId::AppStore,
+            base(ProviderId::AppStore, mode)
+                .with_api_key(g("APPSTORE_PRIVATE_KEY"))
+                .with_webhook_secret(g("APPSTORE_BUNDLE_ID"))
+                .with_extra("key_id", g("APPSTORE_KEY_ID"))
+                .with_extra("issuer_id", g("APPSTORE_ISSUER_ID"))
+                .with_extra("root_sha256", g("APPSTORE_ROOT_SHA256")),
+        );
         providers.insert(
             ProviderId::Adapty,
             base(ProviderId::Adapty, mode)
