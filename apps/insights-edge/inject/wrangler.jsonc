@@ -1,0 +1,22 @@
+{
+	// Railyard Insights tag injector (2026-10-08): adds the cookieless page tag to
+	// the HTML pages of our sites at the edge, so a site does not need a rebuild
+	// (box-hosted apps behind the tunnel) and sites other sessions deploy often
+	// keep the tag whatever they ship. A zone route runs in front of a Worker
+	// custom domain, so this also works for the OpenNext Workers.
+	"$schema": "../node_modules/wrangler/config-schema.json",
+	"name": "railyard-insights-inject",
+	"main": "index.mjs",
+	"compatibility_date": "2026-09-20",
+	"workers_dev": false,
+	"routes": [
+		{ "pattern": "mail.scribase.com/*", "zone_name": "scribase.com" },
+		{ "pattern": "scribase.com/*", "zone_name": "scribase.com" },
+		{ "pattern": "www.scribase.com/*", "zone_name": "scribase.com" },
+		{ "pattern": "menivor.com/*", "zone_name": "menivor.com" },
+		{ "pattern": "www.menivor.com/*", "zone_name": "menivor.com" }
+	],
+	"vars": {
+		"SITE_KEYS": "{\"mail.scribase.com\":\"ry_site_scribase_mail_7e3c28c34586\",\"scribase.com\":\"ry_site_scribase_8831be787dd5\",\"www.scribase.com\":\"ry_site_scribase_8831be787dd5\",\"menivor.com\":\"ry_site_menivor_89f8a6785e1a\",\"www.menivor.com\":\"ry_site_menivor_89f8a6785e1a\"}"
+	}
+}

@@ -7,6 +7,7 @@
 
 import { capDecision } from "./caps.ts";
 import { PA_MAX_BATCH, sendToPa, toPaEvent } from "./pa-forward.mjs";
+import { storeBatches } from "./store.mjs";
 
 export const FLUSH_MS = 2000;
 export const MAX_BUFFER_PER_SITE = 10_000;
@@ -136,8 +137,27 @@ export class OrgCollector {
 
   async flushIngest(now) {
     const batches = [...this.buffers.entries()].filter(([, b]) => b.events.length).map(([siteKey, b]) => ({ site_key: siteKey, app_id: b.appId, events: b.events }));
-    if (!batches.length || !this.env.INGEST_URL) return;
+    if (!batches.length || (!this.env.INGEST_URL && !this.env.DB)) return;
     this.buffers = new Map();
+    const requeue = (why) => {
+      // Put the events back in front of anything that arrived meanwhile; retried at the next alarm.
+      for (const b of batches) {
+        const cur = this.buffers.get(b.site_key) ?? { appId: b.app_id, events: [] };
+        cur.events = [...b.events, ...cur.events].slice(-MAX_BUFFER_PER_SITE);
+        this.buffers.set(b.site_key, cur);
+      }
+      console.error(`insights-edge: ${why} for org ${this.orgId} failed, will retry`);
+    };
+    // The $0 sink: D1. When it is bound it is the system of record and the
+    // ingest forward below is best effort (a retry would write D1 twice).
+    if (this.env.DB) {
+      try {
+        await storeBatches(this.env.DB, batches);
+      } catch (err) {
+        return requeue(`d1 write (${err.message})`);
+      }
+    }
+    if (!this.env.INGEST_URL) return;
     try {
       const res = await fetch(`${this.env.INGEST_URL.replace(/\/$/, "")}/v1/ingest/batch`, {
         method: "POST",
@@ -146,13 +166,8 @@ export class OrgCollector {
       });
       if (!res.ok) throw new Error(`ingest ${res.status}`);
     } catch (err) {
-      // Put the events back in front of anything that arrived meanwhile; retried at the next alarm.
-      for (const b of batches) {
-        const cur = this.buffers.get(b.site_key) ?? { appId: b.app_id, events: [] };
-        cur.events = [...b.events, ...cur.events].slice(-MAX_BUFFER_PER_SITE);
-        this.buffers.set(b.site_key, cur);
-      }
-      console.error(`insights-edge: ingest flush for org ${this.orgId} failed: ${err.message}`);
+      if (this.env.DB) console.error(`insights-edge: ingest forward for org ${this.orgId} dropped: ${err.message}`);
+      else requeue(`ingest flush (${err.message})`);
     }
   }
 

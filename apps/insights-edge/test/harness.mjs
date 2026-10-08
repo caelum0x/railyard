@@ -9,7 +9,7 @@ import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-export async function startCollector({ bindings = {}, sites = {}, respond = () => 200 } = {}) {
+export async function startCollector({ bindings = {}, sites = {}, respond = () => 200, d1 = false } = {}) {
   const persist = mkdtempSync(join(tmpdir(), "ry-insights-"));
   const outbound = [];
   // Miniflare 5 takes its new option shape; the converter keeps the classic one readable.
@@ -28,6 +28,7 @@ export async function startCollector({ bindings = {}, sites = {}, respond = () =
         compatibilityDate: "2026-09-20",
         durableObjects: { ORG_COLLECTOR: { className: "OrgCollector", useSQLite: true } },
         kvNamespaces: ["SITES"],
+        ...(d1 ? { d1Databases: ["DB"] } : {}),
         bindings: {
           VISITOR_SALT_SECRET: "test-salt-secret",
           INGEST_URL: "https://ingest.test",

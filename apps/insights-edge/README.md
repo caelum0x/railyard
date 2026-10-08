@@ -26,6 +26,16 @@ A Cloudflare Worker (RYP-D3) that takes page views and custom events from the
   `$web_vitals`, a cookieless daily id for anonymous visitors), so the web view
   there reads the same store as funnels and replay.
 
+Live (2026-10-08): `https://insights.ereboslab.com` with a D1 event store
+(`railyard-insights`, binding `DB`; every stored event is written there at each
+flush, no IP), `GET /api/stats?days=N` and `POST /api/report` behind
+`STATS_TOKEN`, and a weekly funnel email (cron Mondays 07:00 UTC) to `REPORT_TO`
+through Scribase Mail (key `mk_3e204ab960f7f073`, from no-reply@mail.menivor.com).
+Sites are `site:<key>` entries in the SITES KV. `inject/` is a pass-through
+Worker on zone routes that adds the page tag to HTML at the edge (scribase.com,
+mail.scribase.com, menivor.com); bidstage.app and yokharita.com carry the tag
+in their own layouts. Secrets live in `~/.config/products-keys/railyard-insights.env`.
+
 The downstream contract is `contract/INGEST-API.md` (and its JSON schema). Until
 Insights ingest is deployed, `INGEST_URL` is empty and events are counted and
 capped but not forwarded.

@@ -7,6 +7,7 @@ import { dropReason } from "./bots.mjs";
 import { MAX_BATCH, MAX_BODY_BYTES, parseOne } from "./payload.mjs";
 import { TRACKER_JS } from "./tracker.mjs";
 import { dailySalt, visitorHash } from "./visitor.mjs";
+import { buildReport, sendReport } from "./report.mjs";
 
 export { OrgCollector } from "./collector.mjs";
 
@@ -92,13 +93,43 @@ async function collect(request, env, batch) {
   return reply(202, { ok: true }, headers);
 }
 
+/** Constant-time-ish bearer check for the owner endpoints (stats, report). */
+function authorized(request, env) {
+  const want = env.STATS_TOKEN;
+  const got = (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!want || got.length !== want.length) return false;
+  let diff = 0;
+  for (let i = 0; i < want.length; i += 1) diff |= want.charCodeAt(i) ^ got.charCodeAt(i);
+  return diff === 0;
+}
+
+async function owner(request, env, url) {
+  if (!env.DB) return reply(503, { error: "no event store" });
+  if (!authorized(request, env)) return reply(401, { error: "unauthorized" });
+  if (url.pathname === "/api/stats") {
+    const days = Math.min(90, Math.max(1, Number(url.searchParams.get("days")) || 7));
+    // `days` back from now (including today), so fresh events show up at once.
+    return reply(200, await buildReport(env, Date.now() + 86_400_000, days));
+  }
+  return reply(200, await sendReport(env, Date.now()));
+}
+
 export default {
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(
+      sendReport(env, Date.now()).then((r) => {
+        if (!r.sent) console.error(`insights-edge: weekly report not sent: ${JSON.stringify(r)}`);
+      }),
+    );
+  },
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     if (request.method === "GET" && url.pathname === "/s.js") {
       return new Response(TRACKER_JS, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "public, max-age=3600", ...CORS } });
     }
+    if (request.method === "GET" && url.pathname === "/api/stats") return owner(request, env, url);
+    if (request.method === "POST" && url.pathname === "/api/report") return owner(request, env, url);
     if (request.method === "POST" && url.pathname === "/api/send") return collect(request, env, false);
     if (request.method === "POST" && url.pathname === "/api/batch") return collect(request, env, true);
     return reply(404, { error: "not found" });

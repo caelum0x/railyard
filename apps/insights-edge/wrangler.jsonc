@@ -1,14 +1,19 @@
 {
 	// Railyard Insights edge collector (RYP-D3), our Cloudflare account.
-	// Secrets (owner, `wrangler secret put`): VISITOR_SALT_SECRET, INGEST_TOKEN, RAGO_API_KEY.
+	// Secrets (`wrangler secret put`): VISITOR_SALT_SECRET, INGEST_TOKEN, RAGO_API_KEY,
+	// STATS_TOKEN (GET /api/stats, POST /api/report), RALLY_TX_KEY (Scribase Mail key for the weekly report).
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "railyard-insights-edge",
 	"main": "src/index.mjs",
 	"compatibility_date": "2026-09-20",
 	"workers_dev": false,
-	"routes": [{ "pattern": "insights.railyard.ereboslab.com", "custom_domain": true }],
+	"routes": [{ "pattern": "insights.ereboslab.com", "custom_domain": true }],
 	"durable_objects": { "bindings": [{ "name": "ORG_COLLECTOR", "class_name": "OrgCollector" }] },
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["OrgCollector"] }],
+	// The $0 event store (2026-10-08): every stored event is written here at each 2 s flush.
+	"d1_databases": [{ "binding": "DB", "database_name": "railyard-insights", "database_id": "6b0d8ae9-4156-40e3-8f0c-875f39cfbd3c" }],
+	// Weekly funnel report, Mondays 07:00 UTC, through Scribase Mail.
+	"triggers": { "crons": ["0 7 * * 1"] },
 	// Namespace RAILYARD_SITES, created 2026-09-30 (`wrangler kv namespace create RAILYARD_SITES`).
 	"kv_namespaces": [{ "binding": "SITES", "id": "323121abfdc64ff6ab90927620d3dbb2" }],
 	"vars": {
@@ -16,6 +21,10 @@
 		"INGEST_URL": "",
 		"RAGO_URL": "",
 		// QY1.2: the product analytics service base URL. Empty until it is started (owner Y-2): page-tag events then also land there.
-		"PRODUCT_ANALYTICS_URL": ""
+		"PRODUCT_ANALYTICS_URL": "",
+		"RALLY_TX_URL": "https://api.scribase.com/api/rally/v1/transactional/send",
+		"REPORT_TO": "subasiarhan3@gmail.com",
+		"REPORT_PRODUCT": "menivor",
+		"REPORT_FROM_LOCAL": "no-reply"
 	}
 }
