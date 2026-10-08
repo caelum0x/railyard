@@ -14,9 +14,11 @@
 		{ "pattern": "scribase.com/*", "zone_name": "scribase.com" },
 		{ "pattern": "www.scribase.com/*", "zone_name": "scribase.com" },
 		{ "pattern": "menivor.com/*", "zone_name": "menivor.com" },
-		{ "pattern": "www.menivor.com/*", "zone_name": "menivor.com" }
+		{ "pattern": "www.menivor.com/*", "zone_name": "menivor.com" },
+		{ "pattern": "yokharita.com/*", "zone_name": "yokharita.com" },
+		{ "pattern": "www.yokharita.com/*", "zone_name": "yokharita.com" }
 	],
 	"vars": {
-		"SITE_KEYS": "{\"mail.scribase.com\":\"ry_site_scribase_mail_7e3c28c34586\",\"scribase.com\":\"ry_site_scribase_8831be787dd5\",\"www.scribase.com\":\"ry_site_scribase_8831be787dd5\",\"menivor.com\":\"ry_site_menivor_89f8a6785e1a\",\"www.menivor.com\":\"ry_site_menivor_89f8a6785e1a\"}"
+		"SITE_KEYS": "{\"mail.scribase.com\":\"ry_site_scribase_mail_7e3c28c34586\",\"scribase.com\":\"ry_site_scribase_8831be787dd5\",\"www.scribase.com\":\"ry_site_scribase_8831be787dd5\",\"menivor.com\":\"ry_site_menivor_89f8a6785e1a\",\"www.menivor.com\":\"ry_site_menivor_89f8a6785e1a\",\"yokharita.com\":\"ry_site_yokharita_782a2c9d25ed\",\"www.yokharita.com\":\"ry_site_yokharita_782a2c9d25ed\"}"
 	}
 }
