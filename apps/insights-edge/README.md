@@ -36,6 +36,20 @@ Worker on zone routes that adds the page tag to HTML at the edge (scribase.com,
 mail.scribase.com, menivor.com); bidstage.app and yokharita.com carry the tag
 in their own layouts. Secrets live in `~/.config/products-keys/railyard-insights.env`.
 
+Self-serve (2026-10-12): `GET /` is a public landing page with a sign-up form
+(email + domain, works without JavaScript). `POST /api/sites` (JSON or form)
+creates a `site:s_...` entry (10,000 stored events a month, `self_serve: true`,
+KV list metadata so the weekly run skips it) and a private dashboard link
+`/d/<token>` (only the token's SHA-256 is stored, as `dash:<hash>`), mailed
+through Scribase Mail and shown at once. A self-serve site stores events only
+from its own domain and subdomains. `GET /api/d/<token>/stats?days=N` is the
+same data as JSON. `POST /d/<token>/delete` with `confirm=<domain>` removes the
+site, the link, the `signups` row and every stored event. Limits: 3 sign-ups
+per email and per domain a day, `SIGNUP_DAILY_CAP` in total. `/privacy`,
+`/robots.txt`, `/sitemap.xml`. Stats and the weekly report also list page
+views per `utm_source`; the owner report counts self-serve sites but never
+itemises them.
+
 The downstream contract is `contract/INGEST-API.md` (and its JSON schema). Until
 Insights ingest is deployed, `INGEST_URL` is empty and events are counted and
 capped but not forwarded.

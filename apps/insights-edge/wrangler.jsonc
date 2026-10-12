@@ -25,6 +25,9 @@
 		"RALLY_TX_URL": "https://api.scribase.com/api/rally/v1/transactional/send",
 		"REPORT_TO": "subasiarhan3@gmail.com",
 		"REPORT_PRODUCT": "menivor",
-		"REPORT_FROM_LOCAL": "no-reply"
+		"REPORT_FROM_LOCAL": "no-reply",
+		// Self-serve sign-up (2026-10-12): the landing page's own site entry (site:ry_insights_landing in SITES).
+		"LANDING_SITE_KEY": "ry_insights_landing",
+		"SIGNUP_DAILY_CAP": "300"
 	}
 }

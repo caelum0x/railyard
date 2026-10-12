@@ -7,7 +7,11 @@ import { dropReason } from "./bots.mjs";
 import { MAX_BATCH, MAX_BODY_BYTES, parseOne } from "./payload.mjs";
 import { TRACKER_JS } from "./tracker.mjs";
 import { dailySalt, visitorHash } from "./visitor.mjs";
-import { buildReport, sendReport } from "./report.mjs";
+import { buildReport, sendReport, windows } from "./report.mjs";
+import { capMessage } from "./caps.ts";
+import { createSite, deleteSite, hostMatches, resolveDashboard, usage } from "./selfserve.mjs";
+import { siteStats } from "./store.mjs";
+import { ROBOTS, SITEMAP, dashboardPage, landingPage, messagePage, privacyPage } from "./pages.mjs";
 
 export { OrgCollector } from "./collector.mjs";
 
@@ -74,9 +78,12 @@ async function collect(request, env, batch) {
       paused += events.length;
       continue;
     }
+    // A self-serve site stores events only from its own domain and subdomains.
+    const own = s.hostname ? events.filter((e) => hostMatches(e.hostname, s.hostname)) : events;
+    if (!own.length) continue;
     const visitor = await visitorHash({ salt, siteKey: key, ip, userAgent: ua });
     const ts = new Date(now).toISOString();
-    const out = events.map((e) => ({ ...e, visitor, country, ts }));
+    const out = own.map((e) => ({ ...e, visitor, country, ts }));
     const stub = env.ORG_COLLECTOR.get(env.ORG_COLLECTOR.idFromName(s.org_id));
     const res = await stub.fetch("https://collector/ingest", {
       method: "POST",
@@ -114,6 +121,88 @@ async function owner(request, env, url) {
   return reply(200, await sendReport(env, Date.now()));
 }
 
+const DAY = 86_400_000;
+const PAGE_HEADERS = {
+  "content-type": "text/html; charset=utf-8",
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+};
+const html = (status, body, extra = {}) => new Response(body, { status, headers: { ...PAGE_HEADERS, "cache-control": "no-store", ...extra } });
+const landingTag = (env) => env.LANDING_SITE_KEY || null;
+
+async function readSignup(request) {
+  const type = request.headers.get("content-type") ?? "";
+  if (type.includes("application/json")) {
+    try {
+      return { form: false, input: await request.json() };
+    } catch {
+      return { form: false, input: null };
+    }
+  }
+  const f = await request.formData();
+  return { form: true, input: { email: f.get("email"), domain: f.get("domain") } };
+}
+
+async function signup(request, env, url) {
+  if ((Number(request.headers.get("content-length")) || 0) > 4096) return reply(413, { error: "too large" });
+  const { form, input } = await readSignup(request);
+  const r = await createSite(env, input, url.origin);
+  if (!form) return reply(r.status, r.body);
+  if (r.status !== 201) return html(r.status, landingPage({ error: r.body.error, values: input ?? {}, tag: landingTag(env) }));
+  const token = r.body.dashboard_url.split("/d/")[1];
+  return new Response(null, { status: 303, headers: { location: `/d/${token}?new=${r.body.mailed ? "mailed" : "1"}`, "cache-control": "no-store" } });
+}
+
+async function dashboardData(env, found, days) {
+  const w = windows(Date.now() + DAY, days);
+  const stats = await siteStats(env.DB, found.key, ...w.cur);
+  const used = await usage(env.DB, found.key);
+  return { stats, usage: used, capLine: capMessage(used.month, found.site.events_limit ?? 0, new Date()) };
+}
+
+async function dashboard(request, env, url, parts) {
+  const [, , token, action] = parts;
+  const found = env.DB ? await resolveDashboard(env, token) : null;
+  const priv = { "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" };
+  if (!found) {
+    if (parts[1] === "api") return reply(404, { error: "not found" }, priv);
+    return html(404, messagePage("Dashboard not found", "This link is not valid, or the site was deleted."), priv);
+  }
+  const days = [7, 30, 90].includes(Number(url.searchParams.get("days"))) ? Number(url.searchParams.get("days")) : 7;
+  if (parts[1] === "api") {
+    const d = await dashboardData(env, found, Math.min(90, Math.max(1, Number(url.searchParams.get("days")) || 7)));
+    return reply(200, { domain: found.site.label, cur: d.stats, usage: d.usage, events_limit: found.site.events_limit }, priv);
+  }
+  if (action === "delete") {
+    if (request.method !== "POST") return html(405, messagePage("Not allowed", "Use the delete button on the dashboard."), priv);
+    const f = await request.formData();
+    if (String(f.get("confirm") ?? "").trim().toLowerCase() !== found.site.label) {
+      return html(400, messagePage("Not deleted", `Type ${found.site.label} exactly to delete it.`, "error"), priv);
+    }
+    await deleteSite(env, found.key, found.site);
+    return html(200, messagePage("Deleted", `${found.site.label} and every stored event are deleted. Remove the tag from your pages; it now does nothing.`, "ok"), priv);
+  }
+  const d = await dashboardData(env, found, days);
+  const fresh = url.searchParams.get("new");
+  return html(200, dashboardPage({ token, origin: url.origin, key: found.key, site: found.site, stats: d.stats, days, usage: d.usage, capLine: d.capLine, fresh: fresh === "mailed" ? "mailed" : fresh ? "yes" : null }), priv);
+}
+
+/** Public pages, sign-up and dashboards; null when the path is not one of them. */
+async function publicRoute(request, env, url) {
+  const p = url.pathname;
+  const get = request.method === "GET" || request.method === "HEAD";
+  if (get && p === "/") return html(200, landingPage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300" });
+  if (get && p === "/privacy") return html(200, privacyPage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300" });
+  if (get && p === "/robots.txt") return new Response(ROBOTS, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" } });
+  if (get && p === "/sitemap.xml") return new Response(SITEMAP, { headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" } });
+  if (request.method === "POST" && p === "/api/sites") return signup(request, env, url);
+  const parts = p.split("/");
+  if (parts[1] === "d" && parts.length >= 3 && parts.length <= 4 && (parts.length === 3 || parts[3] === "delete")) return dashboard(request, env, url, parts);
+  if (get && parts[1] === "api" && parts[2] === "d" && parts.length === 5 && parts[4] === "stats") return dashboard(request, env, url, ["", "api", parts[3]]);
+  return null;
+}
+
 export default {
   async scheduled(_controller, env, ctx) {
     ctx.waitUntil(
@@ -132,6 +221,8 @@ export default {
     if (request.method === "POST" && url.pathname === "/api/report") return owner(request, env, url);
     if (request.method === "POST" && url.pathname === "/api/send") return collect(request, env, false);
     if (request.method === "POST" && url.pathname === "/api/batch") return collect(request, env, true);
+    const page = await publicRoute(request, env, url);
+    if (page) return page;
     return reply(404, { error: "not found" });
   },
 };

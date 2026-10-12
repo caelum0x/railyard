@@ -65,6 +65,23 @@ const hostOf = (ref) => {
   }
 };
 
+/** Page views per `utm_source` (campaign links, e.g. one per video), top 10. */
+export function utmSources(rows) {
+  const by = new Map();
+  for (const r of rows) {
+    let src = null;
+    try {
+      src = new URL(r.url, "https://x.invalid").searchParams.get("utm_source");
+    } catch {
+      src = null;
+    }
+    if (!src) continue;
+    const k = src.trim().toLowerCase().slice(0, 60);
+    if (k) by.set(k, (by.get(k) ?? 0) + r.n);
+  }
+  return [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([source, n]) => ({ source, n }));
+}
+
 /**
  * Per-site funnel for [since, until): visitors -> engaged visitors (2+ pages)
  * -> visitors with a custom event, plus page views, top pages, top referrers
@@ -74,13 +91,14 @@ export async function siteStats(db, siteKey, since, until) {
   await ensureSchema(db);
   const w = "site_key = ? AND ts >= ? AND ts < ?";
   const args = [siteKey, since, until];
-  const [totals, engaged, converted, pages, refs, events] = await db.batch([
+  const [totals, engaged, converted, pages, refs, events, utms] = await db.batch([
     db.prepare(`SELECT COUNT(*) AS pageviews, COUNT(DISTINCT visitor || substr(ts,1,10)) AS visitors FROM events WHERE ${w} AND type = 'event' AND name IS NULL`).bind(...args),
     db.prepare(`SELECT COUNT(*) AS n FROM (SELECT visitor, substr(ts,1,10) d FROM events WHERE ${w} AND type = 'event' AND name IS NULL GROUP BY visitor, d HAVING COUNT(DISTINCT url) >= 2)`).bind(...args),
     db.prepare(`SELECT COUNT(DISTINCT visitor || substr(ts,1,10)) AS n FROM events WHERE ${w} AND type = 'event' AND name IS NOT NULL`).bind(...args),
     db.prepare(`SELECT url, COUNT(*) AS n FROM events WHERE ${w} AND type = 'event' AND name IS NULL GROUP BY url ORDER BY n DESC LIMIT 5`).bind(...args),
     db.prepare(`SELECT referrer, hostname, COUNT(*) AS n FROM events WHERE ${w} AND type = 'event' AND name IS NULL AND referrer IS NOT NULL AND referrer != '' GROUP BY referrer, hostname ORDER BY n DESC LIMIT 200`).bind(...args),
     db.prepare(`SELECT name, COUNT(*) AS n FROM events WHERE ${w} AND type = 'event' AND name IS NOT NULL GROUP BY name ORDER BY n DESC LIMIT 10`).bind(...args),
+    db.prepare(`SELECT url, COUNT(*) AS n FROM events WHERE ${w} AND type = 'event' AND name IS NULL AND url LIKE '%utm_source=%' GROUP BY url ORDER BY n DESC LIMIT 500`).bind(...args),
   ]);
   const t = totals.results[0] ?? { pageviews: 0, visitors: 0 };
   const byHost = new Map();
@@ -97,5 +115,6 @@ export async function siteStats(db, siteKey, since, until) {
     top_pages: pages.results.map((r) => ({ url: r.url, n: r.n })),
     top_referrers: [...byHost.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([host, n]) => ({ host, n })),
     events: events.results.map((r) => ({ name: r.name, n: r.n })),
+    utm_sources: utmSources(utms.results),
   };
 }

@@ -12,6 +12,11 @@ export async function listSites(env) {
   do {
     const page = await env.SITES.list({ prefix: "site:", cursor });
     for (const k of page.keys) {
+      // Self-serve entries carry list metadata, so the weekly run never reads them one by one.
+      if (k.metadata?.self_serve) {
+        out.push({ key: k.name.slice(5), label: k.name.slice(5), self_serve: true });
+        continue;
+      }
       const raw = await env.SITES.get(k.name);
       if (!raw) continue;
       const s = JSON.parse(raw);
@@ -30,7 +35,9 @@ export function windows(nowMs, days = 7) {
 }
 
 export async function buildReport(env, nowMs, days = 7) {
-  const sites = await listSites(env);
+  const all = await listSites(env);
+  // Self-serve sites belong to their owners: counted here, never itemised in our report.
+  const sites = all.filter((s) => !s.self_serve);
   const w = windows(nowMs, days);
   const rows = [];
   for (const s of sites) {
@@ -38,7 +45,7 @@ export async function buildReport(env, nowMs, days = 7) {
     const prev = await siteStats(env.DB, s.key, ...w.prev);
     rows.push({ site: s.label, cur, prev });
   }
-  return { from: w.cur[0].slice(0, 10), to: w.cur[1].slice(0, 10), rows };
+  return { from: w.cur[0].slice(0, 10), to: w.cur[1].slice(0, 10), rows, self_serve_sites: all.length - sites.length };
 }
 
 const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -63,8 +70,11 @@ export function renderReport(r) {
     html += list("Top pages", cur.top_pages, (x) => `${esc(x.url)} (${x.n})`);
     html += list("Top referrers", cur.top_referrers, (x) => `${esc(x.host)} (${x.n})`);
     html += list("Events", cur.events, (x) => `${esc(x.name)} (${x.n})`);
-    text.push("", site, ...cur.top_pages.map((x) => `  page ${x.url} ${x.n}`), ...cur.top_referrers.map((x) => `  from ${x.host} ${x.n}`), ...cur.events.map((x) => `  event ${x.name} ${x.n}`));
+    html += list("UTM sources", cur.utm_sources ?? [], (x) => `${esc(x.source)} (${x.n})`);
+    text.push("", site, ...cur.top_pages.map((x) => `  page ${x.url} ${x.n}`), ...cur.top_referrers.map((x) => `  from ${x.host} ${x.n}`), ...cur.events.map((x) => `  event ${x.name} ${x.n}`), ...(cur.utm_sources ?? []).map((x) => `  utm ${x.source} ${x.n}`));
   }
+  html += `<p><b>Self-serve sites signed up:</b> ${r.self_serve_sites ?? 0}</p>`;
+  text.push("", `Self-serve sites signed up: ${r.self_serve_sites ?? 0}`);
   html += `<p style="color:#666;font-size:12px">Cookieless: visitors are a daily salted hash; no IP or cookie is stored. Visitors are counted per day.</p></div>`;
   return { subject, html, text: text.join("\n") };
 }
