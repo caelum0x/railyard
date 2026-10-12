@@ -128,6 +128,8 @@ const PAGE_HEADERS = {
   "x-frame-options": "DENY",
   "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
 };
+// The public pages also allow the zone's Cloudflare Web Analytics beacon (cookieless).
+const PUBLIC_CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'self' https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 const html = (status, body, extra = {}) => new Response(body, { status, headers: { ...PAGE_HEADERS, "cache-control": "no-store", ...extra } });
 const landingTag = (env) => env.LANDING_SITE_KEY || null;
 
@@ -149,7 +151,7 @@ async function signup(request, env, url) {
   const { form, input } = await readSignup(request);
   const r = await createSite(env, input, url.origin);
   if (!form) return reply(r.status, r.body);
-  if (r.status !== 201) return html(r.status, landingPage({ error: r.body.error, values: input ?? {}, tag: landingTag(env) }));
+  if (r.status !== 201) return html(r.status, landingPage({ error: r.body.error, values: input ?? {}, tag: landingTag(env) }), { "content-security-policy": PUBLIC_CSP });
   const token = r.body.dashboard_url.split("/d/")[1];
   return new Response(null, { status: 303, headers: { location: `/d/${token}?new=${r.body.mailed ? "mailed" : "1"}`, "cache-control": "no-store" } });
 }
@@ -164,7 +166,8 @@ async function dashboardData(env, found, days) {
 async function dashboard(request, env, url, parts) {
   const [, , token, action] = parts;
   const found = env.DB ? await resolveDashboard(env, token) : null;
-  const priv = { "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" };
+  // no-transform keeps the zone's edge features from injecting third-party scripts into a private page.
+  const priv = { "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow", "cache-control": "no-store, no-transform" };
   if (!found) {
     if (parts[1] === "api") return reply(404, { error: "not found" }, priv);
     return html(404, messagePage("Dashboard not found", "This link is not valid, or the site was deleted."), priv);
@@ -192,8 +195,8 @@ async function dashboard(request, env, url, parts) {
 async function publicRoute(request, env, url) {
   const p = url.pathname;
   const get = request.method === "GET" || request.method === "HEAD";
-  if (get && p === "/") return html(200, landingPage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300" });
-  if (get && p === "/privacy") return html(200, privacyPage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300" });
+  if (get && p === "/") return html(200, landingPage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
+  if (get && p === "/privacy") return html(200, privacyPage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
   if (get && p === "/robots.txt") return new Response(ROBOTS, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" } });
   if (get && p === "/sitemap.xml") return new Response(SITEMAP, { headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" } });
   if (request.method === "POST" && p === "/api/sites") return signup(request, env, url);
