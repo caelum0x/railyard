@@ -83,6 +83,8 @@ export function privacyPage({ tag } = {}) {
 <p>We store your email address and your domain to send you the dashboard link. We do not use your email for marketing. The dashboard link is a secret; we keep only a hash of it.</p>
 <h2>Where it is stored</h2>
 <p>On Cloudflare (Workers, D1 and KV). The link email is sent through Scribase Mail.</p>
+<h2>This website</h2>
+<p>The public pages of insights.ereboslab.com count their own visits with this same tag and with Cloudflare Web Analytics, which also sets no cookies. Private dashboards load neither.</p>
 <h2>Deleting your data</h2>
 <p>Open your dashboard link and use <b>Delete this site</b>: the site, its sign-up record, its dashboard link and every stored event are removed at once. Lost the link? Email ${esc(CONTACT)} from the address you signed up with and we delete it by hand.</p>`;
   return shell({ title: "Privacy | Railyard Insights", description: "What Railyard Insights stores, what it never stores, and how to delete your data.", body, canonical: `${CANONICAL}/privacy`, tag });
@@ -91,7 +93,22 @@ export function privacyPage({ tag } = {}) {
 const list = (title, rows, cols) =>
   `<h2>${esc(title)}</h2>${rows.length ? `<table><tr>${cols.map((c) => `<th${c.r ? ' class="r"' : ""}>${esc(c.h)}</th>`).join("")}</tr>${rows.map((r) => `<tr>${cols.map((c) => `<td${c.r ? ' class="r"' : ""}>${esc(c.v(r))}</td>`).join("")}</tr>`).join("")}</table>` : `<p class="small">Nothing yet.</p>`}`;
 
-export function dashboardPage({ token, origin, key, site, stats, days, usage, fresh, capLine }) {
+// Google's "good" thresholds for LCP, INP and CLS at the 75th percentile.
+const SPEED_GOOD = { lcp: 2500, inp: 200, cls: 0.1 };
+const grade = (k, v) => (v <= SPEED_GOOD[k] ? "good" : "needs work");
+
+function speedSection(speed) {
+  if (!speed || !speed.samples) return `<h2>Page speed</h2><p class="small">Nothing yet. LCP, INP and CLS arrive from real visits when a visitor leaves or hides a page.</p>`;
+  const cells = [
+    ["LCP", "lcp", speed.lcp, (v) => `${(v / 1000).toFixed(1)} s`],
+    ["INP", "inp", speed.inp, (v) => `${Math.round(v)} ms`],
+    ["CLS", "cls", speed.cls, (v) => v.toFixed(2)],
+  ].filter((c) => c[2] != null);
+  return `<h2>Page speed</h2><div class="grid">${cells.map(([label, k, v, f]) => `<div class="stat"><b>${esc(f(v))}</b>${label}, ${grade(k, v)}</div>`).join("")}</div>
+<p class="small">75th percentile of ${n(speed.samples)} page views from real visitors. Good is LCP under 2.5 s, INP under 200 ms, CLS under 0.1.</p>`;
+}
+
+export function dashboardPage({ token, origin, key, site, stats, speed, days, usage, fresh, capLine }) {
   const cur = stats;
   const snippet = snippetFor(origin, key);
   const waiting = usage.all === 0;
@@ -108,6 +125,7 @@ ${list("Top pages", cur.top_pages, [{ h: "Page", v: (r) => r.url }, { h: "Views"
 ${list("Top referrers", cur.top_referrers, [{ h: "Site", v: (r) => r.host }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
 ${list("UTM sources", cur.utm_sources, [{ h: "utm_source", v: (r) => r.source }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
 ${list("Custom events", cur.events, [{ h: "Event", v: (r) => r.name }, { h: "Count", v: (r) => n(r.n), r: 1 }])}
+${speedSection(speed)}
 ${waiting ? "" : `<h2>Your tag</h2><pre>${esc(snippet)}</pre>`}
 <p class="small">Count a sign-up or purchase with <code>railyard.track("signup")</code> after the tag loads. Visitors are counted per day, without cookies.</p>
 <h2>Delete this site</h2>

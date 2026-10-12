@@ -67,22 +67,29 @@ test("sign-up gives a tag and dashboard; events show there; foreign hostnames ar
     assert.equal((await c.send(ev(s.site_key, "/", { hostname: "shop.example" }))).status, 202);
     assert.equal((await c.send(ev(s.site_key, "/?utm_source=newsletter&utm_campaign=oct", { hostname: "www.shop.example" }))).status, 202);
     assert.equal((await c.send(ev(s.site_key, "/", { hostname: "evil.example" }))).status, 202);
+    // Page speed from real visits, shown on the dashboard as the 75th percentile.
+    for (const [lcp, inp, cls] of [[1000, 40, 0.01], [2000, 120, 0.05], [3000, 300, 0.2], [4000, 500, 0.3]]) {
+      assert.equal((await c.send({ type: "performance", payload: { ...ev(s.site_key, "/").payload, lcp, inp, cls } })).status, 202);
+    }
     await sleep(3500);
     const db = await c.mf.getD1Database("DB");
     const rows = (await db.prepare("SELECT hostname FROM events WHERE site_key = ?").bind(s.site_key).all()).results;
-    assert.deepEqual(rows.map((r) => r.hostname).sort(), ["shop.example", "www.shop.example"]);
+    assert.deepEqual(rows.map((r) => r.hostname).sort(), ["shop.example", "shop.example", "shop.example", "shop.example", "shop.example", "www.shop.example"]);
 
     const token = s.dashboard_url.split("/d/")[1];
     const stats = await (await fetch(`${c.base}/api/d/${token}/stats?days=1`)).json();
     assert.equal(stats.domain, "shop.example");
     assert.equal(stats.cur.pageviews, 2);
     assert.deepEqual(stats.cur.utm_sources, [{ source: "newsletter", n: 1 }]);
+    assert.deepEqual(stats.speed, { samples: 4, lcp: 3000, inp: 300, cls: 0.2 });
     const page = await fetch(`${c.base}/d/${token}`);
     assert.equal(page.status, 200);
     assert.equal(page.headers.get("referrer-policy"), "no-referrer");
     const html = await page.text();
     assert.match(html, /shop\.example/);
     assert.match(html, /newsletter/);
+    assert.match(html, /Page speed/);
+    assert.match(html, /3\.0 s/);
     assert.equal((await fetch(`${c.base}/d/not-a-real-token-aaaaaaaaaaaaaaaaaaaaaaaaaa`)).status, 404);
 
     // The owner's weekly report leaves self-serve sites out.

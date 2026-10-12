@@ -118,3 +118,28 @@ export async function siteStats(db, siteKey, since, until) {
     utm_sources: utmSources(utms.results),
   };
 }
+
+/** 75th percentile (nearest rank) of the finite numbers in `values`, or null. */
+export function p75(values) {
+  const v = values.filter((x) => typeof x === "number" && Number.isFinite(x)).sort((a, b) => a - b);
+  return v.length ? v[Math.ceil(v.length * 0.75) - 1] : null;
+}
+
+const SPEED_SAMPLE = 2000;
+
+/** Page speed from real visits in [since, until): p75 LCP and INP (ms) and CLS, over the latest page views. */
+export async function pageSpeed(db, siteKey, since, until) {
+  await ensureSchema(db);
+  const { results } = await db
+    .prepare("SELECT data FROM events WHERE site_key = ? AND ts >= ? AND ts < ? AND type = 'performance' AND data IS NOT NULL ORDER BY ts DESC LIMIT ?")
+    .bind(siteKey, since, until, SPEED_SAMPLE)
+    .all();
+  const parsed = results.map((r) => {
+    try {
+      return JSON.parse(r.data) ?? {};
+    } catch {
+      return {};
+    }
+  });
+  return { samples: parsed.length, lcp: p75(parsed.map((d) => d.lcp)), inp: p75(parsed.map((d) => d.inp)), cls: p75(parsed.map((d) => d.cls)) };
+}

@@ -10,7 +10,7 @@ import { dailySalt, visitorHash } from "./visitor.mjs";
 import { buildReport, sendReport, windows } from "./report.mjs";
 import { capMessage } from "./caps.ts";
 import { createSite, deleteSite, hostMatches, resolveDashboard, usage } from "./selfserve.mjs";
-import { siteStats } from "./store.mjs";
+import { pageSpeed, siteStats } from "./store.mjs";
 import { ROBOTS, SITEMAP, dashboardPage, landingPage, messagePage, privacyPage } from "./pages.mjs";
 
 export { OrgCollector } from "./collector.mjs";
@@ -159,8 +159,9 @@ async function signup(request, env, url) {
 async function dashboardData(env, found, days) {
   const w = windows(Date.now() + DAY, days);
   const stats = await siteStats(env.DB, found.key, ...w.cur);
+  const speed = await pageSpeed(env.DB, found.key, ...w.cur);
   const used = await usage(env.DB, found.key);
-  return { stats, usage: used, capLine: capMessage(used.month, found.site.events_limit ?? 0, new Date()) };
+  return { stats, speed, usage: used, capLine: capMessage(used.month, found.site.events_limit ?? 0, new Date()) };
 }
 
 async function dashboard(request, env, url, parts) {
@@ -175,7 +176,7 @@ async function dashboard(request, env, url, parts) {
   const days = [7, 30, 90].includes(Number(url.searchParams.get("days"))) ? Number(url.searchParams.get("days")) : 7;
   if (parts[1] === "api") {
     const d = await dashboardData(env, found, Math.min(90, Math.max(1, Number(url.searchParams.get("days")) || 7)));
-    return reply(200, { domain: found.site.label, cur: d.stats, usage: d.usage, events_limit: found.site.events_limit }, priv);
+    return reply(200, { domain: found.site.label, cur: d.stats, speed: d.speed, usage: d.usage, events_limit: found.site.events_limit }, priv);
   }
   if (action === "delete") {
     if (request.method !== "POST") return html(405, messagePage("Not allowed", "Use the delete button on the dashboard."), priv);
@@ -188,7 +189,7 @@ async function dashboard(request, env, url, parts) {
   }
   const d = await dashboardData(env, found, days);
   const fresh = url.searchParams.get("new");
-  return html(200, dashboardPage({ token, origin: url.origin, key: found.key, site: found.site, stats: d.stats, days, usage: d.usage, capLine: d.capLine, fresh: fresh === "mailed" ? "mailed" : fresh ? "yes" : null }), priv);
+  return html(200, dashboardPage({ token, origin: url.origin, key: found.key, site: found.site, stats: d.stats, speed: d.speed, days, usage: d.usage, capLine: d.capLine, fresh: fresh === "mailed" ? "mailed" : fresh ? "yes" : null }), priv);
 }
 
 /** Public pages, sign-up and dashboards; null when the path is not one of them. */
