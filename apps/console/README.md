@@ -96,6 +96,11 @@ in-memory fakes of the payment and auth servers. The bundle test runs
 `next build` with sentinel secrets and greps the client bundle. The migration
 test starts a throwaway local Postgres.
 
+## Deploy
+
+Never deployed yet. See [`DEPLOY.md`](./DEPLOY.md) for the exact secret list,
+build/deploy commands, pre-flight checklist, and rollback.
+
 ## Owner steps
 
 1. Create the `railyard` brand and the three test-mode products; set the env above.
