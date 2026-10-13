@@ -1,9 +1,9 @@
 // Railyard Insights tag injector: a pass-through Worker route in front of a
 // site we cannot redeploy cheaply (box-hosted apps behind the tunnel). It adds
 // the cookieless page tag to HTML responses and leaves everything else as is.
-// Sites: hostname -> site key (SITE_KEYS var, JSON). Also fronts yokharita.com, whose
-// app ships the tag itself but is redeployed from other working trees; the tag is
-// added only when the page does not already have it.
+// Sites: hostname -> site key (SITE_KEYS var, JSON). Also fronts yokharita.com and
+// oxhanatelier.com, whose apps ship the tag themselves but are redeployed from
+// other working trees; the tag is added only when the page does not already have it.
 
 export const TAG_SRC = "https://insights.ereboslab.com/s.js";
 
