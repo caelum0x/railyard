@@ -45,3 +45,13 @@ test("the Scribase project and the session secret are still required", () => {
 test("the live payment host still needs the owner's switch", () => {
   assert.throws(() => readConfig({ ...BASE, ...DODO, DODO_API_BASE: "https://live.dodopayments.com" }), /RAILYARD_DODO_LIVE/);
 });
+
+test("the live payment host rejects any RAILYARD_DODO_LIVE value except exactly \"1\"", () => {
+  for (const value of ["true", "yes", "on", "01", " 1", "1 ", ""]) {
+    assert.throws(
+      () => readConfig({ ...BASE, ...DODO, DODO_API_BASE: "https://live.dodopayments.com", RAILYARD_DODO_LIVE: value }),
+      /RAILYARD_DODO_LIVE/,
+      `RAILYARD_DODO_LIVE=${JSON.stringify(value)} must not unlock the live host`,
+    );
+  }
+});
