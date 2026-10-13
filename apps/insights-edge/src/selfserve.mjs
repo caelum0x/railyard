@@ -155,6 +155,13 @@ export async function resolveDashboard(env, token) {
   return raw ? { key, site: JSON.parse(raw) } : null;
 }
 
+/** The email a site signed up with, for the upgrade checkout's receipt; null for a site with no sign-up row. */
+export async function signupEmail(db, key) {
+  await ensureSignups(db);
+  const row = await db.prepare("SELECT email FROM signups WHERE site_key = ?").bind(key).first();
+  return row?.email ?? null;
+}
+
 /** Stored events this UTC month and all time, for the cap line and the install check. */
 export async function usage(db, key, now = Date.now()) {
   await ensureSchema(db);

@@ -40,7 +40,12 @@ export async function startCollector({ bindings = {}, sites = {}, respond = () =
         outboundService: async (req) => {
           const entry = { url: req.url, at: Date.now(), body: await req.text(), auth: req.headers.get("authorization") };
           outbound.push(entry);
-          return new Response("{}", { status: respond(entry) });
+          // `respond` returns either a bare status (body defaults to "{}") or
+          // `{status, body}` so a test can mock a real JSON reply (e.g. Dodo's
+          // `checkout_url`) per outbound call.
+          const r = respond(entry);
+          const { status, body } = typeof r === "object" && r !== null ? r : { status: r, body: "{}" };
+          return new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
         },
       },
     ],
