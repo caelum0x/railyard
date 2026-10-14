@@ -2,6 +2,8 @@
 	// Railyard Insights edge collector (RYP-D3), our Cloudflare account.
 	// Secrets (`wrangler secret put`): VISITOR_SALT_SECRET, INGEST_TOKEN, RAGO_API_KEY,
 	// STATS_TOKEN (GET /api/stats, POST /api/report), RALLY_TX_KEY (Scribase Mail key for the weekly report).
+	// Paid plan (2026-10-14, test mode until all three are set + RAILYARD_DODO_LIVE=1 for the live host):
+	// DODO_API_KEY, DODO_PRODUCT_ID (one Insights "Pro" product), DODO_WEBHOOK_SECRET (POST /api/billing/webhook).
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "railyard-insights-edge",
 	"main": "src/index.mjs",
@@ -11,7 +13,11 @@
 	"durable_objects": { "bindings": [{ "name": "ORG_COLLECTOR", "class_name": "OrgCollector" }] },
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["OrgCollector"] }],
 	// The $0 event store (2026-10-08): every stored event is written here at each 2 s flush.
+	// Also holds replay_sessions metadata (2026-10-15, src/replay/store.mjs) — same DB, new table.
 	"d1_databases": [{ "binding": "DB", "database_name": "railyard-insights", "database_id": "6b0d8ae9-4156-40e3-8f0c-875f39cfbd3c" }],
+	// Session replay (2026-10-15): recorded rrweb events, one object per chunk, keyed
+	// `<siteKey>/<sessionId>/<seq>.json`. Create once with `wrangler r2 bucket create railyard-insights-replay`.
+	"r2_buckets": [{ "binding": "REPLAY", "bucket_name": "railyard-insights-replay" }],
 	// Weekly funnel report, Mondays 07:00 UTC, through Scribase Mail.
 	"triggers": { "crons": ["0 7 * * 1"] },
 	// Namespace RAILYARD_SITES, created 2026-09-30 (`wrangler kv namespace create RAILYARD_SITES`).

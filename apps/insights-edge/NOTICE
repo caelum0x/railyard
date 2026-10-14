@@ -10,3 +10,13 @@ text is in packages/insights-web/NOTICE).
 The metric definitions (LCP, INP, CLS session windows, FCP and TTFB counted
 from activation) follow GoogleChrome/web-vitals (Apache License 2.0,
 Copyright Google LLC). No source file of web-vitals is copied.
+
+Session replay (2026-10-15) vendors two prebuilt UMD bundles verbatim from
+rrweb-io/rrweb (MIT License, Copyright (c) rrweb-io and contributors):
+  - src/vendor/rrweb-recorder.generated.mjs <- rrweb@2.1.7 dist/rrweb.umd.min.cjs
+  - src/vendor/rrweb-player.generated.mjs, rrweb-player.generated.css.mjs
+    <- rrweb-player@2.1.7 dist/rrweb-player.umd.min.cjs, dist/style.min.css
+Regenerate with `npm run vendor:rrweb` (scripts/vendor-rrweb.mjs) after
+bumping the `rrweb` / `rrweb-player` versions in package.json. Nothing in
+src/replay/ is rrweb source; it is Railyard's own ingestion, caps, storage
+and dashboard code that calls the vendored recorder and player.

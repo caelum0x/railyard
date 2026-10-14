@@ -23,7 +23,7 @@ ul.points{padding-left:20px}ul.points li{margin:6px 0}.grid{display:grid;grid-te
 table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e3e3e3;border-radius:10px;font-size:14px}td,th{padding:8px 10px;border-bottom:1px solid #eee;text-align:left}td.r,th.r{text-align:right}
 nav.days a{margin-right:12px}footer{margin-top:48px;font-size:13px;color:#666}@media(max-width:600px){.grid{grid-template-columns:repeat(2,1fr)}h1{font-size:28px}}`;
 
-function shell({ title, description, body, canonical, tag, robots = "index,follow", head = "" }) {
+export function shell({ title, description, body, canonical, tag, robots = "index,follow", head = "" }) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title><meta name="description" content="${esc(description)}"><meta name="robots" content="${robots}">
 ${canonical ? `<link rel="canonical" href="${esc(canonical)}"><meta property="og:url" content="${esc(canonical)}">` : ""}
@@ -70,6 +70,12 @@ ${error ? `<p class="error" role="alert">${esc(error)}</p>` : ""}
 </ul>
 <h2>Limits</h2>
 <p>Free: up to ${FREE} stored events a month per site. Past that, new events are counted but not stored until the 1st of next month; nothing already stored is removed. You can delete a site and all of its data from its dashboard at any time.</p>
+<h2>Read more</h2>
+<ul class="points">
+<li><a href="/cookieless-analytics">What "cookieless analytics" means</a>, and exactly how this tag counts a visitor without one.</li>
+<li><a href="/google-analytics-alternative">A privacy-friendly Google Analytics alternative</a>.</li>
+<li><a href="/plausible-alternative">A free, cookieless analytics alternative</a> with no card and no trial clock.</li>
+</ul>
 <script type="application/ld+json">${ld.replace(/</g, "\\u003c")}</script>`;
   return shell({ title: "Free cookieless website analytics, one script tag | Railyard Insights", description: `Privacy-friendly website analytics with no cookies and no stored IP addresses. Visitors, pages, referrers, UTM sources, events and page speed. Free up to ${FREE} events a month.`, body, canonical: `${CANONICAL}/`, tag });
 }
@@ -90,6 +96,100 @@ export function privacyPage({ tag } = {}) {
   return shell({ title: "Privacy | Railyard Insights", description: "What Railyard Insights stores, what it never stores, and how to delete your data.", body, canonical: `${CANONICAL}/privacy`, tag });
 }
 
+// SEO landing pages (2026-10-14): each targets one real search query with only
+// true, checkable statements about this product. No comparison tables and no
+// claims about a named competitor's features or price — only what Railyard
+// Insights itself does.
+const seoFooter = `<h2>Try it on your site</h2>
+<form class="signup" method="post" action="/api/sites">
+<label>Your site's domain<input name="domain" placeholder="shop.example.com" required autocomplete="url"></label>
+<label>Your email (we send the dashboard link here)<input type="email" name="email" placeholder="you@company.com" required autocomplete="email"></label>
+<button type="submit">Get my tag and dashboard</button>
+<p class="small">No password and no card. Free for up to ${FREE} stored events a month per site.</p>
+</form>`;
+
+export function cookielessAnalyticsPage({ tag } = {}) {
+  const body = `<h1>Cookieless website analytics</h1>
+<p class="muted">"Cookieless analytics" means a visitor is counted without a cookie, without local storage and without any identifier that follows them from one day or one site to the next. Railyard Insights is built that way end to end.</p>
+<h2>How Railyard Insights counts a visitor without a cookie</h2>
+<ul class="points">
+<li>A visitor is a one-way hash of their IP address, browser string and a secret that changes every UTC day. The hash is computed in memory for that one request and the IP address itself is never written anywhere.</li>
+<li>Nothing is stored in the browser: no cookie, no <code>localStorage</code>, no fingerprinting script that tries to re-identify the same device across days.</li>
+<li>Because the salt rotates daily, the same visitor on two different days produces two different hashes; there is no way to link them back to one person over time.</li>
+<li>A browser sending Do Not Track is not counted at all; bots, crawlers, link-preview fetchers and prefetch requests are dropped before anything is stored.</li>
+</ul>
+<h2>Why this matters</h2>
+<p>A cookie-based analytics tool stores a unique id in the visitor's browser, so it can recognize the same person on their next visit. That id is personal data under most privacy law, which is why cookie-based analytics usually needs a consent banner. A script that never sets that id, and never stores the raw IP address either, counts unique visitors per day without collecting the personal data a banner exists to ask permission for.</p>
+<h2>What you get</h2>
+<ul class="points">
+<li>Visitors and page views over the last 7, 30 or 90 days.</li>
+<li>Top pages and top referrers, with <code>utm_source</code> per campaign link.</li>
+<li>Custom events: call <code>railyard.track("signup")</code> and see the count.</li>
+<li>Real-visitor page speed: LCP, INP and CLS at the 75th percentile.</li>
+</ul>
+<p>One script tag, a private dashboard link mailed to you, free for up to ${FREE} stored events a month. <a href="/privacy">Read exactly what is and is not stored</a>.</p>
+${seoFooter}`;
+  return shell({
+    title: "Cookieless website analytics, explained | Railyard Insights",
+    description: "What cookieless analytics means and how Railyard Insights counts visitors without cookies, local storage or stored IP addresses. Free up to " + FREE + " events a month.",
+    body,
+    canonical: `${CANONICAL}/cookieless-analytics`,
+    tag,
+  });
+}
+
+export function googleAnalyticsAlternativePage({ tag } = {}) {
+  const body = `<h1>A privacy-friendly Google Analytics alternative</h1>
+<p class="muted">Teams move off a cookie-based analytics setup for a few recurring reasons: the consent banner it requires, the size of the script, and wanting one plain dashboard instead of a reporting suite built for ad platforms. Railyard Insights is built around the opposite defaults.</p>
+<h2>What "privacy-friendly" means here, specifically</h2>
+<ul class="points">
+<li>No cookie and no <code>localStorage</code> entry is ever set by the tag, so there is nothing on the visitor's device for a cookie-consent banner to ask permission for.</li>
+<li>No IP address is stored. It is combined in memory with a secret that changes every day into a one-way hash used only to count that day's unique visitors, then dropped.</li>
+<li>The tracker script is small (under 3&nbsp;KB gzipped) and loads with <code>defer</code>, so it does not block the page.</li>
+<li>One dashboard: visitors, page views, top pages, top referrers, <code>utm_source</code> campaigns, custom events and real-visitor page speed (LCP, INP, CLS) — no separate reporting tool needed for the numbers most sites check day to day.</li>
+</ul>
+<h2>Moving over</h2>
+<p>Add one script tag with your site's key, keep your current analytics running alongside it for as long as you like, and compare the numbers yourself. There is no account migration: a new site gets a dashboard the moment you sign up, free for up to ${FREE} stored events a month.</p>
+<p><a href="/privacy">Full detail on what is stored and what never is</a>.</p>
+${seoFooter}`;
+  return shell({
+    title: "Privacy-friendly Google Analytics alternative | Railyard Insights",
+    description: "A cookieless, no-stored-IP alternative to a cookie-based analytics setup: one script tag, one dashboard, free up to " + FREE + " events a month.",
+    body,
+    canonical: `${CANONICAL}/google-analytics-alternative`,
+    tag,
+  });
+}
+
+export function plausibleAlternativePage({ tag } = {}) {
+  const body = `<h1>A free, cookieless analytics alternative</h1>
+<p class="muted">If you've looked at a privacy-first analytics tool before and the free tier ran out of room, or the real price only showed up after your traffic grew, Railyard Insights is built to answer that search directly: cookieless, no stored IP addresses, and free for up to ${FREE} stored events a month per site with no card on file.</p>
+<h2>What's free, exactly</h2>
+<ul class="points">
+<li>Up to ${FREE} stored events a month, per site, for as long as you use it — not a trial.</li>
+<li>No credit card to sign up: an email address and a domain get you the tag and a private dashboard link at once.</li>
+<li>Past the free cap, new events are still counted (so your numbers don't silently go dark) but not stored until the 1st of next month; nothing already stored is ever removed.</li>
+<li>Delete the site and every stored event yourself, from the dashboard, at any time.</li>
+</ul>
+<h2>What's in the dashboard</h2>
+<ul class="points">
+<li>Visitors and page views for the last 7, 30 or 90 days, including how many viewed 2 or more pages.</li>
+<li>Top pages, top referrers, and <code>utm_source</code> per campaign link.</li>
+<li>Custom events with <code>railyard.track("signup")</code>.</li>
+<li>Real-visitor page speed: LCP, INP and CLS.</li>
+</ul>
+<h2>How it stays cookieless</h2>
+<p>A visitor is a one-way hash of IP address, browser and a secret that changes every UTC day; the IP address itself is never stored. No cookies, no local storage, no cross-day fingerprinting. Browsers with Do Not Track on send nothing. See <a href="/privacy">the full privacy page</a> for every field the tag sends.</p>
+${seoFooter}`;
+  return shell({
+    title: "Free cookieless analytics alternative | Railyard Insights",
+    description: "A free, cookieless website analytics tool: no card to sign up, free up to " + FREE + " stored events a month per site, no stored IP addresses.",
+    body,
+    canonical: `${CANONICAL}/plausible-alternative`,
+    tag,
+  });
+}
+
 const list = (title, rows, cols) =>
   `<h2>${esc(title)}</h2>${rows.length ? `<table><tr>${cols.map((c) => `<th${c.r ? ' class="r"' : ""}>${esc(c.h)}</th>`).join("")}</tr>${rows.map((r) => `<tr>${cols.map((c) => `<td${c.r ? ' class="r"' : ""}>${esc(c.v(r))}</td>`).join("")}</tr>`).join("")}</table>` : `<p class="small">Nothing yet.</p>`}`;
 
@@ -108,24 +208,40 @@ function speedSection(speed) {
 <p class="small">75th percentile of ${n(speed.samples)} page views from real visitors. Good is LCP under 2.5 s, INP under 200 ms, CLS under 0.1.</p>`;
 }
 
-export function dashboardPage({ token, origin, key, site, stats, speed, days, usage, fresh, capLine }) {
+export function dashboardPage({ token, origin, key, site, stats, speed, days, usage, fresh, capLine, billingReady = false }) {
   const cur = stats;
   const snippet = snippetFor(origin, key);
   const waiting = usage.all === 0;
+  const showUpgrade = billingReady && !site.paid && Boolean(capLine);
+  const freshLine =
+    fresh === "mailed"
+      ? "Your site is added. Bookmark this page: it is your private dashboard, and we emailed you the link."
+      : fresh === "upgraded"
+        ? "Thanks — your payment is confirmed. The higher monthly limit applies as soon as Dodo's confirmation arrives (usually within a few seconds)."
+        : fresh
+          ? "Your site is added. Bookmark this page: it is your private dashboard."
+          : null;
   const body = `<h1>${esc(site.label)}</h1>
-${fresh ? `<p class="ok">Your site is added. Bookmark this page: it is your private dashboard${fresh === "mailed" ? ", and we emailed you the link" : ""}.</p>` : ""}
+${freshLine ? `<p class="ok">${esc(freshLine)}</p>` : ""}
 ${waiting ? `<h2>Step 1: add the tag</h2><p>Paste this into the <code>&lt;head&gt;</code> of every page of ${esc(site.label)}, deploy, then open your site in a browser. Your first page view shows up here within a few seconds of a reload.</p><pre>${esc(snippet)}</pre>` : ""}
 <nav class="days">Last: ${[7, 30, 90].map((d) => (d === days ? `<b>${d} days</b>` : `<a href="/d/${esc(token)}?days=${d}">${d} days</a>`)).join(" ")}</nav>
 <div class="grid">
 <div class="stat"><b>${n(cur.visitors)}</b>visitors</div><div class="stat"><b>${n(cur.pageviews)}</b>page views</div>
 <div class="stat"><b>${n(cur.engaged)}</b>viewed 2+ pages</div><div class="stat"><b>${n(cur.converted)}</b>sent a custom event</div>
 </div>
-<p class="small">${n(usage.month)} of ${n(site.events_limit)} stored events used this month.${capLine ? ` ${esc(capLine)}` : ""}</p>
+<p class="small">${n(usage.month)} of ${n(site.events_limit)} stored events used this month.${site.paid ? " (paid plan)" : ""}${capLine ? ` ${esc(capLine)}` : ""}</p>
+${
+  showUpgrade
+    ? `<form method="post" action="/d/${esc(token)}/upgrade" style="margin:10px 0"><button type="submit">Upgrade for more stored events</button></form>`
+    : ""
+}
 ${list("Top pages", cur.top_pages, [{ h: "Page", v: (r) => r.url }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
 ${list("Top referrers", cur.top_referrers, [{ h: "Site", v: (r) => r.host }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
 ${list("UTM sources", cur.utm_sources, [{ h: "utm_source", v: (r) => r.source }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
 ${list("Custom events", cur.events, [{ h: "Event", v: (r) => r.name }, { h: "Count", v: (r) => n(r.n), r: 1 }])}
 ${speedSection(speed)}
+<h2>Session replay</h2>
+<p class="small">${site.paid ? `Watch back what visitors do on the page.` : `A paid-tier feature: record and watch back what visitors do on the page.`} <a href="/d/${esc(token)}/replay">${site.paid ? "Open session replay" : "Learn more"}</a></p>
 ${waiting ? "" : `<h2>Your tag</h2><pre>${esc(snippet)}</pre>`}
 <p class="small">Count a sign-up or purchase with <code>railyard.track("signup")</code> after the tag loads. Visitors are counted per day, without cookies.</p>
 <h2>Delete this site</h2>
@@ -140,4 +256,5 @@ export function messagePage(title, text, status = "") {
 }
 
 export const ROBOTS = `User-agent: *\nAllow: /\nDisallow: /d/\nDisallow: /api/\nSitemap: ${CANONICAL}/sitemap.xml\n`;
-export const SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${CANONICAL}/</loc><lastmod>2026-10-12</lastmod></url><url><loc>${CANONICAL}/privacy</loc><lastmod>2026-10-12</lastmod></url></urlset>\n`;
+const SEO_PATHS = ["/cookieless-analytics", "/google-analytics-alternative", "/plausible-alternative"];
+export const SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${CANONICAL}/</loc><lastmod>2026-10-12</lastmod></url><url><loc>${CANONICAL}/privacy</loc><lastmod>2026-10-12</lastmod></url>${SEO_PATHS.map((p) => `<url><loc>${CANONICAL}${p}</loc><lastmod>2026-10-14</lastmod></url>`).join("")}</urlset>\n`;

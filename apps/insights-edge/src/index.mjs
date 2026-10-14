@@ -9,9 +9,15 @@ import { TRACKER_JS } from "./tracker.mjs";
 import { dailySalt, visitorHash } from "./visitor.mjs";
 import { buildReport, sendReport, windows } from "./report.mjs";
 import { capMessage } from "./caps.ts";
-import { createSite, deleteSite, hostMatches, resolveDashboard, usage } from "./selfserve.mjs";
+import { applyWebhookEvent, billingReady, createCheckout, verifyDodoWebhook } from "./dodo.mjs";
+import { createSite, deleteSite, hostMatches, resolveDashboard, signupEmail, usage } from "./selfserve.mjs";
 import { pageSpeed, siteStats } from "./store.mjs";
-import { ROBOTS, SITEMAP, dashboardPage, landingPage, messagePage, privacyPage } from "./pages.mjs";
+import { ROBOTS, SITEMAP, cookielessAnalyticsPage, dashboardPage, googleAnalyticsAlternativePage, landingPage, messagePage, plausibleAlternativePage, privacyPage } from "./pages.mjs";
+import { REPLAY_JS, REPLAY_VIEWER_JS } from "./replay/tracker.mjs";
+import { ingestReplayChunk } from "./replay/ingest.mjs";
+import { replayDashboardRoute, replayEventsApi, replayPublicConfig } from "./replay/routes.mjs";
+import { RRWEB_RECORDER_JS } from "./vendor/rrweb-recorder.generated.mjs";
+import { RRWEB_PLAYER_JS } from "./vendor/rrweb-player.generated.mjs";
 
 export { OrgCollector } from "./collector.mjs";
 
@@ -156,12 +162,42 @@ async function signup(request, env, url) {
   return new Response(null, { status: 303, headers: { location: `/d/${token}?new=${r.body.mailed ? "mailed" : "1"}`, "cache-control": "no-store" } });
 }
 
+const WEBHOOK_MAX_BYTES = 65_536;
+
+/** Dodo's confirmation that a site's checkout was paid (or its subscription ended). */
+async function billingWebhook(request, env) {
+  if (!billingReady(env)) return reply(503, { error: "billing_not_configured" });
+  if ((Number(request.headers.get("content-length")) || 0) > WEBHOOK_MAX_BYTES) return reply(413, { error: "too large" });
+  const body = await request.text();
+  const headers = { id: request.headers.get("webhook-id"), timestamp: request.headers.get("webhook-timestamp"), signature: request.headers.get("webhook-signature") };
+  if (!(await verifyDodoWebhook(env.DODO_WEBHOOK_SECRET, headers, body))) return reply(401, { error: "invalid_signature" });
+  let event;
+  try {
+    event = JSON.parse(body);
+  } catch {
+    return reply(400, { error: "invalid_body" });
+  }
+  const r = await applyWebhookEvent(env, event);
+  return reply(200, { received: true, ...r });
+}
+
 async function dashboardData(env, found, days) {
   const w = windows(Date.now() + DAY, days);
   const stats = await siteStats(env.DB, found.key, ...w.cur);
   const speed = await pageSpeed(env.DB, found.key, ...w.cur);
   const used = await usage(env.DB, found.key);
   return { stats, speed, usage: used, capLine: capMessage(used.month, found.site.events_limit ?? 0, new Date()) };
+}
+
+async function upgrade(request, env, url, token, found, priv) {
+  if (request.method !== "POST") return html(405, messagePage("Not allowed", "Use the upgrade button on the dashboard."), priv);
+  if (!billingReady(env)) return html(503, messagePage("Not available yet", "Card payments for Insights aren't turned on yet. Check back soon."), priv);
+  if (found.site.paid) return new Response(null, { status: 303, headers: { location: `/d/${token}`, "cache-control": "no-store" } });
+  const email = env.DB ? await signupEmail(env.DB, found.key) : null;
+  if (!email) return html(400, messagePage("Not available", "This site has no sign-up email on file to send the receipt to."), priv);
+  const r = await createCheckout(env, { siteKey: found.key, domain: found.site.label, email, returnUrl: `${url.origin}/d/${token}?upgraded=1` });
+  if (!r.ok) return html(502, messagePage("Checkout failed", "The payment provider did not answer. Try again in a moment."), priv);
+  return new Response(null, { status: 303, headers: { location: r.checkoutUrl, "cache-control": "no-store" } });
 }
 
 async function dashboard(request, env, url, parts) {
@@ -176,7 +212,7 @@ async function dashboard(request, env, url, parts) {
   const days = [7, 30, 90].includes(Number(url.searchParams.get("days"))) ? Number(url.searchParams.get("days")) : 7;
   if (parts[1] === "api") {
     const d = await dashboardData(env, found, Math.min(90, Math.max(1, Number(url.searchParams.get("days")) || 7)));
-    return reply(200, { domain: found.site.label, cur: d.stats, speed: d.speed, usage: d.usage, events_limit: found.site.events_limit }, priv);
+    return reply(200, { domain: found.site.label, cur: d.stats, speed: d.speed, usage: d.usage, events_limit: found.site.events_limit, paid: Boolean(found.site.paid), billing_ready: billingReady(env) }, priv);
   }
   if (action === "delete") {
     if (request.method !== "POST") return html(405, messagePage("Not allowed", "Use the delete button on the dashboard."), priv);
@@ -187,9 +223,26 @@ async function dashboard(request, env, url, parts) {
     await deleteSite(env, found.key, found.site);
     return html(200, messagePage("Deleted", `${found.site.label} and every stored event are deleted. Remove the tag from your pages; it now does nothing.`, "ok"), priv);
   }
+  if (action === "upgrade") return upgrade(request, env, url, token, found, priv);
   const d = await dashboardData(env, found, days);
   const fresh = url.searchParams.get("new");
-  return html(200, dashboardPage({ token, origin: url.origin, key: found.key, site: found.site, stats: d.stats, speed: d.speed, days, usage: d.usage, capLine: d.capLine, fresh: fresh === "mailed" ? "mailed" : fresh ? "yes" : null }), priv);
+  return html(
+    200,
+    dashboardPage({
+      token,
+      origin: url.origin,
+      key: found.key,
+      site: found.site,
+      stats: d.stats,
+      speed: d.speed,
+      days,
+      usage: d.usage,
+      capLine: d.capLine,
+      billingReady: billingReady(env),
+      fresh: fresh === "mailed" ? "mailed" : fresh ? "yes" : url.searchParams.get("upgraded") ? "upgraded" : null,
+    }),
+    priv,
+  );
 }
 
 /** Public pages, sign-up and dashboards; null when the path is not one of them. */
@@ -198,12 +251,18 @@ async function publicRoute(request, env, url) {
   const get = request.method === "GET" || request.method === "HEAD";
   if (get && p === "/") return html(200, landingPage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
   if (get && p === "/privacy") return html(200, privacyPage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
+  if (get && p === "/cookieless-analytics") return html(200, cookielessAnalyticsPage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
+  if (get && p === "/google-analytics-alternative") return html(200, googleAnalyticsAlternativePage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
+  if (get && p === "/plausible-alternative") return html(200, plausibleAlternativePage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
   if (get && p === "/robots.txt") return new Response(ROBOTS, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" } });
   if (get && p === "/sitemap.xml") return new Response(SITEMAP, { headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" } });
   if (request.method === "POST" && p === "/api/sites") return signup(request, env, url);
+  if (request.method === "POST" && p === "/api/billing/webhook") return billingWebhook(request, env);
   const parts = p.split("/");
-  if (parts[1] === "d" && parts.length >= 3 && parts.length <= 4 && (parts.length === 3 || parts[3] === "delete")) return dashboard(request, env, url, parts);
+  if (parts[1] === "d" && parts[3] === "replay" && parts.length >= 4 && parts.length <= 5) return replayDashboardRoute(request, env, url, parts);
+  if (parts[1] === "d" && parts.length >= 3 && parts.length <= 4 && (parts.length === 3 || parts[3] === "delete" || parts[3] === "upgrade")) return dashboard(request, env, url, parts);
   if (get && parts[1] === "api" && parts[2] === "d" && parts.length === 5 && parts[4] === "stats") return dashboard(request, env, url, ["", "api", parts[3]]);
+  if (get && parts[1] === "api" && parts[2] === "d" && parts.length === 7 && parts[4] === "replay" && parts[6] === "events") return replayEventsApi(env, parts[3], parts[5]);
   return null;
 }
 
@@ -220,6 +279,29 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     if (request.method === "GET" && url.pathname === "/s.js") {
       return new Response(TRACKER_JS, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "public, max-age=3600", ...CORS } });
+    }
+    // Session replay (2026-10-15): the opt-in tag, the vendored rrweb bundles it and the
+    // player page load, and the two endpoints the tag talks to. Everything here is a
+    // GET of static, versionless JS/CSS except /api/replay itself.
+    if (request.method === "GET" && url.pathname === "/replay.js") {
+      // Short-lived on purpose (unlike /s.js): a site owner who just flipped the replay toggle, or an
+      // owner who just shipped a loader fix, should not be stuck on a stale cached copy for an hour.
+      return new Response(REPLAY_JS, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "no-store", ...CORS } });
+    }
+    if (request.method === "GET" && url.pathname === "/replay-viewer.js") {
+      return new Response(REPLAY_VIEWER_JS, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "no-store", ...CORS } });
+    }
+    if (request.method === "GET" && url.pathname === "/replay-recorder.js") {
+      return new Response(RRWEB_RECORDER_JS, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "public, max-age=86400, immutable", ...CORS } });
+    }
+    if (request.method === "GET" && url.pathname === "/replay-player.js") {
+      return new Response(RRWEB_PLAYER_JS, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "public, max-age=86400, immutable", ...CORS } });
+    }
+    if (request.method === "GET" && url.pathname === "/api/replay/config") {
+      return replayPublicConfig(url.searchParams.get("site") ?? "", (key, now) => site(env, key, now), Date.now());
+    }
+    if (request.method === "POST" && url.pathname === "/api/replay") {
+      return ingestReplayChunk(request, env, Date.now(), (key, now) => site(env, key, now));
     }
     if (request.method === "GET" && url.pathname === "/api/stats") return owner(request, env, url);
     if (request.method === "POST" && url.pathname === "/api/report") return owner(request, env, url);

@@ -1,6 +1,6 @@
 // Runs the collector in Miniflare (workerd) with a KV of sites and an
 // outbound mock that records every request the Worker sends downstream.
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,21 @@ import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-export async function startCollector({ bindings = {}, sites = {}, respond = () => 200, d1 = false } = {}) {
+/** Every .mjs/.ts module under src/, recursively (Miniflare's module converter does not follow imports, so every file index.mjs transitively imports — including src/replay/* and src/vendor/* — must be listed by hand). */
+function collectSrcModules(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) {
+      out.push(...collectSrcModules(full));
+    } else if ((entry.endsWith(".mjs") || entry.endsWith(".ts")) && full !== join(ROOT, "src", "index.mjs")) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+export async function startCollector({ bindings = {}, sites = {}, respond = () => 200, d1 = false, r2 = false } = {}) {
   const persist = mkdtempSync(join(tmpdir(), "ry-insights-"));
   const outbound = [];
   // Miniflare 5 takes its new option shape; the converter keeps the classic one readable.
@@ -18,17 +32,18 @@ export async function startCollector({ bindings = {}, sites = {}, respond = () =
       {
         name: "insights-edge",
         // Every module listed, entry first (the converter does not follow imports).
-        modules: ["index.mjs", ...readdirSync(join(ROOT, "src")).filter((f) => (f.endsWith(".mjs") || f.endsWith(".ts")) && f !== "index.mjs")].map((f) => ({
+        modules: [join(ROOT, "src", "index.mjs"), ...collectSrcModules(join(ROOT, "src"))].map((full) => ({
           type: "ESModule",
-          path: join(ROOT, "src", f),
+          path: full,
           // workerd runs JavaScript: TypeScript modules (caps.ts) have their types stripped, as wrangler's bundle does.
-          contents: f.endsWith(".ts") ? stripTypeScriptTypes(readFileSync(join(ROOT, "src", f), "utf8")) : readFileSync(join(ROOT, "src", f), "utf8"),
+          contents: full.endsWith(".ts") ? stripTypeScriptTypes(readFileSync(full, "utf8")) : readFileSync(full, "utf8"),
         })),
         modulesRoot: ROOT,
         compatibilityDate: "2026-09-20",
         durableObjects: { ORG_COLLECTOR: { className: "OrgCollector", useSQLite: true } },
         kvNamespaces: ["SITES"],
         ...(d1 ? { d1Databases: ["DB"] } : {}),
+        ...(r2 ? { r2Buckets: ["REPLAY"] } : {}),
         bindings: {
           VISITOR_SALT_SECRET: "test-salt-secret",
           INGEST_URL: "https://ingest.test",
@@ -40,7 +55,12 @@ export async function startCollector({ bindings = {}, sites = {}, respond = () =
         outboundService: async (req) => {
           const entry = { url: req.url, at: Date.now(), body: await req.text(), auth: req.headers.get("authorization") };
           outbound.push(entry);
-          return new Response("{}", { status: respond(entry) });
+          // `respond` returns either a bare status (body defaults to "{}") or
+          // `{status, body}` so a test can mock a real JSON reply (e.g. Dodo's
+          // `checkout_url`) per outbound call.
+          const r = respond(entry);
+          const { status, body } = typeof r === "object" && r !== null ? r : { status: r, body: "{}" };
+          return new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
         },
       },
     ],

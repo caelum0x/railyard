@@ -7,11 +7,14 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node --test test/*.test.mjs",
-    "load": "node test/load.mjs"
+    "test": "node --test test/*.test.mjs test/replay/*.test.mjs",
+    "load": "node test/load.mjs",
+    "vendor:rrweb": "node scripts/vendor-rrweb.mjs"
   },
   "devDependencies": {
     "miniflare": "5.20260923.0-alpha",
+    "rrweb": "2.1.7",
+    "rrweb-player": "2.1.7",
     "wrangler": "4.139.0"
   }
 }
