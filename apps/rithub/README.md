@@ -1,5 +1,15 @@
 # Rithub: a self-hostable git forge in Rust
 
+> **2026-10-15 note:** Railyard's production code-hosting decision for the
+> Dec 21/28 roadmap milestone is **`apps/gitea`** (go-gitea/gitea, MIT) — it
+> closes exactly the gap this README names below ("Actions/runners, packages,
+> wikis/projects, OAuth/SSO, and a SPA remain ahead") without a from-scratch
+> build. See `apps/gitea/README.md` for the full inventory and reasoning.
+> This code is **kept, not deleted** (owner rule) and not currently deployed;
+> its "Product identity" section below (predating this decision) is superseded
+> for that one claim — `apps/gitea` is now the identity shown on
+> `git.railyard.<domain>` and linked from the console, not this binary.
+
 The self-hostable collaboration forge built **on top of `rit`** ([`../rit`](../rit)):
 repositories, organizations, permissions, issues, pull requests, review, protected branches,
 webhooks, releases, audit logs. The `GitHub` equivalent.
