@@ -5,6 +5,7 @@
 // and can be deleted with every stored event from its dashboard.
 
 import { ensureSchema } from "./store.mjs";
+import { deleteAllSessions } from "./replay/store.mjs";
 
 export const FREE_EVENTS_PER_MONTH = 10_000;
 export const PER_EMAIL_PER_DAY = 3;
@@ -173,11 +174,12 @@ export async function usage(db, key, now = Date.now()) {
   return { month: m.results[0].n, all: all.results[0].n };
 }
 
-/** Removes the site, its dashboard link, its sign-up row and every stored event. */
+/** Removes the site, its dashboard link, its sign-up row, every stored event and every recorded replay session. */
 export async function deleteSite(env, key, site) {
   await ensureSchema(env.DB);
   await ensureSignups(env.DB);
   await env.DB.batch([env.DB.prepare("DELETE FROM events WHERE site_key = ?").bind(key), env.DB.prepare("DELETE FROM signups WHERE site_key = ?").bind(key)]);
+  await deleteAllSessions(env, key);
   await env.SITES.delete(`site:${key}`);
   if (site.dash_hash) await env.SITES.delete(`dash:${site.dash_hash}`);
 }

@@ -13,6 +13,11 @@ import { applyWebhookEvent, billingReady, createCheckout, verifyDodoWebhook } fr
 import { createSite, deleteSite, hostMatches, resolveDashboard, signupEmail, usage } from "./selfserve.mjs";
 import { pageSpeed, siteStats } from "./store.mjs";
 import { ROBOTS, SITEMAP, cookielessAnalyticsPage, dashboardPage, googleAnalyticsAlternativePage, landingPage, messagePage, plausibleAlternativePage, privacyPage } from "./pages.mjs";
+import { REPLAY_JS, REPLAY_VIEWER_JS } from "./replay/tracker.mjs";
+import { ingestReplayChunk } from "./replay/ingest.mjs";
+import { replayDashboardRoute, replayEventsApi, replayPublicConfig } from "./replay/routes.mjs";
+import { RRWEB_RECORDER_JS } from "./vendor/rrweb-recorder.generated.mjs";
+import { RRWEB_PLAYER_JS } from "./vendor/rrweb-player.generated.mjs";
 
 export { OrgCollector } from "./collector.mjs";
 
@@ -254,8 +259,10 @@ async function publicRoute(request, env, url) {
   if (request.method === "POST" && p === "/api/sites") return signup(request, env, url);
   if (request.method === "POST" && p === "/api/billing/webhook") return billingWebhook(request, env);
   const parts = p.split("/");
+  if (parts[1] === "d" && parts[3] === "replay" && parts.length >= 4 && parts.length <= 5) return replayDashboardRoute(request, env, url, parts);
   if (parts[1] === "d" && parts.length >= 3 && parts.length <= 4 && (parts.length === 3 || parts[3] === "delete" || parts[3] === "upgrade")) return dashboard(request, env, url, parts);
   if (get && parts[1] === "api" && parts[2] === "d" && parts.length === 5 && parts[4] === "stats") return dashboard(request, env, url, ["", "api", parts[3]]);
+  if (get && parts[1] === "api" && parts[2] === "d" && parts.length === 7 && parts[4] === "replay" && parts[6] === "events") return replayEventsApi(env, parts[3], parts[5]);
   return null;
 }
 
@@ -272,6 +279,29 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     if (request.method === "GET" && url.pathname === "/s.js") {
       return new Response(TRACKER_JS, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "public, max-age=3600", ...CORS } });
+    }
+    // Session replay (2026-10-15): the opt-in tag, the vendored rrweb bundles it and the
+    // player page load, and the two endpoints the tag talks to. Everything here is a
+    // GET of static, versionless JS/CSS except /api/replay itself.
+    if (request.method === "GET" && url.pathname === "/replay.js") {
+      // Short-lived on purpose (unlike /s.js): a site owner who just flipped the replay toggle, or an
+      // owner who just shipped a loader fix, should not be stuck on a stale cached copy for an hour.
+      return new Response(REPLAY_JS, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "no-store", ...CORS } });
+    }
+    if (request.method === "GET" && url.pathname === "/replay-viewer.js") {
+      return new Response(REPLAY_VIEWER_JS, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "no-store", ...CORS } });
+    }
+    if (request.method === "GET" && url.pathname === "/replay-recorder.js") {
+      return new Response(RRWEB_RECORDER_JS, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "public, max-age=86400, immutable", ...CORS } });
+    }
+    if (request.method === "GET" && url.pathname === "/replay-player.js") {
+      return new Response(RRWEB_PLAYER_JS, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "public, max-age=86400, immutable", ...CORS } });
+    }
+    if (request.method === "GET" && url.pathname === "/api/replay/config") {
+      return replayPublicConfig(url.searchParams.get("site") ?? "", (key, now) => site(env, key, now), Date.now());
+    }
+    if (request.method === "POST" && url.pathname === "/api/replay") {
+      return ingestReplayChunk(request, env, Date.now(), (key, now) => site(env, key, now));
     }
     if (request.method === "GET" && url.pathname === "/api/stats") return owner(request, env, url);
     if (request.method === "POST" && url.pathname === "/api/report") return owner(request, env, url);

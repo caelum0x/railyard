@@ -23,7 +23,7 @@ ul.points{padding-left:20px}ul.points li{margin:6px 0}.grid{display:grid;grid-te
 table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e3e3e3;border-radius:10px;font-size:14px}td,th{padding:8px 10px;border-bottom:1px solid #eee;text-align:left}td.r,th.r{text-align:right}
 nav.days a{margin-right:12px}footer{margin-top:48px;font-size:13px;color:#666}@media(max-width:600px){.grid{grid-template-columns:repeat(2,1fr)}h1{font-size:28px}}`;
 
-function shell({ title, description, body, canonical, tag, robots = "index,follow", head = "" }) {
+export function shell({ title, description, body, canonical, tag, robots = "index,follow", head = "" }) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title><meta name="description" content="${esc(description)}"><meta name="robots" content="${robots}">
 ${canonical ? `<link rel="canonical" href="${esc(canonical)}"><meta property="og:url" content="${esc(canonical)}">` : ""}
@@ -240,6 +240,8 @@ ${list("Top referrers", cur.top_referrers, [{ h: "Site", v: (r) => r.host }, { h
 ${list("UTM sources", cur.utm_sources, [{ h: "utm_source", v: (r) => r.source }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
 ${list("Custom events", cur.events, [{ h: "Event", v: (r) => r.name }, { h: "Count", v: (r) => n(r.n), r: 1 }])}
 ${speedSection(speed)}
+<h2>Session replay</h2>
+<p class="small">${site.paid ? `Watch back what visitors do on the page.` : `A paid-tier feature: record and watch back what visitors do on the page.`} <a href="/d/${esc(token)}/replay">${site.paid ? "Open session replay" : "Learn more"}</a></p>
 ${waiting ? "" : `<h2>Your tag</h2><pre>${esc(snippet)}</pre>`}
 <p class="small">Count a sign-up or purchase with <code>railyard.track("signup")</code> after the tag loads. Visitors are counted per day, without cookies.</p>
 <h2>Delete this site</h2>
