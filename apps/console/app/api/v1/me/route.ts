@@ -3,6 +3,8 @@ import { json } from "../../../../lib/http.ts";
 import { access } from "../../../../lib/ladder.ts";
 import { orgForBearer } from "../../../../lib/tokens.ts";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: Request) {
   const { repo } = deps();
   const who = await orgForBearer(repo, req.headers.get("authorization"));
