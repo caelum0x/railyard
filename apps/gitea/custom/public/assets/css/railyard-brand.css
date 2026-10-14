@@ -1,0 +1,13 @@
+/* Rithub (Railyard) brand overrides — loaded via templates/custom/header.tmpl.
+   Only overrides CSS custom properties Gitea's built-in theme already
+   exposes; no upstream stylesheet is edited or replaced. */
+:root {
+  --color-primary: #1f6feb;
+  --color-primary-dark-1: #1a5fc9;
+  --color-primary-dark-2: #154ea3;
+  --color-primary-light-1: #4b8bef;
+}
+.ui.top.secondary.menu .brand img.logo,
+.full.height > .navbar .brand img.logo {
+  border-radius: 6px;
+}

@@ -1,0 +1,100 @@
+# apps/gitea — Railyard's code hosting (Rithub), on Gitea
+
+**Decision (2026-10-15):** Railyard's code-hosting service ("Rithub + Rit" on
+the roadmap, Dec 21/28 milestone) is **go-gitea/gitea** (MIT, 58k+★, actively
+maintained) — composed as its own container, not hand-built. This closes the
+roadmap gap named in `plans/OSS-ADOPTION-2026-10-15.md` ("Railyard" section,
+row 1): packages, LFS, wikis, and Actions CI were each a multi-week
+from-scratch build; Gitea ships all four today.
+
+## Inventory: what existed, what Gitea covers, what's kept
+
+Two prior, independent efforts exist in this repo for the same product slot.
+**Neither is deleted** (owner rule: never delete sources/features) — both stay
+on disk, now documented as superseded by this decision for new work:
+
+| Path | What it is | Status | Disposition |
+|---|---|---|---|
+| `apps/rit` | Library-first Rust reimplementation of Git's object/index/ref/pack model (hash-object, pack receive/upload, interop-tested against real `git`) | Phase-complete for its own scope; genuinely impressive, byte-for-byte Git-compatible | **Kept, not deleted.** No longer the dependency of a forge build — see below. |
+| `apps/rithub` | Self-hostable Rust git **forge** built on `rit`: full collaboration core (issues, PRs with merge/squash/rebase, review, forks + cross-repo PRs), web UI, RBAC, protected branches, webhooks, releases, audit log, search, Rago/Mint billing hook. Self-contained git plane (no system `git` binary needed). Its own README states it directly: **"Actions/runners, packages, wikis/projects, OAuth/SSO, and a SPA remain ahead"** — i.e., exactly this roadmap milestone's scope was its open gap. | Phase 7 of its own roadmap; not deployed anywhere | **Kept, not deleted; superseded for this milestone.** The remaining gap (packages/LFS/wikis/Actions/OAuth) is now closed by `apps/gitea` instead of being built from scratch in Rust. If `rithub`'s deeper collaboration/billing model (native Rago/Mint integration, no `git` binary dependency) is wanted later, it remains available to finish independently — the two are not mutually exclusive, just not both being built at once. |
+| `apps/rithub-forge` | An **uncommitted**, in-progress Forgejo (Gitea's AGPL/GPL community fork) adoption from an earlier session: full Forgejo source checkout (~593 MB, its own nested git repo cloned from `codeberg.org/forgejo/forgejo`), rebranded via `custom/` overlay, with a real `integrations/railyard/` billing bridge (webhook → Rago → Mint) and SSO/OIDC docs. Its own README already flagged itself as "a separate, optional... deployment kept for teams that need Forgejo-only features," distinct from the Rust `rithub` which it called "the shipped Rithub product." | Never committed to git (sits as untracked files in the main `~/products/railyard` checkout); never deployed | **Kept on disk, untouched by this change, documented here.** Superseded as *the* adoption decision: the owner's current instruction is explicitly Gitea (MIT), not Forgejo (GPL-3.0-or-later for Forgejo's own code going forward) — license cleanliness was exactly why the OSS-ADOPTION doc picked Gitea over Forgejo as the runner-up. `integrations/railyard/webhook-bridge/bridge.mjs` in *this* directory is adapted from (not copied verbatim into history — the source was never committed) that experiment's bridge, which already handled both Forgejo's and Gitea's webhook header names. |
+
+**Net:** three codebases now exist side by side for the same product slot
+(`rit`+`rithub` Rust-native, `rithub-forge` Forgejo/uncommitted, `gitea`
+official/deployed). Nothing was deleted. `apps/gitea` is the one wired into
+the console and documented for production deploy.
+
+## What's here
+
+- `docker-compose.yml` — official `gitea/gitea:1.23` image + `postgres:17`.
+  `app.ini` is generated entirely from `GITEA__<SECTION>__<KEY>` environment
+  variables (Gitea's documented environment-to-ini mechanism) — **no app.ini
+  is committed**. See the file's own comments for two non-obvious gotchas
+  found while proving this locally:
+  1. The Docker image's `CustomPath` **is** `/data/gitea` itself, not
+     `/data/gitea/custom` — branding overlays bind-mount
+     `./custom/public → /data/gitea/public` and
+     `./custom/templates → /data/gitea/templates` individually, never the
+     whole `/data/gitea` (that would shadow `conf/`, `ssh/`, the sqlite/log
+     dirs that also live there).
+  2. Root-level `app.ini` keys with no `[section]` (like `APP_NAME`) map to
+     `GITEA____KEY` (empty section segment), not `GITEA__APP_NAME`.
+  3. Don't set `GITEA__server__START_SSH_SERVER=true` *and* leave the base
+     image's own passthrough OpenSSH running — they fight over container
+     port `:22` and crash-loop. Leave `START_SSH_SERVER` unset (the
+     passthrough default); `SSH_PORT` is only the port *advertised* in clone
+     URLs.
+- `.env.example` — copy to `.env`, fill in secrets.
+- `custom/` — branding overlay: `public/assets/img/logo.svg` + `favicon.svg`
+  (Rithub "R" mark), `public/assets/css/railyard-brand.css` (brand color
+  CSS-variable overrides), `templates/custom/header.tmpl` (injects the
+  stylesheet), `templates/custom/footer.tmpl` (brand + MIT attribution line).
+- `integrations/railyard/` — the Rago/Mint billing bridge (dependency-free
+  Node, HMAC-verified both ways) and its unit tests (16/16 passing,
+  `node --test integrations/railyard/tests/bridge.test.mjs`).
+- `deploy/RUNBOOK.md` — first production deploy on railyard-box (Oracle A1
+  ARM64), Cloudflare Tunnel for HTTPS, SSH on a non-22 port via the VCN
+  security list, `gitea dump`/`gitea restore` backups, rollback.
+
+## SSO
+
+No Railyard-run OIDC/identity server exists yet (`apps/console` is email-code
+sign-in only — see `lib/current.ts`). Gitea runs with **native accounts** for
+now; the exact `gitea admin auth add-oauth` command to register Railyard's
+console as an OIDC source once it exposes a discovery endpoint is documented
+as a `TODO(railyard-sso)` inline in `docker-compose.yml`.
+
+## Local proof (2026-10-15, this session)
+
+Ran via `docker-compose up -d` on this machine (Colima, arm64 host — the
+exact target architecture as the Oracle A1 box) against the official
+`gitea/gitea:1.23` + `postgres:17` images, both pulled as native arm64
+manifests (no emulation):
+
+- Branding: page `<title>` = "Rithub (by Railyard)", custom logo + favicon +
+  brand CSS served (200s), custom footer line rendered with MIT attribution
+  to Gitea — confirmed via `curl` and three screenshots (desktop 1440×900
+  home + repo, mobile 390×844 repo) at `/tmp/railyard-git-*.png`.
+- Admin user created (`gitea admin user create --admin`), API token minted.
+- Repo created via API; **HTTPS push** (`git push` over `http://` with a
+  token in the URL) — works.
+- **SSH push** — registered a public key via the API, pushed a second commit
+  over `ssh://...@localhost:2222` — works.
+- **Git LFS** — `git lfs track "*.bin"`, pushed a 200 KB binary, confirmed
+  tracked via `git lfs ls-files` and visible in the repo file list — works.
+- **npm package registry** — `npm publish` against
+  `http://localhost:3300/api/packages/<owner>/npm/` with a `.npmrc` token —
+  published `@railyard/proof-pkg@1.0.0`, confirmed via the packages API —
+  works.
+- **Wiki** — created a page via the wiki API — works.
+- Repo's own tab bar confirms Issues, Pull Requests, **Actions**,
+  **Packages**, **Projects**, **Wiki** are all present and enabled.
+
+Local proof was torn down after screenshots (`docker compose down`, image/
+volume cleanup) — disk discipline, nothing proof-only is left running.
+
+## Console wiring
+
+`apps/console`'s left nav has a new **Code** entry pointing at
+`RAILYARD_GIT_URL` (default `https://git.railyard.ereboslab.com`) — see
+`lib/config.ts` and `components/Nav.tsx`.

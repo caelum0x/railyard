@@ -1,5 +1,12 @@
 # rit — rust git
 
+> **2026-10-15 note:** Railyard's production code-hosting decision for the
+> Dec 21/28 roadmap milestone ("Rithub + Rit") is **`apps/gitea`**
+> (go-gitea/gitea, MIT) — see `apps/gitea/README.md`'s inventory table for the
+> full reasoning. This code is **kept, not deleted** (owner rule), and remains
+> available if `rithub`'s Rago/Mint-native billing model is worth finishing
+> independently later. It is not currently the dependency of a deployed forge.
+
 A **library-first** Rust implementation of Git's local object/authoring model.
 rit owns its safety-critical loose-object, index, tree, commit, and ref-transaction
 paths while adopting audited open-source crates for expensive commodity layers.

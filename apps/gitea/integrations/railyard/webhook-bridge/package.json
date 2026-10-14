@@ -1,0 +1,13 @@
+{
+  "name": "rithub-gitea-railyard-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Rithub (Gitea) webhook -> Rago usage / Mint settlement bridge",
+  "engines": { "node": ">=18" },
+  "bin": { "rithub-railyard-bridge": "bridge.mjs" },
+  "scripts": {
+    "start": "node bridge.mjs",
+    "test": "node --test ../tests/bridge.test.mjs"
+  }
+}

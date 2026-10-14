@@ -1,0 +1,141 @@
+# apps/gitea — Railyard's code-hosting service: the official go-gitea/gitea
+# image (MIT) + Postgres. Replaces the from-scratch "Rithub + Rit" build
+# (apps/rit, apps/rithub — Rust, preserved, not deleted) per
+# plans/OSS-ADOPTION-2026-10-15.md.
+#
+# app.ini is generated entirely from GITEA__<SECTION>__<KEY> environment
+# variables (Gitea's "environment-to-ini" mechanism) — no app.ini file is
+# committed. Branding overrides (logo, footer, locale strings) live in
+# ./custom and are bind-mounted over the persistent /data volume's
+# gitea/custom subdirectory, Gitea's documented customization path.
+#
+# Local proof (this machine): HTTP on 3300, SSH on 2222 (both non-default to
+# avoid clashing with other local services / the eventual Oracle box's :22).
+# Production (Oracle ARM box): see deploy/RUNBOOK.md — same compose file,
+# Cloudflare Tunnel in front of HTTP, SSH opened on a non-22 port in the
+# box's security list.
+#
+# Usage:
+#   cd apps/gitea
+#   cp .env.example .env   # fill in secrets (or export them)
+#   docker compose up -d
+#   docker compose exec gitea gitea admin user create --admin \
+#     --username <name> --password <pass> --email <email>
+
+services:
+  gitea-postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gitea
+      POSTGRES_PASSWORD: ${GITEA_DB_PASSWORD:-gitea}
+      POSTGRES_DB: gitea
+    volumes:
+      - gitea-pgdata:/var/lib/postgresql/data
+    ports:
+      - "${GITEA_DB_HOST_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gitea -d gitea"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  gitea:
+    image: gitea/gitea:${GITEA_IMAGE_TAG:-1.23}
+    restart: unless-stopped
+    depends_on:
+      gitea-postgres:
+        condition: service_healthy
+    environment:
+      USER_UID: 1000
+      USER_GID: 1000
+      # --- identity / branding -------------------------------------------------
+      # APP_NAME has no [section] in app.ini (it's a top-of-file root key), so
+      # the environment-to-ini mapping uses an empty section segment:
+      # GITEA + "__" + "" + "__" + APP_NAME.
+      GITEA____APP_NAME: "Rithub (by Railyard)"
+      GITEA__server__DOMAIN: ${GITEA_DOMAIN:-git.railyard.ereboslab.com}
+      GITEA__server__ROOT_URL: ${GITEA_ROOT_URL:-https://git.railyard.ereboslab.com/}
+      GITEA__server__SSH_DOMAIN: ${GITEA_DOMAIN:-git.railyard.ereboslab.com}
+      # SSH_PORT is the port advertised in clone URLs / the UI; the container
+      # itself always listens on :22 via the base image's passthrough OpenSSH
+      # (the default — do NOT also set START_SSH_SERVER=true, Gitea's own
+      # built-in SSH server, or the two fight over :22 and crash-loop).
+      GITEA__server__SSH_PORT: ${GITEA_SSH_PUBLIC_PORT:-2222}
+      GITEA__server__HTTP_PORT: "3000"
+      GITEA__server__DISABLE_SSH: "false"
+      GITEA__server__LFS_START_SERVER: "true"
+      # --- database -------------------------------------------------------------
+      GITEA__database__DB_TYPE: postgres
+      GITEA__database__HOST: gitea-postgres:5432
+      GITEA__database__NAME: gitea
+      GITEA__database__USER: gitea
+      GITEA__database__PASSWD: ${GITEA_DB_PASSWORD:-gitea}
+      # --- secrets (required in production; generate with
+      #     `docker compose run --rm gitea gitea generate secret SECRET_KEY` /
+      #     `... INTERNAL_TOKEN`) -----------------------------------------------
+      GITEA__security__SECRET_KEY: ${GITEA_SECRET_KEY:-dev-only-secret-key-change-me}
+      GITEA__security__INTERNAL_TOKEN: ${GITEA_INTERNAL_TOKEN:-dev-only-internal-token-change-me}
+      # DB/branding are fully supplied above; skip the interactive install
+      # wizard and boot straight into normal run mode.
+      GITEA__security__INSTALL_LOCK: "true"
+      # --- packages / LFS / wiki / actions (the Dec 21/28 roadmap scope) --------
+      GITEA__packages__ENABLED: "true"
+      GITEA__packages__LIMIT_TOTAL_OWNER_COUNT: "-1"
+      GITEA__repository__DISABLE_DOWNLOAD_SOURCE_ARCHIVES: "false"
+      GITEA__repository__DEFAULT_PRIVATE: "private"
+      GITEA__actions__ENABLED: "true"
+      GITEA__actions__DEFAULT_ACTIONS_URL: github
+      # --- accounts: native Gitea auth until Railyard has its own IdP -----------
+      # TODO(railyard-sso): when apps/console (or a dedicated identity service)
+      # exposes an OIDC discovery endpoint, register it with:
+      #   docker compose exec gitea gitea admin auth add-oauth \
+      #     --name railyard-id --provider openidConnect \
+      #     --key <client-id> --secret <client-secret> \
+      #     --auto-discover-url https://railyard.ereboslab.com/.well-known/openid-configuration \
+      #     --group-claim-name groups --admin-group railyard-admins
+      # Today console (apps/console) runs email-code sign-in only, no OIDC
+      # provider — see apps/console/lib/current.ts. Native accounts + the
+      # webhook-bridge billing hook (integrations/railyard/) are what's live.
+      GITEA__service__DISABLE_REGISTRATION: ${GITEA_DISABLE_REGISTRATION:-false}
+      GITEA__service__REGISTER_EMAIL_CONFIRM: "false"
+      GITEA__openid__ENABLE_OPENID_SIGNIN: "false"
+      GITEA__mailer__ENABLED: "false"
+    volumes:
+      - gitea-data:/data
+      # The official Docker image collapses Gitea's normal "custom/" override
+      # dir straight into /data/gitea (CustomPath == WorkPath in this image,
+      # NOT /data/gitea/custom) — bind-mount only the public/templates
+      # subpaths, never the whole /data/gitea, or this would shadow conf/,
+      # the sqlite/log dirs and ssh host keys that live there too.
+      - ./custom/public:/data/gitea/public:ro
+      - ./custom/templates:/data/gitea/templates:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "${GITEA_HTTP_HOST_PORT:-3300}:3000"
+      - "${GITEA_SSH_HOST_PORT:-2222}:22"
+
+  # Optional: Gitea Actions CI runner (the "forge CI runners" gap from
+  # plans/OSS-ADOPTION-2026-10-15.md — Gitea's built-in Actions covers it,
+  # no separate Woodpecker install needed). Commented out: register a runner
+  # token first (Site Admin -> Actions -> Runners -> Create new runner, or
+  # `docker compose exec gitea gitea actions generate-runner-token`), then
+  # uncomment and set GITEA_RUNNER_TOKEN.
+  #
+  # act_runner:
+  #   image: gitea/act_runner:latest
+  #   restart: unless-stopped
+  #   depends_on: [gitea]
+  #   environment:
+  #     GITEA_INSTANCE_URL: ${GITEA_ROOT_URL:-https://git.railyard.ereboslab.com/}
+  #     GITEA_RUNNER_REGISTRATION_TOKEN: ${GITEA_RUNNER_TOKEN:?set after generating a token}
+  #     GITEA_RUNNER_NAME: railyard-box
+  #   volumes:
+  #     - gitea-runner-data:/data
+  #     - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  gitea-pgdata:
+  gitea-data:
+  # gitea-runner-data:
