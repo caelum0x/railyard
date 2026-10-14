@@ -25,6 +25,15 @@ export const DODO_LIVE_BASE = "https://live.dodopayments.com";
 export interface Config {
   consoleUrl: string;
   insightsUrl: string;
+  /**
+   * Railyard's code-hosting service (product name "Rithub", served off
+   * apps/gitea — go-gitea/gitea, MIT). Always shown in the Nav as an
+   * external link; the service itself runs native Gitea accounts until a
+   * Railyard identity/OIDC source exists (TODO(railyard-sso) in
+   * apps/gitea/docker-compose.yml). Override with RAILYARD_GIT_URL once the
+   * real hostname is live.
+   */
+  gitUrl: string;
   scribaseUrl: string;
   scribaseAnonKey: string;
   scribaseServiceRoleKey: string;
@@ -105,6 +114,7 @@ export function readConfig(env: Env = process.env): Config {
   return {
     consoleUrl: (env.RAILYARD_CONSOLE_URL ?? "https://railyard.ereboslab.com").replace(/\/$/, ""),
     insightsUrl: (env.RAILYARD_INSIGHTS_URL ?? "https://insights.railyard.ereboslab.com").replace(/\/$/, ""),
+    gitUrl: (env.RAILYARD_GIT_URL ?? "https://git.railyard.ereboslab.com").replace(/\/$/, ""),
     scribaseUrl: need(env, "SCRIBASE_URL").replace(/\/$/, ""),
     scribaseAnonKey: need(env, "SCRIBASE_ANON_KEY"),
     scribaseServiceRoleKey: need(env, "SCRIBASE_SERVICE_ROLE_KEY"),

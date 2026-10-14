@@ -10,7 +10,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (!(await currentSession())) redirect("/");
   return (
     <div className="shell">
-      <Nav watch={deps().cfg.watchLive} />
+      <Nav watch={deps().cfg.watchLive} gitUrl={deps().cfg.gitUrl} />
       <main className="main">{children}</main>
     </div>
   );
