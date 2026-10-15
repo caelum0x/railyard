@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { applyChanges, countStatuses, formatReport, groups, run, selfTest } from './recount.mjs';
+import { applyChanges, countStatuses, formatReport, groups, mergeWaves, run, selfTest } from './recount.mjs';
 import { ANALYTICS, BASELINE, INFRA, LIMRUN, ROWS } from './rows.mjs';
 import { WAVE_Q } from './wave-q.mjs';
+import { WAVE_R } from './wave-r.mjs';
 
 test('rows cover I1-I44, A1-A26 and L1-L12 once each', () => {
   assert.equal(INFRA.length, 44);
@@ -80,8 +81,8 @@ test('--self-test exits 0 on the committed rows and 1 when the baseline is wrong
   assert.match(lines.join('\n'), /infra: 26 \/ 12 \/ 6/);
 });
 
-test('Wave Q changes apply only with their test file and leave the baseline alone', () => {
-  const { rows, skipped } = applyChanges();
+test('Wave Q changes alone apply only with their test file and leave the baseline alone', () => {
+  const { rows, skipped } = applyChanges(ROWS, WAVE_Q);
   assert.deepEqual(skipped, []);
   const split = groups(rows);
   assert.deepEqual(countStatuses(split.infra), { DONE: 29, PARTIAL: 10, MISSING: 5 });
@@ -91,9 +92,35 @@ test('Wave Q changes apply only with their test file and leave the baseline alon
   const none = applyChanges(ROWS, WAVE_Q, () => false);
   assert.equal(none.skipped.length, WAVE_Q.length);
   assert.deepEqual(countStatuses(groups(none.rows).infra), { ...BASELINE.infra });
+});
+
+test('Wave R closes A4, A22 and A23 on top of Wave Q, and the default report applies both waves', () => {
+  for (const change of WAVE_R) assert.match(change.evidence, /test|Test/, change.id);
+  const { rows, skipped } = applyChanges();
+  assert.deepEqual(skipped, []);
+  const split = groups(rows);
+  // Wave Q alone: infra 29/10/5, analytics 24/6/7. Wave R moves A4, A22 and
+  // A23 from PARTIAL to DONE: analytics gains 3 DONE, loses 3 PARTIAL.
+  assert.deepEqual(countStatuses(split.infra), { DONE: 29, PARTIAL: 10, MISSING: 5 });
+  assert.deepEqual(countStatuses(split.analytics), { DONE: 27, PARTIAL: 3, MISSING: 7 });
+  assert.deepEqual(selfTest(), []);
+  const byId = Object.fromEntries(rows.map((row) => [row.id, row]));
+  assert.equal(byId.A4.status, 'DONE');
+  assert.equal(byId.A22.status, 'DONE');
+  assert.equal(byId.A23.status, 'DONE');
   const lines = [];
   assert.equal(run([], (line) => lines.push(line)), 0);
   const text = lines.join('\n');
   assert.match(text, /infra: 29 \/ 10 \/ 5/);
+  assert.match(text, /analytics: 27 \/ 3 \/ 7/);
   assert.match(text, /baseline 2026-09-30: infra 26 \/ 12 \/ 6, analytics 20 \/ 9 \/ 8/);
+});
+
+test('mergeWaves lets a later wave override an earlier one on the same row id', () => {
+  const merged = mergeWaves(WAVE_Q, WAVE_R);
+  const a23 = merged.find((change) => change.id === 'A23');
+  assert.equal(a23.status, 'DONE');
+  assert.equal(a23.pkg, '2026-10-15');
+  // Wave Q's own A23 entry (PARTIAL) is not the one that wins.
+  assert.notEqual(a23, WAVE_Q.find((change) => change.id === 'A23'));
 });

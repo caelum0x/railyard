@@ -53,7 +53,12 @@ Settings (environment):
 pnpm test          # scratch Postgres from initdb, never a hosted database
 pnpm test:browser  # one Chromium run from the local browser cache
 pnpm capacity      # memory at 50 events per second for 10 minutes
+pnpm test:qy       # includes test/qy/mixpanel-compat.test.ts, the real mixpanel npm client against this service
 ```
+
+## Docs
+
+- `docs/MIXPANEL-PARITY-CHECKLIST.md` -- ingestion and analysis parity against another event-analytics product's wire protocol: what's compatible today, what's accepted but silently dropped, and what's still missing.
 
 ## Layout
 

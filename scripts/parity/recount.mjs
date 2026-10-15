@@ -1,20 +1,23 @@
 #!/usr/bin/env node
 /**
- * Railyard parity recount (Wave Q, QY1.0).
+ * Railyard parity recount (Wave Q, QY1.0; Wave R, 2026-10-15).
  *
  * Prints DONE, PARTIAL or MISSING for every row in scripts/parity/rows.mjs.
  * The statuses are the static record of PARITY-RECOUNT-2026-09-30.md section 5
  * on today's main (ae0f113). The script does not re-run the product tests.
  *
- *   node scripts/parity/recount.mjs              (baseline plus Wave Q verified changes)
+ *   node scripts/parity/recount.mjs              (baseline plus every wave's verified changes)
  *   node scripts/parity/recount.mjs --baseline   (the static 2026-09-30 record only)
  *   node scripts/parity/recount.mjs --self-test
  *
- * Wave Q changes live in wave-q.mjs; each names the test file that proves it,
- * and a change whose test file is gone is ignored (the row keeps its baseline).
+ * Verified wave changes live in wave-q.mjs (2026-10-05) and wave-r.mjs
+ * (2026-10-15); each names the test file that proves it, and a change whose
+ * test file is gone is ignored (the row keeps its prior status). Waves apply
+ * in order, so a later wave's entry for the same row id wins.
  *
  * --self-test checks that the printed totals are infra 26/12/6 and analytics
- * 20/9/8 (A1-A26 plus L1-L12 except L11, which the recount marks n/a).
+ * 20/9/8 (A1-A26 plus L1-L12 except L11, which the recount marks n/a). That
+ * check is against the static baseline (rows.mjs), not the wave-applied report.
  */
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -22,8 +25,25 @@ import { fileURLToPath } from 'node:url';
 
 import { BASELINE, ROWS } from './rows.mjs';
 import { WAVE_Q } from './wave-q.mjs';
+import { WAVE_R } from './wave-r.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/**
+ * Merge verified-wave change lists in order; a later wave's entry for the
+ * same row id replaces an earlier one (e.g. Wave R closes an A23 row Wave Q
+ * had only marked PARTIAL).
+ * @param {readonly (readonly {id: string}[])[]} waves
+ */
+export function mergeWaves(...waves) {
+  const byId = new Map();
+  for (const wave of waves) {
+    for (const change of wave) byId.set(change.id, change);
+  }
+  return [...byId.values()];
+}
+
+const DEFAULT_CHANGES = mergeWaves(WAVE_Q, WAVE_R);
 
 export const STATUSES = Object.freeze(['DONE', 'PARTIAL', 'MISSING']);
 
@@ -54,7 +74,7 @@ export function groups(rows = ROWS) {
  * Overlay verified changes on the baseline rows. A change is applied only when
  * its evidence file exists in the repo; otherwise it is reported as skipped.
  */
-export function applyChanges(rows = ROWS, changes = WAVE_Q, exists = (path) => existsSync(join(REPO_ROOT, path))) {
+export function applyChanges(rows = ROWS, changes = DEFAULT_CHANGES, exists = (path) => existsSync(join(REPO_ROOT, path))) {
   const byId = new Map(changes.map((change) => [change.id, change]));
   const skipped = [];
   const out = rows.map((row) => {
