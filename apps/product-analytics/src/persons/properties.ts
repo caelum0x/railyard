@@ -63,12 +63,32 @@ export interface PropertyOps {
   set: Record<string, unknown>;
   setOnce: Record<string, unknown>;
   unset: string[];
+  /** Mixpanel `$add`: numeric increment (negative to decrement). */
+  add: Record<string, unknown>;
+  /** Mixpanel `$append`: push one value onto a list property, creating it if absent. */
+  append: Record<string, unknown>;
+  /** Mixpanel `$union`: merge value(s) into a list property, de-duplicated. */
+  union: Record<string, unknown>;
+  /** Mixpanel `$remove`: drop one scalar value from a list property. */
+  remove: Record<string, unknown>;
 }
 
 type Obj = Record<string, unknown>;
 
+const EMPTY_OBJ: Obj = {};
+
 /** The ops an event applies to its person. `updateAll` is off for personless events. */
-export function eventOps(ev: { properties: Obj; set: Obj | null; set_once: Obj | null; unset: string[] | null; event: string }): PropertyOps {
+export function eventOps(ev: {
+  properties: Obj;
+  set: Obj | null;
+  set_once: Obj | null;
+  unset: string[] | null;
+  event: string;
+  add?: Obj | null;
+  append?: Obj | null;
+  union?: Obj | null;
+  remove?: Obj | null;
+}): PropertyOps {
   const set: Obj = {};
   const setOnce: Obj = {};
   // $pageview-style properties first, so an explicit $set of the same key wins.
@@ -81,10 +101,10 @@ export function eventOps(ev: { properties: Obj; set: Obj | null; set_once: Obj |
   }
   Object.assign(setOnce, ev.set_once ?? {});
   Object.assign(set, ev.set ?? {});
-  return { set, setOnce, unset: ev.unset ?? [] };
+  return { set, setOnce, unset: ev.unset ?? [], add: ev.add ?? EMPTY_OBJ, append: ev.append ?? EMPTY_OBJ, union: ev.union ?? EMPTY_OBJ, remove: ev.remove ?? EMPTY_OBJ };
 }
 
-/** New properties after the ops, or null when nothing changes. Never mutates `current`. */
+/** New properties after the ops, or null when nothing changes. Never mutates `current`. Order: set_once, set, add, append, union, remove, unset. */
 export function applyOps(current: Obj, ops: PropertyOps): Obj | null {
   const next: Obj = { ...current };
   let changed = false;
@@ -97,6 +117,36 @@ export function applyOps(current: Obj, ops: PropertyOps): Obj | null {
   for (const [k, v] of Object.entries(ops.set)) {
     if (JSON.stringify(next[k]) !== JSON.stringify(v)) {
       next[k] = v;
+      changed = true;
+    }
+  }
+  for (const [k, v] of Object.entries(ops.add)) {
+    const by = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(by)) continue;
+    const cur = typeof next[k] === "number" ? (next[k] as number) : 0;
+    next[k] = cur + by;
+    changed = true;
+  }
+  for (const [k, v] of Object.entries(ops.append)) {
+    const cur = Array.isArray(next[k]) ? (next[k] as unknown[]) : next[k] !== undefined ? [next[k]] : [];
+    next[k] = [...cur, v];
+    changed = true;
+  }
+  for (const [k, raw] of Object.entries(ops.union)) {
+    const values = Array.isArray(raw) ? raw : [raw];
+    const cur = Array.isArray(next[k]) ? (next[k] as unknown[]) : [];
+    const merged = [...cur];
+    for (const v of values) if (!merged.some((x) => JSON.stringify(x) === JSON.stringify(v))) merged.push(v);
+    if (merged.length !== cur.length) {
+      next[k] = merged;
+      changed = true;
+    }
+  }
+  for (const [k, v] of Object.entries(ops.remove)) {
+    if (!Array.isArray(next[k])) continue;
+    const filtered = (next[k] as unknown[]).filter((x) => JSON.stringify(x) !== JSON.stringify(v));
+    if (filtered.length !== (next[k] as unknown[]).length) {
+      next[k] = filtered;
       changed = true;
     }
   }

@@ -8,7 +8,7 @@
 
 import { capDecision } from "../caps.ts";
 import type { Db } from "../db.ts";
-import { groupColumns, groupTypeIndex, upsertGroup } from "../groups/groups.ts";
+import { groupColumns, groupTypeIndex, setOps, upsertGroup } from "../groups/groups.ts";
 import type { Logger } from "../log.ts";
 import { personIdFor } from "../persons/ids.ts";
 import { processPerson } from "../persons/service.ts";
@@ -70,11 +70,12 @@ export class CapturePipeline {
     return next;
   }
 
-  ingest(site: Site, events: CapturedEvent[]): Promise<IngestResult> {
-    return this.serial(`org:${site.org_id}`, () => this.ingestNow(site, events));
+  /** `historical`: skip the retention-window cutoff (the /import endpoint's job -- backfilling events older than the plan's retention, unlike /track's live path). */
+  ingest(site: Site, events: CapturedEvent[], opts: { historical?: boolean } = {}): Promise<IngestResult> {
+    return this.serial(`org:${site.org_id}`, () => this.ingestNow(site, events, opts));
   }
 
-  async ingestNow(site: Site, events: CapturedEvent[]): Promise<IngestResult> {
+  async ingestNow(site: Site, events: CapturedEvent[], opts: { historical?: boolean } = {}): Promise<IngestResult> {
     const { writer, usage, meter, now: clock } = this.deps;
     const now = clock();
     const month = monthOf(now);
@@ -85,7 +86,7 @@ export class CapturePipeline {
       return { received, accepted: 0, capped: 0, dropped: received, paused: true };
     }
     const oldest = now.getTime() - site.retention_days * DAY_MS;
-    const inWindow = events.filter((e) => e.timestamp.getTime() >= oldest && !tooLarge(e));
+    const inWindow = events.filter((e) => (opts.historical || e.timestamp.getTime() >= oldest) && !tooLarge(e));
     const expired = received - inWindow.length;
     const used = await usage.used(site.org_id);
     const decision = capDecision(used, site.events_limit, inWindow.length);
@@ -110,7 +111,7 @@ export class CapturePipeline {
           const set = ev.properties.$group_set;
           if (typeof type === "string" && type && (typeof key === "string" || typeof key === "number") && String(key)) {
             const idx = await groupTypeIndex(c, site.project_id, type, cache);
-            if (idx !== null) await upsertGroup(c, site.project_id, idx, String(key).slice(0, 400), set && typeof set === "object" && !Array.isArray(set) ? withoutIp(set as Record<string, unknown>) : {}, ev.timestamp);
+            if (idx !== null) await upsertGroup(c, site.project_id, idx, String(key).slice(0, 400), setOps(set && typeof set === "object" && !Array.isArray(set) ? withoutIp(set as Record<string, unknown>) : {}), ev.timestamp);
           }
         }
         rows.push({

@@ -21,6 +21,7 @@ import type {
   Interval,
   LifecycleQuery,
   PathsQuery,
+  PropertyFilter,
   RetentionQuery,
   Series,
   StickinessQuery,
@@ -278,24 +279,34 @@ async function withTimeout<T>(db: Db, projectId: string, timeoutMs: number, fn: 
   });
 }
 
+/** Merges a named data view's filters (pa.data_views, written through ./store.ts's parseFilters) ahead of the query's own `properties`, when `data_view_id` is set. Every builder (trends.ts, funnels.ts, ...) sees only the resolved `properties` -- a data view is otherwise invisible to them. */
+async function applyDataView<Q extends InsightQuery>(c: Client, projectId: string, q: Q): Promise<Q> {
+  if (!q.data_view_id) return q;
+  const r = await c.query<{ filters: PropertyFilter[] }>("select filters from pa.data_views where project_id = $1 and id = $2", [projectId, q.data_view_id]);
+  const row = r.rows[0];
+  if (!row) throw new QueryError("That data view no longer exists. Pick another one.");
+  return { ...q, properties: [...row.filters, ...(q.properties ?? [])] };
+}
+
 export async function runInsight(db: Db, projectId: string, q: InsightQuery, now: Date, opts: RunOptions = {}): Promise<InsightResult> {
   const range = resolveRange(q.date_range, now);
   try {
     return await withTimeout(db, projectId, opts.timeoutMs ?? QUERY_TIMEOUT_MS, async (c) => {
-      const ctx: BuildContext = { projectId, now, actions: await loadActions(c, projectId, actionIds(q)) };
-      switch (q.kind) {
+      const resolved = await applyDataView(c, projectId, q);
+      const ctx: BuildContext = { projectId, now, actions: await loadActions(c, projectId, actionIds(resolved)) };
+      switch (resolved.kind) {
         case "trends":
-          return runTrends(c, q, range, ctx);
+          return runTrends(c, resolved, range, ctx);
         case "funnels":
-          return runFunnels(c, q, range, ctx);
+          return runFunnels(c, resolved, range, ctx);
         case "retention":
-          return runRetention(c, q, range, ctx);
+          return runRetention(c, resolved, range, ctx);
         case "paths":
-          return runPaths(c, q, range, ctx);
+          return runPaths(c, resolved, range, ctx);
         case "stickiness":
-          return runStickiness(c, q, range, ctx);
+          return runStickiness(c, resolved, range, ctx);
         case "lifecycle":
-          return runLifecycle(c, q, range, ctx);
+          return runLifecycle(c, resolved, range, ctx);
       }
     });
   } catch (err) {
@@ -324,8 +335,9 @@ export async function runFunnelPeople(db: Db, projectId: string, q: FunnelsQuery
   const range = resolveRange(q.date_range, now);
   try {
     return await withTimeout(db, projectId, QUERY_TIMEOUT_MS, async (c) => {
-      const ctx: BuildContext = { projectId, now, actions: await loadActions(c, projectId, actionIds(q)) };
-      const rows = await run(c, buildFunnelPeople(q, range, ctx, step, dropped, 100, breakdownValue));
+      const resolved = await applyDataView(c, projectId, q);
+      const ctx: BuildContext = { projectId, now, actions: await loadActions(c, projectId, actionIds(resolved)) };
+      const rows = await run(c, buildFunnelPeople(resolved, range, ctx, step, dropped, 100, breakdownValue));
       return rows.map((r) => ({ id: String(r.id), distinct_id: r.distinct_id == null ? null : String(r.distinct_id), entered_at: new Date(String(r.entered_at)).toISOString(), properties: (r.properties as Record<string, unknown>) ?? null }));
     });
   } catch (err) {
@@ -342,8 +354,9 @@ export async function runTimeToConvert(db: Db, projectId: string, q: FunnelsQuer
   const range = resolveRange(q.date_range, now);
   try {
     return await withTimeout(db, projectId, QUERY_TIMEOUT_MS, async (c) => {
-      const ctx: BuildContext = { projectId, now, actions: await loadActions(c, projectId, actionIds(q)) };
-      const rows = await run(c, buildTimeToConvert(q, range, ctx, bins));
+      const resolved = await applyDataView(c, projectId, q);
+      const ctx: BuildContext = { projectId, now, actions: await loadActions(c, projectId, actionIds(resolved)) };
+      const rows = await run(c, buildTimeToConvert(resolved, range, ctx, bins));
       if (!rows.length) return { bins: [], total: 0 };
       const lo = Number(rows[0].lo);
       const hi = Number(rows[0].hi) + 1;

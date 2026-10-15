@@ -89,6 +89,54 @@ export function captureRoutes(deps: CaptureDeps): Hono {
     app.post(p, capture);
   }
 
+  /**
+   * Historical/batch import, separate from /track's live path:
+   *  - auth: Mixpanel's real /import requires a service account or API
+   *    secret (Basic auth), not the bare project token every SDK event
+   *    already carries in its body for /track. This service has no
+   *    separate secret, so it accepts the project token as Basic auth or as
+   *    an explicit api_key/token query parameter instead -- never from the
+   *    event body alone.
+   *  - retention: /track silently drops events older than the plan's
+   *    retention window (that's the live path's job); /import exists to
+   *    backfill events from before that window, so it skips the cutoff.
+   *  - idempotency: shared with /track via the same uuid/$insert_id
+   *    dedup (../capture/writer.ts's ingest_receipts) -- importing the same
+   *    event twice stores it once.
+   */
+  const importRoute = async (c: Context) => {
+    const origin = c.req.header("origin");
+    try {
+      const payload = await readPayload(c);
+      const url = new URL(c.req.url);
+      const auth = c.req.header("authorization");
+      let basicToken: string | null = null;
+      if (auth && /^basic\s+/i.test(auth)) {
+        const decoded = Buffer.from(auth.replace(/^basic\s+/i, ""), "base64").toString("utf8");
+        const sep = decoded.indexOf(":");
+        const user = sep === -1 ? decoded : decoded.slice(0, sep);
+        const pass = sep === -1 ? "" : decoded.slice(sep + 1);
+        basicToken = pass || user || null;
+      }
+      const queryToken = url.searchParams.get("token") ?? url.searchParams.get("api_key");
+      const strongToken = basicToken ?? queryToken;
+      if (!strongToken) throw new EventError(401, "/import requires Basic authentication (service account or API secret) or an api_key/token query parameter; a token inside the event body alone is not enough.");
+      const site = await deps.sites.byToken(strongToken);
+      if (!site) throw new EventError(401, "The project token is not valid.");
+      const n = normalizeEvents(payload, { now: deps.now(), country: c.req.header("cf-ipcountry") ?? null, queryToken: strongToken, sentAtQuery: null });
+      if (n.token !== site.token) throw new EventError(400, "Every event of one request must use the same project token as the import credential.");
+      const result = await deps.pipeline.ingest(site, n.events, { historical: true });
+      return c.json({ status: 1, num_records_imported: result.accepted }, 200, CORS_HEADERS(origin));
+    } catch (err) {
+      return problem(c, err, deps.log);
+    }
+  };
+  for (const p of ["/import", "/import/"]) {
+    app.options(p, (c) => c.body(null, 204, CORS_HEADERS(c.req.header("origin"))));
+    app.get(p, importRoute);
+    app.post(p, importRoute);
+  }
+
   const engage = async (c: Context) => {
     const origin = c.req.header("origin");
     try {
@@ -104,7 +152,20 @@ export function captureRoutes(deps: CaptureDeps): Hono {
         if (typeof id !== "string" || !id || id.length > 200) throw new EventError(400, `Update ${i} needs a distinct_id.`);
         if ((u.$token ?? u.token ?? u.api_key ?? token) !== token) throw new EventError(400, "Every update of one request must use the same project token.");
         const unset = Array.isArray(u.$unset) ? u.$unset.filter((k): k is string => typeof k === "string") : null;
-        return { id, ops: eventOps({ event: "$engage", properties: {}, set: isObj(u.$set) ? withoutIp(u.$set) : null, set_once: isObj(u.$set_once) ? withoutIp(u.$set_once) : null, unset }) };
+        return {
+          id,
+          ops: eventOps({
+            event: "$engage",
+            properties: {},
+            set: isObj(u.$set) ? withoutIp(u.$set) : null,
+            set_once: isObj(u.$set_once) ? withoutIp(u.$set_once) : null,
+            unset,
+            add: isObj(u.$add) ? u.$add : null,
+            append: isObj(u.$append) ? withoutIp(u.$append) : null,
+            union: isObj(u.$union) ? u.$union : null,
+            remove: isObj(u.$remove) ? u.$remove : null,
+          }),
+        };
       });
       if (!site.paused) {
         await deps.pipeline.serial(`org:${site.org_id}`, () =>
@@ -128,17 +189,52 @@ export function captureRoutes(deps: CaptureDeps): Hono {
       if (!token) throw new EventError(401, "The project token is missing.");
       const site = await deps.sites.byToken(token);
       if (!site) throw new EventError(401, "The project token is not valid.");
-      const type = payload.$group_type ?? payload.group_type;
-      const key = payload.$group_key ?? payload.group_key;
-      const set = payload.$group_set ?? payload.properties ?? {};
+      // This service's own wire protocol uses $group_type (the group's TYPE,
+      // e.g. "company") and $group_key (the group's KEY, e.g. "acme"). The
+      // real Mixpanel SDK instead sends $group_key for the TYPE and
+      // $group_id for the KEY -- the opposite meaning for $group_key, plus a
+      // field ($group_id) this service never otherwise reads. $group_id only
+      // exists in Mixpanel's shape, so its presence disambiguates which
+      // protocol sent the request.
+      const mixpanel = payload.$group_id !== undefined;
+      const type = mixpanel ? payload.$group_key : payload.$group_type ?? payload.group_type;
+      const key = mixpanel ? payload.$group_id : payload.$group_key ?? payload.group_key;
       if (typeof type !== "string" || !type || type.length > 100) throw new EventError(400, "group_type is required.");
       if ((typeof key !== "string" && typeof key !== "number") || !String(key) || String(key).length > 400) throw new EventError(400, "group_key is required.");
-      if (!isObj(set)) throw new EventError(400, "Group properties must be an object.");
+      const setSrc = payload.$set ?? payload.$group_set ?? payload.properties ?? {};
+      if (!isObj(setSrc)) throw new EventError(400, "Group properties must be an object.");
+      for (const [field, v] of [
+        ["$set_once", payload.$set_once],
+        ["$add", payload.$add],
+        ["$append", payload.$append],
+        ["$union", payload.$union],
+        ["$remove", payload.$remove],
+      ] as const) {
+        if (v !== undefined && !isObj(v)) throw new EventError(400, `${field} must be an object.`);
+      }
+      const set = setSrc;
+      const setOnce = isObj(payload.$set_once) ? payload.$set_once : null;
+      const unset = Array.isArray(payload.$unset) ? payload.$unset.filter((k): k is string => typeof k === "string") : null;
+      const add = isObj(payload.$add) ? payload.$add : null;
+      const append = isObj(payload.$append) ? payload.$append : null;
+      const union = isObj(payload.$union) ? payload.$union : null;
+      const remove = isObj(payload.$remove) ? payload.$remove : null;
+      const ops = eventOps({
+        event: "$groups",
+        properties: {},
+        set: withoutIp(set),
+        set_once: setOnce ? withoutIp(setOnce) : null,
+        unset,
+        add,
+        append: append ? withoutIp(append) : null,
+        union,
+        remove,
+      });
       if (!site.paused) {
         await deps.pipeline.serial(`org:${site.org_id}`, () =>
           deps.db.asProject(site.project_id, async (tx) => {
             const idx = await groupTypeIndex(tx, site.project_id, type, new Map());
-            if (idx !== null) await upsertGroup(tx, site.project_id, idx, String(key), withoutIp(set), deps.now());
+            if (idx !== null) await upsertGroup(tx, site.project_id, idx, String(key), ops, deps.now());
           }),
         );
       }

@@ -46,7 +46,7 @@ export interface PersonResult {
   merge: MergeOutcome;
 }
 
-const EMPTY_OPS: PropertyOps = { set: {}, setOnce: {}, unset: [] };
+const EMPTY_OPS: PropertyOps = { set: {}, setOnce: {}, unset: [], add: {}, append: {}, union: {}, remove: {} };
 
 export async function findPerson(c: Client, projectId: string, distinctId: string): Promise<Person | null> {
   const r = await c.query<Person>(

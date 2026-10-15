@@ -10,6 +10,7 @@ import {
   type Breakdown,
   type DateRange,
   type InsightQuery,
+  type LookupSource,
   type MathKind,
   type PropertyFilter,
   type PropertyOperator,
@@ -53,11 +54,23 @@ export function parseFilters(v: unknown): PropertyFilter[] {
   return v.map((f): PropertyFilter => {
     if (!isObj(f)) throw new QueryError("A filter must be an object.");
     // "segment" is the console's word for a cohort.
-    const type = oneOf(f.type ?? "event", ["event", "person", "group", "cohort", "segment"] as const, "event", "a filter type");
+    const type = oneOf(f.type ?? "event", ["event", "person", "group", "cohort", "segment", "lookup"] as const, "event", "a filter type");
     if (type === "cohort" || type === "segment") {
       const id = f.cohort_id ?? f.segment_id;
       if (!isUuid(id)) throw new QueryError("Pick a segment.");
       return { type: "cohort", cohort_id: id, negate: f.negate === true };
+    }
+    if (type === "lookup") {
+      if (!isUuid(f.lookup_table_id)) throw new QueryError("Pick a lookup table.");
+      const sourceRaw = isObj(f.source) ? f.source : {};
+      const sourceType = oneOf(sourceRaw.type ?? "event", ["event", "person", "group"] as const, "event", "a property type");
+      const source: LookupSource = { type: sourceType, key: checkKey(sourceRaw.key, "the lookup's join property") };
+      if (sourceType === "group") source.group_type_index = groupIndex(sourceRaw.group_type_index);
+      const column = checkKey(f.column, "lookup column");
+      const operator = oneOf(f.operator, OPS, "exact", "an operator");
+      const value = filterValue(f.value);
+      if (operator !== "is_set" && operator !== "is_not_set" && (value === null || (Array.isArray(value) && value.length === 0))) throw new QueryError(`Give a value for the ${column} filter.`);
+      return { type: "lookup", lookup_table_id: f.lookup_table_id, source, column, operator, value };
     }
     const operator = oneOf(f.operator, OPS, "exact", "an operator");
     const key = checkKey(f.key);
@@ -119,10 +132,21 @@ function intIn(v: unknown, lo: number, hi: number, fallback: number, what: strin
   return v;
 }
 
+function parseDataViewId(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  if (!isUuid(v)) throw new QueryError("Pick a data view.");
+  return v;
+}
+
 export function parseQuery(v: unknown): InsightQuery {
   if (!isObj(v)) throw new QueryError("Send an insight query.");
   const kind = oneOf(v.kind, INSIGHT_KINDS, undefined, "an insight type");
-  const base = { date_range: parseRange(v.date_range), properties: parseFilters(v.properties), timezone: checkTimezone(typeof v.timezone === "string" ? v.timezone : undefined) };
+  const base = {
+    date_range: parseRange(v.date_range),
+    properties: parseFilters(v.properties),
+    timezone: checkTimezone(typeof v.timezone === "string" ? v.timezone : undefined),
+    data_view_id: parseDataViewId(v.data_view_id),
+  };
   const interval = oneOf(v.interval, INTERVALS, "day", "an interval");
   switch (kind) {
     case "trends": {

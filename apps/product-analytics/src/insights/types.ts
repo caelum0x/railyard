@@ -29,6 +29,13 @@ export type PropertyOperator =
 
 export type PropertyValue = string | number | boolean | (string | number)[] | null;
 
+/** The event/person/group property a lookup table filter or breakdown joins on. */
+export interface LookupSource {
+  type: "event" | "person" | "group";
+  key: string;
+  group_type_index?: number;
+}
+
 export type PropertyFilter =
   | {
       type: "event" | "person";
@@ -43,7 +50,17 @@ export type PropertyFilter =
       operator: PropertyOperator;
       value?: PropertyValue;
     }
-  | { type: "cohort"; cohort_id: string; negate?: boolean };
+  | { type: "cohort"; cohort_id: string; negate?: boolean }
+  | {
+      type: "lookup";
+      /** pa.lookup_tables.id: the CSV-backed table joined in. */
+      lookup_table_id: string;
+      source: LookupSource;
+      /** The lookup table's own column (its key column, or any enrichment column) to compare. */
+      column: string;
+      operator: PropertyOperator;
+      value?: PropertyValue;
+    };
 
 export type MathKind =
   | "total"
@@ -90,6 +107,8 @@ interface Base {
   properties?: PropertyFilter[];
   /** IANA time zone for buckets. Default UTC. */
   timezone?: string;
+  /** pa.data_views.id: a named, reusable set of filters merged into `properties` before the query runs (runner.ts). */
+  data_view_id?: string | null;
 }
 
 export interface TrendsQuery extends Base {

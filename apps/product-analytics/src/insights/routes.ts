@@ -13,11 +13,29 @@ import { createAction, deleteAction, listActions, updateAction } from "./actions
 import { computeCached, type CacheMode } from "./cache.ts";
 import { cohortsGdprHook, createCohort, deleteCohort, getCohort, importCohortCsv, listCohorts, MAX_CSV_BYTES, recomputeCohort } from "./cohorts.ts";
 import { startInsightsJobs } from "./jobs.ts";
+import { createLookupTable, deleteLookupTable, getLookupTable, listLookupTables, replaceLookupTableCsv } from "./lookup-tables.ts";
 import { projectMeta } from "./meta.ts";
 import { runFunnelPeople, runTimeToConvert } from "./runner.ts";
 import { SqlSandbox, SqlUnavailable, toCsv } from "./sandbox.ts";
 import { SqlRejected } from "./sandbox-parser.ts";
-import { addTile, createDashboard, createSavedInsight, deleteDashboard, deleteSavedInsight, getDashboard, getSavedInsight, listDashboards, listSavedInsights, removeTile, updateSavedInsight } from "./store.ts";
+import {
+  addTile,
+  createDashboard,
+  createDataView,
+  createSavedInsight,
+  deleteDashboard,
+  deleteDataView,
+  deleteSavedInsight,
+  getDashboard,
+  getDataView,
+  getSavedInsight,
+  listDashboards,
+  listDataViews,
+  listSavedInsights,
+  removeTile,
+  updateDataView,
+  updateSavedInsight,
+} from "./store.ts";
 import { QueryError, type FunnelsQuery } from "./types.ts";
 import { parseQuery } from "./validate.ts";
 
@@ -156,6 +174,50 @@ export function insightsRoutes(deps: ServiceDeps): Hono<Env> {
   app.delete(`${P}/dashboards/:did/tiles/:iid`, async (c) => {
     writer(c);
     return (await removeTile(deps.db, pid(c), c.req.param("did"), c.req.param("iid"))) ? c.json({ removed: true }) : c.json({ error: "That insight is not on the dashboard." }, 404);
+  });
+
+  // Data views (Mixpanel parity checklist row 5)
+  app.get(`${P}/data-views`, async (c) => c.json({ data_views: await listDataViews(deps.db, pid(c)) }));
+  app.post(`${P}/data-views`, async (c) => {
+    writer(c);
+    const b = await body(c);
+    return c.json({ data_view: await createDataView(deps.db, pid(c), { name: b.name, filters: b.filters }) }, 201);
+  });
+  app.get(`${P}/data-views/:vid`, async (c) => {
+    const v = await getDataView(deps.db, pid(c), c.req.param("vid"));
+    return v ? c.json({ data_view: v }) : c.json({ error: "No data view has that id in this app." }, 404);
+  });
+  app.put(`${P}/data-views/:vid`, async (c) => {
+    writer(c);
+    const b = await body(c);
+    const v = await updateDataView(deps.db, pid(c), c.req.param("vid"), { name: b.name, filters: b.filters });
+    return v ? c.json({ data_view: v }) : c.json({ error: "No data view has that id in this app." }, 404);
+  });
+  app.delete(`${P}/data-views/:vid`, async (c) => {
+    writer(c);
+    return (await deleteDataView(deps.db, pid(c), c.req.param("vid"))) ? c.json({ deleted: true }) : c.json({ error: "No data view has that id in this app." }, 404);
+  });
+
+  // Lookup tables (Mixpanel parity checklist row 4)
+  app.get(`${P}/lookup-tables`, async (c) => c.json({ lookup_tables: await listLookupTables(deps.db, pid(c)) }));
+  app.post(`${P}/lookup-tables`, async (c) => {
+    writer(c);
+    const b = await body(c);
+    return c.json({ lookup_table: await createLookupTable(deps.db, pid(c), { name: b.name, csv: b.csv }) }, 201);
+  });
+  app.get(`${P}/lookup-tables/:lid`, async (c) => {
+    const t = await getLookupTable(deps.db, pid(c), c.req.param("lid"));
+    return t ? c.json({ lookup_table: t }) : c.json({ error: "No lookup table has that id in this app." }, 404);
+  });
+  app.put(`${P}/lookup-tables/:lid/csv`, async (c) => {
+    writer(c);
+    const b = await body(c);
+    const t = await replaceLookupTableCsv(deps.db, pid(c), c.req.param("lid"), { csv: b.csv });
+    return t ? c.json({ lookup_table: t }) : c.json({ error: "No lookup table has that id in this app." }, 404);
+  });
+  app.delete(`${P}/lookup-tables/:lid`, async (c) => {
+    writer(c);
+    return (await deleteLookupTable(deps.db, pid(c), c.req.param("lid"))) ? c.json({ deleted: true }) : c.json({ error: "No lookup table has that id in this app." }, 404);
   });
 
   // Actions

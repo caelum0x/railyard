@@ -57,9 +57,9 @@ function parseTime(v: unknown): number | null {
   return null;
 }
 
-/** Clock-skew correction as the SDKs expect: now + (timestamp - sent_at), else now - offset. */
+/** Clock-skew correction as the SDKs expect: now + (timestamp - sent_at), else now - offset. `properties.time` is Mixpanel's own event-time field (its `track`/`import` SDKs set it, not `$time`). */
 export function eventTime(ev: Obj, props: Obj, sentAt: number | null, now: number): Date {
-  const ts = parseTime(ev.timestamp ?? props.$time);
+  const ts = parseTime(ev.timestamp ?? props.$time ?? props.time);
   let t: number;
   if (ts !== null && sentAt !== null && props.$ignore_sent_at !== true) t = now + (ts - sentAt);
   else if (typeof ev.offset === "number" && Number.isFinite(ev.offset)) t = now - ev.offset;

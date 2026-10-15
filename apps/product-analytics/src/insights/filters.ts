@@ -5,11 +5,38 @@
 
 import { HREF_PATTERN, selectorRegex, tagNameRegex, TEXT_PATTERN } from "./elements.ts";
 import { PERSON, type Params } from "./sql.ts";
-import { QueryError, type ActionStep, type BuildContext, type PropertyFilter, type PropertyOperator, type Series } from "./types.ts";
+import { QueryError, type ActionStep, type BuildContext, type LookupSource, type PropertyFilter, type PropertyOperator, type Series } from "./types.ts";
 
 export class Joins {
   person = false;
   groups = new Set<number>();
+  private lookupAliases = new Map<string, string>();
+  private lookupClauses: string[] = [];
+
+  /** Joins one lookup table's rows, keyed by an event/person/group property; returns the alias (read `${alias}.data ->> 'col'`). Identical joins within one query are reused. */
+  lookup(lookupTableId: string, source: LookupSource, P: Params): string {
+    const dedupeKey = `${lookupTableId}|${source.type}|${source.key}|${source.group_type_index ?? ""}`;
+    const existing = this.lookupAliases.get(dedupeKey);
+    if (existing) return existing;
+    const alias = `lt${this.lookupAliases.size}`;
+    this.lookupAliases.set(dedupeKey, alias);
+    let keyExpr: string;
+    if (source.type === "person") {
+      this.person = true;
+      keyExpr = "p.properties";
+    } else if (source.type === "group") {
+      const g = source.group_type_index ?? 0;
+      if (!Number.isInteger(g) || g < 0 || g > 4) throw new QueryError("Pick a group type.");
+      this.groups.add(g);
+      keyExpr = `g${g}.properties`;
+    } else {
+      keyExpr = "e.properties";
+    }
+    const sourceKeyParam = P.add(source.key);
+    const idParam = P.add(lookupTableId);
+    this.lookupClauses.push(`left join pa.lookup_table_rows ${alias} on ${alias}.project_id = e.project_id and ${alias}.lookup_table_id = ${idParam}::uuid and ${alias}.key = (${keyExpr} ->> ${sourceKeyParam})`);
+    return alias;
+  }
 
   /** Join clauses for everything the conditions used. `e` must be the events alias. */
   sql(): string {
@@ -18,6 +45,7 @@ export class Joins {
     for (const g of [...this.groups].sort()) {
       out.push(`left join pa.groups g${g} on g${g}.project_id = e.project_id and g${g}.group_type_index = ${g} and g${g}.group_key = e."$group_${g}"`);
     }
+    out.push(...this.lookupClauses);
     return out.join("\n");
   }
 }
@@ -103,6 +131,10 @@ export function filterSql(f: PropertyFilter, P: Params, J: Joins, projectParam: 
       return compareProperty(`g${f.group_type_index}.properties`, f.key, f.operator, f.value, P);
     case "cohort":
       return `${f.negate ? "not " : ""}(${PERSON} in ${cohortMembers(f.cohort_id, projectParam, P)})`;
+    case "lookup": {
+      const alias = J.lookup(f.lookup_table_id, f.source, P);
+      return compareProperty(`${alias}.data`, f.column, f.operator, f.value, P);
+    }
   }
 }
 

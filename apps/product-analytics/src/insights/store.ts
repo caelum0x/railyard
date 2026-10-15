@@ -5,8 +5,8 @@
 import type { Db } from "../db.ts";
 import { isUuid } from "../db.ts";
 import { computeCached, type CachedAnswer } from "./cache.ts";
-import { QueryError, type InsightKind, type InsightQuery } from "./types.ts";
-import { parseQuery } from "./validate.ts";
+import { QueryError, type InsightKind, type InsightQuery, type PropertyFilter } from "./types.ts";
+import { parseFilters, parseQuery } from "./validate.ts";
 
 export interface SavedInsight {
   id: string;
@@ -40,7 +40,7 @@ export interface Dashboard {
 
 export const MAX_TILES = 24;
 
-function name(v: unknown, what: string): string {
+export function name(v: unknown, what: string): string {
   const n = typeof v === "string" ? v.trim() : "";
   if (n.length < 1 || n.length > 200) throw new QueryError(`Give the ${what} a name of 1 to 200 characters.`);
   return n;
@@ -173,4 +173,69 @@ export async function getDashboard(db: Db, projectId: string, id: string, now: D
     }
   }
   return { ...found.d, tiles };
+}
+
+// Data views (Mixpanel parity checklist row 5): a named, reusable set of
+// property filters. runner.ts's applyDataView merges a view's filters into
+// a query's own `properties` by id (query.data_view_id) before any builder
+// (trends.ts, funnels.ts, ...) sees it -- a data view is otherwise invisible
+// to the query layer, the same way a saved insight's query is just an
+// InsightQuery to computeCached.
+
+export interface DataView {
+  id: string;
+  name: string;
+  filters: PropertyFilter[];
+  created_at: string;
+  updated_at: string;
+}
+
+const DATA_VIEW_COLS = "id, name, filters, created_at, updated_at";
+
+export async function listDataViews(db: Db, projectId: string): Promise<DataView[]> {
+  return db.asProject(projectId, async (c) => (await c.query<DataView>(`select ${DATA_VIEW_COLS} from pa.data_views where project_id = $1 order by name`, [projectId])).rows);
+}
+
+export async function getDataView(db: Db, projectId: string, id: string): Promise<DataView | null> {
+  if (!isUuid(id)) return null;
+  return db.asProject(projectId, async (c) => (await c.query<DataView>(`select ${DATA_VIEW_COLS} from pa.data_views where project_id = $1 and id = $2`, [projectId, id])).rows[0] ?? null);
+}
+
+export async function createDataView(db: Db, projectId: string, input: { name: unknown; filters: unknown }): Promise<DataView> {
+  const n = name(input.name, "data view");
+  const filters = parseFilters(input.filters);
+  if (!filters.length) throw new QueryError("Give the data view at least one filter.");
+  try {
+    return await db.asProject(
+      projectId,
+      async (c) => (await c.query<DataView>(`insert into pa.data_views (project_id, name, filters) values ($1, $2, $3) returning ${DATA_VIEW_COLS}`, [projectId, n, JSON.stringify(filters)])).rows[0],
+    );
+  } catch (err) {
+    if ((err as { code?: string }).code === "23505") throw new QueryError("A data view with that name already exists.");
+    throw err;
+  }
+}
+
+export async function updateDataView(db: Db, projectId: string, id: string, input: { name: unknown; filters: unknown }): Promise<DataView | null> {
+  if (!isUuid(id)) return null;
+  const n = name(input.name, "data view");
+  const filters = parseFilters(input.filters);
+  if (!filters.length) throw new QueryError("Give the data view at least one filter.");
+  return db.asProject(
+    projectId,
+    async (c) =>
+      (
+        await c.query<DataView>(`update pa.data_views set name = $3, filters = $4, updated_at = now() where project_id = $1 and id = $2 returning ${DATA_VIEW_COLS}`, [
+          projectId,
+          id,
+          n,
+          JSON.stringify(filters),
+        ])
+      ).rows[0] ?? null,
+  );
+}
+
+export async function deleteDataView(db: Db, projectId: string, id: string): Promise<boolean> {
+  if (!isUuid(id)) return false;
+  return db.asProject(projectId, async (c) => ((await c.query("delete from pa.data_views where project_id = $1 and id = $2", [projectId, id])).rowCount ?? 0) > 0);
 }

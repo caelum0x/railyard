@@ -41,7 +41,7 @@ test("the illegal-id list and the property ops follow upstream", () => {
   for (const id of ["nan", "user-1", "a@b.co"]) assert.ok(!isDistinctIdIllegal(id), id);
   const ops = eventOps({ event: "x", properties: { $browser: "Firefox", utm_source: "news" }, set: { plan: "pro" }, set_once: { first_seen: "mon" }, unset: ["old"] });
   assert.deepEqual(applyOps({ old: 1, first_seen: "sun" }, ops), { first_seen: "sun", $initial_browser: "Firefox", $initial_utm_source: "news", $browser: "Firefox", utm_source: "news", plan: "pro" });
-  assert.equal(applyOps({ plan: "pro" }, { set: { plan: "pro" }, setOnce: {}, unset: [] }), null);
+  assert.equal(applyOps({ plan: "pro" }, { set: { plan: "pro" }, setOnce: {}, unset: [], add: {}, append: {}, union: {}, remove: {} }), null);
   assert.equal(personIdFor(site.project_id, "a"), personIdFor(site.project_id, "a"));
   assert.notEqual(personIdFor(site.project_id, "a"), personIdFor(randomUUID(), "a"));
 });
