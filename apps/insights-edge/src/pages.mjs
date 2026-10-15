@@ -74,7 +74,8 @@ ${error ? `<p class="error" role="alert">${esc(error)}</p>` : ""}
 <ul class="points">
 <li><a href="/cookieless-analytics">What "cookieless analytics" means</a>, and exactly how this tag counts a visitor without one.</li>
 <li><a href="/google-analytics-alternative">A privacy-friendly Google Analytics alternative</a>.</li>
-<li><a href="/plausible-alternative">A free, cookieless analytics alternative</a> with no card and no trial clock.</li>
+<li><a href="/plausible-alternative">A Plausible alternative</a> with a free tier that's not a trial.</li>
+<li><a href="/fathom-analytics-alternative">A Fathom Analytics alternative</a> with no card required to start.</li>
 </ul>
 <script type="application/ld+json">${ld.replace(/</g, "\\u003c")}</script>`;
   return shell({ title: "Free cookieless website analytics, one script tag | Railyard Insights", description: `Privacy-friendly website analytics with no cookies and no stored IP addresses. Visitors, pages, referrers, UTM sources, events and page speed. Free up to ${FREE} events a month.`, body, canonical: `${CANONICAL}/`, tag });
@@ -96,10 +97,16 @@ export function privacyPage({ tag } = {}) {
   return shell({ title: "Privacy | Railyard Insights", description: "What Railyard Insights stores, what it never stores, and how to delete your data.", body, canonical: `${CANONICAL}/privacy`, tag });
 }
 
-// SEO landing pages (2026-10-14): each targets one real search query with only
-// true, checkable statements about this product. No comparison tables and no
-// claims about a named competitor's features or price — only what Railyard
-// Insights itself does.
+// SEO landing pages (2026-10-14, named comparisons added 2026-10-15): each
+// targets one real search query with only true, checkable statements.
+// `cookielessAnalyticsPage` and `googleAnalyticsAlternativePage` describe only
+// what Railyard Insights itself does, with no named competitor. The two named
+// comparison pages below (`plausibleAlternativePage`, `fathomAlternativePage`)
+// name a specific competitor factually, matching the organic "alternative to"
+// pages already shipped elsewhere in this portfolio (vcpeer.com's
+// /wetransfer-alternative): every number about that competitor is taken from
+// its own live public pricing page on the date noted, cited inline, and never
+// used in a paid ad.
 const seoFooter = `<h2>Try it on your site</h2>
 <form class="signup" method="post" action="/api/sites">
 <label>Your site's domain<input name="domain" placeholder="shop.example.com" required autocomplete="url"></label>
@@ -162,11 +169,18 @@ ${seoFooter}`;
 }
 
 export function plausibleAlternativePage({ tag } = {}) {
-  const body = `<h1>A free, cookieless analytics alternative</h1>
-<p class="muted">If you've looked at a privacy-first analytics tool before and the free tier ran out of room, or the real price only showed up after your traffic grew, Railyard Insights is built to answer that search directly: cookieless, no stored IP addresses, and free for up to ${FREE} stored events a month per site with no card on file.</p>
-<h2>What's free, exactly</h2>
+  const body = `<h1>A Plausible alternative with a real free tier</h1>
+<p class="muted">Plausible Analytics is a well-known cookieless, privacy-first analytics tool, and a fair bar to compare against. Checked on Plausible's own pricing page: its <b>Starter plan is $9/month for up to 10,000 monthly pageviews on one site</b>, <b>Growth is $14/month for up to 3 sites</b>, and <b>Business is $19/month for up to 10 sites</b> — every paid plan starts as a 30-day free trial, no card required up front. Railyard Insights answers the same search with a free tier that is not a trial: <b>free for up to ${FREE} stored events a month per site</b>, no credit card at sign-up, for as long as you use it.</p>
+<h2>Side by side</h2>
+<table><tr><th></th><th>Plausible (Starter)</th><th>Railyard Insights (free)</th></tr>
+<tr><td>Price</td><td>$9/month, billed</td><td>$0, no card</td></tr>
+<tr><td>Monthly cap on that plan</td><td>10,000 pageviews</td><td>${FREE} stored events</td></tr>
+<tr><td>How you get in</td><td>30-day free trial, then billed automatically unless cancelled</td><td>Email + domain, free tier runs indefinitely</td></tr>
+<tr><td>Cookies</td><td>None (Plausible's own claim)</td><td>None; see "How it stays cookieless" below</td></tr>
+</table>
+<h2>What's free with Railyard Insights, exactly</h2>
 <ul class="points">
-<li>Up to ${FREE} stored events a month, per site, for as long as you use it — not a trial.</li>
+<li>Up to ${FREE} stored events a month, per site, for as long as you use it — not a trial that starts billing automatically.</li>
 <li>No credit card to sign up: an email address and a domain get you the tag and a private dashboard link at once.</li>
 <li>Past the free cap, new events are still counted (so your numbers don't silently go dark) but not stored until the 1st of next month; nothing already stored is ever removed.</li>
 <li>Delete the site and every stored event yourself, from the dashboard, at any time.</li>
@@ -178,14 +192,49 @@ export function plausibleAlternativePage({ tag } = {}) {
 <li>Custom events with <code>railyard.track("signup")</code>.</li>
 <li>Real-visitor page speed: LCP, INP and CLS.</li>
 </ul>
+<h2>Where Plausible is ahead</h2>
+<p>Plausible's paid plans add funnels, a Stats API, Search Console integration and longer data retention (per its own pricing page) that Railyard Insights' free tier does not have. If you need those specifically, Plausible is the better fit; if you want a free tier that keeps working without a trial clock, Railyard Insights is built for that search.</p>
 <h2>How it stays cookieless</h2>
 <p>A visitor is a one-way hash of IP address, browser and a secret that changes every UTC day; the IP address itself is never stored. No cookies, no local storage, no cross-day fingerprinting. Browsers with Do Not Track on send nothing. See <a href="/privacy">the full privacy page</a> for every field the tag sends.</p>
+<p class="small">Plausible's prices and plan limits checked on plausible.io's own pricing page, 2026-10-15; Plausible may change them at any time.</p>
 ${seoFooter}`;
   return shell({
-    title: "Free cookieless analytics alternative | Railyard Insights",
-    description: "A free, cookieless website analytics tool: no card to sign up, free up to " + FREE + " stored events a month per site, no stored IP addresses.",
+    title: "Plausible alternative: free tier that's not a trial | Railyard Insights",
+    description: "Plausible Starter is $9/mo for 10,000 pageviews with a 30-day trial. Railyard Insights is free up to " + FREE + " stored events a month, no card, no trial clock.",
     body,
     canonical: `${CANONICAL}/plausible-alternative`,
+    tag,
+  });
+}
+
+export function fathomAlternativePage({ tag } = {}) {
+  const body = `<h1>A Fathom Analytics alternative with no card required</h1>
+<p class="muted">Fathom Analytics is another established cookieless analytics tool. Checked on Fathom's own pricing page: its entry plan is <b>$15/month for up to 100,000 monthly pageviews</b> (covering up to 50 sites on every plan), billed after a <b>7-day free trial that requires a card up front</b>. Railyard Insights is free for up to ${FREE} stored events a month per site, and never asks for a card to start.</p>
+<h2>Side by side</h2>
+<table><tr><th></th><th>Fathom (entry plan)</th><th>Railyard Insights (free)</th></tr>
+<tr><td>Price</td><td>$15/month, billed</td><td>$0, no card</td></tr>
+<tr><td>Monthly cap on that plan</td><td>100,000 pageviews</td><td>${FREE} stored events</td></tr>
+<tr><td>Trial</td><td>7 days, card required up front</td><td>No trial: the free tier itself runs indefinitely</td></tr>
+<tr><td>Cookies</td><td>None (Fathom's own claim)</td><td>None; see "How it stays cookieless" below</td></tr>
+</table>
+<h2>What's free with Railyard Insights, exactly</h2>
+<ul class="points">
+<li>Up to ${FREE} stored events a month, per site, for as long as you use it.</li>
+<li>No credit card to sign up: an email address and a domain get you the tag and a private dashboard link at once.</li>
+<li>Past the free cap, new events are still counted but not stored until the 1st of next month; nothing already stored is ever removed.</li>
+<li>Delete the site and every stored event yourself, from the dashboard, at any time.</li>
+</ul>
+<h2>Where Fathom is ahead</h2>
+<p>Fathom's paid plans cover up to 50 sites per account and far higher pageview ceilings (its own pricing page lists tiers up to 25,000,000 monthly pageviews) — a better fit for an agency running many high-traffic sites on one bill. Railyard Insights' free tier is scoped to a single site's events and is built for the search for a no-card starting point, not for that scale.</p>
+<h2>How it stays cookieless</h2>
+<p>A visitor is a one-way hash of IP address, browser and a secret that changes every UTC day; the IP address itself is never stored. No cookies, no local storage, no cross-day fingerprinting. Browsers with Do Not Track on send nothing. See <a href="/privacy">the full privacy page</a> for every field the tag sends.</p>
+<p class="small">Fathom's prices and plan limits checked on usefathom.com's own pricing page, 2026-10-15; Fathom may change them at any time.</p>
+${seoFooter}`;
+  return shell({
+    title: "Fathom Analytics alternative, no card required | Railyard Insights",
+    description: "Fathom's entry plan is $15/mo with a 7-day trial that needs a card. Railyard Insights is free up to " + FREE + " stored events a month, no card at all.",
+    body,
+    canonical: `${CANONICAL}/fathom-analytics-alternative`,
     tag,
   });
 }
@@ -256,5 +305,5 @@ export function messagePage(title, text, status = "") {
 }
 
 export const ROBOTS = `User-agent: *\nAllow: /\nDisallow: /d/\nDisallow: /api/\nSitemap: ${CANONICAL}/sitemap.xml\n`;
-const SEO_PATHS = ["/cookieless-analytics", "/google-analytics-alternative", "/plausible-alternative"];
+const SEO_PATHS = ["/cookieless-analytics", "/google-analytics-alternative", "/plausible-alternative", "/fathom-analytics-alternative"];
 export const SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${CANONICAL}/</loc><lastmod>2026-10-12</lastmod></url><url><loc>${CANONICAL}/privacy</loc><lastmod>2026-10-12</lastmod></url>${SEO_PATHS.map((p) => `<url><loc>${CANONICAL}${p}</loc><lastmod>2026-10-14</lastmod></url>`).join("")}</urlset>\n`;

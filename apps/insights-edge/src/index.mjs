@@ -12,7 +12,7 @@ import { capMessage } from "./caps.ts";
 import { applyWebhookEvent, billingReady, createCheckout, verifyDodoWebhook } from "./dodo.mjs";
 import { createSite, deleteSite, hostMatches, resolveDashboard, signupEmail, usage } from "./selfserve.mjs";
 import { pageSpeed, siteStats } from "./store.mjs";
-import { ROBOTS, SITEMAP, cookielessAnalyticsPage, dashboardPage, googleAnalyticsAlternativePage, landingPage, messagePage, plausibleAlternativePage, privacyPage } from "./pages.mjs";
+import { ROBOTS, SITEMAP, cookielessAnalyticsPage, dashboardPage, fathomAlternativePage, googleAnalyticsAlternativePage, landingPage, messagePage, plausibleAlternativePage, privacyPage } from "./pages.mjs";
 import { REPLAY_JS, REPLAY_VIEWER_JS } from "./replay/tracker.mjs";
 import { ingestReplayChunk } from "./replay/ingest.mjs";
 import { replayDashboardRoute, replayEventsApi, replayPublicConfig } from "./replay/routes.mjs";
@@ -254,6 +254,7 @@ async function publicRoute(request, env, url) {
   if (get && p === "/cookieless-analytics") return html(200, cookielessAnalyticsPage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
   if (get && p === "/google-analytics-alternative") return html(200, googleAnalyticsAlternativePage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
   if (get && p === "/plausible-alternative") return html(200, plausibleAlternativePage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
+  if (get && p === "/fathom-analytics-alternative") return html(200, fathomAlternativePage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
   if (get && p === "/robots.txt") return new Response(ROBOTS, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" } });
   if (get && p === "/sitemap.xml") return new Response(SITEMAP, { headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" } });
   if (request.method === "POST" && p === "/api/sites") return signup(request, env, url);
