@@ -22,6 +22,16 @@ export const SECRET_ENV = [
 export const DODO_TEST_BASE = "https://test.dodopayments.com";
 export const DODO_LIVE_BASE = "https://live.dodopayments.com";
 
+/**
+ * The shared Scribase control-plane (management) API -- creates/lists
+ * organizations, projects and environments. Never a project's own data-plane
+ * URL (the host a project's auth/rest/storage calls go to, which looks like
+ * https://<host_label>.scribase.com per the box's gateway template). Shipped
+ * live as SCRIBASE_URL on 2026-10-14 by mistake: it renders a 200 but every
+ * sign-in silently fails (404 route_not_found on /auth/v1/otp).
+ */
+export const SCRIBASE_CONTROL_PLANE_HOST = "https://api.scribase.com";
+
 export interface Config {
   consoleUrl: string;
   insightsUrl: string;
@@ -111,11 +121,18 @@ export function readConfig(env: Env = process.env): Config {
   if (dodoBase === DODO_LIVE_BASE && !dodoAllowLive) {
     throw new Error("DODO_API_BASE is the live host but RAILYARD_DODO_LIVE is not 1 (test mode only until the owner switches)");
   }
+  const scribaseUrl = need(env, "SCRIBASE_URL").trim().replace(/\/$/, "");
+  if (scribaseUrl === SCRIBASE_CONTROL_PLANE_HOST) {
+    throw new Error(
+      `SCRIBASE_URL is the Scribase control-plane API (${SCRIBASE_CONTROL_PLANE_HOST}), not this console's own project gateway host; ` +
+        "set it to the railyard-console project's api_url once that project is provisioned (see DEPLOY.md)",
+    );
+  }
   return {
     consoleUrl: (env.RAILYARD_CONSOLE_URL ?? "https://railyard.ereboslab.com").replace(/\/$/, ""),
     insightsUrl: (env.RAILYARD_INSIGHTS_URL ?? "https://insights.railyard.ereboslab.com").replace(/\/$/, ""),
     gitUrl: (env.RAILYARD_GIT_URL ?? "https://git.railyard.ereboslab.com").replace(/\/$/, ""),
-    scribaseUrl: need(env, "SCRIBASE_URL").replace(/\/$/, ""),
+    scribaseUrl,
     scribaseAnonKey: need(env, "SCRIBASE_ANON_KEY"),
     scribaseServiceRoleKey: need(env, "SCRIBASE_SERVICE_ROLE_KEY"),
     sessionSecret: need(env, "RAILYARD_SESSION_SECRET"),

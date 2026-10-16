@@ -98,15 +98,27 @@ test starts a throwaway local Postgres.
 
 ## Deploy
 
-Never deployed yet. See [`DEPLOY.md`](./DEPLOY.md) for the exact secret list,
-build/deploy commands, pre-flight checklist, and rollback.
+Deployed once already (2026-10-14), but not working: `SCRIBASE_URL` points at
+the control-plane API, not a project, because no Scribase project exists yet
+for this console. See [`DEPLOY.md`](./DEPLOY.md) for the verified live state,
+the exact secret list, build/deploy commands, pre-flight checklist, and
+rollback.
 
 ## Owner steps
 
+0. Provision the console's own Scribase project (organization `ereboslab`,
+   e.g. project `railyard-console`) with a real `SCRIBASE_ACCESS_TOKEN` — none
+   was found on this machine (checked `~/products/.env`'s
+   `SUPABASE_ACCOUNT_TOKEN`, a different credential: 401 against
+   `api.scribase.com`). Verified 2026-10-17: `ereboslab` owns zero Scribase
+   projects today.
 1. Create the `railyard` brand and the three test-mode products; set the env above.
 2. Apply `db/migrations/0001_railyard_console.sql`, then
    `db/migrations/0002_scribase_bridge.sql` and `db/migrations/0003_ai_gateway.sql`, to the console's Scribase project
-   and add `railyard` to its exposed schemas.
+   and add `railyard` to its exposed schemas. Then update `SCRIBASE_URL` in
+   `wrangler.jsonc` to that project's real `api_url` and redeploy — it is
+   currently the wrong (control-plane) host, which `lib/config.ts` now refuses
+   to boot with.
 3. Email sign-in works as soon as the project mails (its SMTP or Rally Send).
    Later, enable Google and GitHub sign-in on that project with
    `https://railyard.ereboslab.com/auth/callback` as a redirect URL and drop
