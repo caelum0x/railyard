@@ -46,6 +46,7 @@ export function landingPage({ error, values = {}, tag } = {}) {
   });
   const body = `<h1>Website analytics without cookies</h1>
 <p class="muted">Add one script tag and see visitors, top pages, referrers, UTM campaigns, custom events and page speed. The tag sets no cookies, uses no local storage, and no IP address is ever stored. Free for up to ${FREE} events a month per site.</p>
+<p><a href="/live-demo">See a live example with real numbers, before you sign up &rarr;</a></p>
 <form class="signup" method="post" action="/api/sites">
 ${error ? `<p class="error" role="alert">${esc(error)}</p>` : ""}
 <label>Your site's domain<input name="domain" placeholder="shop.example.com" required autocomplete="url" value="${esc(values.domain)}"></label>
@@ -72,6 +73,7 @@ ${error ? `<p class="error" role="alert">${esc(error)}</p>` : ""}
 <p>Free: up to ${FREE} stored events a month per site. Past that, new events are counted but not stored until the 1st of next month; nothing already stored is removed. You can delete a site and all of its data from its dashboard at any time.</p>
 <h2>Read more</h2>
 <ul class="points">
+<li><a href="/live-demo">See a live example dashboard</a> with this site's own real traffic, not a mockup.</li>
 <li><a href="/cookieless-analytics">What "cookieless analytics" means</a>, and exactly how this tag counts a visitor without one.</li>
 <li><a href="/google-analytics-alternative">A privacy-friendly Google Analytics alternative</a>.</li>
 <li><a href="/plausible-alternative">A Plausible alternative</a> with a free tier that's not a trial.</li>
@@ -300,10 +302,43 @@ ${waiting ? "" : `<h2>Your tag</h2><pre>${esc(snippet)}</pre>`}
   return shell({ title: `${site.label} analytics | Railyard Insights`, description: "Private dashboard", body, robots: "noindex,nofollow" });
 }
 
+// Live example (2026-10-16): a public, read-only view of this site's own
+// numbers -- the same dashboard every Railyard Insights sign-up gets --
+// so a visitor can see the product work on real traffic before giving an
+// email address. No PII: no site labels, emails or dashboard tokens of any
+// customer appear here, only this landing page's own aggregate counts.
+export function liveDemoPage({ stats, speed, days, tag } = {}) {
+  const cur = stats;
+  const body = `<h1>A live example, not a mockup</h1>
+<p class="muted">This is the real traffic to insights.ereboslab.com itself over the last ${days} days, read with the same dashboard every sign-up gets. Nothing here is a screenshot or a made-up number.</p>
+<nav class="days">Last: ${[7, 30, 90].map((d) => (d === days ? `<b>${d} days</b>` : `<a href="/live-demo?days=${d}">${d} days</a>`)).join(" ")}</nav>
+<div class="grid">
+<div class="stat"><b>${n(cur.visitors)}</b>visitors</div><div class="stat"><b>${n(cur.pageviews)}</b>page views</div>
+<div class="stat"><b>${n(cur.engaged)}</b>viewed 2+ pages</div><div class="stat"><b>${n(cur.converted)}</b>sent a custom event</div>
+</div>
+${list("Top pages", cur.top_pages, [{ h: "Page", v: (r) => r.url }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
+${list("Top referrers", cur.top_referrers, [{ h: "Site", v: (r) => r.host }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
+${speedSection(speed)}
+<h2>Get the same dashboard for your own site</h2>
+<form class="signup" method="post" action="/api/sites">
+<label>Your site's domain<input name="domain" placeholder="shop.example.com" required autocomplete="url"></label>
+<label>Your email (we send the dashboard link here)<input type="email" name="email" placeholder="you@company.com" required autocomplete="email"></label>
+<button type="submit">Get my tag and dashboard</button>
+<p class="small">No password and no card. Free for up to ${FREE} stored events a month per site.</p>
+</form>`;
+  return shell({
+    title: "Live example dashboard, real traffic | Railyard Insights",
+    description: "Real, live visitor and page-speed numbers from this site's own analytics -- the exact dashboard every Railyard Insights sign-up gets, before you give an email address.",
+    body,
+    canonical: `${CANONICAL}/live-demo`,
+    tag,
+  });
+}
+
 export function messagePage(title, text, status = "") {
   return shell({ title: `${title} | Railyard Insights`, description: title, robots: "noindex", body: `<h1>${esc(title)}</h1>${status ? `<p class="${status}">${esc(text)}</p>` : `<p>${esc(text)}</p>`}<p><a href="/">Back to Railyard Insights</a></p>` });
 }
 
 export const ROBOTS = `User-agent: *\nAllow: /\nDisallow: /d/\nDisallow: /api/\nSitemap: ${CANONICAL}/sitemap.xml\n`;
 const SEO_PATHS = ["/cookieless-analytics", "/google-analytics-alternative", "/plausible-alternative", "/fathom-analytics-alternative"];
-export const SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${CANONICAL}/</loc><lastmod>2026-10-12</lastmod></url><url><loc>${CANONICAL}/privacy</loc><lastmod>2026-10-12</lastmod></url>${SEO_PATHS.map((p) => `<url><loc>${CANONICAL}${p}</loc><lastmod>2026-10-14</lastmod></url>`).join("")}</urlset>\n`;
+export const SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${CANONICAL}/</loc><lastmod>2026-10-12</lastmod></url><url><loc>${CANONICAL}/privacy</loc><lastmod>2026-10-12</lastmod></url><url><loc>${CANONICAL}/live-demo</loc><lastmod>2026-10-16</lastmod></url>${SEO_PATHS.map((p) => `<url><loc>${CANONICAL}${p}</loc><lastmod>2026-10-14</lastmod></url>`).join("")}</urlset>\n`;

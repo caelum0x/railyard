@@ -12,7 +12,7 @@ import { capMessage } from "./caps.ts";
 import { applyWebhookEvent, billingReady, createCheckout, verifyDodoWebhook } from "./dodo.mjs";
 import { createSite, deleteSite, hostMatches, resolveDashboard, signupEmail, usage } from "./selfserve.mjs";
 import { pageSpeed, siteStats } from "./store.mjs";
-import { ROBOTS, SITEMAP, cookielessAnalyticsPage, dashboardPage, fathomAlternativePage, googleAnalyticsAlternativePage, landingPage, messagePage, plausibleAlternativePage, privacyPage } from "./pages.mjs";
+import { ROBOTS, SITEMAP, cookielessAnalyticsPage, dashboardPage, fathomAlternativePage, googleAnalyticsAlternativePage, landingPage, liveDemoPage, messagePage, plausibleAlternativePage, privacyPage } from "./pages.mjs";
 import { REPLAY_JS, REPLAY_VIEWER_JS } from "./replay/tracker.mjs";
 import { ingestReplayChunk } from "./replay/ingest.mjs";
 import { replayDashboardRoute, replayEventsApi, replayPublicConfig } from "./replay/routes.mjs";
@@ -245,6 +245,18 @@ async function dashboard(request, env, url, parts) {
   );
 }
 
+const EMPTY_SITE_STATS = { pageviews: 0, visitors: 0, engaged: 0, converted: 0, top_pages: [], top_referrers: [], events: [], utm_sources: [] };
+
+/** Public, read-only live-example page: this landing site's own real numbers, no auth needed. */
+async function liveDemo(env, url) {
+  const days = [7, 30, 90].includes(Number(url.searchParams.get("days"))) ? Number(url.searchParams.get("days")) : 30;
+  const key = landingTag(env);
+  if (!env.DB || !key) return html(200, liveDemoPage({ stats: EMPTY_SITE_STATS, speed: null, days, tag: key }), { "cache-control": "public, max-age=60", "content-security-policy": PUBLIC_CSP });
+  const w = windows(Date.now() + DAY, days);
+  const [stats, speed] = await Promise.all([siteStats(env.DB, key, ...w.cur), pageSpeed(env.DB, key, ...w.cur)]);
+  return html(200, liveDemoPage({ stats, speed, days, tag: key }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
+}
+
 /** Public pages, sign-up and dashboards; null when the path is not one of them. */
 async function publicRoute(request, env, url) {
   const p = url.pathname;
@@ -255,6 +267,7 @@ async function publicRoute(request, env, url) {
   if (get && p === "/google-analytics-alternative") return html(200, googleAnalyticsAlternativePage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
   if (get && p === "/plausible-alternative") return html(200, plausibleAlternativePage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
   if (get && p === "/fathom-analytics-alternative") return html(200, fathomAlternativePage({ tag: landingTag(env) }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
+  if (get && p === "/live-demo") return liveDemo(env, url);
   if (get && p === "/robots.txt") return new Response(ROBOTS, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" } });
   if (get && p === "/sitemap.xml") return new Response(SITEMAP, { headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" } });
   if (request.method === "POST" && p === "/api/sites") return signup(request, env, url);
