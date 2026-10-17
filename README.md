@@ -11,6 +11,8 @@ The durable asset is the **settlement rail underneath every app**: **Mint** (a f
 | **Mint** (`apps/mint`) | Settlement ledger: double-entry, Ed25519 hash-linked receipts, reserve conservation, payouts and provider reconciliation. The core asset. | implemented; operator console at `/admin` |
 | **Relay** (`apps/relay`) | Model gateway (TensorZero fork) with success-only Mint billing and a per-model price catalog. The model rail. | implemented; operator UI in `apps/relay/ui` |
 | **Rago** (`apps/rago`) | Usage-based billing (Rust rewrite of Lago, API-compatible): metering, subscriptions, invoicing, payments, integrations. | implemented; admin at `/admin`, customer portal at `/portal/:token` |
+| **Insights** (`apps/insights-edge`) | Cookieless, GDPR-friendly web analytics: email+domain signup, private per-site dashboard, session replay (paid tier), UTM/referrer/page-speed reporting. | **live** at `insights.ereboslab.com`, free up to 10,000 events/month/site |
+| **Faultline** (GlitchTip, box 2) | Sentry-compatible browser/server error tracking for the portfolio. | **live** at `errors.ereboslab.com`, wired into Scribase, Menivor, Bidstage |
 | **Vend** (`apps/vend`) | Resellable metered AI SDK on the rail (Stripe-meets-OpenRouter). Interrupted holds and payouts are replayed by `vend-reconcile`. | implemented; tenant console at `/console`, operator admin at `/admin` |
 | **Turnstile** (`apps/turnstile`) | Drop-in paywall for paid agent tools (AITP-402 and x402). | runnable SDK + reference server; admin at `/admin` |
 | **Rithub** (`apps/rithub`) | Self-hostable git forge on `rit`: repos, orgs, issues, pull requests, reviews, releases, CI checks, audit. | implemented; server-rendered web UI at `/` |
