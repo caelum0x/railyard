@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Railyard mark: converging rails — many tracks (apps) settling onto one -->
+<!-- gauge (Mint, the settlement ledger underneath all of them). Monochrome, -->
+<!-- reads at any size, no wordmark baked in. -->
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <rect width="256" height="256" rx="48" fill="#0B0C0E"/>
+  <g stroke="#FFFFFF" stroke-width="10" stroke-linecap="round" fill="none">
+    <path d="M40 72 L128 148" opacity="0.35"/>
+    <path d="M40 128 L128 160" opacity="0.6"/>
+    <path d="M40 184 L128 172" opacity="0.85"/>
+    <path d="M128 148 L216 148" opacity="0.6"/>
+    <path d="M128 160 L216 160" opacity="0.85"/>
+    <path d="M128 172 L216 172"/>
+  </g>
+  <!-- Sleepers (rail ties) across the settled single gauge -->
+  <g stroke="#FFFFFF" stroke-width="7" stroke-linecap="round">
+    <path d="M140 142 L140 178"/>
+    <path d="M164 142 L164 178"/>
+    <path d="M188 142 L188 178"/>
+  </g>
+</svg>
