@@ -36,12 +36,15 @@ export interface Config {
   consoleUrl: string;
   insightsUrl: string;
   /**
-   * Railyard's code-hosting service (product name "Rithub", served off
-   * apps/gitea — go-gitea/gitea, MIT). Always shown in the Nav as an
-   * external link; the service itself runs native Gitea accounts until a
-   * Railyard identity/OIDC source exists (TODO(railyard-sso) in
-   * apps/gitea/docker-compose.yml). Override with RAILYARD_GIT_URL once the
-   * real hostname is live.
+   * Railyard's code-hosting link, shown in the Nav as "Code". The intended
+   * product (name "Rithub", apps/gitea — go-gitea/gitea, MIT) was proven
+   * locally on 2026-10-15 (see apps/gitea/README.md "Local proof") but was
+   * never shipped to railyard-box: no gitea.env/container on the box, no DNS
+   * for git.railyard.ereboslab.com, and the box-tunnel TUNNEL_TOKEN that
+   * would publish it is still blank in /etc/products/box-tunnel.env. Until
+   * that production deploy happens, this points at the repository's real,
+   * live home — the public GitHub repo — instead of a dead subdomain.
+   * Override with RAILYARD_GIT_URL once apps/gitea is actually deployed.
    */
   gitUrl: string;
   scribaseUrl: string;
@@ -131,7 +134,7 @@ export function readConfig(env: Env = process.env): Config {
   return {
     consoleUrl: (env.RAILYARD_CONSOLE_URL ?? "https://railyard.ereboslab.com").replace(/\/$/, ""),
     insightsUrl: (env.RAILYARD_INSIGHTS_URL ?? "https://insights.railyard.ereboslab.com").replace(/\/$/, ""),
-    gitUrl: (env.RAILYARD_GIT_URL ?? "https://git.railyard.ereboslab.com").replace(/\/$/, ""),
+    gitUrl: (env.RAILYARD_GIT_URL ?? "https://github.com/caelum0x/railyard").replace(/\/$/, ""),
     scribaseUrl,
     scribaseAnonKey: need(env, "SCRIBASE_ANON_KEY"),
     scribaseServiceRoleKey: need(env, "SCRIBASE_SERVICE_ROLE_KEY"),
