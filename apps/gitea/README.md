@@ -119,3 +119,31 @@ account `caelum0x` created.
 security list rule for inbound TCP 2222 (git-over-SSH) -- HTTPS clone/push
 and the web UI work today; SSH clone needs that one rule added, same as
 `deploy/RUNBOOK.md` step 3 already documented.
+
+## CI runner deployed (2026-10-20)
+
+Closes a real gap found in a GitLab CE / GitHub Enterprise Server
+comparison: `GITEA__actions__ENABLED=true` has been set since the first
+deploy, but with no runner registered the Actions tab was cosmetic — a
+pushed `.gitea/workflows/*.yml` job would queue forever. `act_runner`
+(`gitea/act_runner:0.6.1`, pinned) is now a real service in
+`docker-compose.yml`: DooD via the mounted host docker socket, registered
+against the gitea container over the internal compose network
+(`http://gitea:3000`, not the public HTTPS hostname), credentials persisted
+in the `gitea-runner-data` volume after first boot. See
+`deploy/RUNBOOK.md`'s "act_runner" section for the registration command and
+an end-to-end smoke-test workflow. Deployed and verified live on
+railyard-box. Live proof (2026-10-20, this session): registered the runner
+(`docker exec -u git railyard-gitea-gitea-1 gitea actions generate-runner-token`
++ `docker compose up -d act_runner`) — logs show `runner: railyard-box ...
+declare successfully` with labels `[ubuntu-latest ubuntu-22.04 ubuntu-24.04]`.
+Created a throwaway repo (`caelum0x/ci-runner-proof`), pushed a real
+`.gitea/workflows/ci.yml` (`runs-on: ubuntu-latest`, one `echo` step) over
+HTTP with a scoped API token, and polled
+`GET /api/v1/repos/caelum0x/ci-runner-proof/actions/tasks`: the runner pulled
+`docker.gitea.com/runner-images:ubuntu-latest`, ran the job in a sibling
+container (`GITEA-ACTIONS-TASK-1-WORKFLOW-JOB-smoke-...`), and the run's
+`status` went `queued` -> `running` -> **`success`** within about a minute
+of the push. Proof repo deleted afterward (`DELETE /api/v1/repos/...`,
+`204`); the two scoped proof tokens remain on the admin account under
+Settings -> Applications (safe to revoke manually).

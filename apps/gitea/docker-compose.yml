@@ -116,26 +116,47 @@ services:
       - "${GITEA_HTTP_HOST_PORT:-3300}:3000"
       - "${GITEA_SSH_HOST_PORT:-2222}:22"
 
-  # Optional: Gitea Actions CI runner (the "forge CI runners" gap from
-  # plans/OSS-ADOPTION-2026-10-15.md — Gitea's built-in Actions covers it,
-  # no separate Woodpecker install needed). Commented out: register a runner
-  # token first (Site Admin -> Actions -> Runners -> Create new runner, or
-  # `docker compose exec gitea gitea actions generate-runner-token`), then
-  # uncomment and set GITEA_RUNNER_TOKEN.
-  #
-  # act_runner:
-  #   image: gitea/act_runner:latest
-  #   restart: unless-stopped
-  #   depends_on: [gitea]
-  #   environment:
-  #     GITEA_INSTANCE_URL: ${GITEA_ROOT_URL:-https://git.ereboslab.com/}
-  #     GITEA_RUNNER_REGISTRATION_TOKEN: ${GITEA_RUNNER_TOKEN:?set after generating a token}
-  #     GITEA_RUNNER_NAME: railyard-box
-  #   volumes:
-  #     - gitea-runner-data:/data
-  #     - /var/run/docker.sock:/var/run/docker.sock
+  # Gitea Actions CI runner (closes the "forge CI runners" gap from
+  # plans/OSS-ADOPTION-2026-10-15.md — Gitea's built-in Actions covers the
+  # pipeline definition/UI, this is what actually *executes* a pushed
+  # `.gitea/workflows/*.yml` job; without it the Actions tab is cosmetic).
+  # `profiles: [actions]` keeps this out of a bare `docker compose up -d`
+  # (it must be started by name: `docker compose up -d act_runner`) — a
+  # fresh clone/box must never fail to bring up gitea+postgres just because
+  # a runner token doesn't exist yet. Requires a one-time registration token:
+  #   docker compose exec -u git gitea gitea actions generate-runner-token
+  # then put it in .env as GITEA_RUNNER_TOKEN before the up -d above. Token
+  # is consumed on first boot: act_runner persists its signed credentials in
+  # the gitea-runner-data volume (`.runner` file) and reconnects with those
+  # on every restart, so the token env var is only read once per fresh
+  # volume. Starting this with GITEA_RUNNER_TOKEN still unset/blank is safe
+  # (no required-var interpolation failure that could block the rest of the
+  # stack) — act_runner just exits/restarts with a clear "no token" error
+  # until a real one is set.
+  act_runner:
+    image: gitea/act_runner:${ACT_RUNNER_IMAGE_TAG:-0.6.1}
+    profiles: ["actions"]
+    restart: unless-stopped
+    depends_on: [gitea]
+    environment:
+      # Internal compose-network hostname, not the public HTTPS URL — the
+      # runner calls Gitea's gRPC/HTTP registration+task API directly inside
+      # the shared docker network, so it doesn't depend on the public DNS
+      # name, TLS termination, or Cloudflare being reachable from the box's
+      # own loopback. Override only if act_runner runs on a different host
+      # than the gitea container (e.g. a dedicated runner box).
+      GITEA_INSTANCE_URL: ${ACT_RUNNER_INSTANCE_URL:-http://gitea:3000}
+      GITEA_RUNNER_REGISTRATION_TOKEN: ${GITEA_RUNNER_TOKEN:-}
+      GITEA_RUNNER_NAME: ${GITEA_RUNNER_NAME:-railyard-box}
+      # No CONFIG_FILE: act_runner runs fine on its built-in defaults from
+      # just the env vars above (DooD via the mounted socket, default
+      # `ubuntu-latest`-style labels) — a mounted config.yaml is only
+      # needed to override those defaults, which nothing here requires yet.
+    volumes:
+      - gitea-runner-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   gitea-pgdata:
   gitea-data:
-  # gitea-runner-data:
+  gitea-runner-data:

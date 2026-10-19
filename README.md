@@ -50,7 +50,7 @@ run on, it probably doesn't belong here — see
 | **Faultline** (GlitchTip, box 2) | Sentry-compatible browser/server error tracking for the portfolio. | **live** at `errors.ereboslab.com`, wired into Scribase, Menivor, Bidstage |
 | **Vend** (`apps/vend`) | Resellable metered AI SDK on the rail (Stripe-meets-OpenRouter). Interrupted holds and payouts are replayed by `vend-reconcile`. | implemented; tenant console at `/console`, operator admin at `/admin` |
 | **Turnstile** (`apps/turnstile`) | Drop-in paywall for paid agent tools (AITP-402 and x402). | runnable SDK + reference server; admin at `/admin` |
-| **Rithub** (`apps/rithub`) | Self-hostable git forge on `rit`: repos, orgs, issues, pull requests, reviews, releases, CI checks, audit. | implemented; server-rendered web UI at `/` |
+| **Rithub** (`apps/gitea`, decided 2026-10-15) | Self-hostable git forge + CI: Gitea (MIT) branded as "Rithub", with the Rago/Mint billing bridge and a registered Actions runner (`act_runner`) so pushed `.gitea/workflows/*.yml` jobs actually execute. `apps/rithub` (from-scratch Rust forge on `rit`) is the earlier effort — kept, not deleted, documented as superseded for this slot in `apps/rithub/README.md` and `apps/gitea/README.md`. | **live** at `git.ereboslab.com`; CI runner deployed 2026-10-20 |
 | **rit** (`apps/rit`) | Library-first Rust implementation of Git's object/authoring model, interop-tested against `git`. | library |
 | **agent-runtime** | Shared Rig/AITP-402 runtime: policy signing, paid SSE/multipart, cancellation reconciliation, pinned Mint-proof verification. | payment SDK ready |
 | **abacus** | Inline proxy enforcing hard, receipted per-agent spend budgets (kill-switch). | implemented; Postgres-backed |

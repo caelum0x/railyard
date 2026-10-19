@@ -181,23 +181,60 @@ the volumes are the fast local recovery path.
 - **Full removal:** `docker compose down -v` (drops both volumes — only
   after a verified `gitea dump` backup exists elsewhere).
 
-## act_runner (optional — Gitea Actions CI, documented not deployed)
+## act_runner (Gitea Actions CI — deployed 2026-10-20)
 
-The `docker-compose.yml` in this directory has a commented-out `act_runner`
-service. Gitea's own Actions (CI) is already enabled
-(`GITEA__actions__ENABLED=true`) and needs no separate system — this is
-purely for running jobs. To turn it on:
+Gitea's own Actions (CI) was enabled (`GITEA__actions__ENABLED=true`) from
+the first deploy, but the Actions tab was cosmetic without a runner attached
+— a pushed `.gitea/workflows/*.yml` would show as queued forever. The
+`act_runner` service in `docker-compose.yml` closes that:
 
 ```bash
-# [railyard-box] generate a registration token in the Gitea admin UI
-# (Site Administration -> Actions -> Runners -> Create new Runner) or:
+# [railyard-box] one-time: generate a registration token, then start the runner
+cd /srv/railyard-gitea
 docker compose exec -u git gitea gitea actions generate-runner-token
 # paste the token into .env as GITEA_RUNNER_TOKEN, then:
-# uncomment the act_runner service block in docker-compose.yml and:
 docker compose up -d act_runner
+docker compose logs -f act_runner   # watch for "runner: <name> registered successfully"
+```
+
+`act_runner` carries `profiles: [actions]`, so a bare `docker compose up -d`
+(a fresh box, or recovering from the rollback steps below) never tries to
+start it and never requires `GITEA_RUNNER_TOKEN` to be set — only naming it
+explicitly (`up -d act_runner`, as above) brings it up. If you do start it
+before generating a token, it exits/restarts with a clear "no token" error
+instead of anything breaking; it never blocks `gitea`/`gitea-postgres`.
+
+Verify end to end (no stub — a real job actually ran):
+
+```bash
+# any existing or new repo on the instance, pushed over HTTPS/SSH as usual
+mkdir -p .gitea/workflows
+cat > .gitea/workflows/ci.yml <<'EOF'
+on: [push]
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "rithub actions runner is alive"
+EOF
+git add .gitea/workflows/ci.yml && git commit -m "ci: smoke test" && git push
+# Site Administration -> Actions -> Runners shows the runner "Idle"/"Active";
+# the repo's Actions tab shows the "smoke" job with a green check and the
+# echoed log line — that's the real proof, not the tab merely existing.
 ```
 
 Runners execute workflow YAML in pushed repos with real container access
-(`/var/run/docker.sock` is mounted) — leave this off until a specific
-workflow needs it; Woodpecker CI (the OSS-ADOPTION runner-up) is not needed
-on top of this.
+(`/var/run/docker.sock` is mounted, DooD) — the registration token is only
+read on the runner's first boot (it persists signed credentials in the
+`gitea-runner-data` volume after that), so `.env`'s `GITEA_RUNNER_TOKEN` can
+be blanked again once the runner shows "Idle". Woodpecker CI (the
+OSS-ADOPTION runner-up) is not needed on top of this.
+
+**Done (2026-10-20):** deployed and verified live — see `../README.md`'s "CI
+runner deployed" section for the full proof log (real repo, real push, real
+`.gitea/workflows/ci.yml`, run status `success`). Housekeeping left for the
+owner: two scoped personal access tokens (`ci-proof`, `ci-proof2`) created
+on the `caelum0x` admin account to drive that proof are still listed under
+Settings -> Applications on the live instance — revoke them there whenever
+convenient (API self-revocation needs Basic auth with the account password,
+which this session didn't have).
