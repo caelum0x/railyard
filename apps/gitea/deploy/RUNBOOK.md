@@ -1,12 +1,20 @@
 # Rithub (Gitea) — Oracle ARM box RUNBOOK
 
+**Status: deployed 2026-10-19.** Live at `https://git.ereboslab.com/`
+(not `git.railyard.ereboslab.com` — see `../README.md`'s "Production deploy"
+section for the actual hostname, ports, and the Caddy-not-Tunnel path taken).
+The steps below are the original plan; they describe the Cloudflare Tunnel
+approach that was *not* the one used in the end (plain Caddy + DNS matched
+every other box service better and needed no new OWNER dashboard step for
+the HTTP path). Kept as-is for the SSH-over-2222 step, which is still
+pending the one real OWNER action (OCI security list rule, step 3 below).
+
 Railyard's code-hosting service: `apps/gitea` — the official `gitea/gitea`
 image (MIT) + Postgres, proven locally (see `../README.md` for the local
 proof log: HTTPS push, SSH push, Git LFS, npm package registry, wiki, all
-verified 2026-10-15). This is the first production deploy — **not executed
-by this session** (never deploy, owner-gated). Follow the Standard Operating
-Pattern already used for Railyard's other box-hosted services
-(`~/products/infra-box/RUNBOOK-A1.md`, `~/products/infra-box/stacks/aptabase/deploy/RUNBOOK.md`).
+verified 2026-10-15). Follow the Standard Operating Pattern already used for
+Railyard's other box-hosted services (`~/products/infra-box/RUNBOOK-A1.md`,
+`~/products/infra-box/stacks/aptabase/deploy/RUNBOOK.md`).
 
 Target box: **railyard-box**, Oracle Always-Free A1 (`VM.Standard.A1.Flex`,
 ARM64/aarch64, Ubuntu 24.04), public IP `130.61.113.116` per

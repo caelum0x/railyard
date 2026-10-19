@@ -95,6 +95,27 @@ volume cleanup) — disk discipline, nothing proof-only is left running.
 
 ## Console wiring
 
-`apps/console`'s left nav has a new **Code** entry pointing at
-`RAILYARD_GIT_URL` (default `https://git.railyard.ereboslab.com`) — see
-`lib/config.ts` and `components/Nav.tsx`.
+`apps/console`'s left nav has a **Code** entry pointing at `RAILYARD_GIT_URL`
+(default `https://git.ereboslab.com`) — see `lib/config.ts` and
+`components/Nav.tsx`.
+
+## Production deploy (2026-10-19)
+
+Live on railyard-box: `docker compose` stack at `/srv/railyard-gitea`
+(web on host port 3350, Postgres on 5434 -- 3300/3400/3100/5433 were already
+taken by rago/mint/relay/the shared Postgres), fronted by Caddy
+(`infra-box/caddy/sites/gitea.caddy`, `CADDY_SITES` += `gitea`) with a
+Let's Encrypt cert, not the Cloudflare Tunnel the original RUNBOOK draft
+proposed -- every other box-hosted Railyard service (rago/relay/mint/errors)
+already uses plain Caddy + a proxied Cloudflare DNS `A` record to
+`130.61.113.116`, so this follows the same, already-proven pattern instead of
+introducing a new one. DNS: `git.ereboslab.com` A record added via the
+Cloudflare API (not `git.railyard.ereboslab.com` -- no other service here
+uses a `railyard.` prefix). Verified live: `https://git.ereboslab.com/` 200s
+with the "Rithub (by Railyard)" title, logo/branding assets 200, admin
+account `caelum0x` created.
+
+**Not yet done (owner step, OCI Console, networking only):** the Oracle VCN
+security list rule for inbound TCP 2222 (git-over-SSH) -- HTTPS clone/push
+and the web UI work today; SSH clone needs that one rule added, same as
+`deploy/RUNBOOK.md` step 3 already documented.

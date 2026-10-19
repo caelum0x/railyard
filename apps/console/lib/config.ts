@@ -36,15 +36,17 @@ export interface Config {
   consoleUrl: string;
   insightsUrl: string;
   /**
-   * Railyard's code-hosting link, shown in the Nav as "Code". The intended
-   * product (name "Rithub", apps/gitea — go-gitea/gitea, MIT) was proven
-   * locally on 2026-10-15 (see apps/gitea/README.md "Local proof") but was
-   * never shipped to railyard-box: no gitea.env/container on the box, no DNS
-   * for git.railyard.ereboslab.com, and the box-tunnel TUNNEL_TOKEN that
-   * would publish it is still blank in /etc/products/box-tunnel.env. Until
-   * that production deploy happens, this points at the repository's real,
-   * live home — the public GitHub repo — instead of a dead subdomain.
-   * Override with RAILYARD_GIT_URL once apps/gitea is actually deployed.
+   * Railyard's code-hosting link, shown in the Nav as "Code". The product
+   * (name "Rithub", apps/gitea — go-gitea/gitea, MIT) was proven locally on
+   * 2026-10-15 (see apps/gitea/README.md "Local proof") and shipped to
+   * railyard-box on 2026-10-19 (apps/gitea/deploy/RUNBOOK.md): Caddy site
+   * `gitea` fronting 127.0.0.1:3350, DNS A record git.ereboslab.com ->
+   * 130.61.113.116 (proxied), Let's Encrypt cert issued — live, verified
+   * 200 with the "Rithub (by Railyard)" branding. (Note: the real hostname
+   * is git.ereboslab.com, not git.railyard.ereboslab.com as earlier drafts
+   * assumed -- every other box-hosted service here follows the flat
+   * `<service>.ereboslab.com` pattern, e.g. rago/relay/mint, not a
+   * `railyard.` prefix.) Override with RAILYARD_GIT_URL if that ever changes.
    */
   gitUrl: string;
   scribaseUrl: string;
@@ -134,7 +136,7 @@ export function readConfig(env: Env = process.env): Config {
   return {
     consoleUrl: (env.RAILYARD_CONSOLE_URL ?? "https://railyard.ereboslab.com").replace(/\/$/, ""),
     insightsUrl: (env.RAILYARD_INSIGHTS_URL ?? "https://insights.railyard.ereboslab.com").replace(/\/$/, ""),
-    gitUrl: (env.RAILYARD_GIT_URL ?? "https://github.com/caelum0x/railyard").replace(/\/$/, ""),
+    gitUrl: (env.RAILYARD_GIT_URL ?? "https://git.ereboslab.com").replace(/\/$/, ""),
     scribaseUrl,
     scribaseAnonKey: need(env, "SCRIBASE_ANON_KEY"),
     scribaseServiceRoleKey: need(env, "SCRIBASE_SERVICE_ROLE_KEY"),

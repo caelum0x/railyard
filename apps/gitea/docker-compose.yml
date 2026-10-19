@@ -54,9 +54,9 @@ services:
       # the environment-to-ini mapping uses an empty section segment:
       # GITEA + "__" + "" + "__" + APP_NAME.
       GITEA____APP_NAME: "Rithub (by Railyard)"
-      GITEA__server__DOMAIN: ${GITEA_DOMAIN:-git.railyard.ereboslab.com}
-      GITEA__server__ROOT_URL: ${GITEA_ROOT_URL:-https://git.railyard.ereboslab.com/}
-      GITEA__server__SSH_DOMAIN: ${GITEA_DOMAIN:-git.railyard.ereboslab.com}
+      GITEA__server__DOMAIN: ${GITEA_DOMAIN:-git.ereboslab.com}
+      GITEA__server__ROOT_URL: ${GITEA_ROOT_URL:-https://git.ereboslab.com/}
+      GITEA__server__SSH_DOMAIN: ${GITEA_DOMAIN:-git.ereboslab.com}
       # SSH_PORT is the port advertised in clone URLs / the UI; the container
       # itself always listens on :22 via the base image's passthrough OpenSSH
       # (the default — do NOT also set START_SSH_SERVER=true, Gitea's own
@@ -128,7 +128,7 @@ services:
   #   restart: unless-stopped
   #   depends_on: [gitea]
   #   environment:
-  #     GITEA_INSTANCE_URL: ${GITEA_ROOT_URL:-https://git.railyard.ereboslab.com/}
+  #     GITEA_INSTANCE_URL: ${GITEA_ROOT_URL:-https://git.ereboslab.com/}
   #     GITEA_RUNNER_REGISTRATION_TOKEN: ${GITEA_RUNNER_TOKEN:?set after generating a token}
   #     GITEA_RUNNER_NAME: railyard-box
   #   volumes:

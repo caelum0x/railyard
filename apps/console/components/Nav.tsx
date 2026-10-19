@@ -13,11 +13,12 @@ const LINKS = [
 
 /**
  * `watch` adds the Watch screen once RAILYARD_WATCH_LIVE is on (PY2.2).
- * `gitUrl` is always shown as an external "Code" link. It defaults to the
- * public GitHub repo (github.com/caelum0x/railyard) -- Rithub (apps/gitea)
- * is the intended self-hosted destination but isn't deployed to production
- * yet, see Config.gitUrl's doc comment in lib/config.ts. Either way it is a
- * plain outbound link, not an internal route with its own session gate.
+ * `gitUrl` is always shown as an external "Code" link. It defaults to
+ * Rithub (apps/gitea), Railyard's self-hosted git forge, live at
+ * https://git.ereboslab.com since 2026-10-19 -- see Config.gitUrl's doc
+ * comment in lib/config.ts. It is a plain outbound link, not an internal
+ * route with its own session gate (Rithub runs native accounts, no SSO
+ * integration yet).
  */
 export function Nav({ watch = false, gitUrl }: { watch?: boolean; gitUrl?: string }) {
   const path = usePathname();
