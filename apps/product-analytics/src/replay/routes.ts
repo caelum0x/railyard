@@ -2,8 +2,11 @@
 //   SDK:     /s/, /i/v0/s/           recording ingest ($snapshot batches, any capture encoding)
 //            /static/<name>.js       the SDK's lazily loaded recorder and survey code
 //   Console: /v1/projects/:id/recording-settings, /replays, /replays/for-people,
-//            /replays/:session, /replays/:session/link (a signed 10-minute player URL)
+//            /replays/:session, /replays/:session/link (a signed 10-minute player URL),
+//            /replays/:session/embed (a signed, longer-lived, embed-anywhere player URL, L8)
 //   Link:    /player/replay?r&p&exp&sig  the player page, and /player/replay/events its lines
+//            /player/embed/replay?r&p&exp&sig  the same player, framable by any third-party
+//            page -- only a /embed link opens it; a console /link never does
 //            /player/assets/*            the pages' static files
 
 import { Hono, type Context } from "hono";
@@ -16,11 +19,11 @@ import { bindSections } from "../remote-config/sections.ts";
 import { ReplayIngest } from "./ingest.ts";
 import { replayRetentionDays } from "./limits.ts";
 import { replayStore } from "./object-store.ts";
-import { assetResponse, pageHeaders, pageHtml, sdkResponse } from "./player-pages.ts";
+import { assetResponse, escapeHtml, pageHeaders, pageHtml, sdkResponse } from "./player-pages.ts";
 import { deleteReplays, identitiesOf, identitiesOfPeople, latestReplays, MAX_LIST, replayBySession, replayForEvent, replayLines, replaysOfIdentities } from "./query.ts";
 import { getRecordingSettings, mergeRecordingSettings, putRecordingSettings } from "./settings.ts";
 import { ApiError, consoleGuard, jsonBody, plainErrors, projectOf, requireWriter, type ConsoleEnv } from "./shared/console-guard.ts";
-import { signLink, verifyLink } from "./shared/signed-link.ts";
+import { EMBED_TTL_SECONDS, signEmbedLink, signLink, verifyLink } from "./shared/signed-link.ts";
 import { extractSnapshots, SnapshotError } from "./snapshot.ts";
 
 export const SESSION_PARAM = /^[A-Za-z0-9._:-]{1,200}$/;
@@ -110,6 +113,49 @@ export function replayRoutes(deps: ServiceDeps): Hono {
     });
   });
 
+  // Embeddable player (L8): the same page and event stream as /player/replay,
+  // but opened only by an embed-scoped link (signEmbedLink) and served with
+  // frame-ancestors * instead of PA_CONSOLE_ORIGIN, so a third party can
+  // paste it into their own support tool, status page or doc as an <iframe>.
+  // A console /link token (scope "console") is refused here, and an /embed
+  // token is refused by /player/replay -- the two surfaces never cross.
+  const linkedEmbed = (c: Context) => {
+    if (!deps.consoleSecret) return null;
+    const v = verifyLink(deps.consoleSecret, new URL(c.req.url).searchParams, deps.now(), "embed");
+    if (!v || !v.resource.startsWith("replay:")) return null;
+    return { project: v.project, session: decodeURIComponent(v.resource.slice("replay:".length)) };
+  };
+  const expiredEmbed = (c: Context) =>
+    c.html(pageHtml({ title: "Link expired", scripts: [], styles: ["player.css"], data: {} }).replace("Loading...", "This embed link has expired or is not valid."), 403, pageHeaders("embed"));
+
+  app.get("/player/embed/replay", async (c) => {
+    const l = linkedEmbed(c);
+    if (!l) return expiredEmbed(c);
+    const q = new URL(c.req.url).searchParams;
+    const t = Number(q.get("t") ?? "0");
+    const events = `/player/embed/replay/events?${new URLSearchParams({ r: q.get("r")!, p: q.get("p")!, exp: q.get("exp")!, sig: q.get("sig")! })}`;
+    return c.body(
+      pageHtml({ title: "Recording", scripts: ["vendor/rrweb-player/rrweb-player.min.js", "replay.js"], styles: ["vendor/rrweb-player/style.css", "player.css"], data: { events, offset: String(Number.isFinite(t) && t > 0 ? Math.floor(t) : 0) } }),
+      200,
+      pageHeaders("embed"),
+    );
+  });
+
+  app.get("/player/embed/replay/events", async (c) => {
+    const l = linkedEmbed(c);
+    if (!l) return c.json({ error: "This embed link has expired or is not valid." }, 403);
+    const store = replayStore();
+    if (!store) return c.json({ error: "Recordings are not stored on this deployment." }, 503);
+    const exists = await deps.db.asProject(l.project, (tx) => replayBySession(tx, l.project, l.session));
+    if (!exists) return c.json({ error: "This recording no longer exists." }, 404);
+    c.header("content-type", "application/x-ndjson; charset=utf-8");
+    c.header("cache-control", "no-store");
+    c.header("referrer-policy", "no-referrer");
+    return stream(c, async (s) => {
+      for await (const text of replayLines(deps.db, store, l.project, l.session)) await s.write(text);
+    });
+  });
+
   // Console API.
   const P = "/v1/projects/:id";
   const api = new Hono<ConsoleEnv>();
@@ -187,6 +233,26 @@ export function replayRoutes(deps: ServiceDeps): Hono {
     const t = typeof b.offset_ms === "number" && Number.isFinite(b.offset_ms) && b.offset_ms > 0 ? Math.floor(b.offset_ms) : 0;
     const link = signLink(deps.consoleSecret!, `replay:${encodeURIComponent(session)}`, pid, deps.now());
     return c.json({ url: `${publicBase(c)}/player/replay?${link.query}${t ? `&t=${t}` : ""}`, expires_at: link.expires_at });
+  });
+
+  // Embeddable player link (L8): a writer only (this is wider exposure than
+  // the console-only /link above -- anyone holding the url can frame the
+  // recording from any site until it expires), default 24h, capped at 7
+  // days (EMBED_TTL_SECONDS). Returns a ready-to-paste <iframe> too, since
+  // that's the actual integration point (a support tool, a status page).
+  api.post(`${P}/replays/:session/embed`, async (c) => {
+    requireWriter(c);
+    const pid = projectOf(c);
+    const session = sessionOf(c);
+    const r = await deps.db.asProject(pid, (tx) => replayBySession(tx, pid, session));
+    if (!r) throw new ApiError(404, "That recording does not exist.");
+    const b = await jsonBody(c);
+    const hours = typeof b.ttl_hours === "number" && Number.isFinite(b.ttl_hours) && b.ttl_hours > 0 ? b.ttl_hours : 24;
+    const ttlSeconds = Math.min(EMBED_TTL_SECONDS, Math.max(1, Math.floor(hours * 3600)));
+    const link = signEmbedLink(deps.consoleSecret!, `replay:${encodeURIComponent(session)}`, pid, deps.now(), ttlSeconds);
+    const url = `${publicBase(c)}/player/embed/replay?${link.query}`;
+    const iframe_html = `<iframe src="${escapeHtml(url)}" width="100%" height="600" frameborder="0" allow="clipboard-write" loading="lazy"></iframe>`;
+    return c.json({ url, iframe_html, expires_at: link.expires_at });
   });
 
   api.delete(`${P}/replays/:session`, async (c) => {

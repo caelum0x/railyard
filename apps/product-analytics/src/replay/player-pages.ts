@@ -58,7 +58,16 @@ export function frameAncestors(env: Record<string, string | undefined> = process
   return list.length ? list.join(" ") : "'self'";
 }
 
-export function pageHeaders(): Record<string, string> {
+/**
+ * `console`: framable only inside the console's own origin (PA_CONSOLE_ORIGIN).
+ * `embed`: a link explicitly minted for embedding (signEmbedLink/scope
+ * "embed"), framable by any page -- that is the one point of this surface,
+ * so `frame-ancestors *` here is intentional, not a default-open mistake.
+ * Everything else about the page (script-src 'self', no inline script,
+ * referrer-policy no-referrer, the event stream's own signature check) is
+ * identical between the two.
+ */
+export function pageHeaders(scope: "console" | "embed" = "console"): Record<string, string> {
   return {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
@@ -73,7 +82,7 @@ export function pageHeaders(): Record<string, string> {
       "media-src * data: blob:",
       "connect-src 'self'",
       "frame-src 'self' about: blob: https: http:",
-      `frame-ancestors ${frameAncestors()}`,
+      `frame-ancestors ${scope === "embed" ? "*" : frameAncestors()}`,
       "base-uri 'none'",
       "form-action 'none'",
     ].join("; "),
