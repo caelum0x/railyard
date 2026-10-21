@@ -357,7 +357,22 @@ pub async fn verify_webhook<H: Headers>(
     }
 
     let ramp = PlayStoreRamp::new(transport, cfg.clone());
-    let info = ramp.lookup(kind, &sku, &token).await.map_err(|_| WebhookError::Ignored(format!("{type_name}: purchase not confirmable")))?;
+    let info = ramp.lookup(kind, &sku, &token).await.map_err(|e| match e {
+        // A transient failure (network error, Google-side 5xx/429, a bad
+        // OAuth2 exchange) — NOT the same as "this purchase is definitively
+        // not confirmable". `Ignored` is acknowledged 200 and Pub/Sub never
+        // redelivers it, which would silently and permanently drop a real
+        // paid purchase on a transient blip. Surface it as `Malformed`
+        // instead: `mint-server`'s webhook dispatch answers that 503, so
+        // Pub/Sub's push subscription retries until the lookup succeeds.
+        RampError::ProviderUnavailable => {
+            WebhookError::Malformed(format!("{type_name}: Play Developer API lookup failed, retry"))
+        }
+        // `DepositNotFound`/`NotConfirmed`/`Unsupported`: the provider
+        // definitively answered "no such purchase" or "not paid" — correctly
+        // final, not retryable.
+        _ => WebhookError::Ignored(format!("{type_name}: purchase not confirmable")),
+    })?;
     if !info.paid {
         return Err(WebhookError::Ignored(format!("{type_name}: not in a paid state")));
     }
@@ -662,6 +677,32 @@ K2nCTa7NqSZGARqYLSthJRM=\n\
         let transport = transport_with(&token_resp, &lookup_resp);
         let result = tokio_test_block_on(verify_webhook(transport, &cfg(r#"{"credits_10":999}"#), &hdrs("push-secret"), &n));
         assert!(matches!(result, Err(WebhookError::Ignored(_))));
+    }
+
+    #[test]
+    fn transient_lookup_failure_is_retried_not_dropped() {
+        // The Developer API re-confirmation call 500s (a transient Google-side
+        // outage, same shape a network blip or rate limit would take: `map_status`
+        // turns any non-404 failure into `RampError::ProviderUnavailable`). This
+        // must NOT be folded into `WebhookError::Ignored` — the HTTP layer
+        // acknowledges that 200 and Pub/Sub never redelivers, so a REAL paid
+        // purchase would be silently and permanently dropped. It must come back
+        // as something the caller retries (`Malformed` maps to 503 in
+        // `mint-server`'s webhook dispatch).
+        let n = pubsub_envelope(json!({
+            "packageName": "com.acme.app",
+            "subscriptionNotification": { "notificationType": 4, "purchaseToken": "ptok_9", "subscriptionId": "pro_monthly" }
+        }));
+        let token_resp = json!({ "access_token": "tok" }).to_string().into_bytes();
+        let transport = Arc::new(FakeTransport {
+            get_responses: Mutex::new(vec![(500, b"{}".to_vec())]),
+            post_responses: Mutex::new(vec![(200, token_resp)]),
+        });
+        let result = tokio_test_block_on(verify_webhook(transport, &cfg(r#"{"pro_monthly":499}"#), &hdrs("push-secret"), &n));
+        assert!(
+            matches!(result, Err(WebhookError::Malformed(_))),
+            "a transient provider failure must be retried, not silently ignored: got {result:?}"
+        );
     }
 
     #[test]
