@@ -16,8 +16,8 @@ I14  DONE     Errors slot (GlitchTip)  [apps/console/lib/watch]
 I15  DONE     Consent slot  [37-consent.test.mjs]
 I16  DONE     Add-on grants and usage  [apps/rago/seeds/portfolio/grants.json]
 I17  PARTIAL  Embeddings route  [apps/relay/config/tensorzero.toml]  (embedding model at line 212; no test of our own)
-I18  MISSING  Semantic cache  [none]
-I19  MISSING  Guardrails and PII redaction  [none]
+I18  DONE     Semantic cache  [apps/relay/crates/relay-semantic-cache]  (coded+tested since b340956e-era Oct 6, deployed+enabled live 2026-10-21: RELAY_SEMANTIC_CACHE=memory, verified with a real cache hit)
+I19  DONE     Guardrails and PII redaction  [apps/relay/crates/relay-guardrails]  (coded+tested since Oct 6, deployed+enabled live 2026-10-21: RELAY_GUARDRAILS_JSON={"pii":"redact"}, verified with a real redacted request)
 I20  PARTIAL  Maintained engine and OTel export  [docs/adr/RY-0001-relay-engine.md]  (RY-RL1 and RY-RL2 landed; otlp exists but is not configured)
 I21  DONE     Per-key trace view  [apps/relay/crates/relay-traces]
 I22  PARTIAL  Billing slot (seller-own payments)  [apps/mint/crates/mint-payments/src/seller]  (P-X4; CA/adapters/railyard/billing.rs is in the Scribase repo)
