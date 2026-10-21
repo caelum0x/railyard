@@ -13,6 +13,7 @@ unless noted.
 | mail.scribase.com | `ry_site_scribase_mail_7e3c28c34586` | edge injector only | `railyard/apps/insights-edge/inject/wrangler.jsonc` (`SITE_KEYS` var) |
 | menivor.com (+ `www.`) | `ry_site_menivor_89f8a6785e1a` | edge injector only — the marketing site does not carry the tag itself | `railyard/apps/insights-edge/inject/wrangler.jsonc` (`SITE_KEYS` var) |
 | oxhanatelier.com (+ `www.`) | `ry_site_oxhan_4684b714b573` | shipped in the app's own layout (added 2026-10-14), **and** listed as a fallback in the edge injector, same belt-and-suspenders pattern as yokharita.com | `oxhan-atelier-fixall/apps/storefront/src/app/layout.tsx`; fallback entry in `railyard/apps/insights-edge/inject/wrangler.jsonc` |
+| share.vcpeer.com | `ry_site_vcpeer_send_80cdc14ff6bc` | shipped in the app's own `_document.tsx` (added 2026-10-21, verified live via `curl`), **and** added as a fallback entry in the edge injector's `routes`/`SITE_KEYS` source — **not yet deployed** (this Worker fronts 4 other live domains, so redeploying it is a dedicated follow-up, not bundled into the vcpeer-share pass that added the tag). The site key also still needs the D1 `signups` row + `SITES` KV `site:<key>` entry (see "Adding a new first-party site" step 3 below) before it actually counts anything. | `vcpeer-share/frontend/src/pages/_document.tsx`; fallback entry (undeployed) in `railyard/apps/insights-edge/inject/wrangler.jsonc` |
 
 ## How the edge injector works
 
