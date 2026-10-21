@@ -97,6 +97,13 @@ export interface Config {
   /** The AI gateway (PY1.4): Relay's tenant key and the sealing key; null keeps the gateway off (503). */
   aiGateway: { relayUrl: string; relayKey: string; credentialsKey: string } | null;
   /**
+   * Rail status (GET /api/v1/rail/status): health URLs for the rail's own
+   * services. Each is independently optional -- unset means that service
+   * reads "not_configured" rather than failing the whole response, so this
+   * works whether only Mint+Rago are live yet or the whole shared plane is up.
+   */
+  railStatus: { mint: string | null; rago: string | null; relay: string | null; abacus: string | null };
+  /**
    * Ship on push (PY3.1, ADR RY-0004): the Railyard GitHub App (owner item Y4)
    * and the Cloudflare OAuth client. Null until all of them and
    * RAILYARD_CREDENTIALS_KEY are set and RAILYARD_SHIP_ON_PUSH_LIVE=1; the routes then answer 503.
@@ -173,6 +180,12 @@ export function readConfig(env: Env = process.env): Config {
       env.RELAY_URL?.trim() && env.RELAY_TENANT_KEY?.trim() && env.RAILYARD_CREDENTIALS_KEY?.trim()
         ? { relayUrl: env.RELAY_URL.trim(), relayKey: env.RELAY_TENANT_KEY.trim(), credentialsKey: env.RAILYARD_CREDENTIALS_KEY.trim() }
         : null,
+    railStatus: {
+      mint: env.MINT_HEALTH_URL?.trim() || null,
+      rago: env.RAGO_HEALTH_URL?.trim() || null,
+      relay: env.RELAY_HEALTH_URL?.trim() || null,
+      abacus: env.ABACUS_HEALTH_URL?.trim() || null,
+    },
     ship: readShip(env),
   };
 }
