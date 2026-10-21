@@ -28,11 +28,13 @@ pub enum ProviderId {
     Iyzico,
     /// Apple App Store, direct (Server Notifications v2 + Server API).
     AppStore,
+    /// Google Play, direct (Real-time Developer Notifications + Developer API).
+    PlayStore,
 }
 
 impl ProviderId {
     /// Every known provider, for registry construction.
-    pub const ALL: [ProviderId; 10] = [
+    pub const ALL: [ProviderId; 11] = [
         ProviderId::Stripe,
         ProviderId::Creem,
         ProviderId::Dodo,
@@ -43,6 +45,7 @@ impl ProviderId {
         ProviderId::Usdc,
         ProviderId::Iyzico,
         ProviderId::AppStore,
+        ProviderId::PlayStore,
     ];
 
     /// The lowercase tag used as the `<provider>:` ref prefix.
@@ -58,6 +61,7 @@ impl ProviderId {
             ProviderId::Usdc => "usdc",
             ProviderId::Iyzico => "iyzico",
             ProviderId::AppStore => "appstore",
+            ProviderId::PlayStore => "playstore",
         }
     }
 

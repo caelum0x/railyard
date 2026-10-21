@@ -21,7 +21,7 @@ use crate::config::{PaymentsConfig, ProviderConfig};
 use crate::crypto_tr::{IyzicoRamp, UsdcRamp};
 use crate::event::{DepositEvent, PayoutEvent, ReversalEvent, VerifiedEvent, WebhookError};
 use crate::http::{Headers, HttpTransport};
-use crate::iap::{AdaptyRamp, AppStoreRamp, RevenueCatRamp};
+use crate::iap::{AdaptyRamp, AppStoreRamp, PlayStoreRamp, RevenueCatRamp};
 use crate::provider::ProviderId;
 use crate::PaymentError;
 
@@ -147,7 +147,7 @@ impl PaymentRegistry {
                     .initialize_checkout(account_id, amount_micros, &callback_url)
                     .await?
             }
-            ProviderId::RevenueCat | ProviderId::Adapty | ProviderId::AppStore => {
+            ProviderId::RevenueCat | ProviderId::Adapty | ProviderId::AppStore | ProviderId::PlayStore => {
                 return Err(PaymentError::NotConfigured(provider));
             }
         };
@@ -209,6 +209,10 @@ impl PaymentRegistry {
             ProviderId::RevenueCat => crate::iap::revenuecat::verify_webhook(cfg, headers, raw),
             ProviderId::Adapty => crate::iap::adapty::verify_webhook(cfg, headers, raw),
             ProviderId::AppStore => crate::iap::appstore::verify_webhook(cfg, headers, raw),
+            // Unlike Apple's self-contained signed transaction, a Play RTDN
+            // notification carries no price/account, so re-confirming it
+            // mintable needs the Developer API (transport-backed).
+            ProviderId::PlayStore => crate::iap::playstore::verify_webhook(self.transport.clone(), cfg, headers, raw).await,
             ProviderId::Usdc => crate::crypto_tr::usdc::verify_webhook(cfg, headers, raw),
             ProviderId::Iyzico => crate::crypto_tr::iyzico::verify_webhook(cfg, headers, raw),
         }
@@ -327,6 +331,7 @@ fn verify_reversal_sync<H: Headers>(
         }
         ProviderId::Adapty => crate::iap::adapty::verify_reversal_webhook(cfg, headers, raw),
         ProviderId::AppStore => crate::iap::appstore::verify_reversal_webhook(cfg, headers, raw),
+        ProviderId::PlayStore => crate::iap::playstore::verify_reversal_webhook(cfg, headers, raw),
         ProviderId::Usdc => Err(WebhookError::Ignored(
             "usdc transfers are final and cannot be reversed".into(),
         )),
@@ -383,7 +388,9 @@ impl PaymentRegistry {
                         extra("rpc_url") && extra("token_contract"),
                     ),
                     ProviderId::Iyzico => (extra("secret_key"), extra("secret_key")),
-                    ProviderId::RevenueCat | ProviderId::Adapty | ProviderId::AppStore => (false, false),
+                    ProviderId::RevenueCat | ProviderId::Adapty | ProviderId::AppStore | ProviderId::PlayStore => {
+                        (false, false)
+                    }
                 };
                 ProviderCapabilities {
                     provider,
@@ -407,6 +414,7 @@ fn build_ramp(cfg: ProviderConfig, transport: Arc<dyn HttpTransport>) -> Arc<dyn
         ProviderId::RevenueCat => Arc::new(RevenueCatRamp::new(transport, cfg)),
         ProviderId::Adapty => Arc::new(AdaptyRamp::new(transport, cfg)),
         ProviderId::AppStore => Arc::new(AppStoreRamp::new(transport, cfg)),
+        ProviderId::PlayStore => Arc::new(PlayStoreRamp::new(transport, cfg)),
         ProviderId::Usdc => Arc::new(UsdcRamp::new(transport, cfg)),
         ProviderId::Iyzico => Arc::new(IyzicoRamp::new(transport, cfg)),
     }

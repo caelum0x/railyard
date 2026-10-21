@@ -8,8 +8,10 @@
 //! attach a custom API-key header, so authenticity is the webhook signature
 //! alone (verified per-provider in `mint-payments`).
 
+use std::collections::HashMap;
+
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use mint_payments::{PayoutEvent, ProviderId, ReversalEvent, VerifiedEvent, WebhookError};
@@ -34,6 +36,48 @@ impl mint_payments::Headers for AxumHeaders<'_> {
     }
 }
 
+/// Google Cloud Pub/Sub push subscriptions cannot attach a custom static
+/// header, only a query parameter on the push endpoint URL — so Play's
+/// webhook auth token travels as `?token=...` instead of a header. This
+/// bridges it into the one synthetic header [`mint_payments::iap::playstore`]
+/// checks, keeping `mint-payments` itself query-string/axum-free (its own
+/// module doc explains why). A real `x-playstore-token` header, if a caller
+/// sends one directly (e.g. local testing with `curl`), is used as a fallback
+/// when no query token is present.
+struct PlayStoreHeaders<'a> {
+    inner: AxumHeaders<'a>,
+    token: Option<&'a str>,
+}
+
+impl mint_payments::Headers for PlayStoreHeaders<'_> {
+    fn get_header(&self, name: &str) -> Option<&str> {
+        if name.eq_ignore_ascii_case("x-playstore-token") {
+            if let Some(t) = self.token {
+                return Some(t);
+            }
+        }
+        self.inner.get_header(name)
+    }
+}
+
+/// The two [`mint_payments::Headers`] views a delivery can need, picked once
+/// per request in [`handle_webhook`] (an enum, not a trait object — `Headers`
+/// has no blanket impl for `Box<dyn Headers>` and doesn't need one for just
+/// two concrete shapes).
+enum RequestHeaders<'a> {
+    Plain(AxumHeaders<'a>),
+    PlayStore(PlayStoreHeaders<'a>),
+}
+
+impl mint_payments::Headers for RequestHeaders<'_> {
+    fn get_header(&self, name: &str) -> Option<&str> {
+        match self {
+            RequestHeaders::Plain(h) => h.get_header(name),
+            RequestHeaders::PlayStore(h) => h.get_header(name),
+        }
+    }
+}
+
 /// What a verified webhook delivery did.
 enum Outcome {
     /// A deposit was minted (or replayed idempotently).
@@ -53,11 +97,12 @@ enum Outcome {
 pub async fn provider_webhook<S: LedgerStore + 'static>(
     State(st): State<AppState<S>>,
     Path(provider): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let browser_callback = provider == ProviderId::Iyzico.tag() && is_form_post(&headers);
-    let outcome = handle_webhook(&st, &provider, &headers, &body).await;
+    let outcome = handle_webhook(&st, &provider, &headers, query.get("token").map(String::as_str), &body).await;
     if browser_callback {
         return browser_response(&st, outcome);
     }
@@ -122,6 +167,7 @@ async fn handle_webhook<S: LedgerStore + 'static>(
     st: &AppState<S>,
     provider: &str,
     headers: &HeaderMap,
+    playstore_token: Option<&str>,
     body: &Bytes,
 ) -> Result<Outcome, ApiError> {
     let provider = ProviderId::from_tag(provider)
@@ -133,16 +179,19 @@ async fn handle_webhook<S: LedgerStore + 'static>(
         .as_ref()
         .ok_or_else(|| ApiError::Internal("provider not configured".into()))?;
 
+    let headers_view = if provider == ProviderId::PlayStore {
+        RequestHeaders::PlayStore(PlayStoreHeaders { inner: AxumHeaders(headers), token: playstore_token })
+    } else {
+        RequestHeaders::Plain(AxumHeaders(headers))
+    };
+
     // Verify the RAW body against the provider signature scheme ONCE, then
     // branch on the outcome taxonomy: a verified deposit mints; a verified
     // refund / chargeback claws the minted credit back; a payout settlement
     // update moves the payout record; an `Ignored` (well-formed but
     // non-crediting) event is acknowledged 200 so the provider stops
     // retrying; every other outcome maps to an error status.
-    let event = match registry
-        .verify_event(provider, &AxumHeaders(headers), body)
-        .await
-    {
+    let event = match registry.verify_event(provider, &headers_view, body).await {
         Ok(VerifiedEvent::Deposit(ev)) => ev,
         Ok(VerifiedEvent::Reversal(rev)) => {
             return apply_webhook_reversal(st, provider, &rev)
@@ -253,4 +302,46 @@ async fn apply_webhook_reversal<S: LedgerStore + 'static>(
             candidates.join(", ")
         ),
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mint_payments::Headers as _;
+
+    #[test]
+    fn playstore_header_prefers_the_query_token_over_a_sent_header() {
+        let mut raw = HeaderMap::new();
+        raw.insert("x-playstore-token", "header-value".parse().unwrap());
+        let h = RequestHeaders::PlayStore(PlayStoreHeaders {
+            inner: AxumHeaders(&raw),
+            token: Some("query-value"),
+        });
+        assert_eq!(h.get_header("x-playstore-token"), Some("query-value"));
+        // Case-insensitive, same as every other provider's header lookup.
+        assert_eq!(h.get_header("X-PlayStore-Token"), Some("query-value"));
+    }
+
+    #[test]
+    fn playstore_header_falls_back_to_a_sent_header_without_a_query_token() {
+        let mut raw = HeaderMap::new();
+        raw.insert("x-playstore-token", "header-value".parse().unwrap());
+        let h = RequestHeaders::PlayStore(PlayStoreHeaders { inner: AxumHeaders(&raw), token: None });
+        assert_eq!(h.get_header("x-playstore-token"), Some("header-value"));
+    }
+
+    #[test]
+    fn playstore_header_is_absent_without_either_source() {
+        let raw = HeaderMap::new();
+        let h = RequestHeaders::PlayStore(PlayStoreHeaders { inner: AxumHeaders(&raw), token: None });
+        assert_eq!(h.get_header("x-playstore-token"), None);
+    }
+
+    #[test]
+    fn plain_headers_are_untouched_by_the_playstore_bridge() {
+        let mut raw = HeaderMap::new();
+        raw.insert("authorization", "Bearer x".parse().unwrap());
+        let h = RequestHeaders::Plain(AxumHeaders(&raw));
+        assert_eq!(h.get_header("authorization"), Some("Bearer x"));
+    }
 }

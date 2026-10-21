@@ -10,10 +10,12 @@
 pub mod adapty;
 pub mod apple_jws;
 pub mod appstore;
+pub mod playstore;
 pub mod revenuecat;
 
 pub use adapty::AdaptyRamp;
 pub use appstore::AppStoreRamp;
+pub use playstore::PlayStoreRamp;
 pub use revenuecat::RevenueCatRamp;
 
 use serde_json::Value;

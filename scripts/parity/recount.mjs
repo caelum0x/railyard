@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Railyard parity recount (Wave Q, QY1.0; Wave R, 2026-10-15).
+ * Railyard parity recount (Wave Q, QY1.0; Wave R, 2026-10-15; Wave S, 2026-10-21).
  *
  * Prints DONE, PARTIAL or MISSING for every row in scripts/parity/rows.mjs.
  * The statuses are the static record of PARITY-RECOUNT-2026-09-30.md section 5
@@ -10,10 +10,11 @@
  *   node scripts/parity/recount.mjs --baseline   (the static 2026-09-30 record only)
  *   node scripts/parity/recount.mjs --self-test
  *
- * Verified wave changes live in wave-q.mjs (2026-10-05) and wave-r.mjs
- * (2026-10-15); each names the test file that proves it, and a change whose
- * test file is gone is ignored (the row keeps its prior status). Waves apply
- * in order, so a later wave's entry for the same row id wins.
+ * Verified wave changes live in wave-q.mjs (2026-10-05), wave-r.mjs
+ * (2026-10-15) and wave-s.mjs (2026-10-21); each names the test/code that
+ * proves it, and a change whose evidence file is gone is ignored (the row
+ * keeps its prior status). Waves apply in order, so a later wave's entry for
+ * the same row id wins.
  *
  * --self-test checks that the printed totals are infra 26/12/6 and analytics
  * 20/9/8 (A1-A26 plus L1-L12 except L11, which the recount marks n/a). That
@@ -26,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { BASELINE, ROWS } from './rows.mjs';
 import { WAVE_Q } from './wave-q.mjs';
 import { WAVE_R } from './wave-r.mjs';
+import { WAVE_S } from './wave-s.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -43,7 +45,7 @@ export function mergeWaves(...waves) {
   return [...byId.values()];
 }
 
-const DEFAULT_CHANGES = mergeWaves(WAVE_Q, WAVE_R);
+const DEFAULT_CHANGES = mergeWaves(WAVE_Q, WAVE_R, WAVE_S);
 
 export const STATUSES = Object.freeze(['DONE', 'PARTIAL', 'MISSING']);
 

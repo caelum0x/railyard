@@ -5,6 +5,7 @@ import { applyChanges, countStatuses, formatReport, groups, mergeWaves, run, sel
 import { ANALYTICS, BASELINE, INFRA, LIMRUN, ROWS } from './rows.mjs';
 import { WAVE_Q } from './wave-q.mjs';
 import { WAVE_R } from './wave-r.mjs';
+import { WAVE_S } from './wave-s.mjs';
 
 test('rows cover I1-I44, A1-A26 and L1-L12 once each', () => {
   assert.equal(INFRA.length, 44);
@@ -94,9 +95,9 @@ test('Wave Q changes alone apply only with their test file and leave the baselin
   assert.deepEqual(countStatuses(groups(none.rows).infra), { ...BASELINE.infra });
 });
 
-test('Wave R closes A4, A22 and A23 on top of Wave Q, and the default report applies both waves', () => {
+test('Wave R closes A4, A22 and A23 on top of Wave Q', () => {
   for (const change of WAVE_R) assert.match(change.evidence, /test|Test/, change.id);
-  const { rows, skipped } = applyChanges();
+  const { rows, skipped } = applyChanges(ROWS, mergeWaves(WAVE_Q, WAVE_R));
   assert.deepEqual(skipped, []);
   const split = groups(rows);
   // Wave Q alone: infra 29/10/5, analytics 24/6/7. Wave R moves A4, A22 and
@@ -108,10 +109,24 @@ test('Wave R closes A4, A22 and A23 on top of Wave Q, and the default report app
   assert.equal(byId.A4.status, 'DONE');
   assert.equal(byId.A22.status, 'DONE');
   assert.equal(byId.A23.status, 'DONE');
+});
+
+test('Wave S closes I31 (Mint Play Store direct) on top of Wave Q + R, and the default report applies all three', () => {
+  for (const change of WAVE_S) assert.match(change.evidence, /\.rs$|test|Test/, change.id);
+  const { rows, skipped } = applyChanges();
+  assert.deepEqual(skipped, []);
+  const split = groups(rows);
+  // Wave Q + R: infra 29/10/5. Wave S moves I31 from MISSING to DONE.
+  assert.deepEqual(countStatuses(split.infra), { DONE: 30, PARTIAL: 10, MISSING: 4 });
+  assert.deepEqual(countStatuses(split.analytics), { DONE: 27, PARTIAL: 3, MISSING: 7 });
+  assert.deepEqual(selfTest(), []);
+  const byId = Object.fromEntries(rows.map((row) => [row.id, row]));
+  assert.equal(byId.I31.status, 'DONE');
+  assert.match(byId.I31.evidence, /playstore\.rs/);
   const lines = [];
   assert.equal(run([], (line) => lines.push(line)), 0);
   const text = lines.join('\n');
-  assert.match(text, /infra: 29 \/ 10 \/ 5/);
+  assert.match(text, /infra: 30 \/ 10 \/ 4/);
   assert.match(text, /analytics: 27 \/ 3 \/ 7/);
   assert.match(text, /baseline 2026-09-30: infra 26 \/ 12 \/ 6, analytics 20 \/ 9 \/ 8/);
 });

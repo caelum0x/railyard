@@ -166,6 +166,26 @@ impl PaymentsConfig {
                 .with_extra("issuer_id", g("APPSTORE_ISSUER_ID"))
                 .with_extra("root_sha256", g("APPSTORE_ROOT_SHA256")),
         );
+        // Google Play direct: `api_key` is the service account's PKCS8 RSA
+        // private key (used to sign the JWT that exchanges for a Developer API
+        // OAuth2 access token); `webhook_secret` is a shared token the operator
+        // puts in the Pub/Sub push subscription's endpoint URL
+        // (`?token=...`) and `mint-server` bridges into the
+        // `x-playstore-token` header before verification, since RTDN carries
+        // no self-authenticating signature `mint-payments` can check offline.
+        providers.insert(
+            ProviderId::PlayStore,
+            base(ProviderId::PlayStore, mode)
+                .with_api_key(g("PLAYSTORE_SERVICE_ACCOUNT_KEY"))
+                .with_webhook_secret(g("PLAYSTORE_WEBHOOK_TOKEN"))
+                .with_extra("package_name", g("PLAYSTORE_PACKAGE_NAME"))
+                .with_extra("client_email", g("PLAYSTORE_CLIENT_EMAIL"))
+                // Static USD-cents catalog price per Play product/subscription
+                // id, e.g. {"credits_10":999,"pro_monthly":499} — the Developer
+                // API purchase resources carry no price field, unlike Apple's
+                // signed transaction or RevenueCat's subscriber record.
+                .with_extra("prices_json", g("PLAYSTORE_PRICES_JSON")),
+        );
         providers.insert(
             ProviderId::Adapty,
             base(ProviderId::Adapty, mode)
