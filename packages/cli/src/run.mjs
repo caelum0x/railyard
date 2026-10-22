@@ -27,7 +27,9 @@ export function run(cmd, args, { cwd, env, echo, redactFn = (s) => s, inherit = 
       if (echo) echo(redactFn(String(b)));
     });
     child.on("error", (err) => resolve({ code: 127, stdout, stderr: `${stderr}${err.message}` }));
-    child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
+    // `signal` is set instead of `code` when the child was killed (e.g. Ctrl+C on a tail);
+    // callers that care about a clean stop (not a crash) can tell the two apart.
+    child.on("close", (code, signal) => resolve({ code: code ?? (signal ? 0 : 1), stdout, stderr, signal }));
   });
 }
 

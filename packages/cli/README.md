@@ -32,6 +32,7 @@ npx railyard deploy    # builds and deploys the folder you are in
 | `railyard deploy [--app NAME] [--branch B] [--dir PATH]` | Builds and deploys |
 | `railyard rollback [--app NAME] [--branch B]` | Goes back one version |
 | `railyard deploys [--app NAME]` | Lists recent deploys |
+| `railyard logs [--app NAME] [--branch B] [--format pretty\|json] [--status ok\|error\|canceled]` | Streams the app's Worker logs until you stop it with Ctrl+C |
 | `railyard link [--app NAME]` | Deploys this GitHub repository on every push |
 | `railyard ci` | The deploy step inside GitHub Actions (the workflow `link` adds runs it) |
 | `railyard domains [--app NAME]` | Lists the app's own domains and whether their certificate is issued |

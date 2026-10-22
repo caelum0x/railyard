@@ -170,6 +170,43 @@ export async function rollback(ctx, opts) {
   return 0;
 }
 
+const FORMATS = new Set(["pretty", "json"]);
+
+/** railyard logs [--app NAME] [--branch B] [--format pretty|json] [--status ok|error|canceled]: stream live Worker logs (RYP-D5). */
+export async function logs(ctx, opts) {
+  const creds = needLogin(ctx);
+  if (!creds) return 1;
+  const format = opts.format || "pretty";
+  if (!FORMATS.has(format)) {
+    ctx.err(`Unknown --format ${format}. Use pretty or json.`);
+    return 2;
+  }
+  const dir = resolve(opts.dir ?? ctx.cwd);
+  const app = opts.app || basename(dir);
+  const branch = opts.branch || git(dir, ["rev-parse", "--abbrev-ref", "HEAD"]) || "main";
+  const name = workerName(app, branch);
+  if (!(await ensureWrangler(ctx, dir))) {
+    ctx.err("Cloudflare login did not finish. Run railyard logs again.");
+    return 1;
+  }
+  const w = tool(ctx.env, "wrangler");
+  const args = [...w.slice(1), "tail", "--name", name, "--format", format];
+  if (opts.status) args.push("--status", opts.status);
+  ctx.out(`Streaming ${name}. Stop with Ctrl+C.`);
+  const result = await run(w[0], args, {
+    cwd: dir,
+    env: ctx.env,
+    echo: (s) => ctx.out(redact(s, [creds.token]).replace(/\n$/, "")),
+  });
+  // A Ctrl+C mid-stream ends the child by signal, not a bad exit code: that is how a
+  // tail is meant to stop, not a failure (run() reports it as code 0, signal set).
+  if (result.code !== 0) {
+    ctx.err("Could not stream logs. The output above says why.");
+    return 1;
+  }
+  return 0;
+}
+
 export async function listDeploys(ctx, opts) {
   const creds = needLogin(ctx);
   if (!creds) return 1;
