@@ -61,6 +61,9 @@ export interface Repo {
   createConnectToken(token: ConnectToken): Promise<void>;
   /** Marks a live token used; returns it, or null when unknown, used or expired. */
   consumeConnectToken(hash: string, at: string): Promise<ConnectToken | null>;
+  // Rithub self-serve provisioning (backlog item 4, migration 0014).
+  /** Records the Gitea user/org/repo provisioned for this org; idempotent, last write wins. */
+  setOrgGitea(orgId: string, input: { username: string; orgSlug: string; repoUrl: string }): Promise<Org | null>;
   // OIDC provider (backlog item 5, migration 0013).
   createOidcCode(code: Omit<OidcCode, "created_at" | "consumed_at">): Promise<void>;
   /** Marks a live code consumed once; returns it, or null when unknown, already consumed or expired. */
@@ -99,7 +102,16 @@ export class MemoryRepo implements Repo {
   async createOrgForUser({ userId, email, name, signupSource }: { userId: string; email: string; name: string; signupSource?: string | null }) {
     const existing = await this.findOrgByUser(userId);
     if (existing) return existing;
-    const org: Org = { id: crypto.randomUUID(), name, owner_user_id: userId, created_at: this.now().toISOString(), signup_source: signupSource ?? null };
+    const org: Org = {
+      id: crypto.randomUUID(),
+      name,
+      owner_user_id: userId,
+      created_at: this.now().toISOString(),
+      signup_source: signupSource ?? null,
+      gitea_username: null,
+      gitea_org_slug: null,
+      gitea_repo_url: null,
+    };
     this.orgs.set(org.id, org);
     this.members = [...this.members, { org_id: org.id, user_id: userId, email }];
     return clone(org);
@@ -269,6 +281,13 @@ export class MemoryRepo implements Repo {
     const used = { ...t, used_at: at };
     this.connectTokens = this.connectTokens.map((x) => (x === t ? used : x));
     return clone(used);
+  }
+  async setOrgGitea(orgId: string, input: { username: string; orgSlug: string; repoUrl: string }) {
+    const org = this.orgs.get(orgId);
+    if (!org) return null;
+    const next: Org = { ...org, gitea_username: input.username, gitea_org_slug: input.orgSlug, gitea_repo_url: input.repoUrl };
+    this.orgs.set(orgId, next);
+    return clone(next);
   }
   async createOidcCode(code: Omit<OidcCode, "created_at" | "consumed_at">) {
     this.oidcCodes = [...this.oidcCodes, { ...clone(code), created_at: this.now().toISOString(), consumed_at: null }];

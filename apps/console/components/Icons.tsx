@@ -32,3 +32,14 @@ export function WalletIcon() {
     </svg>
   );
 }
+/** A git-repo glyph (Rithub self-serve provisioning, item 4). */
+export function GitRepoIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="6" cy="6" r="2.4" />
+      <circle cx="6" cy="18" r="2.4" />
+      <circle cx="18" cy="9" r="2.4" />
+      <path d="M6 8.4V15.6M6 15.6c0-4 3-5.8 6.3-6.5M18 11.4V13" />
+    </svg>
+  );
+}

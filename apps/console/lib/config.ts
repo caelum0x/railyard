@@ -18,6 +18,7 @@ export const SECRET_ENV = [
   "GITHUB_APP_CLIENT_SECRET",
   "CLOUDFLARE_OAUTH_CLIENT_SECRET",
   "MINT_API_KEY",
+  "GITEA_ADMIN_TOKEN",
   "RAILYARD_OIDC_SIGNING_KEY",
   "RAILYARD_OIDC_CLIENTS",
 ] as const;
@@ -107,6 +108,16 @@ export interface Config {
    * no-op ("not configured yet") rather than a 500.
    */
   mint: { url: string; apiKey: string } | null;
+  /**
+   * Rithub self-serve provisioning (backlog item 4): `GITEA_API_URL` (the
+   * Gitea instance's own API, e.g. https://git.ereboslab.com/api/v1 -- note
+   * the `/api/v1` suffix, unlike `gitUrl` above which is the plain site
+   * root) and `GITEA_ADMIN_TOKEN` (a site-admin personal access token used
+   * only with Gitea's `sudo=` impersonation, never to act as the admin
+   * account directly). Null keeps `/rithub`'s "Create your repo" button a
+   * documented 503 instead of failing partway through provisioning.
+   */
+  gitea: { apiUrl: string; adminToken: string } | null;
   /**
    * Console as an OIDC provider (backlog item 5): closes apps/gitea's
    * `TODO(railyard-sso)` so Rithub (Gitea) logs in with the Console session
@@ -202,6 +213,7 @@ export function readConfig(env: Env = process.env): Config {
         ? { relayUrl: env.RELAY_URL.trim(), relayKey: env.RELAY_TENANT_KEY.trim(), credentialsKey: env.RAILYARD_CREDENTIALS_KEY.trim() }
         : null,
     mint: env.MINT_URL?.trim() && env.MINT_API_KEY?.trim() ? { url: env.MINT_URL.trim().replace(/\/$/, ""), apiKey: env.MINT_API_KEY.trim() } : null,
+    gitea: env.GITEA_API_URL?.trim() && env.GITEA_ADMIN_TOKEN?.trim() ? { apiUrl: env.GITEA_API_URL.trim().replace(/\/$/, ""), adminToken: env.GITEA_ADMIN_TOKEN.trim() } : null,
     oidc: readOidc(env),
     railStatus: {
       mint: env.MINT_HEALTH_URL?.trim() || null,

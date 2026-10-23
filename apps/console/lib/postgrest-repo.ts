@@ -54,6 +54,15 @@ export class PostgrestRepo implements Repo {
   async getOrg(orgId: string) {
     return this.one<Org>(`orgs?id=eq.${encodeURIComponent(orgId)}`);
   }
+  async setOrgGitea(orgId: string, input: { username: string; orgSlug: string; repoUrl: string }) {
+    const { rows } = await this.req<Org>(
+      "PATCH",
+      `orgs?id=eq.${encodeURIComponent(orgId)}`,
+      { gitea_username: input.username, gitea_org_slug: input.orgSlug, gitea_repo_url: input.repoUrl },
+      "return=representation",
+    );
+    return rows[0] ?? null;
+  }
   async getEntitlement(orgId: string) {
     return this.one<Entitlement>(`entitlements?org_id=eq.${encodeURIComponent(orgId)}`);
   }

@@ -12,6 +12,10 @@ export interface Org {
   created_at: string;
   /** First-touch signup attribution slug (e.g. "insights"), or null (db/migrations/0011). */
   signup_source: string | null;
+  /** Rithub (apps/gitea) provisioned account/org/repo (backlog item 4, db/migrations/0014), or null until provisioned. */
+  gitea_username: string | null;
+  gitea_org_slug: string | null;
+  gitea_repo_url: string | null;
 }
 
 export interface App {

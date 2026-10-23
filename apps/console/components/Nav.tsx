@@ -16,9 +16,11 @@ const LINKS = [
  * `gitUrl` is always shown as an external "Code" link. It defaults to
  * Rithub (apps/gitea), Railyard's self-hosted git forge, live at
  * https://git.ereboslab.com since 2026-10-19 -- see Config.gitUrl's doc
- * comment in lib/config.ts. It is a plain outbound link, not an internal
- * route with its own session gate (Rithub runs native accounts, no SSO
- * integration yet).
+ * comment in lib/config.ts. It is a plain outbound link for an account that
+ * already exists (Console is now a real OIDC provider for Rithub -- see
+ * apps/gitea/README.md "SSO" -- so a visitor without one yet goes through
+ * `/rithub` instead, which provisions a Gitea org + first repo, backlog
+ * item 4).
  */
 export function Nav({ watch = false, gitUrl }: { watch?: boolean; gitUrl?: string }) {
   const path = usePathname();

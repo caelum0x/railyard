@@ -4,6 +4,7 @@
 import { readConfig, type Config } from "./config.ts";
 import { Dodo } from "./dodo.ts";
 import { mintClient, type MintClient } from "./mint.ts";
+import { giteaClient, type GiteaClient } from "./gitea.ts";
 import { PostgrestRepo } from "./postgrest-repo.ts";
 import type { Repo } from "./repo.ts";
 import { insightsClient, type InsightsClient } from "./insights.ts";
@@ -36,6 +37,8 @@ export interface Deps {
   ship: ShipDeps | null;
   /** Mint self-serve account provisioning (backlog item 11); null until MINT_URL/MINT_API_KEY are set. */
   mint: MintClient | null;
+  /** Rithub self-serve provisioning (backlog item 4); null until GITEA_API_URL/GITEA_ADMIN_TOKEN are set. */
+  gitea: GiteaClient | null;
 }
 
 function flagsDeps(cfg: Config): FlagsDeps {
@@ -90,6 +93,7 @@ export function deps(): Deps {
     },
     ship: shipDeps(cfg, repo, sites),
     mint: cfg.mint ? mintClient({ url: cfg.mint.url, apiKey: cfg.mint.apiKey }) : null,
+    gitea: cfg.gitea ? giteaClient({ apiUrl: cfg.gitea.apiUrl, adminToken: cfg.gitea.adminToken }) : null,
   };
   return cached;
 }
