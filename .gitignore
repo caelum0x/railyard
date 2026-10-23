@@ -9,6 +9,7 @@ __pycache__/
 *.db
 # Node
 node_modules/
+.wrangler/
 # Secrets / env
 .env
 .env.*
