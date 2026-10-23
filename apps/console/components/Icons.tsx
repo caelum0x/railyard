@@ -22,3 +22,13 @@ export function CloseIcon() {
     </svg>
   );
 }
+/** A ledger/billing account glyph (Mint self-serve provisioning, item 11). */
+export function WalletIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <rect x="3" y="6" width="18" height="13" rx="2" />
+      <path d="M3 10h18" />
+      <circle cx="16" cy="14.5" r="1.3" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}

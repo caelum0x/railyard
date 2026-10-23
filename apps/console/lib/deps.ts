@@ -3,6 +3,7 @@
 
 import { readConfig, type Config } from "./config.ts";
 import { Dodo } from "./dodo.ts";
+import { mintClient, type MintClient } from "./mint.ts";
 import { PostgrestRepo } from "./postgrest-repo.ts";
 import type { Repo } from "./repo.ts";
 import { insightsClient, type InsightsClient } from "./insights.ts";
@@ -33,6 +34,8 @@ export interface Deps {
   watch: WatchDeps;
   /** Ship on push (PY3.1); null until its GitHub App and Cloudflare client are configured. */
   ship: ShipDeps | null;
+  /** Mint self-serve account provisioning (backlog item 11); null until MINT_URL/MINT_API_KEY are set. */
+  mint: MintClient | null;
 }
 
 function flagsDeps(cfg: Config): FlagsDeps {
@@ -86,6 +89,7 @@ export function deps(): Deps {
       live: cfg.watchLive,
     },
     ship: shipDeps(cfg, repo, sites),
+    mint: cfg.mint ? mintClient({ url: cfg.mint.url, apiKey: cfg.mint.apiKey }) : null,
   };
   return cached;
 }

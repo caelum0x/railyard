@@ -20,6 +20,8 @@ export interface App {
   name: string;
   site_key: string;
   created_at: string;
+  /** Mint ledger account funding this app's metered usage (db/migrations/0012), or null until provisioned. */
+  mint_account_id: string | null;
 }
 
 export interface Entitlement {
@@ -163,4 +165,24 @@ export interface ConnectToken {
   purpose: "ai";
   expires_at: string;
   used_at: string | null;
+}
+
+/**
+ * A single-use OIDC authorization code (db/migrations/0013), item 5: closes
+ * `apps/gitea`'s `TODO(railyard-sso)` by making Console an OIDC provider so
+ * Rithub (Gitea) can register it as an `openidConnect` source and log in
+ * with the same Console session.
+ */
+export interface OidcCode {
+  code_hash: string;
+  client_id: string;
+  redirect_uri: string;
+  org_id: string;
+  user_id: string;
+  email: string;
+  nonce: string | null;
+  scope: string;
+  created_at: string;
+  expires_at: string;
+  consumed_at: string | null;
 }

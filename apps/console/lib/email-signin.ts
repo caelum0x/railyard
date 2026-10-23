@@ -12,8 +12,9 @@ import {
   sendEmailCode,
   verifyEmailCode,
 } from "./scribase-auth.ts";
-import { normalizeSrc, SESSION_COOKIE, SESSION_TTL_SECONDS, SRC_COOKIE } from "./session.ts";
+import { normalizeSrc, OIDC_RETURN_COOKIE, SESSION_COOKIE, SESSION_TTL_SECONDS, SRC_COOKIE } from "./session.ts";
 import { completeSignIn } from "./signin.ts";
+import { postSignInLocation } from "./post-signin.ts";
 
 export interface EmailSignInDeps {
   cfg: { consoleUrl: string; scribaseUrl: string; scribaseAnonKey: string; sessionSecret: string };
@@ -69,10 +70,12 @@ export async function verifyEmailSignIn(req: Request, d: EmailSignInDeps): Promi
   try {
     const user = await verifyEmailCode({ scribaseUrl: d.cfg.scribaseUrl, anonKey: d.cfg.scribaseAnonKey, email, code, fetchImpl: d.fetchImpl });
     const { cookie: session } = await completeSignIn(d.repo, d.cfg.sessionSecret, user, (d.now ?? (() => new Date()))(), src);
-    return redirect(`${base}/apps`, [
+    const { location, clearCookie } = postSignInLocation(base, readCookie(req, OIDC_RETURN_COOKIE));
+    return redirect(location, [
       cookie(SESSION_COOKIE, session, SESSION_TTL_SECONDS),
       cookie(EMAIL_COOKIE, "", 0),
       cookie(SRC_COOKIE, "", 0),
+      clearCookie,
     ]);
   } catch (err) {
     console.error(`email sign-in: ${(err as Error).message}`);

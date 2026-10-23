@@ -17,6 +17,9 @@ export const SECRET_ENV = [
   "GITHUB_APP_WEBHOOK_SECRET",
   "GITHUB_APP_CLIENT_SECRET",
   "CLOUDFLARE_OAUTH_CLIENT_SECRET",
+  "MINT_API_KEY",
+  "RAILYARD_OIDC_SIGNING_KEY",
+  "RAILYARD_OIDC_CLIENTS",
 ] as const;
 
 export const DODO_TEST_BASE = "https://test.dodopayments.com";
@@ -96,6 +99,24 @@ export interface Config {
   flags: { apiUrl: string; adminToken: string } | null;
   /** The AI gateway (PY1.4): Relay's tenant key and the sealing key; null keeps the gateway off (503). */
   aiGateway: { relayUrl: string; relayKey: string; credentialsKey: string } | null;
+  /**
+   * Mint self-serve account provisioning (backlog item 11): MINT_URL +
+   * MINT_API_KEY (an "accounts"-scope key, never the master key) let the
+   * Apps tab mint a billing ledger account per app instead of an operator
+   * curling Mint's admin API; null keeps that button a documented
+   * no-op ("not configured yet") rather than a 500.
+   */
+  mint: { url: string; apiKey: string } | null;
+  /**
+   * Console as an OIDC provider (backlog item 5): closes apps/gitea's
+   * `TODO(railyard-sso)` so Rithub (Gitea) logs in with the Console session
+   * instead of a separate native account. `RAILYARD_OIDC_SIGNING_KEY` is a
+   * private RSA JWK (generate with `scripts/gen-oidc-key.mjs`, see
+   * apps/console/app/oidc/README or the repo's inline comment);
+   * `RAILYARD_OIDC_CLIENTS` maps client_id -> {secret, redirect_uri}. Null
+   * keeps every /oidc/* and /.well-known/openid-configuration route 503.
+   */
+  oidc: { signingKey: Record<string, unknown>; clients: Record<string, { secret: string; redirectUri: string }> } | null;
   /**
    * Rail status (GET /api/v1/rail/status): health URLs for the rail's own
    * services. Each is independently optional -- unset means that service
@@ -180,6 +201,8 @@ export function readConfig(env: Env = process.env): Config {
       env.RELAY_URL?.trim() && env.RELAY_TENANT_KEY?.trim() && env.RAILYARD_CREDENTIALS_KEY?.trim()
         ? { relayUrl: env.RELAY_URL.trim(), relayKey: env.RELAY_TENANT_KEY.trim(), credentialsKey: env.RAILYARD_CREDENTIALS_KEY.trim() }
         : null,
+    mint: env.MINT_URL?.trim() && env.MINT_API_KEY?.trim() ? { url: env.MINT_URL.trim().replace(/\/$/, ""), apiKey: env.MINT_API_KEY.trim() } : null,
+    oidc: readOidc(env),
     railStatus: {
       mint: env.MINT_HEALTH_URL?.trim() || null,
       rago: env.RAGO_HEALTH_URL?.trim() || null,
@@ -188,6 +211,29 @@ export function readConfig(env: Env = process.env): Config {
     },
     ship: readShip(env),
   };
+}
+
+function readOidc(env: Env): Config["oidc"] {
+  const keyRaw = env.RAILYARD_OIDC_SIGNING_KEY?.trim();
+  const clientsRaw = env.RAILYARD_OIDC_CLIENTS?.trim();
+  if (!keyRaw || !clientsRaw) return null;
+  try {
+    const signingKey = JSON.parse(keyRaw) as Record<string, unknown>;
+    if (signingKey.kty !== "RSA" || typeof signingKey.kid !== "string" || !signingKey.kid) {
+      throw new Error("RAILYARD_OIDC_SIGNING_KEY must be an RSA private JWK with a kid (see scripts/gen-oidc-key.mjs)");
+    }
+    const rawClients = JSON.parse(clientsRaw) as Record<string, { secret?: string; redirect_uri?: string }>;
+    const clients: Record<string, { secret: string; redirectUri: string }> = {};
+    for (const [id, c] of Object.entries(rawClients)) {
+      if (!c.secret || !c.redirect_uri?.startsWith("https://")) throw new Error(`RAILYARD_OIDC_CLIENTS.${id} needs secret and an https redirect_uri`);
+      clients[id] = { secret: c.secret, redirectUri: c.redirect_uri };
+    }
+    if (Object.keys(clients).length === 0) throw new Error("RAILYARD_OIDC_CLIENTS is empty");
+    return { signingKey, clients };
+  } catch (e) {
+    console.error(`OIDC provider disabled: ${(e as Error).message}`);
+    return null;
+  }
 }
 
 function readShip(env: Env): Config["ship"] {

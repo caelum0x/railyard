@@ -23,6 +23,17 @@ export function normalizeSrc(raw: string | null | undefined): string | null {
   return /^[a-z0-9_-]{1,40}$/.test(src) ? src : null;
 }
 
+/**
+ * OIDC provider (backlog item 5): holds the original, already-validated
+ * `/oidc/authorize` query string across a sign-in detour so a visitor who
+ * was not signed in yet lands back on `/oidc/authorize` (and gets their
+ * authorization code) right after completing email or OAuth sign-in,
+ * instead of at the default `/apps`. Re-validated on return -- this cookie
+ * only ever carries a query string this same handler already checked.
+ */
+export const OIDC_RETURN_COOKIE = "ry_oidc_return";
+export const OIDC_RETURN_TTL_SECONDS = 600;
+
 export interface Session {
   uid: string;
   email: string;

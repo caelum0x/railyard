@@ -2,7 +2,7 @@
 // `railyard`, with the project's service role. Server-only.
 
 import type { Repo } from "./repo.ts";
-import type { AiCredential, AiKey, AiProvider, AiTrace, ApiToken, App, BillingEvent, ConnectToken, Deploy, DeviceCode, Entitlement, Org, ScribaseBinding } from "./types.ts";
+import type { AiCredential, AiKey, AiProvider, AiTrace, ApiToken, App, BillingEvent, ConnectToken, Deploy, DeviceCode, Entitlement, OidcCode, Org, ScribaseBinding } from "./types.ts";
 
 type Fetch = typeof fetch;
 
@@ -104,6 +104,15 @@ export class PostgrestRepo implements Repo {
   }
   async findAppByName(orgId: string, name: string) {
     return this.one<App>(`apps?org_id=eq.${encodeURIComponent(orgId)}&name=eq.${encodeURIComponent(name)}`);
+  }
+  async setAppMintAccount(orgId: string, appId: string, mintAccountId: string) {
+    const { rows } = await this.req<App>(
+      "PATCH",
+      `apps?org_id=eq.${encodeURIComponent(orgId)}&id=eq.${encodeURIComponent(appId)}`,
+      { mint_account_id: mintAccountId },
+      "return=representation",
+    );
+    return rows[0] ?? null;
   }
   async listDeploys(orgId: string, appId?: string) {
     const app = appId ? `&app_id=eq.${encodeURIComponent(appId)}` : "";
@@ -217,6 +226,18 @@ export class PostgrestRepo implements Repo {
       "PATCH",
       `connect_tokens?token_hash=eq.${encodeURIComponent(hash)}&used_at=is.null&expires_at=gt.${encodeURIComponent(at)}`,
       { used_at: at },
+      "return=representation",
+    );
+    return rows[0] ?? null;
+  }
+  async createOidcCode(code: Omit<OidcCode, "created_at" | "consumed_at">) {
+    await this.req("POST", "oidc_codes", code, "return=minimal");
+  }
+  async consumeOidcCode(hash: string, at: string) {
+    const { rows } = await this.req<OidcCode>(
+      "PATCH",
+      `oidc_codes?code_hash=eq.${encodeURIComponent(hash)}&consumed_at=is.null&expires_at=gt.${encodeURIComponent(at)}`,
+      { consumed_at: at },
       "return=representation",
     );
     return rows[0] ?? null;

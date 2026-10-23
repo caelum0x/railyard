@@ -1,4 +1,5 @@
 import { AddApp } from "../../../components/AddApp.tsx";
+import { AppBillingAccount } from "../../../components/AppBillingAccount.tsx";
 import { installSnippet } from "../../../lib/apps.ts";
 import { currentSession } from "../../../lib/current.ts";
 import { deps } from "../../../lib/deps.ts";
@@ -31,6 +32,7 @@ export default async function AppsPage() {
                 <li key={app.id}>
                   <strong>{app.name}</strong>
                   <code className="muted">{sn.deploy}</code>
+                  <AppBillingAccount appId={app.id} mintAccountId={app.mint_account_id} />
                 </li>
               );
             })}

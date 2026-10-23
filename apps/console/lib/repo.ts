@@ -2,7 +2,7 @@
 // this interface: `MemoryRepo` (tests and local dev without a database) and
 // `PostgrestRepo` (the console's Scribase project, schema `railyard`).
 
-import type { AiCredential, AiKey, AiProvider, AiTrace, ApiToken, App, BillingEvent, ConnectToken, Deploy, DeviceCode, Entitlement, Org, ScribaseBinding } from "./types.ts";
+import type { AiCredential, AiKey, AiProvider, AiTrace, ApiToken, App, BillingEvent, ConnectToken, Deploy, DeviceCode, Entitlement, OidcCode, Org, ScribaseBinding } from "./types.ts";
 
 export interface Repo {
   findOrgByUser(userId: string): Promise<Org | null>;
@@ -25,6 +25,8 @@ export interface Repo {
   createApp(input: { orgId: string; name: string; siteKey: string }): Promise<App>;
   getApp(orgId: string, appId: string): Promise<App | null>;
   findAppByName(orgId: string, name: string): Promise<App | null>;
+  /** Records the Mint billing account minted for this app (backlog item 11); idempotent, last write wins. */
+  setAppMintAccount(orgId: string, appId: string, mintAccountId: string): Promise<App | null>;
   listDeploys(orgId: string, appId?: string): Promise<Deploy[]>;
   getDeploy(orgId: string, deployId: string): Promise<Deploy | null>;
   createDeploy(input: Omit<Deploy, "id" | "created_at">): Promise<Deploy>;
@@ -59,6 +61,10 @@ export interface Repo {
   createConnectToken(token: ConnectToken): Promise<void>;
   /** Marks a live token used; returns it, or null when unknown, used or expired. */
   consumeConnectToken(hash: string, at: string): Promise<ConnectToken | null>;
+  // OIDC provider (backlog item 5, migration 0013).
+  createOidcCode(code: Omit<OidcCode, "created_at" | "consumed_at">): Promise<void>;
+  /** Marks a live code consumed once; returns it, or null when unknown, already consumed or expired. */
+  consumeOidcCode(hash: string, at: string): Promise<OidcCode | null>;
 }
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -78,6 +84,7 @@ export class MemoryRepo implements Repo {
   aiUsage: { key_id: string; day: string; tokens: number; requests: number }[] = [];
   aiTraces: AiTrace[] = [];
   connectTokens: ConnectToken[] = [];
+  oidcCodes: OidcCode[] = [];
   bridgeMessages: string[] = [];
   now: () => Date;
 
@@ -133,7 +140,7 @@ export class MemoryRepo implements Repo {
   }
   async createApp({ orgId, name, siteKey }: { orgId: string; name: string; siteKey: string }) {
     if (this.apps.some((a) => a.org_id === orgId && a.name === name)) throw new Error("app_exists");
-    const app: App = { id: crypto.randomUUID(), org_id: orgId, name, site_key: siteKey, created_at: this.now().toISOString() };
+    const app: App = { id: crypto.randomUUID(), org_id: orgId, name, site_key: siteKey, created_at: this.now().toISOString(), mint_account_id: null };
     this.apps = [...this.apps, app];
     return clone(app);
   }
@@ -142,6 +149,12 @@ export class MemoryRepo implements Repo {
   }
   async findAppByName(orgId: string, name: string) {
     return clone(this.apps.find((a) => a.org_id === orgId && a.name === name) ?? null);
+  }
+  async setAppMintAccount(orgId: string, appId: string, mintAccountId: string) {
+    const app = this.apps.find((a) => a.org_id === orgId && a.id === appId);
+    if (!app) return null;
+    app.mint_account_id = mintAccountId;
+    return clone(app);
   }
   async listDeploys(orgId: string, appId?: string) {
     return clone(
@@ -255,6 +268,16 @@ export class MemoryRepo implements Repo {
     if (!t) return null;
     const used = { ...t, used_at: at };
     this.connectTokens = this.connectTokens.map((x) => (x === t ? used : x));
+    return clone(used);
+  }
+  async createOidcCode(code: Omit<OidcCode, "created_at" | "consumed_at">) {
+    this.oidcCodes = [...this.oidcCodes, { ...clone(code), created_at: this.now().toISOString(), consumed_at: null }];
+  }
+  async consumeOidcCode(hash: string, at: string) {
+    const c = this.oidcCodes.find((x) => x.code_hash === hash && !x.consumed_at && x.expires_at > at);
+    if (!c) return null;
+    const used = { ...c, consumed_at: at };
+    this.oidcCodes = this.oidcCodes.map((x) => (x === c ? used : x));
     return clone(used);
   }
 }
