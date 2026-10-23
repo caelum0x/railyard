@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content="Vend: your own OpenRouter, white-labelled. One OpenAI-compatible endpoint, your prices, your margin, automatic payouts." />
+<title>Vend — your own OpenRouter, white-labelled</title>
+<style>
+  :root { --bg:#0f1117; --panel:#181b24; --border:#262b38; --fg:#e6e8ee; --muted:#8b91a1;
+    --accent:#6ea8fe; --ok:#55c98a; --row:#1e222d; --warn:#f2b35a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  a { color:var(--accent); text-decoration:none; }
+  header { display:flex; align-items:center; gap:12px; padding:18px 24px; border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--bg); z-index:5; }
+  header strong { font-size:16px; }
+  header nav { margin-left:auto; display:flex; gap:18px; font-size:14px; }
+  main { max-width:960px; margin:0 auto; padding:0 24px 80px; }
+  .hero { padding:64px 0 32px; text-align:center; }
+  .hero h1 { font-size:38px; line-height:1.2; margin:0 0 16px; }
+  .hero p { color:var(--muted); font-size:17px; max-width:620px; margin:0 auto 28px; }
+  .cta-row { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+  .btn { display:inline-flex; align-items:center; gap:6px; padding:12px 22px; border-radius:8px; font-weight:600; font-size:15px; border:1px solid var(--border); background:var(--row); color:var(--fg); cursor:pointer; }
+  .btn.primary { background:var(--accent); color:#0b1020; border-color:var(--accent); }
+  .btn.ghost { background:transparent; }
+  section { margin-top:56px; }
+  section h2 { font-size:13px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); margin:0 0 20px; text-align:center; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:16px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:18px; }
+  .card h3 { margin:0 0 8px; font-size:15px; }
+  .card p { margin:0; color:var(--muted); font-size:13.5px; }
+  .steps { display:flex; flex-direction:column; gap:14px; counter-reset:step; }
+  .step { display:flex; gap:14px; align-items:flex-start; }
+  .step .num { flex:0 0 28px; height:28px; border-radius:50%; background:var(--row); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-weight:600; font-size:13px; color:var(--accent); }
+  .step .body { flex:1; }
+  .step .body strong { display:block; margin-bottom:2px; }
+  .step .body span { color:var(--muted); font-size:13.5px; }
+  pre { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px; overflow:auto; font-size:12.5px; line-height:1.5; }
+  table.pricing { width:100%; border-collapse:collapse; margin-top:8px; }
+  table.pricing th, table.pricing td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); font-size:13.5px; }
+  table.pricing th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.4px; }
+  .compare-note { color:var(--muted); font-size:13px; margin-top:10px; }
+  footer { border-top:1px solid var(--border); padding:24px; text-align:center; color:var(--muted); font-size:13px; margin-top:64px; }
+  footer a { color:var(--muted); margin:0 8px; }
+</style>
+</head>
+<body>
+<header>
+  <strong>Vend</strong>
+  <nav>
+    <a href="#how">How it works</a>
+    <a href="#pricing">Pricing</a>
+    <a href="/console">Console →</a>
+  </nav>
+</header>
+<main>
+  <div class="hero">
+    <h1>Your own OpenRouter, white-labelled.</h1>
+    <p>
+      One OpenAI-compatible endpoint across every model Relay routes. Your
+      brand, your prices, your margin. A wallet for each of your users,
+      automatic spend caps, and revenue split paid out on Mint — not
+      OpenRouter's.
+    </p>
+    <div class="cta-row">
+      <a class="btn primary" href="/console">Create a workspace ↗</a>
+      <a class="btn ghost" href="#how">See how it works</a>
+    </div>
+  </div>
+
+  <section id="how">
+    <h2>Launch in five calls</h2>
+    <div class="steps">
+      <div class="step"><div class="num">1</div><div class="body"><strong>Sign up</strong><span>Create a workspace, your first app and a live provisioning key in one call — or the form at <a href="/console">/console</a>.</span></div></div>
+      <div class="step"><div class="num">2</div><div class="body"><strong>Set your price</strong><span>Default markup per app, overridable per model. The next request bills at the new rate and <code>/v1/models</code> reflects it immediately.</span></div></div>
+      <div class="step"><div class="num">3</div><div class="body"><strong>Give a user a wallet</strong><span><code>POST /v1/wallets</code> from your backend, or let the console do it. Each user holds their own Mint balance.</span></div></div>
+      <div class="step"><div class="num">4</div><div class="body"><strong>Send a top-up link</strong><span>Creem, Polar, PayPal, Stripe, iyzico or USDC — whichever your market actually uses. The signed webhook deposits straight into the wallet.</span></div></div>
+      <div class="step"><div class="num">5</div><div class="body"><strong>Call the model</strong><span>The user's wallet pays the provider's exact cost; your margin and the platform fee settle automatically on every captured charge.</span></div></div>
+    </div>
+    <pre>curl $VEND/v1/chat/completions \
+  -H "Authorization: Bearer $VK" -H "Vend-End-User: user_42" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"tensorzero::model_name::openai::gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'</pre>
+  </section>
+
+  <section>
+    <h2>Built for founders OpenRouter does not serve</h2>
+    <div class="grid">
+      <div class="card"><h3>Your brand, not theirs</h3><p>Your users never see OpenRouter. The endpoint, the invoice and the dashboard are yours.</p></div>
+      <div class="card"><h3>Non-US top-ups</h3><p>Mint checkouts cover iyzico and USDC alongside Stripe, Creem, Polar and PayPal — markets Stripe alone does not reach.</p></div>
+      <div class="card"><h3>Per-user wallets</h3><p>Every user gets a prepaid balance with its own daily spend cap, enforced atomically — no shared pool to drain.</p></div>
+      <div class="card"><h3>Success-only billing</h3><p>A hold is placed first; only the exact provider cost plus your markup is ever captured. Failures release automatically.</p></div>
+      <div class="card"><h3>Automatic payouts</h3><p>Every charge splits into provider cost, your margin and the platform fee on Mint — idempotent, with a reconciler for interrupted legs.</p></div>
+      <div class="card"><h3>One API, every model</h3><p>The full OpenAI-compatible surface, streaming included, across whatever Relay routes — no separate integration per provider.</p></div>
+    </div>
+  </section>
+
+  <section id="pricing">
+    <h2>Pricing</h2>
+    <table class="pricing">
+      <tr><th>What you pay Vend</th><th></th></tr>
+      <tr><td>Platform fee</td><td>a share of your margin on captured charges, set by the operator at launch — not a per-seat or per-request fee</td></tr>
+      <tr><td>Provider cost</td><td>passed through exactly; Vend adds no markup of its own on top of what you charge your users</td></tr>
+      <tr><td>Hosting</td><td>run it yourself (open path) or on the operator's infrastructure</td></tr>
+    </table>
+    <p class="compare-note">
+      Compare that to reselling through a provider's own billing: you do not
+      control the price, the invoice, or when you get paid. On Vend you set
+      the markup and Mint pays you out.
+    </p>
+  </section>
+</main>
+<footer>
+  <a href="/console">Console</a>
+  <a href="https://github.com/caelum0x/railyard/tree/main/apps/vend">Source</a>
+</footer>
+</body>
+</html>

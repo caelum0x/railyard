@@ -91,6 +91,7 @@ pub struct AppState {
 /// Build the router for a given [`AppState`].
 pub fn build_router(state: AppState) -> Router {
     Router::new()
+        .route("/", get(landing_page))
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/models", get(list_models))
         .route("/admin", get(admin_page))
@@ -98,6 +99,16 @@ pub fn build_router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .with_state(state)
+}
+
+/// `GET /` — the public marketing landing page (static HTML, no build step,
+/// no auth). Pitches the white-label kit and links straight into `/console`,
+/// whose "Create a workspace" panel self-serve signs founders up when the
+/// operator has set `VEND_SIGNUP_ENABLED=true` (see `whitelabel::signup`).
+/// Vend had a working signup API and console with no public page describing
+/// or linking to either, so nobody landing on the bare root found either.
+async fn landing_page() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("../assets/landing.html"))
 }
 
 /// `GET /admin` — a self-contained operator console (static HTML + vanilla JS,
