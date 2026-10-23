@@ -10,6 +10,8 @@ export interface Org {
   name: string;
   owner_user_id: string;
   created_at: string;
+  /** First-touch signup attribution slug (e.g. "insights"), or null (db/migrations/0011). */
+  signup_source: string | null;
 }
 
 export interface App {

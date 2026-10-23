@@ -6,7 +6,7 @@ import type { AiCredential, AiKey, AiProvider, AiTrace, ApiToken, App, BillingEv
 
 export interface Repo {
   findOrgByUser(userId: string): Promise<Org | null>;
-  createOrgForUser(input: { userId: string; email: string; name: string }): Promise<Org>;
+  createOrgForUser(input: { userId: string; email: string; name: string; signupSource?: string | null }): Promise<Org>;
   getOrg(orgId: string): Promise<Org | null>;
   getEntitlement(orgId: string): Promise<Entitlement | null>;
   saveEntitlement(ent: Entitlement): Promise<Entitlement>;
@@ -89,10 +89,10 @@ export class MemoryRepo implements Repo {
     const m = this.members.find((x) => x.user_id === userId);
     return m ? clone(this.orgs.get(m.org_id) ?? null) : null;
   }
-  async createOrgForUser({ userId, email, name }: { userId: string; email: string; name: string }) {
+  async createOrgForUser({ userId, email, name, signupSource }: { userId: string; email: string; name: string; signupSource?: string | null }) {
     const existing = await this.findOrgByUser(userId);
     if (existing) return existing;
-    const org: Org = { id: crypto.randomUUID(), name, owner_user_id: userId, created_at: this.now().toISOString() };
+    const org: Org = { id: crypto.randomUUID(), name, owner_user_id: userId, created_at: this.now().toISOString(), signup_source: signupSource ?? null };
     this.orgs.set(org.id, org);
     this.members = [...this.members, { org_id: org.id, user_id: userId, email }];
     return clone(org);

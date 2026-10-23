@@ -5,6 +5,24 @@ import { b64url, constantTimeEqual, hmacSha256 } from "./crypto.ts";
 export const SESSION_COOKIE = "ry_session";
 export const SESSION_TTL_SECONDS = 7 * 24 * 3600;
 
+/**
+ * First-touch signup attribution (console cross-sell bridge, RYP-X1): a short
+ * lived cookie set when a sign-in link carries `?src=<slug>` (for example the
+ * Insights dashboard banner linking to `/auth/start?email=&src=insights`).
+ * Read once at the moment a *new* org is created, written to its
+ * `signup_source` column, then discarded; it never changes which org an
+ * existing user signs into.
+ */
+export const SRC_COOKIE = "ry_src";
+export const SRC_COOKIE_TTL_SECONDS = 1800;
+
+/** A bounded, lower-case attribution slug (e.g. "insights"), or null. */
+export function normalizeSrc(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string") return null;
+  const src = raw.trim().toLowerCase();
+  return /^[a-z0-9_-]{1,40}$/.test(src) ? src : null;
+}
+
 export interface Session {
   uid: string;
   email: string;

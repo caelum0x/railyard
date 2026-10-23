@@ -42,10 +42,10 @@ export class PostgrestRepo implements Repo {
     const m = await this.one<{ org_id: string }>(`org_members?select=org_id&user_id=eq.${encodeURIComponent(userId)}&limit=1`);
     return m ? this.getOrg(m.org_id) : null;
   }
-  async createOrgForUser({ userId, email, name }: { userId: string; email: string; name: string }) {
+  async createOrgForUser({ userId, email, name, signupSource }: { userId: string; email: string; name: string; signupSource?: string | null }) {
     const existing = await this.findOrgByUser(userId);
     if (existing) return existing;
-    const { rows } = await this.req<Org>("POST", "orgs", { name, owner_user_id: userId }, "return=representation");
+    const { rows } = await this.req<Org>("POST", "orgs", { name, owner_user_id: userId, signup_source: signupSource ?? null }, "return=representation");
     const org = rows[0] ?? (await this.one<Org>(`orgs?owner_user_id=eq.${encodeURIComponent(userId)}`));
     if (!org) throw new Error("could not create the organization");
     await this.req("POST", "org_members", { org_id: org.id, user_id: userId, email, role: "owner" }, "resolution=ignore-duplicates");

@@ -6,8 +6,10 @@ import { orgNameFor, type SignedInUser } from "./scribase-auth.ts";
 import { sealSession } from "./session.ts";
 import { emptyEntitlement } from "./types.ts";
 
-export async function completeSignIn(repo: Repo, sessionSecret: string, user: SignedInUser, now: Date) {
-  const org = (await repo.findOrgByUser(user.id)) ?? (await repo.createOrgForUser({ userId: user.id, email: user.email, name: orgNameFor(user.email) }));
+export async function completeSignIn(repo: Repo, sessionSecret: string, user: SignedInUser, now: Date, signupSource?: string | null) {
+  const org =
+    (await repo.findOrgByUser(user.id)) ??
+    (await repo.createOrgForUser({ userId: user.id, email: user.email, name: orgNameFor(user.email), signupSource }));
   if (!(await repo.getEntitlement(org.id))) await repo.saveEntitlement(emptyEntitlement(org.id, now));
   const cookie = await sealSession(sessionSecret, { uid: user.id, email: user.email, org: org.id }, now);
   return { org, cookie };

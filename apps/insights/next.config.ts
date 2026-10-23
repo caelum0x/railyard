@@ -24,6 +24,9 @@ const trackerScriptName = process.env.TRACKER_SCRIPT_NAME || '';
 const trackerScriptURL = process.env.TRACKER_SCRIPT_URL || '';
 const selfTrack = process.env.UMAMI_SELF_TRACK || '';
 const selfRecord = process.env.UMAMI_SELF_RECORD || '';
+// Console cross-sell bridge (RYP-X1): base URL of the Railyard console the
+// dashboard banner links into. Unset hides the banner entirely.
+const railyardConsoleUrl = process.env.RAILYARD_CONSOLE_URL || '';
 
 function isRelativeUrl(url: string) {
   return Boolean(url && !/^https?:\/\//i.test(url));
@@ -221,6 +224,7 @@ export default withNextIntl({
     defaultLocale,
     selfTrack,
     selfRecord,
+    railyardConsoleUrl,
   },
   basePath,
   output: isVercel ? undefined : 'standalone',

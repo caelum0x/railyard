@@ -12,7 +12,7 @@ import {
   sendEmailCode,
   verifyEmailCode,
 } from "./scribase-auth.ts";
-import { SESSION_COOKIE, SESSION_TTL_SECONDS } from "./session.ts";
+import { normalizeSrc, SESSION_COOKIE, SESSION_TTL_SECONDS, SRC_COOKIE } from "./session.ts";
 import { completeSignIn } from "./signin.ts";
 
 export interface EmailSignInDeps {
@@ -65,10 +65,15 @@ export async function verifyEmailSignIn(req: Request, d: EmailSignInDeps): Promi
   if (!email) return redirect(`${base}/?signin=expired`, [cookie(EMAIL_COOKIE, "", 0)]);
   const code = normalizeCode(await formField(req, "code"));
   if (!code) return redirect(`${base}/?step=code&signin=code`);
+  const src = normalizeSrc(readCookie(req, SRC_COOKIE));
   try {
     const user = await verifyEmailCode({ scribaseUrl: d.cfg.scribaseUrl, anonKey: d.cfg.scribaseAnonKey, email, code, fetchImpl: d.fetchImpl });
-    const { cookie: session } = await completeSignIn(d.repo, d.cfg.sessionSecret, user, (d.now ?? (() => new Date()))());
-    return redirect(`${base}/apps`, [cookie(SESSION_COOKIE, session, SESSION_TTL_SECONDS), cookie(EMAIL_COOKIE, "", 0)]);
+    const { cookie: session } = await completeSignIn(d.repo, d.cfg.sessionSecret, user, (d.now ?? (() => new Date()))(), src);
+    return redirect(`${base}/apps`, [
+      cookie(SESSION_COOKIE, session, SESSION_TTL_SECONDS),
+      cookie(EMAIL_COOKIE, "", 0),
+      cookie(SRC_COOKIE, "", 0),
+    ]);
   } catch (err) {
     console.error(`email sign-in: ${(err as Error).message}`);
     return redirect(`${base}/?step=code&signin=code`);
