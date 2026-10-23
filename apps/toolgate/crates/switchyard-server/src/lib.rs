@@ -23,7 +23,7 @@ use switchyard_catalog::Catalog;
 pub use config::Settings;
 pub use state::{AppState, Deps};
 
-use routes::{account, admin, mcp, meta, oauth, tools};
+use routes::{account, admin, catalog_page, mcp, meta, oauth, signup, tools};
 
 pub fn router(st: AppState) -> Router {
     Router::new()
@@ -31,6 +31,10 @@ pub fn router(st: AppState) -> Router {
         .route("/readyz", get(meta::readyz))
         .route("/llms.txt", get(meta::llms_txt))
         .route("/openapi.json", get(meta::openapi))
+        // Public signup + human catalog (items 6, 13)
+        .route("/v1/auth/signup", post(signup::signup))
+        .route("/catalog", get(catalog_page::html))
+        .route("/v1/catalog", get(catalog_page::as_json))
         // Tools
         .route("/v1/tools/search", get(tools::search))
         .route("/v1/tools/batch", post(tools::batch))

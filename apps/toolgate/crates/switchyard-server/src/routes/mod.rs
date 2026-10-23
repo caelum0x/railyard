@@ -1,7 +1,9 @@
 pub mod account;
 pub mod admin;
+pub mod catalog_page;
 pub mod mcp;
 pub mod meta;
 pub mod oauth;
 pub mod oauth_connect;
+pub mod signup;
 pub mod tools;

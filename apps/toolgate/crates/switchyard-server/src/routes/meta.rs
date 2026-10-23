@@ -34,6 +34,7 @@ pub async fn llms_txt(State(st): State<AppState>) -> Response {
 ## Use it
 
 - Base URL: {base}
+- Get a key: `POST /v1/auth/signup {{\"org_name\": \"acme\"}}` -- no operator in the loop, returns a full-scope key in the same response. Browse pricing first at `{base}/catalog`.
 - Auth: `Authorization: Bearer sk-t0-...` (the same key works on Relay's `/openai/v1`), or OAuth 2.1 (`{base}/.well-known/oauth-authorization-server`).
 - MCP: streamable HTTP at `{base}/mcp` (meta-tools `search_tools`, `describe_tool`, `call_tool`, `balance`, `usage`).
 - CLI: `sy login`, `sy search \"verify an email\"`, `sy call rally.email.verify --input '{{\"email\":\"a@b.com\"}}'`.
@@ -41,6 +42,7 @@ pub async fn llms_txt(State(st): State<AppState>) -> Response {
 
 ## Endpoints
 
+- `POST /v1/auth/signup` self-serve: `{{\"org_name\"}}` -> org + default project + key (shown once). `GET /catalog` human pricing page, `GET /v1/catalog` the same as JSON.
 - `GET /v1/tools/search?q=` search by task; `GET /v1/tools/{{id}}` schemas, price and fallback chain (spends nothing).
 - `POST /v1/tools/{{id}}/call` body `{{\"input\":{{}},\"options\":{{\"provider\",\"max_cost_micros\",\"cache\",\"dry_run\"}}}}`; send `Idempotency-Key` on writes and sends. `{{id}}` may be a capability (routed, with fallback) or a concrete tool.
 - `POST /v1/tools/batch` up to 50 calls under one hold.
@@ -72,6 +74,9 @@ pub async fn openapi(State(st): State<AppState>) -> Response {
         },
         "security": bearer,
         "paths": {
+            "/v1/auth/signup": { "post": { "summary": "Self-serve signup: creates an org, a default project and a full-scope key", "security": [], "requestBody": { "content": { "application/json": { "schema": { "type": "object", "required": ["org_name"], "properties": { "org_name": { "type": "string" }, "email": { "type": "string" }, "project_name": { "type": "string" } } } } } },
+                "responses": { "201": { "description": "org + project + key (shown once)" }, "400": { "description": "invalid org_name/email" }, "404": { "description": "signup disabled" } } } },
+            "/v1/catalog": { "get": { "summary": "Every capability and tool with live pricing, as JSON", "security": [] } },
             "/v1/tools/search": { "get": { "summary": "Search tools by task", "parameters": [
                 { "name": "q", "in": "query", "required": true, "schema": { "type": "string" } },
                 { "name": "side_effect", "in": "query", "schema": { "enum": ["read", "write", "send", "spend"] } },

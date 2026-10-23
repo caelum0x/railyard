@@ -25,6 +25,11 @@ pub struct Settings {
     /// OAuth app credentials by provider id, for connecting a team's own
     /// account (`SWITCHYARD_OAUTH_CLIENTS` = `{"github": {"client_id": "...", "client_secret": "..."}}`).
     pub oauth_clients: BTreeMap<String, OAuthClient>,
+    /// Public self-serve signup (`POST /v1/auth/signup`, backlog item 6): on
+    /// by default (it's the primary onboarding path, not an opt-in extra,
+    /// same rule as Vend's signup flag) -- set `SWITCHYARD_SIGNUP_DISABLED=1`
+    /// to go back to admin-token-curl-only onboarding.
+    pub signup_enabled: bool,
 }
 
 /// One OAuth app registration.
@@ -62,6 +67,7 @@ impl Settings {
             cache_bytes: 32 * 1024 * 1024,
             idempotency_hours: 24,
             oauth_clients: BTreeMap::new(),
+            signup_enabled: true,
         }
     }
 }
@@ -114,6 +120,7 @@ impl Settings {
                 tracing::error!(error = %e, "OAuth connect disabled");
                 BTreeMap::new()
             }),
+            signup_enabled: env("SWITCHYARD_SIGNUP_DISABLED").as_deref() != Some("1"),
         }
     }
 }
