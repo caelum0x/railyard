@@ -1,0 +1,22 @@
+[Unit]
+Description=Railyard Watch checks agent (PY2.2) — bridges console checks to the box's Gatus probe engine
+Documentation=file:///srv/src/railyard/stacks/gatus-customers/README.md
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/src/railyard/stacks/gatus-customers
+Environment=WATCH_AGENT_ENV_FILE=/etc/products/watch-agent.env
+ExecStartPre=/usr/bin/docker compose -f /srv/src/railyard/stacks/gatus-customers/docker-compose.yml up -d
+ExecStart=/srv/src/railyard/stacks/gatus-customers/agent.sh
+Restart=on-failure
+RestartSec=10s
+Nice=5
+MemoryMax=256M
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

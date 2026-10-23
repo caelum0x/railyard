@@ -1,0 +1,34 @@
+# Static Gatus settings (RAILYARD_WATCH_LIVE / PY2.2). Merged by Gatus itself
+# with endpoints.generated.yaml, which agent.sh rewrites every pass — never
+# edit that file by hand, it is overwritten.
+#
+# This instance only ever probes the https addresses customers give Railyard
+# Watch through the console (apps/console/lib/watch/service.ts::checkUrl
+# already refuses private/loopback/our-own-domain names before a check is
+# ever created, so nothing here can be pointed at box 1 itself). It binds to
+# 127.0.0.1 only (see ../docker-compose.yml) — agent.sh is its only caller.
+web:
+  port: 8080
+
+storage:
+  type: sqlite
+  path: /data/data.db
+  maximum-number-of-results: 100
+
+# Gatus refuses to start with zero endpoints in its merged config, and the
+# console can genuinely have zero active Watch checks (a fresh box, every
+# customer paused). This one loopback self-check keeps Gatus always
+# startable either way; it is never surfaced to a customer (agent.sh only
+# reads results for the ids it got from the console, and this endpoint's
+# name is not one of them).
+endpoints:
+  - name: "gatus-self-check"
+    group: "railyard-internal"
+    url: "http://127.0.0.1:8080/health"
+    interval: 5m
+    conditions:
+      - "[STATUS] == 200"
+
+# Gatus's own alerting stays off: Railyard Watch's alert email (Rally Send,
+# apps/console/lib/watch/service.ts::alertText) is the only alert a customer
+# ever sees. This instance exists purely as the probe engine behind it.

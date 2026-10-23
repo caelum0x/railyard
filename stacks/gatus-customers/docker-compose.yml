@@ -1,0 +1,25 @@
+services:
+  gatus:
+    image: ghcr.io/twin/gatus:stable
+    container_name: railyard-watch-gatus
+    restart: unless-stopped
+    # Internal only: this is the probe engine behind Railyard Watch
+    # (apps/console/lib/watch), never a surface a customer reaches directly.
+    # agent.sh is the only thing allowed to call it, over localhost.
+    ports:
+      - "127.0.0.1:8083:8080"
+    environment:
+      # Directory merge: config.yaml (static) + endpoints.generated.yaml
+      # (rewritten by agent.sh every pass) are merged into one config.
+      GATUS_CONFIG_PATH: /config
+    volumes:
+      - ./config:/config
+      - gatus-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  gatus-data:
