@@ -46,6 +46,7 @@ export function landingPage({ error, values = {}, tag } = {}) {
   });
   const body = `<h1>Website analytics without cookies</h1>
 <p class="muted">Add one script tag and see visitors, top pages, referrers, UTM campaigns, custom events and page speed. The tag sets no cookies, uses no local storage, and no IP address is ever stored. Free for up to ${FREE} events a month per site.</p>
+<p>The dashboard also lists agent failures on their own: the agent, the model, and the error name. The prompt is not stored. <a href="/live-demo">The live example</a> shows that list.</p>
 <p><a href="/live-demo">See a live example with real numbers, before you sign up &rarr;</a></p>
 <form class="signup" method="post" action="/api/sites">
 ${error ? `<p class="error" role="alert">${esc(error)}</p>` : ""}
@@ -85,9 +86,9 @@ ${error ? `<p class="error" role="alert">${esc(error)}</p>` : ""}
 
 export function privacyPage({ tag } = {}) {
   const body = `<h1>Privacy</h1>
-<p class="muted">Railyard Insights is run by Erebos Lab. Last updated 2026-10-12.</p>
+<p class="muted">Railyard Insights is run by Erebos Lab. Last updated 2026-10-22.</p>
 <h2>Visitors of sites that use the tag</h2>
-<p>The tag sends the page address, the referring page, the page title, the browser language, the screen size, the country (from the network, not GPS), page speed numbers, and any custom event name and fields the site sends. It sets no cookies and uses no local storage. Your IP address and browser string are combined with a secret that changes every day into a one-way hash used to count unique visitors for that day; the IP address itself is never stored or logged. Browsers with Do Not Track on send nothing.</p>
+<p>The tag sends the page address, the referring page, the page title, the browser language, the screen size, the country (from the network, not GPS), page speed numbers, and any custom event name and fields the site sends. An agent failure stores only the agent name, the model name, and the error name. A prompt or a key sent with that event is dropped and not stored. It sets no cookies and uses no local storage. Your IP address and browser string are combined with a secret that changes every day into a one-way hash used to count unique visitors for that day; the IP address itself is never stored or logged. Browsers with Do Not Track on send nothing.</p>
 <h2>People who add a site</h2>
 <p>We store your email address and your domain to send you the dashboard link. We do not use your email for marketing. The dashboard link is a secret; we keep only a hash of it.</p>
 <h2>Where it is stored</h2>
@@ -244,6 +245,17 @@ ${seoFooter}`;
 const list = (title, rows, cols) =>
   `<h2>${esc(title)}</h2>${rows.length ? `<table><tr>${cols.map((c) => `<th${c.r ? ' class="r"' : ""}>${esc(c.h)}</th>`).join("")}</tr>${rows.map((r) => `<tr>${cols.map((c) => `<td${c.r ? ' class="r"' : ""}>${esc(c.v(r))}</td>`).join("")}</tr>`).join("")}</table>` : `<p class="small">Nothing yet.</p>`}`;
 
+/** Agent failures sit apart from page views and custom events. The prompt is not stored. */
+function agentFailureSection(rows) {
+  const table = list("Agent failures", rows ?? [], [
+    { h: "When", v: (r) => r.ts },
+    { h: "Agent", v: (r) => r.agent },
+    { h: "Model", v: (r) => r.model || "none" },
+    { h: "Error", v: (r) => r.error },
+  ]);
+  return `${table}<p class="small">Each row is one agent that failed: the agent, the model, and the error name. A prompt or a key is not stored. Send one with <code>railyard.track("$agent_failure", { agent: "relay", model: "name", error: "TimeoutError" })</code>. Faultline gets the same three fields as the issue.</p>`;
+}
+
 // Google's "good" thresholds for LCP, INP and CLS at the 75th percentile.
 const SPEED_GOOD = { lcp: 2500, inp: 200, cls: 0.1 };
 const grade = (k, v) => (v <= SPEED_GOOD[k] ? "good" : "needs work");
@@ -290,6 +302,7 @@ ${list("Top pages", cur.top_pages, [{ h: "Page", v: (r) => r.url }, { h: "Views"
 ${list("Top referrers", cur.top_referrers, [{ h: "Site", v: (r) => r.host }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
 ${list("UTM sources", cur.utm_sources, [{ h: "utm_source", v: (r) => r.source }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
 ${list("Custom events", cur.events, [{ h: "Event", v: (r) => r.name }, { h: "Count", v: (r) => n(r.n), r: 1 }])}
+${agentFailureSection(cur.agent_failures)}
 ${speedSection(speed)}
 <h2>Session replay</h2>
 <p class="small">${site.paid ? `Watch back what visitors do on the page.` : `A paid-tier feature: record and watch back what visitors do on the page.`} <a href="/d/${esc(token)}/replay">${site.paid ? "Open session replay" : "Learn more"}</a></p>
@@ -318,6 +331,7 @@ export function liveDemoPage({ stats, speed, days, tag } = {}) {
 </div>
 ${list("Top pages", cur.top_pages, [{ h: "Page", v: (r) => r.url }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
 ${list("Top referrers", cur.top_referrers, [{ h: "Site", v: (r) => r.host }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
+${agentFailureSection(cur.agent_failures)}
 ${speedSection(speed)}
 <h2>Get the same dashboard for your own site</h2>
 <form class="signup" method="post" action="/api/sites">

@@ -71,7 +71,8 @@ export function renderReport(r) {
     html += list("Top referrers", cur.top_referrers, (x) => `${esc(x.host)} (${x.n})`);
     html += list("Events", cur.events, (x) => `${esc(x.name)} (${x.n})`);
     html += list("UTM sources", cur.utm_sources ?? [], (x) => `${esc(x.source)} (${x.n})`);
-    text.push("", site, ...cur.top_pages.map((x) => `  page ${x.url} ${x.n}`), ...cur.top_referrers.map((x) => `  from ${x.host} ${x.n}`), ...cur.events.map((x) => `  event ${x.name} ${x.n}`), ...(cur.utm_sources ?? []).map((x) => `  utm ${x.source} ${x.n}`));
+    html += list("Agent failures", cur.agent_failures ?? [], (x) => `${esc(x.agent)} ${esc(x.model || "none")} ${esc(x.error)}`);
+    text.push("", site, ...cur.top_pages.map((x) => `  page ${x.url} ${x.n}`), ...cur.top_referrers.map((x) => `  from ${x.host} ${x.n}`), ...cur.events.map((x) => `  event ${x.name} ${x.n}`), ...(cur.utm_sources ?? []).map((x) => `  utm ${x.source} ${x.n}`), ...(cur.agent_failures ?? []).map((x) => `  agent failure ${x.agent} ${x.model || "none"} ${x.error}`));
   }
   html += `<p><b>Self-serve sites signed up:</b> ${r.self_serve_sites ?? 0}</p>`;
   text.push("", `Self-serve sites signed up: ${r.self_serve_sites ?? 0}`);

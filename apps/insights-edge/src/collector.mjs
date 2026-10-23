@@ -5,6 +5,7 @@
 // minute it reports the org's usage to Rago as an `insights_events` event
 // (a $0 shadow meter). It never receives an IP address.
 
+import { sendAgentFailures } from "./agent-failure.mjs";
 import { capDecision } from "./caps.ts";
 import { PA_MAX_BATCH, sendToPa, toPaEvent } from "./pa-forward.mjs";
 import { storeBatches } from "./store.mjs";
@@ -157,6 +158,13 @@ export class OrgCollector {
         return requeue(`d1 write (${err.message})`);
       }
     }
+    const reportFailures = () => {
+      if (!this.env.FAULTLINE_DSN) return null;
+      return sendAgentFailures(this.env.FAULTLINE_DSN, batches, now).catch((err) => {
+        console.error(`insights-edge: faultline forward for org ${this.orgId} dropped: ${err.message}`);
+      });
+    };
+    if (this.env.DB) await reportFailures();
     if (!this.env.INGEST_URL) return;
     try {
       const res = await fetch(`${this.env.INGEST_URL.replace(/\/$/, "")}/v1/ingest/batch`, {
@@ -165,6 +173,7 @@ export class OrgCollector {
         body: JSON.stringify({ org_id: this.orgId, sent_at: new Date(now).toISOString(), batches }),
       });
       if (!res.ok) throw new Error(`ingest ${res.status}`);
+      if (!this.env.DB) await reportFailures();
     } catch (err) {
       if (this.env.DB) console.error(`insights-edge: ingest forward for org ${this.orgId} dropped: ${err.message}`);
       else requeue(`ingest flush (${err.message})`);

@@ -3,6 +3,8 @@
 // end without the box-hosted Insights service. The visitor id is the daily
 // salted hash; no IP address is ever written.
 
+import { AGENT_FAILURE_EVENT, agentFailureRecord } from "./agent-failure.mjs";
+
 export const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,14 +93,15 @@ export async function siteStats(db, siteKey, since, until) {
   await ensureSchema(db);
   const w = "site_key = ? AND ts >= ? AND ts < ?";
   const args = [siteKey, since, until];
-  const [totals, engaged, converted, pages, refs, events, utms] = await db.batch([
+  const [totals, engaged, converted, pages, refs, events, utms, failures] = await db.batch([
     db.prepare(`SELECT COUNT(*) AS pageviews, COUNT(DISTINCT visitor || substr(ts,1,10)) AS visitors FROM events WHERE ${w} AND type = 'event' AND name IS NULL`).bind(...args),
     db.prepare(`SELECT COUNT(*) AS n FROM (SELECT visitor, substr(ts,1,10) d FROM events WHERE ${w} AND type = 'event' AND name IS NULL GROUP BY visitor, d HAVING COUNT(DISTINCT url) >= 2)`).bind(...args),
-    db.prepare(`SELECT COUNT(DISTINCT visitor || substr(ts,1,10)) AS n FROM events WHERE ${w} AND type = 'event' AND name IS NOT NULL`).bind(...args),
+    db.prepare(`SELECT COUNT(DISTINCT visitor || substr(ts,1,10)) AS n FROM events WHERE ${w} AND type = 'event' AND name IS NOT NULL AND name != ?`).bind(...args, AGENT_FAILURE_EVENT),
     db.prepare(`SELECT url, COUNT(*) AS n FROM events WHERE ${w} AND type = 'event' AND name IS NULL GROUP BY url ORDER BY n DESC LIMIT 5`).bind(...args),
     db.prepare(`SELECT referrer, hostname, COUNT(*) AS n FROM events WHERE ${w} AND type = 'event' AND name IS NULL AND referrer IS NOT NULL AND referrer != '' GROUP BY referrer, hostname ORDER BY n DESC LIMIT 200`).bind(...args),
-    db.prepare(`SELECT name, COUNT(*) AS n FROM events WHERE ${w} AND type = 'event' AND name IS NOT NULL GROUP BY name ORDER BY n DESC LIMIT 10`).bind(...args),
+    db.prepare(`SELECT name, COUNT(*) AS n FROM events WHERE ${w} AND type = 'event' AND name IS NOT NULL AND name != ? GROUP BY name ORDER BY n DESC LIMIT 10`).bind(...args, AGENT_FAILURE_EVENT),
     db.prepare(`SELECT url, COUNT(*) AS n FROM events WHERE ${w} AND type = 'event' AND name IS NULL AND url LIKE '%utm_source=%' GROUP BY url ORDER BY n DESC LIMIT 500`).bind(...args),
+    db.prepare(`SELECT ts, data FROM events WHERE ${w} AND type = 'event' AND name = ? ORDER BY ts DESC LIMIT 50`).bind(...args, AGENT_FAILURE_EVENT),
   ]);
   const t = totals.results[0] ?? { pageviews: 0, visitors: 0 };
   const byHost = new Map();
@@ -116,7 +119,20 @@ export async function siteStats(db, siteKey, since, until) {
     top_referrers: [...byHost.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([host, n]) => ({ host, n })),
     events: events.results.map((r) => ({ name: r.name, n: r.n })),
     utm_sources: utmSources(utms.results),
+    agent_failures: failures.results.map(storedFailure).filter(Boolean),
   };
+}
+
+/** One stored row back into the safe record. A row that is not that shape is skipped. */
+function storedFailure(row) {
+  let data = null;
+  try {
+    data = JSON.parse(row.data);
+  } catch {
+    data = null;
+  }
+  const rec = agentFailureRecord({ name: AGENT_FAILURE_EVENT, data });
+  return rec ? { ts: row.ts, ...rec } : null;
 }
 
 /** 75th percentile (nearest rank) of the finite numbers in `values`, or null. */

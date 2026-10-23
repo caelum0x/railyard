@@ -1,7 +1,9 @@
 {
 	// Railyard Insights edge collector (RYP-D3), our Cloudflare account.
 	// Secrets (`wrangler secret put`): VISITOR_SALT_SECRET, INGEST_TOKEN, RAGO_API_KEY,
-	// STATS_TOKEN (GET /api/stats, POST /api/report), RALLY_TX_KEY (Scribase Mail key for the weekly report).
+	// STATS_TOKEN (GET /api/stats, POST /api/report), RALLY_TX_KEY (Scribase Mail key for the weekly report),
+	// FAULTLINE_DSN (GlitchTip project DSN; `$agent_failure` events forward {agent, model, error} there --
+	// never a prompt or a key, src/agent-failure.mjs -- unset means the forward is skipped, not an error).
 	// Paid plan (2026-10-14, test mode until all three are set + RAILYARD_DODO_LIVE=1 for the live host):
 	// DODO_API_KEY, DODO_PRODUCT_ID (one Insights "Pro" product), DODO_WEBHOOK_SECRET (POST /api/billing/webhook).
 	"$schema": "node_modules/wrangler/config-schema.json",

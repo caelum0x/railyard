@@ -1,6 +1,8 @@
 // Umami-compatible payloads ({ type, payload: { website, url, ... } }) to the
 // Railyard event shape. Only listed fields pass; lengths are clamped.
 
+import { AGENT_FAILURE_EVENT, agentFailureRecord } from "./agent-failure.mjs";
+
 export const MAX_BATCH = 100;
 export const MAX_BODY_BYTES = 64 * 1024;
 const TYPES = new Set(["event", "identify", "performance"]);
@@ -56,6 +58,11 @@ export function parseOne(item) {
     }
     if (!Object.keys(vitals).length) return { error: "performance needs a metric" };
   }
+  const name = str(p.name, 50);
+  const data = cleanData(p.data);
+  // $agent_failure keeps only the agent, the model and the error name.
+  const failure = name === AGENT_FAILURE_EVENT ? agentFailureRecord({ name, data: p.data }) : null;
+  if (name === AGENT_FAILURE_EVENT && !failure) return { error: "agent failure needs an agent and an error name" };
   return {
     siteKey,
     event: {
@@ -63,14 +70,14 @@ export function parseOne(item) {
       ...(id ? { id } : {}),
       ...(user ? { user } : {}),
       ...vitals,
-      name: str(p.name, 50),
+      name,
       url,
       hostname: str(p.hostname, 100),
       referrer: str(p.referrer, 1000),
       title: str(p.title, 500),
       language: str(p.language, 35),
       screen: str(p.screen, 11),
-      data: cleanData(p.data),
+      data: failure ?? data,
     },
   };
 }

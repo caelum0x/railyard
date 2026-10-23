@@ -25,6 +25,14 @@ A Cloudflare Worker (RYP-D3) that takes page views and custom events from the
   analytics in its capture protocol (page views as `$pageview`, page speed as
   `$web_vitals`, a cookieless daily id for anonymous visitors), so the web view
   there reads the same store as funnels and replay.
+- Agent failures (2026-10-23): a page or SDK can send `railyard.track("$agent_failure",
+  { agent, model, error })`. Only those three fields are kept (`src/agent-failure.mjs`);
+  a prompt, an API key or any other field is dropped before anything is stored or
+  forwarded, and the event is missing without an `agent` and an `error`. These rows
+  sit in their own "Agent failures" table on the dashboard and the live demo, apart
+  from `events`/`converted`. With `FAULTLINE_DSN` set (a GlitchTip project DSN), each
+  one is also posted to Faultline as an issue tagged `agent`/`model`, fingerprinted on
+  `(agent, error)` so repeats group together.
 
 Live (2026-10-08): `https://insights.ereboslab.com` with a D1 event store
 (`railyard-insights`, binding `DB`; every stored event is written there at each
@@ -67,3 +75,6 @@ node test/load.mjs 60 1000         # load run in the local runtime; results in L
 1. `wrangler kv namespace create SITES` and put the id in `wrangler.jsonc`.
 2. `wrangler secret put VISITOR_SALT_SECRET` (32+ random bytes), `INGEST_TOKEN`, `RAGO_API_KEY`.
 3. Deploy at the Wave E gate, after Insights ingest is up.
+4. Optional: `wrangler secret put FAULTLINE_DSN` with the real GlitchTip project DSN
+   to turn on agent-failure forwarding; unset, the dashboard table still fills in,
+   only the Faultline forward is skipped.
