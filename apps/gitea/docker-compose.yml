@@ -86,17 +86,23 @@ services:
       GITEA__repository__DEFAULT_PRIVATE: "private"
       GITEA__actions__ENABLED: "true"
       GITEA__actions__DEFAULT_ACTIONS_URL: github
-      # --- accounts: native Gitea auth until Railyard has its own IdP -----------
-      # TODO(railyard-sso): when apps/console (or a dedicated identity service)
-      # exposes an OIDC discovery endpoint, register it with:
+      # --- accounts: native Gitea auth, or Railyard SSO once registered --------
+      # CLOSED (backlog item 5, was TODO(railyard-sso)): apps/console now
+      # exposes a real OIDC discovery endpoint (lib/oidc.ts, /oidc/{authorize,
+      # token,userinfo,jwks}). Register it once RAILYARD_OIDC_SIGNING_KEY and
+      # RAILYARD_OIDC_CLIENTS (client_id "railyard-id" below) are set on
+      # console:
       #   docker compose exec gitea gitea admin auth add-oauth \
       #     --name railyard-id --provider openidConnect \
-      #     --key <client-id> --secret <client-secret> \
+      #     --key railyard-id --secret <the RAILYARD_OIDC_CLIENTS secret> \
       #     --auto-discover-url https://railyard.ereboslab.com/.well-known/openid-configuration \
       #     --group-claim-name groups --admin-group railyard-admins
-      # Today console (apps/console) runs email-code sign-in only, no OIDC
-      # provider — see apps/console/lib/current.ts. Native accounts + the
-      # webhook-bridge billing hook (integrations/railyard/) are what's live.
+      # The redirect_uri Gitea will present is
+      # <GITEA_ROOT_URL>user/oauth2/railyard-id/callback -- it must exactly
+      # match the redirect_uri configured for "railyard-id" in console's
+      # RAILYARD_OIDC_CLIENTS. Native accounts stay available alongside this;
+      # the webhook-bridge billing hook (integrations/railyard/) is unaffected
+      # either way.
       GITEA__service__DISABLE_REGISTRATION: ${GITEA_DISABLE_REGISTRATION:-false}
       GITEA__service__REGISTER_EMAIL_CONFIRM: "false"
       GITEA__openid__ENABLE_OPENID_SIGNIN: "false"

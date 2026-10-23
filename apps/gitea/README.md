@@ -56,13 +56,21 @@ the console and documented for production deploy.
   ARM64), Cloudflare Tunnel for HTTPS, SSH on a non-22 port via the VCN
   security list, `gitea dump`/`gitea restore` backups, rollback.
 
-## SSO
+## SSO (backlog item 5, closed)
 
-No Railyard-run OIDC/identity server exists yet (`apps/console` is email-code
-sign-in only — see `lib/current.ts`). Gitea runs with **native accounts** for
-now; the exact `gitea admin auth add-oauth` command to register Railyard's
-console as an OIDC source once it exposes a discovery endpoint is documented
-as a `TODO(railyard-sso)` inline in `docker-compose.yml`.
+`apps/console` is now a real OIDC provider (`lib/oidc.ts`: RS256 id_token and
+a self-contained RS256 access_token, authorization-code grant, single-use
+codes in `railyard.oidc_codes`): discovery at
+`/.well-known/openid-configuration`, `/oidc/{authorize,token,userinfo,jwks}`.
+A visitor who is not yet signed into Console is bounced through its existing
+sign-in and comes straight back to finish the OIDC flow, so one session
+covers both Console and Rithub. It is gated on two console env vars
+(`RAILYARD_OIDC_SIGNING_KEY`, generated with
+`apps/console/scripts/gen-oidc-key.mjs`; `RAILYARD_OIDC_CLIENTS`, a
+`{client_id: {secret, redirect_uri}}` map) -- unset, every `/oidc/*` route
+answers 503 and Gitea just keeps its native accounts. The exact
+`gitea admin auth add-oauth` registration command is documented inline in
+`docker-compose.yml`'s `railyard-sso` block.
 
 ## Local proof (2026-10-15, this session)
 
