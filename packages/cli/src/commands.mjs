@@ -197,6 +197,9 @@ export async function logs(ctx, opts) {
     cwd: dir,
     env: ctx.env,
     echo: (s) => ctx.out(redact(s, [creds.token]).replace(/\n$/, "")),
+    // A tail can run for hours; only the exit code is ever read below, so never
+    // accumulate the streamed text (see run.mjs's `capture` doc comment).
+    capture: false,
   });
   // A Ctrl+C mid-stream ends the child by signal, not a bad exit code: that is how a
   // tail is meant to stop, not a failure (run() reports it as code 0, signal set).

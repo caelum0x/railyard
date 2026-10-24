@@ -40,5 +40,26 @@ if (cmd === "rollback") {
   console.log(`\nCurrent Version ID: ${rest[0]}`);
   process.exit(0);
 }
-console.error(`fake wrangler: unknown command ${cmd}`);
-process.exit(1);
+if (cmd === "tail") {
+  // Stands in for `wrangler tail`'s real behaviour: it streams until something
+  // kills it, it never exits on its own. Used to load-test `railyard logs`
+  // against a long-running stream (many lines, one carrying a secret to prove
+  // redaction still runs per-chunk) and against a Ctrl+C-style signal stop
+  // (FAKE_WRANGLER_TAIL_SELF_SIGTERM simulates the terminal sending SIGTERM to
+  // this child, the same way Ctrl+C would, without a second process to send it).
+  const n = Number(process.env.FAKE_WRANGLER_TAIL_LINES ?? "0");
+  const secret = process.env.FAKE_WRANGLER_TAIL_SECRET ?? "";
+  for (let i = 0; i < n; i += 1) {
+    // The secret rides on the very first line (whole in the first small write,
+    // nowhere near a pipe chunk boundary) so the redaction assertion below can't
+    // flake on the token happening to straddle two separate `data` events.
+    console.log(JSON.stringify({ line: i, message: i === 0 && secret ? `token ${secret} seen` : `log line ${i}` }));
+  }
+  if (process.env.FAKE_WRANGLER_TAIL_SELF_SIGTERM === "1") process.kill(process.pid, "SIGTERM");
+  else if (n > 0) process.exit(0);
+  else setInterval(() => {}, 1000); // hang like a real tail until the parent kills us
+  process.exitCode = 0;
+} else {
+  console.error(`fake wrangler: unknown command ${cmd}`);
+  process.exit(1);
+}

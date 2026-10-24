@@ -12,21 +12,30 @@ export function tool(env, name) {
   throw new Error(`unknown tool ${name}`);
 }
 
-/** Run and capture output; echo it live when `echo` is set (through `redactFn`). */
-export function run(cmd, args, { cwd, env, echo, redactFn = (s) => s, inherit = false } = {}) {
+/**
+ * Run and capture output; echo it live when `echo` is set (through `redactFn`).
+ *
+ * `capture: false` (the default is `true`) skips accumulating stdout/stderr into
+ * strings at all: a short-lived command like `deploy` needs the full text back
+ * (`parseDeployOutput` reads it), but a long-running stream like `logs` (which
+ * only ever reads `result.code`) must not grow those strings without bound for
+ * as long as the tail stays open — a `railyard logs` left running overnight on a
+ * busy Worker would otherwise hold every log line it ever printed in memory.
+ */
+export function run(cmd, args, { cwd, env, echo, redactFn = (s) => s, inherit = false, capture = true } = {}) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { cwd, env, stdio: inherit ? "inherit" : ["inherit", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (b) => {
-      stdout += b;
+      if (capture) stdout += b;
       if (echo) echo(redactFn(String(b)));
     });
     child.stderr?.on("data", (b) => {
-      stderr += b;
+      if (capture) stderr += b;
       if (echo) echo(redactFn(String(b)));
     });
-    child.on("error", (err) => resolve({ code: 127, stdout, stderr: `${stderr}${err.message}` }));
+    child.on("error", (err) => resolve({ code: 127, stdout, stderr: capture ? `${stderr}${err.message}` : err.message }));
     // `signal` is set instead of `code` when the child was killed (e.g. Ctrl+C on a tail);
     // callers that care about a clean stop (not a crash) can tell the two apart.
     child.on("close", (code, signal) => resolve({ code: code ?? (signal ? 0 : 1), stdout, stderr, signal }));

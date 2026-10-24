@@ -172,3 +172,32 @@ test("deploy without login says what to do", async () => {
   assert.equal(await main(["deploy"], c.c), 1);
   assert.deepEqual(c.lines, ["ERR Run railyard login first."]);
 });
+
+// `railyard logs` wraps `wrangler tail`, a stream that can run for hours. These
+// load-test it the way the PLAN-2026-10-23-DEEP.md addendum flagged as not yet
+// done: a long stream of lines (so a naive implementation that buffers the
+// whole thing would show it) and a Ctrl+C-style signal stop mid-stream.
+test("logs: a long tail streams every line live, redacts the saved token, and never fails on a normal end", async () => {
+  const { token } = JSON.parse(readFileSync(join(TMP, "config/credentials.json"), "utf8"));
+  const dir = project("logger", { "index.html": "<h1>x</h1>" });
+  const lines = 4000;
+  const c = ctx(dir, { FAKE_WRANGLER_LOGGED_IN: "1", FAKE_WRANGLER_TAIL_LINES: String(lines), FAKE_WRANGLER_TAIL_SECRET: token });
+  assert.equal(await main(["logs", "--format", "json", "--status", "error"], c.c), 0, c.lines.join("\n"));
+  assert.equal(c.lines[0], "Streaming logger. Stop with Ctrl+C.");
+  // Every line wrangler printed reached the terminal (nothing dropped by capture:false)...
+  const streamed = c.lines.slice(1).join("\n");
+  assert.equal((streamed.match(/"line":/g) ?? []).length, lines);
+  // ...the saved token never appears in the clear...
+  assert.ok(!streamed.includes(token), "token redacted");
+  assert.ok(streamed.includes("[redacted]"), "redaction placeholder present");
+  const call = wranglerCalls().at(-1);
+  assert.equal(call.cmd, "tail");
+  assert.deepEqual(call.rest, ["--name", "logger", "--format", "json", "--status", "error"]);
+});
+
+test("logs: a Ctrl+C-style signal mid-stream ends the command cleanly, not as a failure", async () => {
+  const dir = project("logger2", { "index.html": "<h1>x</h1>" });
+  const c = ctx(dir, { FAKE_WRANGLER_LOGGED_IN: "1", FAKE_WRANGLER_TAIL_LINES: "3", FAKE_WRANGLER_TAIL_SELF_SIGTERM: "1" });
+  assert.equal(await main(["logs"], c.c), 0, c.lines.join("\n"));
+  assert.ok(!c.lines.some((l) => l.startsWith("ERR")), "a signal stop is not reported as an error");
+});
