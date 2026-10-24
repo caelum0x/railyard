@@ -56,3 +56,29 @@ test("the report endpoint sends one Rally Send email to the owner", async () => 
     await c.close();
   }
 });
+
+test("the funnel counts same-day visitor-days that progress through ordered steps, via the real API", async () => {
+  const c = await startCollector({ d1: true, sites, bindings });
+  try {
+    // 2 visitors (distinguished by IP, like real distinct visitors) reach "/",
+    // only 1 of them goes on to "/pricing", and only that one then fires the
+    // "signup" custom event -- a real 3-step funnel, not a guess.
+    await c.send(ev(SITE, "/"), { "cf-connecting-ip": "203.0.113.11" });
+    await c.send(ev(SITE, "/pricing"), { "cf-connecting-ip": "203.0.113.11" });
+    await c.send(ev(SITE, "/pricing", { name: "signup" }), { "cf-connecting-ip": "203.0.113.11" });
+    await c.send(ev(SITE, "/"), { "cf-connecting-ip": "203.0.113.12" });
+    await sleep(3500);
+    const res = await fetch(`${c.base}/api/funnel?site=${SITE}&days=1&steps=/,/pricing*`, { headers: { authorization: "Bearer stats-token-123" } });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.steps.length, 2);
+    assert.equal(body.steps[0].step, "/");
+    assert.equal(body.steps[0].visitors, 2);
+    assert.equal(body.steps[1].step, "/pricing*");
+    assert.equal(body.steps[1].visitors, 1);
+    assert.equal(body.steps[1].rate, 50);
+    assert.equal((await fetch(`${c.base}/api/funnel?site=${SITE}&days=1`)).status, 401);
+  } finally {
+    await c.close();
+  }
+});

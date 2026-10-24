@@ -135,6 +135,73 @@ function storedFailure(row) {
   return rec ? { ts: row.ts, ...rec } : null;
 }
 
+const pathOf = (url) => {
+  const q = url.indexOf("?");
+  return q === -1 ? url : url.slice(0, q);
+};
+
+/**
+ * Named multi-step path funnel for [since, until): for ordered `steps` (each
+ * an exact page path or a `prefix*` path prefix), the number of distinct
+ * visitor-days that reached each step, counting only visitor-days that
+ * reached every earlier step first (by timestamp order, same UTC day --
+ * this service's visitor id is a daily salted hash, so a funnel can only
+ * ever be computed within one day, never across days). Real conversion
+ * between consecutive steps is `visitors[i] / visitors[i-1]`.
+ */
+export async function pathFunnel(db, siteKey, since, until, steps) {
+  await ensureSchema(db);
+  const clean = steps.map((s) => String(s ?? "").trim()).filter(Boolean).slice(0, 8);
+  if (!clean.length) return { steps: [] };
+  const w = "site_key = ? AND ts >= ? AND ts < ? AND type = 'event' AND name IS NULL";
+  const perStep = [];
+  for (const step of clean) {
+    const prefix = step.endsWith("*");
+    const needle = prefix ? step.slice(0, -1) : step;
+    const sql = prefix
+      ? `SELECT visitor || substr(ts,1,10) AS vd, MIN(ts) AS first_ts FROM events WHERE ${w} AND url LIKE ? GROUP BY vd`
+      : `SELECT visitor || substr(ts,1,10) AS vd, MIN(ts) AS first_ts FROM events WHERE ${w} AND (url = ? OR url LIKE ?) GROUP BY vd`;
+    const args = prefix ? [siteKey, since, until, `${needle}%`] : [siteKey, since, until, needle, `${needle}?%`];
+    const { results } = await db.prepare(sql).bind(...args).all();
+    perStep.push(new Map(results.map((r) => [r.vd, r.first_ts])));
+  }
+  const out = [];
+  let carry = null;
+  for (let i = 0; i < perStep.length; i += 1) {
+    const stepMap = perStep[i];
+    let reached = stepMap;
+    if (i > 0) {
+      reached = new Map();
+      for (const [vd, ts] of stepMap) {
+        const prevTs = carry.get(vd);
+        if (prevTs !== undefined && prevTs <= ts) reached.set(vd, ts);
+      }
+    }
+    out.push({ step: clean[i], visitors: reached.size, rate: i === 0 || !out[i - 1]?.visitors ? null : Math.round((reached.size / out[i - 1].visitors) * 1000) / 10 });
+    carry = reached;
+  }
+  return { steps: out };
+}
+
+/** Home page plus the next 2 most-visited distinct paths, a reasonable funnel default for any site. */
+export function defaultFunnelSteps(topPages) {
+  const seen = new Set();
+  const steps = [];
+  const home = topPages.find((p) => pathOf(p.url) === "/");
+  if (home) {
+    steps.push("/");
+    seen.add("/");
+  }
+  for (const p of topPages) {
+    const path = pathOf(p.url);
+    if (seen.has(path)) continue;
+    seen.add(path);
+    steps.push(`${path}*`);
+    if (steps.length >= 3) break;
+  }
+  return steps;
+}
+
 /** 75th percentile (nearest rank) of the finite numbers in `values`, or null. */
 export function p75(values) {
   const v = values.filter((x) => typeof x === "number" && Number.isFinite(x)).sort((a, b) => a - b);

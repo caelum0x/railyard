@@ -271,7 +271,15 @@ function speedSection(speed) {
 <p class="small">75th percentile of ${n(speed.samples)} page views from real visitors. Good is LCP under 2.5 s, INP under 200 ms, CLS under 0.1.</p>`;
 }
 
-export function dashboardPage({ token, origin, key, site, stats, speed, days, usage, fresh, capLine, billingReady = false }) {
+const funnelSection = (funnel) => {
+  const steps = funnel?.steps ?? [];
+  if (!steps.length || !steps[0].visitors) return "";
+  const rows = steps.map((s, i) => `<tr><td>${esc(s.step)}</td><td class="r">${n(s.visitors)}</td><td class="r">${i === 0 ? "-" : `${s.rate ?? 0}%`}</td></tr>`).join("");
+  return `<h2>Funnel</h2><p class="small">Same-day path order: home, then your next 2 most-visited pages. Each row counts visitor-days that reached that step after the one above it.</p>
+<table><tr><th>Step</th><th class="r">Visitors</th><th class="r">Reached from previous</th></tr>${rows}</table>`;
+};
+
+export function dashboardPage({ token, origin, key, site, stats, speed, funnel, days, usage, fresh, capLine, billingReady = false }) {
   const cur = stats;
   const snippet = snippetFor(origin, key);
   const waiting = usage.all === 0;
@@ -302,6 +310,7 @@ ${list("Top pages", cur.top_pages, [{ h: "Page", v: (r) => r.url }, { h: "Views"
 ${list("Top referrers", cur.top_referrers, [{ h: "Site", v: (r) => r.host }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
 ${list("UTM sources", cur.utm_sources, [{ h: "utm_source", v: (r) => r.source }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
 ${list("Custom events", cur.events, [{ h: "Event", v: (r) => r.name }, { h: "Count", v: (r) => n(r.n), r: 1 }])}
+${funnelSection(funnel)}
 ${agentFailureSection(cur.agent_failures)}
 ${speedSection(speed)}
 <h2>Session replay</h2>
@@ -320,7 +329,7 @@ ${waiting ? "" : `<h2>Your tag</h2><pre>${esc(snippet)}</pre>`}
 // so a visitor can see the product work on real traffic before giving an
 // email address. No PII: no site labels, emails or dashboard tokens of any
 // customer appear here, only this landing page's own aggregate counts.
-export function liveDemoPage({ stats, speed, days, tag } = {}) {
+export function liveDemoPage({ stats, speed, funnel, days, tag } = {}) {
   const cur = stats;
   const body = `<h1>A live example, not a mockup</h1>
 <p class="muted">This is the real traffic to insights.ereboslab.com itself over the last ${days} days, read with the same dashboard every sign-up gets. Nothing here is a screenshot or a made-up number.</p>
@@ -331,6 +340,7 @@ export function liveDemoPage({ stats, speed, days, tag } = {}) {
 </div>
 ${list("Top pages", cur.top_pages, [{ h: "Page", v: (r) => r.url }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
 ${list("Top referrers", cur.top_referrers, [{ h: "Site", v: (r) => r.host }, { h: "Views", v: (r) => n(r.n), r: 1 }])}
+${funnelSection(funnel)}
 ${agentFailureSection(cur.agent_failures)}
 ${speedSection(speed)}
 <h2>Get the same dashboard for your own site</h2>

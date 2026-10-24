@@ -11,7 +11,7 @@ import { buildReport, sendReport, windows } from "./report.mjs";
 import { capMessage } from "./caps.ts";
 import { applyWebhookEvent, billingReady, createCheckout, verifyDodoWebhook } from "./dodo.mjs";
 import { createSite, deleteSite, hostMatches, resolveDashboard, signupEmail, usage } from "./selfserve.mjs";
-import { pageSpeed, siteStats } from "./store.mjs";
+import { defaultFunnelSteps, pageSpeed, pathFunnel, siteStats } from "./store.mjs";
 import { ROBOTS, SITEMAP, cookielessAnalyticsPage, dashboardPage, fathomAlternativePage, googleAnalyticsAlternativePage, landingPage, liveDemoPage, messagePage, plausibleAlternativePage, privacyPage } from "./pages.mjs";
 import { REPLAY_JS, REPLAY_VIEWER_JS } from "./replay/tracker.mjs";
 import { ingestReplayChunk } from "./replay/ingest.mjs";
@@ -124,6 +124,16 @@ async function owner(request, env, url) {
     // `days` back from now (including today), so fresh events show up at once.
     return reply(200, await buildReport(env, Date.now() + 86_400_000, days));
   }
+  if (url.pathname === "/api/funnel") {
+    const site = url.searchParams.get("site");
+    if (!site) return reply(400, { error: "site required" });
+    const days = Math.min(90, Math.max(1, Number(url.searchParams.get("days")) || 7));
+    const w = windows(Date.now() + 86_400_000, days);
+    const steps = (url.searchParams.get("steps") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const stats = steps.length ? null : await siteStats(env.DB, site, ...w.cur);
+    const funnel = await pathFunnel(env.DB, site, ...w.cur, steps.length ? steps : defaultFunnelSteps(stats.top_pages));
+    return reply(200, { site, from: w.cur[0], to: w.cur[1], ...funnel });
+  }
   return reply(200, await sendReport(env, Date.now()));
 }
 
@@ -186,7 +196,8 @@ async function dashboardData(env, found, days) {
   const stats = await siteStats(env.DB, found.key, ...w.cur);
   const speed = await pageSpeed(env.DB, found.key, ...w.cur);
   const used = await usage(env.DB, found.key);
-  return { stats, speed, usage: used, capLine: capMessage(used.month, found.site.events_limit ?? 0, new Date()) };
+  const funnel = await pathFunnel(env.DB, found.key, ...w.cur, defaultFunnelSteps(stats.top_pages));
+  return { stats, speed, usage: used, funnel, capLine: capMessage(used.month, found.site.events_limit ?? 0, new Date()) };
 }
 
 async function upgrade(request, env, url, token, found, priv) {
@@ -212,7 +223,7 @@ async function dashboard(request, env, url, parts) {
   const days = [7, 30, 90].includes(Number(url.searchParams.get("days"))) ? Number(url.searchParams.get("days")) : 7;
   if (parts[1] === "api") {
     const d = await dashboardData(env, found, Math.min(90, Math.max(1, Number(url.searchParams.get("days")) || 7)));
-    return reply(200, { domain: found.site.label, cur: d.stats, speed: d.speed, usage: d.usage, events_limit: found.site.events_limit, paid: Boolean(found.site.paid), billing_ready: billingReady(env) }, priv);
+    return reply(200, { domain: found.site.label, cur: d.stats, speed: d.speed, funnel: d.funnel, usage: d.usage, events_limit: found.site.events_limit, paid: Boolean(found.site.paid), billing_ready: billingReady(env) }, priv);
   }
   if (action === "delete") {
     if (request.method !== "POST") return html(405, messagePage("Not allowed", "Use the delete button on the dashboard."), priv);
@@ -235,6 +246,7 @@ async function dashboard(request, env, url, parts) {
       site: found.site,
       stats: d.stats,
       speed: d.speed,
+      funnel: d.funnel,
       days,
       usage: d.usage,
       capLine: d.capLine,
@@ -251,10 +263,11 @@ const EMPTY_SITE_STATS = { pageviews: 0, visitors: 0, engaged: 0, converted: 0, 
 async function liveDemo(env, url) {
   const days = [7, 30, 90].includes(Number(url.searchParams.get("days"))) ? Number(url.searchParams.get("days")) : 30;
   const key = landingTag(env);
-  if (!env.DB || !key) return html(200, liveDemoPage({ stats: EMPTY_SITE_STATS, speed: null, days, tag: key }), { "cache-control": "public, max-age=60", "content-security-policy": PUBLIC_CSP });
+  if (!env.DB || !key) return html(200, liveDemoPage({ stats: EMPTY_SITE_STATS, speed: null, funnel: { steps: [] }, days, tag: key }), { "cache-control": "public, max-age=60", "content-security-policy": PUBLIC_CSP });
   const w = windows(Date.now() + DAY, days);
   const [stats, speed] = await Promise.all([siteStats(env.DB, key, ...w.cur), pageSpeed(env.DB, key, ...w.cur)]);
-  return html(200, liveDemoPage({ stats, speed, days, tag: key }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
+  const funnel = await pathFunnel(env.DB, key, ...w.cur, defaultFunnelSteps(stats.top_pages));
+  return html(200, liveDemoPage({ stats, speed, funnel, days, tag: key }), { "cache-control": "public, max-age=300", "content-security-policy": PUBLIC_CSP });
 }
 
 /** Public pages, sign-up and dashboards; null when the path is not one of them. */
@@ -318,6 +331,7 @@ export default {
       return ingestReplayChunk(request, env, Date.now(), (key, now) => site(env, key, now));
     }
     if (request.method === "GET" && url.pathname === "/api/stats") return owner(request, env, url);
+    if (request.method === "GET" && url.pathname === "/api/funnel") return owner(request, env, url);
     if (request.method === "POST" && url.pathname === "/api/report") return owner(request, env, url);
     if (request.method === "POST" && url.pathname === "/api/send") return collect(request, env, false);
     if (request.method === "POST" && url.pathname === "/api/batch") return collect(request, env, true);
