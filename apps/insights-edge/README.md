@@ -11,9 +11,11 @@ A Cloudflare Worker (RYP-D3) that takes page views and custom events from the
 - Bots, crawlers, link previews and prefetches are answered 202 and dropped.
 - The visitor id is a salted hash that changes every UTC day. The IP is used only
   to compute it, in memory; it is never stored, logged or sent on.
-- Plan caps per site and month. Over the cap the answer is still 202, with
-  `x-railyard-capped: 1`; those events are counted for usage but not stored.
-  A paused org gets `x-railyard-paused: 1`.
+- Plan caps per org and month, pooled across every site/app the org has (not
+  a separate allowance per site — a 3-app org cannot store 3x its plan's
+  events by spreading events across its 3 sites). Over the cap the answer is
+  still 202, with `x-railyard-capped: 1`; those events are counted for usage
+  but not stored. A paused org gets `x-railyard-paused: 1`.
 - One Durable Object per org buffers events and flushes every 2 seconds in one
   request, so each site sees at most one downstream request every 2 seconds.
 - Once a minute each org's counts go to the usage meter as `insights_events`

@@ -1,9 +1,12 @@
 // OrgCollector: one Durable Object per Railyard org. It counts events against
-// each site's monthly cap, buffers the stored ones, and flushes every 2 s in
-// ONE request to Insights ingest (so each site sees at most one downstream
-// request every 2 s). Over-cap events are counted, never stored. Once a
-// minute it reports the org's usage to Rago as an `insights_events` event
-// (a $0 shadow meter). It never receives an IP address.
+// the ORG'S monthly cap (one shared pool across every site/app of the org —
+// the plan's events_limit is per org, not per site, so an org on the 3-app
+// plan cannot store 3x its quota by spreading events across 3 site keys),
+// buffers the stored ones, and flushes every 2 s in ONE request to Insights
+// ingest (so each site sees at most one downstream request every 2 s).
+// Over-cap events are counted, never stored. Once a minute it reports the
+// org's usage to Rago as an `insights_events` event (a $0 shadow meter). It
+// never receives an IP address.
 
 import { sendAgentFailures } from "./agent-failure.mjs";
 import { capDecision } from "./caps.ts";
@@ -24,7 +27,7 @@ export class OrgCollector {
     this.env = env;
     this.orgId = null;
     this.buffers = new Map(); // siteKey -> { appId, events: [] }
-    this.counts = new Map(); // `${siteKey}|${month}` -> number
+    this.counts = new Map(); // month -> number, pooled across every site of this org
     this.minutes = new Map(); // minute -> { events, stored, capped, dropped }
     this.dirty = new Set();
     this.seen = new Map(); // siteKey -> Map(event id -> expiry ms)
@@ -43,10 +46,10 @@ export class OrgCollector {
     return Date.now();
   }
 
-  async count(siteKey, month) {
-    const k = `${siteKey}|${month}`;
-    if (!this.counts.has(k)) this.counts.set(k, (await this.state.storage.get(`count:${k}`)) ?? 0);
-    return this.counts.get(k);
+  /** Events stored this UTC month, pooled across every site of this org (one DO per org). */
+  async count(month) {
+    if (!this.counts.has(month)) this.counts.set(month, (await this.state.storage.get(`count:${month}`)) ?? 0);
+    return this.counts.get(month);
   }
 
   minute(ms) {
@@ -66,12 +69,15 @@ export class OrgCollector {
     const events = await this.fresh(site.key, body.events, now);
     const duplicates = body.events.length - events.length;
     const month = monthKey(now);
-    const used = await this.count(site.key, month);
+    // Pooled org-wide: usage from every site of this org counts against the
+    // same monthly cap, so a 3-app org cannot store 3x its plan's events_limit
+    // by spreading events across its sites (RYP per-site pricing penalty fix).
+    const used = await this.count(month);
     const decision = capDecision(used, site.events_limit ?? 0, events.length);
     const stored = events.slice(0, decision.stored);
     const capped = decision.capped;
-    this.counts.set(`${site.key}|${month}`, used + events.length);
-    this.dirty.add(`${site.key}|${month}`);
+    this.counts.set(month, used + events.length);
+    this.dirty.add(month);
     const m = this.minute(now);
     m.events += events.length;
     m.capped += capped;

@@ -54,8 +54,9 @@ Machine-readable schema: `ingest-batch.schema.json`.
   salt is `HMAC(VISITOR_SALT_SECRET, "railyard-insights-salt:" + UTC date)`, so a
   visitor cannot be linked across days or sites. **No IP address is ever sent**,
   and Insights must not add one.
-- Every event in a batch is under the site's plan cap. Over-cap events never
-  reach Insights; they are counted in Rago only.
+- Every event in a batch is under the org's plan cap — one pool shared across
+  every site/app of the org, not a separate cap per site. Over-cap events
+  never reach Insights; they are counted in Rago only.
 
 ## Response
 
@@ -72,9 +73,11 @@ The console writes one KV entry per app (`SITES` namespace), key `site:<site_key
 { "org_id": "...", "app_id": "...", "events_limit": 100000, "paused": false }
 ```
 
-`events_limit` comes from the org's entitlements; `paused` from the pause switch.
-The collector caches an entry for 60 seconds. (Writing these entries on app
-creation and on entitlement changes is RYP-E1.)
+`events_limit` comes from the org's entitlements (the same number on every
+site/app of the org — the collector pools usage across all of an org's sites
+against this one number, it is not a separate allowance per site); `paused`
+from the pause switch. The collector caches an entry for 60 seconds. (Writing
+these entries on app creation and on entitlement changes is RYP-E1.)
 
 ## Usage to Rago (shadow meter)
 

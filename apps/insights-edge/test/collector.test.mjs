@@ -104,6 +104,41 @@ test("over the cap: 202 with x-railyard-capped, not stored, counted in Rago", as
   assert.ok(usage.every((e) => e.code === "insights_events" && e.transaction_id.startsWith("insights:org-b:")));
 });
 
+test("the cap is pooled org-wide: two sites of the same org share one monthly budget", async () => {
+  const SITE_A = "ry_site_poolporgaaaa";
+  const SITE_B = "ry_site_poolporgbbbb";
+  const pooled = await startCollector({
+    bindings: { RAGO_BUCKET_MS: "1000" },
+    sites: {
+      [SITE_A]: { org_id: "org-pool", app_id: "app-a", events_limit: 3, paused: false },
+      [SITE_B]: { org_id: "org-pool", app_id: "app-b", events_limit: 3, paused: false },
+    },
+  });
+  try {
+    const start = pooled.outbound.length;
+    // Site A alone uses 2 of the org's 3-event pool.
+    const r1 = await pooled.send(Array.from({ length: 2 }, (_, i) => ev(SITE_A, `/a${i}`)), {}, "/api/batch");
+    assert.equal(r1.status, 202);
+    assert.equal(r1.headers.get("x-railyard-capped"), null);
+    // Site B, a DIFFERENT site of the SAME org, only has 1 of room left in the
+    // shared pool — not its own fresh 3-event allowance (the per-site bug this
+    // test guards against would let it store all 2 of these, too).
+    const r2 = await pooled.send(Array.from({ length: 2 }, (_, i) => ev(SITE_B, `/b${i}`)), {}, "/api/batch");
+    assert.equal(r2.status, 202);
+    assert.equal(r2.headers.get("x-railyard-capped"), "1");
+    await sleep(3500);
+    const stored = pooled.outbound
+      .slice(start)
+      .filter((o) => o.url.includes("/ingest/"))
+      .flatMap((o) => JSON.parse(o.body).batches.flatMap((b) => b.events));
+    assert.equal(stored.length, 3, "exactly the org's pooled 3-event budget, not 3 per site");
+    assert.ok(stored.some((e) => e.url === "/b0"), "the first of site B's events still fit the shared pool");
+    assert.ok(!stored.some((e) => e.url === "/b1"), "the second of site B's events overran the shared pool");
+  } finally {
+    await pooled.close();
+  }
+});
+
 test("a paused site answers 202 with x-railyard-paused and stores nothing", async () => {
   const start = c.outbound.length;
   const r = await c.send(ev(PAUSED));
