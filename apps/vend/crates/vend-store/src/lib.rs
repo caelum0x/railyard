@@ -1179,7 +1179,7 @@ impl ControlPlaneRepo for VendStore {
         }
         let activated = sqlx::query(
             "UPDATE customer_users u SET password_hash = COALESCE(u.password_hash, $2), \
-             status = 'active', activated_at = COALESCE(activated_at, now()) \
+             status = 'active', activated_at = COALESCE(u.activated_at, now()) \
              FROM tenant_memberships m WHERE m.id = $1 AND m.user_id = u.id \
              AND u.status <> 'disabled'",
         )

@@ -321,13 +321,29 @@ impl MintTransport for MintClient {
         &self,
         req: CreateAccountRequest,
     ) -> Result<CreateAccountResponse, VendError> {
-        if !matches!(req.kind.as_str(), "user" | "org") {
-            return Err(VendError::InvalidAmount);
-        }
+        // Vend's own `kind` contract (vend_core::transport::CreateAccountRequest)
+        // is documented and validated as lowercase ("user"/"org"), matching the
+        // in-memory FakeMint used by every unit/integration test. Real
+        // mint-server's `AccountKind` is a plain serde enum with no
+        // `rename_all`, so its actual wire contract is the PascalCase variant
+        // name ("User"/"Org") -- sending the lowercase form 422s with
+        // "unknown variant `org`", which this client's generic status-code
+        // mapper then turns into the misleading `CaptureExceedsHold`. Translate
+        // at this HTTP boundary only, so the rest of Vend (and its tests) keep
+        // using the lowercase convention.
+        let mint_kind = match req.kind.as_str() {
+            "user" => "User",
+            "org" => "Org",
+            _ => return Err(VendError::InvalidAmount),
+        };
         if req.owner_ref.as_ref().is_some_and(|owner| owner.len() > 256) {
             return Err(VendError::InvalidAmount);
         }
-        self.post_json("/v1/accounts", &req).await
+        let wire = CreateAccountRequest {
+            kind: mint_kind.to_string(),
+            owner_ref: req.owner_ref,
+        };
+        self.post_json("/v1/accounts", &wire).await
     }
 }
 
