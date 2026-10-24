@@ -34,9 +34,18 @@ fn price_label(p: &Price) -> String {
     }
 }
 
-fn curl_snippet(base: &str, tool: &ToolManifest) -> String {
+/// A copy-paste `curl` snippet. The example input comes from the catalog's
+/// own `example_input` (the manifest's documented example when one exists,
+/// otherwise a schema-derived placeholder for every required field) so a
+/// real developer pasting this straight from `/catalog` gets a real response
+/// instead of an opaque `422 invalid_input` on a tool that requires fields --
+/// a bare `{"input": {}}` failed this for most of the catalog (13/27 tools
+/// ship a manifest example; most of the rest still have required fields).
+fn curl_snippet(base: &str, tool: &ToolManifest, catalog: &switchyard_catalog::Catalog) -> String {
+    let input = catalog.example_input(&tool.id);
+    let input_json = serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string());
     format!(
-        "curl {base}/v1/tools/{}/call \\\n  -H \"Authorization: Bearer sk-t0-...\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{{\"input\": {{}}}}'",
+        "curl {base}/v1/tools/{}/call \\\n  -H \"Authorization: Bearer sk-t0-...\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{{\"input\": {input_json}}}'",
         tool.id
     )
 }
@@ -75,7 +84,7 @@ pub async fn html(State(st): State<AppState>) -> Response {
                 esc(&t.provider),
                 esc(t.side_effect.as_str()),
                 esc(&price_label(&t.price)),
-                esc(&curl_snippet(base, t)),
+                esc(&curl_snippet(base, t, &st.catalog)),
             ));
         }
         if rows.is_empty() {

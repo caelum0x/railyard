@@ -232,6 +232,24 @@ impl Catalog {
         self.capabilities.get(id).map(|c| c.output_schema.clone())
     }
 
+    /// A real, runnable example input for a tool or capability: the
+    /// manifest's own documented `example.input` when the catalog author
+    /// provided one, otherwise a placeholder derived from the effective
+    /// input schema's `required` properties -- never a bare `{}` for a tool
+    /// that would reject it. Used anywhere an example is shown as a
+    /// copy-paste call (the `/catalog` page's curl snippets, `sy describe`'s
+    /// dry-run preview), so those examples pass the exact same JSON Schema
+    /// validation a real call enforces instead of failing with
+    /// `invalid_input` on first use.
+    pub fn example_input(&self, id: &str) -> Value {
+        if let Some(t) = self.tools.get(id) {
+            if let Some(ex) = &t.example {
+                return ex.input.clone();
+            }
+        }
+        self.input_schema(id).map(|schema| placeholder_from_schema(&schema)).unwrap_or_else(|| Value::Object(Default::default()))
+    }
+
     /// Validate an input for a tool or capability id.
     pub fn validate_input(&self, id: &str, input: &Value) -> Result<(), Vec<(String, String)>> {
         match self.input_schemas.get(id) {
@@ -247,5 +265,72 @@ impl Catalog {
 
     pub fn search(&self, query: &str, filters: &SearchFilters) -> Vec<SearchHit> {
         self.index.search(self, query, filters)
+    }
+}
+
+/// Build a minimal JSON object covering every property a JSON Schema
+/// `object` marks required, so the result satisfies schema validation. A
+/// `default` on the property wins; otherwise a representative literal for
+/// its declared `type` (first type when the schema lists several, e.g.
+/// `["string", "null"]`), pattern-checked when the property has a `pattern`
+/// so e.g. a `domain` field gets `example.com` instead of a plain word that
+/// fails its own regex. "Required" here is either the schema's own
+/// top-level `required` list, or -- when a tool needs one of several fields
+/// (`company.sec.filings`: ticker OR cik) -- the first `anyOf` alternative's
+/// `required` list. Properties without a `type`/`default` and non-object
+/// schemas fall back to an empty object -- strictly better than a bare `{}`
+/// for anything with required fields, never worse.
+fn placeholder_from_schema(schema: &Value) -> Value {
+    let Some(obj) = schema.as_object() else { return Value::Object(Default::default()) };
+    let Some(props) = obj.get("properties").and_then(Value::as_object) else {
+        return Value::Object(Default::default());
+    };
+    let mut required: Vec<&str> = obj.get("required").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+    if required.is_empty() {
+        if let Some(first_alt) = obj.get("anyOf").and_then(Value::as_array).and_then(|a| a.first()) {
+            required = first_alt.get("required").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+        }
+    }
+    let mut out = serde_json::Map::new();
+    for name in required {
+        let Some(prop) = props.get(name) else { continue };
+        let value = prop
+            .get("default")
+            .cloned()
+            .or_else(|| prop.get("enum").and_then(Value::as_array).and_then(|a| a.first().cloned()))
+            .unwrap_or_else(|| placeholder_for_type(prop));
+        out.insert(name.to_string(), value);
+    }
+    Value::Object(out)
+}
+
+/// A handful of candidate strings that look like real-world values (a
+/// domain, an email, a short word), tried in order against the property's
+/// own `pattern` when it has one. Falls back to the first candidate
+/// ("example") when there is no pattern or none of the candidates match --
+/// still correct for the common unconstrained-string case, and no worse
+/// than before for a pattern we didn't anticipate.
+fn placeholder_for_type(prop: &Value) -> Value {
+    let kind = match prop.get("type") {
+        Some(Value::String(s)) => Some(s.as_str()),
+        Some(Value::Array(a)) => a.iter().find_map(|v| v.as_str()).filter(|s| *s != "null"),
+        _ => None,
+    };
+    match kind {
+        Some("string") => Value::String(string_placeholder(prop).into()),
+        Some("integer") => Value::Number(1.into()),
+        Some("number") => serde_json::Number::from_f64(1.0).map(Value::Number).unwrap_or(Value::Null),
+        Some("boolean") => Value::Bool(true),
+        Some("array") => Value::Array(vec![]),
+        Some("object") => Value::Object(Default::default()),
+        _ => Value::String(string_placeholder(prop).into()),
+    }
+}
+
+fn string_placeholder(prop: &Value) -> &'static str {
+    const CANDIDATES: &[&str] = &["example", "example.com", "example@example.com", "https://example.com", "1"];
+    match prop.get("pattern").and_then(Value::as_str).and_then(|p| regex::Regex::new(p).ok()) {
+        Some(re) => CANDIDATES.iter().copied().find(|c| re.is_match(c)).unwrap_or("example"),
+        None => "example",
     }
 }
