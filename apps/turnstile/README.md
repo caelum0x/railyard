@@ -17,19 +17,51 @@
 > Container image (build context = repo root, because of the `aitp-client` path
 > dependency): `docker build -f apps/turnstile/Dockerfile -t railyard/turnstile-server .`
 
-Run the paid echo product against Mint:
+Run the paid echo product against Mint. `TURNSTILE_API_KEY` must be the SAME
+key the mint-server below was started with (`MINT_API_KEY`) — Turnstile
+presents it to Mint as its own `X-API-Key`, it is not a Turnstile-side secret.
+`TURNSTILE_PAYEE` must be a REAL `ait1…` address that Mint can resolve, not a
+hand-typed placeholder: `from_env()` now rejects anything that doesn't decode
+as valid bech32 (see `validate_payee_address` in
+`crates/turnstile-core/src/config.rs`) rather than starting a server that can
+issue `402`s all day and only ever fail, cryptically, the first time anyone
+actually tries to pay one. Mint one first:
 
 ```bash
-cd apps/turnstile
+# 1. Start Mint (a disposable local ledger — see apps/mint/README.md):
+cd apps/mint
+MINT_API_KEY=local-secret MINT_ALLOW_INMEMORY=1 cargo run -p mint-server &
+
+# 2. Create a provider account and bind it a real receive address:
+curl -s -X POST http://127.0.0.1:8080/v1/accounts -H 'x-api-key: local-secret' \
+  -H 'content-type: application/json' -d '{"kind":"Provider","owner_ref":"demo-provider"}'
+# -> {"data":{"account_id":"acct_..."}}
+curl -s -X POST http://127.0.0.1:8080/v1/accounts/acct_.../addresses \
+  -H 'x-api-key: local-secret' -H 'content-type: application/json' -d '{"purpose":"turnstile-payee"}'
+# -> {"data":{"address":"ait1q..."}}  <- use this as TURNSTILE_PAYEE below
+
+# 3. Start Turnstile against that real address:
+cd ../turnstile
 MINT_SERVER_URL=http://127.0.0.1:8080 \
-TURNSTILE_API_KEY=mint-secret \
-TURNSTILE_PAYEE=ait1qprovider \
+TURNSTILE_API_KEY=local-secret \
+TURNSTILE_PAYEE=ait1q... \
 TURNSTILE_PRICE_MICROS=4200 \
 TURNSTILE_DATABASE_URL=postgres://localhost/turnstile \
 BIND_ADDR=0.0.0.0:8101 \
 TURNSTILE_DEMO_ECHO=1 \
 cargo run -p turnstile-server
 ```
+
+An unpaid `POST /v1/echo` now answers a real `402` with an `AITP-Challenge`.
+Actually paying it needs a payer account with a real Mint balance (a separate,
+genuinely owner-gated step — fund it through one of Mint's real payment
+providers; there is no HTTP-reachable fake-funding path, by design) — but the
+setup above is no longer the broken quickstart that failed every payment with
+an opaque `mint error (status 400, code 'bad_address')` before ever reaching
+that real funding boundary. Verified live end-to-end against a real
+`mint-server` while fixing this: the former placeholder (`ait1qprovider`) is
+not valid bech32 and never resolves; a real minted address correctly advances
+all the way to `insufficient_funds` instead.
 
 ### Put your own endpoints behind the paywall (no Rust)
 

@@ -15,6 +15,10 @@ serde_json.workspace = true
 thiserror.workspace = true
 rand.workspace = true
 hex = "0.4"
+# Validates TURNSTILE_PAYEE as a real `ait1…` Mint receive address at startup
+# (same encoding mint-core uses) instead of accepting any opaque string that
+# can only fail, cryptically, much later at first capture.
+bech32 = "0.11"
 # x402 `X-PAYMENT` / `X-PAYMENT-RESPONSE` headers are base64-encoded JSON.
 base64 = "0.22"
 # Coinbase CDP facilitator auth: per-request JWTs signed with the CDP API key,
