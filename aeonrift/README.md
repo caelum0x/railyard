@@ -15,6 +15,7 @@ wired as real Cargo path deps so the workspace graph is queryable from day one.
 - Typed architecture graph: [AEONRIFT-GRAPH.md](../AEONRIFT-GRAPH.md)
 - Universe / naming: [AEONRIFT-UNIVERSE.md](../AEONRIFT-UNIVERSE.md)
 - Two-repo + asset scale: [MOBA-ARCHITECTURE.md](../MOBA-ARCHITECTURE.md)
+- Credits + AI-asset provenance (required before any storefront listing): [CREDITS.md](./CREDITS.md)
 
 ## Layout
 ```
