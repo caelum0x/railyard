@@ -56,7 +56,17 @@ services:
       GITEA____APP_NAME: "Rithub (by Railyard)"
       GITEA__server__DOMAIN: ${GITEA_DOMAIN:-git.ereboslab.com}
       GITEA__server__ROOT_URL: ${GITEA_ROOT_URL:-https://git.ereboslab.com/}
-      GITEA__server__SSH_DOMAIN: ${GITEA_DOMAIN:-git.ereboslab.com}
+      # SSH_DOMAIN is deliberately a SEPARATE var from DOMAIN/ROOT_URL above:
+      # DOMAIN is the Cloudflare-proxied (orange-cloud) public hostname, and
+      # Cloudflare's proxy only forwards HTTP(S) (80/443) -- it does not
+      # forward arbitrary TCP ports like 2222, so a clone URL built from
+      # DOMAIN (ssh://git@git.ereboslab.com:2222/...) times out for every
+      # end user even once the OCI security list + UFW allow 2222 inbound.
+      # Point this at a DNS-only (grey-cloud) A/AAAA record for the same box
+      # instead (e.g. git-ssh.ereboslab.com) -- confirmed 2026-10-25 by a
+      # real SSH push: hostname-through-Cloudflare timed out, the box's raw
+      # IP and a grey-cloud hostname both worked.
+      GITEA__server__SSH_DOMAIN: ${GITEA_SSH_DOMAIN:-git-ssh.ereboslab.com}
       # SSH_PORT is the port advertised in clone URLs / the UI; the container
       # itself always listens on :22 via the base image's passthrough OpenSSH
       # (the default — do NOT also set START_SSH_SERVER=true, Gitea's own
