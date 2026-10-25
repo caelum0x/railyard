@@ -1,13 +1,31 @@
 # Rithub (Gitea) — Oracle ARM box RUNBOOK
 
-**Status: deployed 2026-10-19.** Live at `https://git.ereboslab.com/`
-(not `git.railyard.ereboslab.com` — see `../README.md`'s "Production deploy"
-section for the actual hostname, ports, and the Caddy-not-Tunnel path taken).
-The steps below are the original plan; they describe the Cloudflare Tunnel
-approach that was *not* the one used in the end (plain Caddy + DNS matched
-every other box service better and needed no new OWNER dashboard step for
-the HTTP path). Kept as-is for the SSH-over-2222 step, which is still
-pending the one real OWNER action (OCI security list rule, step 3 below).
+**Status: deployed 2026-10-19, SSH-over-2222 closed out 2026-10-25.** Live at
+`https://git.ereboslab.com/` (not `git.railyard.ereboslab.com` — see
+`../README.md`'s "Production deploy" section for the actual hostname, ports,
+and the Caddy-not-Tunnel path taken). The steps below are the original plan;
+they describe the Cloudflare Tunnel approach that was *not* the one used in
+the end (plain Caddy + DNS matched every other box service better and needed
+no new OWNER dashboard step for the HTTP path).
+
+Step 3 below (OCI VCN security-list rule for port 2222) turned out to **not**
+need an owner click: this environment already had a working `oci` CLI config
+(`~/.oci/config` + API key), used to add the ingress rule directly via
+`oci network security-list update`. `sudo ufw allow 2222/tcp` was applied on
+the box the same session. A second real gap was found and fixed while
+verifying live: Gitea was advertising
+`ssh://git@git.ereboslab.com:2222/...` clone URLs, but `git.ereboslab.com` is
+a Cloudflare-proxied (orange-cloud) A record, and Cloudflare's proxy does not
+forward arbitrary TCP ports (only 80/443) — so that clone URL timed out for
+every real end user even with the firewall correctly open. Fixed by adding a
+second, DNS-only (grey-cloud) A record `git-ssh.ereboslab.com` → the same IP
+(via the Cloudflare API, `CLOUDFLARE_DNS_API_TOKEN`) and a new
+`GITEA_SSH_DOMAIN` env var pointed at it (`docker-compose.yml`,
+`.env.example`), independent from the proxied `GITEA_DOMAIN`. Verified with a
+real `git push` over `ssh://git@git-ssh.ereboslab.com:2222/...` landing on
+the live instance — see `plans/railyard.md`'s 2026-10-25 entry for the full
+proof log. Nothing in this runbook's SSH section is an owner-only step
+anymore.
 
 Railyard's code-hosting service: `apps/gitea` — the official `gitea/gitea`
 image (MIT) + Postgres, proven locally (see `../README.md` for the local
