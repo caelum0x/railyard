@@ -37,6 +37,30 @@ export const CORS_HEADERS = (origin: string | undefined): Record<string, string>
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 
+// Mixpanel's real wire contract: a client that does not opt into `verbose`
+// (the mixpanel-node/mixpanel-js/mixpanel-python SDKs all default to this,
+// and still send an explicit `verbose=0` -- never nothing) treats the
+// response body as a failure unless it is the literal text "1" (or "0" on
+// failure); only `verbose=1` switches the response to JSON with a `status`
+// field. This service's own PostHog-shaped SDKs never send a `verbose`
+// query param at all, so a request with no `verbose` param keeps today's
+// unconditional JSON response -- only a request that explicitly opts into
+// Mixpanel's contract (by sending `verbose` at all) gets the plain-text
+// behavior when it asks for it.
+type ResponseMode = "json" | "plain";
+function responseMode(url: URL): ResponseMode {
+  const v = url.searchParams.get("verbose");
+  if (v === null) return "json";
+  return v === "1" || v === "true" ? "json" : "plain";
+}
+
+/** Success response honoring the caller's verbose/plain contract. `extra` is only visible in JSON mode -- the plain "1" contract carries no payload. */
+function okResponse(c: Context, origin: string | undefined, url: URL, extra: Record<string, unknown> = {}) {
+  const headers = CORS_HEADERS(origin);
+  if (responseMode(url) === "plain") return c.text("1", 200, headers);
+  return c.json({ status: 1, ...extra }, 200, headers);
+}
+
 export async function readPayload(c: Context): Promise<unknown> {
   const len = Number(c.req.header("content-length") ?? "0");
   if (len > MAX_BODY_BYTES) throw new DecodeError(413, "The body is too large.");
@@ -52,10 +76,13 @@ export async function readPayload(c: Context): Promise<unknown> {
 
 export function problem(c: Context, err: unknown, log: Logger) {
   const origin = c.req.header("origin");
+  const plain = responseMode(new URL(c.req.url)) === "plain";
   if (err instanceof DecodeError || err instanceof EventError) {
+    if (plain) return c.text("0", err.status, CORS_HEADERS(origin));
     return c.json({ type: err.status === 401 ? "authentication_error" : "validation_error", detail: err.message }, err.status, CORS_HEADERS(origin));
   }
   log.error("request failed", { path: logPath(c.req.url), error: (err as Error).message });
+  if (plain) return c.text("0", 503, CORS_HEADERS(origin));
   return c.json({ type: "server_error", detail: "The event could not be processed. Try again shortly." }, 503, CORS_HEADERS(origin));
 }
 
@@ -78,7 +105,7 @@ export function captureRoutes(deps: CaptureDeps): Hono {
       const site = await deps.sites.byToken(n.token);
       if (!site) throw new EventError(401, "The project token is not valid.");
       await deps.pipeline.ingest(site, n.events);
-      return c.json({ status: 1 }, 200, CORS_HEADERS(origin));
+      return okResponse(c, origin, url);
     } catch (err) {
       return problem(c, err, deps.log);
     }
@@ -126,7 +153,7 @@ export function captureRoutes(deps: CaptureDeps): Hono {
       const n = normalizeEvents(payload, { now: deps.now(), country: c.req.header("cf-ipcountry") ?? null, queryToken: strongToken, sentAtQuery: null });
       if (n.token !== site.token) throw new EventError(400, "Every event of one request must use the same project token as the import credential.");
       const result = await deps.pipeline.ingest(site, n.events, { historical: true });
-      return c.json({ status: 1, num_records_imported: result.accepted }, 200, CORS_HEADERS(origin));
+      return okResponse(c, origin, url, { num_records_imported: result.accepted });
     } catch (err) {
       return problem(c, err, deps.log);
     }
@@ -141,9 +168,10 @@ export function captureRoutes(deps: CaptureDeps): Hono {
     const origin = c.req.header("origin");
     try {
       const payload = await readPayload(c);
+      const url = new URL(c.req.url);
       const list = Array.isArray(payload) ? payload : [payload];
       if (list.length === 0 || list.length > 1000 || !list.every(isObj)) throw new EventError(400, "Send one update or a list of updates.");
-      const token = tokenOf(list[0], null, new URL(c.req.url).searchParams.get("token"));
+      const token = tokenOf(list[0], null, url.searchParams.get("token"));
       if (!token) throw new EventError(401, "The project token is missing.");
       const site = await deps.sites.byToken(token);
       if (!site) throw new EventError(401, "The project token is not valid.");
@@ -174,7 +202,7 @@ export function captureRoutes(deps: CaptureDeps): Hono {
           }),
         );
       }
-      return c.json({ status: 1 }, 200, CORS_HEADERS(origin));
+      return okResponse(c, origin, url);
     } catch (err) {
       return problem(c, err, deps.log);
     }
@@ -184,8 +212,9 @@ export function captureRoutes(deps: CaptureDeps): Hono {
     const origin = c.req.header("origin");
     try {
       const payload = await readPayload(c);
+      const url = new URL(c.req.url);
       if (!isObj(payload)) throw new EventError(400, "Send one group update.");
-      const token = tokenOf(payload, null, new URL(c.req.url).searchParams.get("token"));
+      const token = tokenOf(payload, null, url.searchParams.get("token"));
       if (!token) throw new EventError(401, "The project token is missing.");
       const site = await deps.sites.byToken(token);
       if (!site) throw new EventError(401, "The project token is not valid.");
@@ -238,7 +267,7 @@ export function captureRoutes(deps: CaptureDeps): Hono {
           }),
         );
       }
-      return c.json({ status: 1 }, 200, CORS_HEADERS(origin));
+      return okResponse(c, origin, url);
     } catch (err) {
       return problem(c, err, deps.log);
     }

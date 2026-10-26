@@ -22,14 +22,18 @@
 //   disambiguates by the presence of $group_id (a field only the Mixpanel
 //   shape ever sends) and applies $set/$set_once/$unset/$add/$append/
 //   $union/$remove the same way /engage does.
-// - Response body: still NOT compatible by default. A real (non-verbose)
-//   Mixpanel client treats the response body as a failure unless it is the
-//   literal text "1"; this service always answers PostHog-shaped JSON
-//   (`{"status":1}`), so every call below uses `verbose: true` (the SDK's
-//   own opt-in to parse JSON and check `result.status`) to see past that
-//   and test the ingestion shape on its own. Without `verbose: true`, every
-//   real Mixpanel SDK call against this service reports an error today,
-//   track and engage included.
+// - Response body (2026-10-26): now compatible in both modes. The real SDK
+//   always sends an explicit `verbose` query param (`0` or `1`, never
+//   absent); `src/capture/routes.ts`'s `responseMode()` reads it and
+//   answers the literal text "1"/"0" when the caller opted into the plain
+//   contract (`verbose=0`, the SDK's own default) and JSON `{status:1}` /
+//   `{type,detail}` when it asked for `verbose=1` -- the same JSON this
+//   service's own PostHog-shaped SDKs still get unconditionally, since they
+//   never send a `verbose` param at all. Most calls above still pass
+//   `verbose: true` because that is what lets a thrown SDK error carry
+//   Mixpanel's own `result.error` text; the dedicated tests at the bottom
+//   of this file cover the real SDK with its real default
+//   (`verbose: false`) end to end, plus the raw plain-text wire shape.
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -49,6 +53,12 @@ before(async () => {
 function client(): Mixpanel.Mixpanel {
   const { hostname, port } = new URL(run.base);
   return Mixpanel.init(site.token, { protocol: "http", host: port ? `${hostname}:${port}` : hostname, verbose: true });
+}
+
+/** The real SDK's actual default: `verbose` left unset, which the SDK itself turns into an explicit `verbose=0` on the wire. A call here only succeeds if the response body is the literal text "1" -- this is the exact contract a team's existing Mixpanel code (that never set `verbose: true`) relies on. */
+function plainClient(): Mixpanel.Mixpanel {
+  const { hostname, port } = new URL(run.base);
+  return Mixpanel.init(site.token, { protocol: "http", host: port ? `${hostname}:${port}` : hostname });
 }
 
 /** `key` makes the real SDK attach `api_key` -- the stronger, query-level credential /import requires (the SDK forces HTTPS for its `secret`/service-account auth, which this local http test server can't exercise). */
@@ -172,4 +182,69 @@ test("mixpanel /import: refused without Basic auth or an api_key/token query par
   const resBody = (await res.json()) as { detail: string };
   assert.match(resBody.detail, /Basic authentication|api_key/);
   assert.equal(count(pg, `project_id = '${site.project_id}' and event = 'legacy_signup_refused'`), 0);
+});
+
+// The plain (non-verbose) response contract (2026-10-26): a real Mixpanel
+// SDK that never opts into `verbose: true` -- i.e. every SDK's own default
+// -- still sends an explicit `verbose=0` on the wire and treats anything
+// but the literal text "1" as a thrown error. Below, `plainClient()` is the
+// SDK exactly as a team would already have it configured; a callback error
+// here means this service is not actually usable by that team's existing
+// code. This is the exact gap `docs/MIXPANEL-PARITY-CHECKLIST.md` flagged
+// as MISSING before `src/capture/routes.ts`'s `responseMode()`/`okResponse()`.
+
+test("mixpanel.track() with the SDK's real default (verbose unset -> verbose=0 on the wire): no error, plain '1' body", { skip: skipNoPg }, async () => {
+  const mp = plainClient();
+  await new Promise<void>((resolve, reject) => mp.track("plain_signed_up", { distinct_id: "mp-plain-1", plan: "pro" }, (err) => (err ? reject(err) : resolve())));
+  await settle();
+  assert.equal(count(pg, `project_id = '${site.project_id}' and event = 'plain_signed_up' and distinct_id = 'mp-plain-1'`), 1);
+});
+
+test("mixpanel.people.set() with the SDK's real default: no error, plain '1' body", { skip: skipNoPg }, async () => {
+  const mp = plainClient();
+  await new Promise<void>((resolve, reject) => mp.people.set("mp-plain-2", { plan: "pro" }, (err) => (err ? reject(err) : resolve())));
+  await settle();
+  const person = pg.psql(`select person_id from pa.person_distinct_ids where project_id = '${site.project_id}' and distinct_id = 'mp-plain-2'`);
+  assert.equal(pg.psql(`select properties ->> 'plan' from pa.persons where id = '${person}'`), "pro");
+});
+
+test("mixpanel.groups.set() with the SDK's real default: no error, plain '1' body", { skip: skipNoPg }, async () => {
+  const mp = plainClient();
+  await new Promise<void>((resolve, reject) => mp.groups.set("company", "plain-acme", { name: "Plain Acme" }, (err) => (err ? reject(err) : resolve())));
+  await settle();
+  assert.equal(pg.psql(`select properties ->> 'name' from pa.groups where project_id = '${site.project_id}' and group_key = 'plain-acme'`), "Plain Acme");
+});
+
+test("the raw wire contract: verbose=0 answers the literal text \"1\" on success and \"0\" on a refused token, never JSON", { skip: skipNoPg }, async () => {
+  const { hostname, port } = new URL(run.base);
+  const okBody = { event: "plain_wire_ok", properties: { token: site.token, distinct_id: "mp-plain-3" } };
+  const okData = Buffer.from(JSON.stringify(okBody)).toString("base64");
+  const okRes = await fetch(`http://${hostname}:${port}/track?verbose=0&data=${encodeURIComponent(okData)}`);
+  assert.equal(okRes.status, 200);
+  assert.equal(await okRes.text(), "1");
+  assert.match(okRes.headers.get("content-type") ?? "", /text\/plain/);
+
+  const badBody = { event: "plain_wire_bad", properties: { token: "site_does_not_exist00", distinct_id: "mp-plain-4" } };
+  const badData = Buffer.from(JSON.stringify(badBody)).toString("base64");
+  const badRes = await fetch(`http://${hostname}:${port}/track?verbose=0&data=${encodeURIComponent(badData)}`);
+  assert.equal(badRes.status, 401);
+  assert.equal(await badRes.text(), "0");
+});
+
+test("the raw wire contract: verbose=1 still answers JSON with a status field, same as before this change", { skip: skipNoPg }, async () => {
+  const { hostname, port } = new URL(run.base);
+  const body = { event: "verbose_wire_ok", properties: { token: site.token, distinct_id: "mp-plain-5" } };
+  const data = Buffer.from(JSON.stringify(body)).toString("base64");
+  const res = await fetch(`http://${hostname}:${port}/track?verbose=1&data=${encodeURIComponent(data)}`);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { status: 1 });
+});
+
+test("a caller that never mentions verbose at all (this service's own PostHog-shaped SDKs) keeps today's unconditional JSON body -- the plain contract is opt-in, not a breaking change", { skip: skipNoPg }, async () => {
+  const { hostname, port } = new URL(run.base);
+  const body = { event: "no_verbose_param", properties: { token: site.token, distinct_id: "mp-plain-6" } };
+  const data = Buffer.from(JSON.stringify(body)).toString("base64");
+  const res = await fetch(`http://${hostname}:${port}/track?data=${encodeURIComponent(data)}`);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { status: 1 });
 });

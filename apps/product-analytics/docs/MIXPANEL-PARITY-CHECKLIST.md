@@ -1,18 +1,20 @@
 # Mixpanel parity checklist
 
 Written 2026-10-15 against the code on main, not against the plan file's own
-claims. Updated the same day to close the five rows the first pass left
-open: `/groups` field disambiguation, `$add`/`$append`/`$union`/`$remove`,
-`/import`, lookup tables and data views. Every row below cites a file or a
-test that was actually read or run in this pass; `node
-scripts/parity/recount.mjs` (A-rows) and `pnpm run test:all` /
-`pnpm test test/qy/*.test.ts` in `apps/product-analytics` are the evidence
-for most of it (225 tests, 221 pass, 0 fail, 4 skipped -- no cached
-Chromium; unrelated -- after this update, up from 220/216/0/4 before it).
-This service's own wire protocol is PostHog's (`/batch/`, `/capture/`,
-`/flags/`); it is not, and has never claimed to be, a drop-in Mixpanel
-endpoint. This checklist asks a narrower, honest question: for a team
-migrating off Mixpanel, which parts already work, which are
+claims. Updated the same day to close five rows the first pass left open:
+`/groups` field disambiguation, `$add`/`$append`/`$union`/`$remove`,
+`/import`, lookup tables and data views. Updated again 2026-10-26 to close
+the one row still open after that pass: the plain (non-verbose) response
+contract. Every row below cites a file or a test that was actually read or
+run in this pass; `node scripts/parity/recount.mjs` (A-rows) and `pnpm run
+test:all` / `pnpm test test/qy/*.test.ts` in `apps/product-analytics` are
+the evidence for most of it (231 tests, 227 pass, 0 fail, 4 skipped -- no
+cached Chromium; unrelated -- after the 2026-10-26 update, up from
+225/221/0/4 before it, itself up from 220/216/0/4 before the 2026-10-15
+pass). This service's own wire protocol is PostHog's (`/batch/`,
+`/capture/`, `/flags/`); it is not, and has never claimed to be, a drop-in
+Mixpanel endpoint. This checklist asks a narrower, honest question: for a
+team migrating off Mixpanel, which parts already work, which are
 feature-equivalent but need a different client, and which are missing.
 
 ## Ingestion compat (`/track`, `/engage`, `/groups`, `/import`)
@@ -29,7 +31,7 @@ client.
 | `/engage` -- `$add` / `$append` / `$union` / `$remove` | **DONE** (2026-10-15) | `PropertyOps` (`src/persons/properties.ts`) grew `add`/`append`/`union`/`remove` fields and `applyOps` applies them (numeric increment, list push, de-duplicated list merge, scalar removal) the same way it already applied `set`/`set_once`/`unset`; `/engage` (`src/capture/routes.ts`) now reads `$add`/`$append`/`$union`/`$remove` off each update into `eventOps`, the exact function `$set` already went through. Proven with `mixpanel.people.increment/append/union/remove()` in `mixpanel-compat.test.ts`. |
 | `/groups` | **DONE** (2026-10-15) | `/groups` (`src/capture/routes.ts`) now disambiguates by the presence of `$group_id` (a field only the Mixpanel wire shape ever sends): when present, `$group_key` is read as the group TYPE and `$group_id` as the KEY (Mixpanel's meaning); otherwise `$group_type`/`$group_key` keep this service's own meaning (unchanged, still covered by `test/a1/identity.test.ts`). `upsertGroup` (`src/groups/groups.ts`) now applies a full `PropertyOps` (`$set`/`$set_once`/`$unset`/`$union`/`$remove`) the same way person profiles do, instead of a flat jsonb merge. Proven with `mixpanel.groups.set/union/remove()` in `mixpanel-compat.test.ts`. |
 | `/import` (historical bulk import, separate auth) | **DONE** (2026-10-15) | New `/import`/`/import/` route (`src/capture/routes.ts`) shares `normalizeEvents` and `CapturePipeline.ingest` with `/track`, differing only where the real API differs: (1) auth -- requires Basic authentication or an explicit `api_key`/`token` query parameter, refusing a token that only appears in the event body (what `/track` accepts); (2) retention -- passes `{ historical: true }` so `CapturePipeline.ingestNow` (`src/capture/pipeline.ts`) skips the retention-window cutoff that silently drops old events on `/track`; (3) idempotency -- shared with `/track` via the existing uuid/`$insert_id` dedup (`pa.ingest_receipts`, `src/capture/writer.ts`). `properties.time` (Mixpanel's own event-time field, distinct from this service's `$time`) is now also read by `src/capture/normalize.ts`'s `eventTime`. Proven with `mixpanel.import()` (a 400-day-old event lands via `/import`, is dropped via `/track`, and re-importing the same `$insert_id` stores it once) and a direct-fetch 401 for the no-credential case, in `mixpanel-compat.test.ts`. |
-| Default (non-verbose) response contract | **MISSING** | A real Mixpanel client without `verbose: true` treats any response that is not the literal text `"1"` as a failure; this service always answers PostHog-shaped JSON (`{"status":1}`). Every call in `mixpanel-compat.test.ts` uses `verbose: true` to see past this. Without it, every SDK call against this service reports an error today, `/track` and `/engage` included. Not attempted in this pass (out of the five rows scoped here); would need every capture route to detect the caller's `verbose` query param and switch its response body, which touches `/track`'s and `/engage`'s existing A1-proven response contract. |
+| Default (non-verbose) response contract | **DONE** (2026-10-26) | A real Mixpanel client without `verbose: true` still sends an explicit `verbose=0` on the wire (every official SDK does -- the option is never actually absent) and treats any response that is not the literal text `"1"` as a failure. `responseMode()`/`okResponse()` (`src/capture/routes.ts`) now read that param: `verbose=0` answers the literal text `"1"` (or `"0"` from `problem()` on error) on `/track`, `/import`, `/engage` and `/groups`; `verbose=1` keeps the JSON `{status:1}` / `{type,detail}` shape. A request that never mentions `verbose` at all -- this service's own PostHog-shaped SDKs -- is unaffected and keeps the unconditional JSON body it always had, so this is additive, not a breaking change to A1's existing protocol contract. Proven with the real SDK's actual default (`plainClient()`, `verbose` left unset) succeeding end to end on `track`/`people.set`/`groups.set`, plus raw-fetch checks of the literal `"1"`/`"0"` body and `content-type: text/plain` for `verbose=0`, JSON for `verbose=1`, and JSON for no `verbose` param at all, in `mixpanel-compat.test.ts`. |
 
 ## Analysis parity (Insights, Funnels, Flows, Retention)
 
@@ -64,11 +66,18 @@ checked above.
 
 For a team moving off Mixpanel: event tracking, user-property sets and the
 increment/append/union/remove ops, group profiles (via `/groups`), historical
-import (via `/import`), lookup tables and data views all now work with the
-official Mixpanel SDK (`verbose: true`) or this service's own console API.
-The one remaining ingestion gap is the plain (non-verbose) `"1"` response
-contract -- every SDK call still needs `verbose: true` to see past this
-service's JSON response body. The underlying analysis engine (funnels,
+import (via `/import`), lookup tables and data views, and now the plain
+(non-verbose) response contract all work with the official Mixpanel SDK
+exactly as that SDK ships by default (no `verbose: true` opt-in required
+any more), or this service's own console API. Ingestion compat (`/track`,
+`/engage`, `/groups`, `/import`, and the response contract all four of them
+answer with) is now fully closed; nothing in this checklist's "Ingestion
+compat" section is still open. The underlying analysis engine (funnels,
 retention, flows/paths, cohorts, SQL) is at parity and already proven
-against the service's own PostHog-shaped SDKs; none of the five rows closed
-today required a change to that engine.
+against the service's own PostHog-shaped SDKs; none of the six rows closed
+across the 2026-10-15 and 2026-10-26 passes required a change to that
+engine. What is not attempted anywhere in this checklist: a Mixpanel
+client's *analysis*-API calls (`/query`, segmentation, etc.) -- this
+service's own console/SDKs reach the same analysis features, but a
+Mixpanel client reading query results back over Mixpanel's own API is a
+different, unscoped problem from ingestion compat.
