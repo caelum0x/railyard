@@ -21,7 +21,13 @@
 	// `<siteKey>/<sessionId>/<seq>.json`. Create once with `wrangler r2 bucket create railyard-insights-replay`.
 	"r2_buckets": [{ "binding": "REPLAY", "bucket_name": "railyard-insights-replay" }],
 	// Weekly funnel report, Mondays 07:00 UTC, through Scribase Mail.
-	"triggers": { "crons": ["0 7 * * 1"] },
+	// NB (found 2026-10-26): Cloudflare Cron Triggers number weekdays 1=Sunday..7=Saturday
+	// (Quartz-style), NOT the POSIX 0=Sunday..6=Saturday most cron docs assume. "0 7 * * 1"
+	// therefore actually fired every SUNDAY 07:00 UTC in production for weeks (confirmed via
+	// the real delivered digest emails: 2026-10-11, -18, -25 all landed Sunday 07:00-07:01
+	// UTC, not Monday). Using the three-letter abbreviation instead, as Cloudflare's own docs
+	// recommend, to avoid this ambiguity ever recurring.
+	"triggers": { "crons": ["0 7 * * MON"] },
 	// Namespace RAILYARD_SITES, created 2026-09-30 (`wrangler kv namespace create RAILYARD_SITES`).
 	"kv_namespaces": [{ "binding": "SITES", "id": "323121abfdc64ff6ab90927620d3dbb2" }],
 	"vars": {

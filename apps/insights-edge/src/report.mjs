@@ -1,6 +1,8 @@
 // Weekly funnel report: every site in the SITES KV, last 7 full UTC days
 // against the 7 before, emailed through Scribase Mail (Rally Send protocol).
-// Runs from the Worker cron (Mondays 07:00 UTC) and from POST /api/report.
+// Runs from the Worker cron (Mondays 07:00 UTC -- wrangler.jsonc's "triggers.crons",
+// fixed 2026-10-26 to "0 7 * * MON" after it silently fired every Sunday for weeks;
+// see the comment there) and from POST /api/report.
 
 import { siteStats } from "./store.mjs";
 
