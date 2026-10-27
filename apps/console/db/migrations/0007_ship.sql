@@ -21,7 +21,7 @@ create table if not exists railyard.ship_links (
   repo_full_name    text not null check (repo_full_name ~ '^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$'),
   installation_id   bigint not null check (installation_id > 0),
   production_branch text not null check (length(production_branch) between 1 and 200),
-  workflow_pr_url   text check (workflow_pr_url is null or workflow_pr_url ~ '^https://github\.com/'),
+  workflow_pr_url   text check (workflow_pr_url is null or workflow_pr_url ~ '^https://github[.]com/'),
   created_at        timestamptz not null default now()
 );
 create index if not exists ship_links_org_idx on railyard.ship_links (org_id);

@@ -20,7 +20,12 @@
 	"kv_namespaces": [{ "binding": "SITES", "id": "323121abfdc64ff6ab90927620d3dbb2" }],
 	"vars": {
 		"RAILYARD_CONSOLE_URL": "https://railyard.ereboslab.com",
-		"SCRIBASE_URL": "https://api.scribase.com",
+		// Must be this project's own gateway host, never the control-plane API
+		// (api.scribase.com) — see lib/config.ts's readConfig guard, added after
+		// 2026-10-14's misconfiguration shipped a console that rendered but could
+		// never sign anyone in. Real project provisioned 2026-10-27 (temporary,
+		// 72h TTL — see DEPLOY.md for the permanent-project follow-up).
+		"SCRIBASE_URL": "https://tmp-2166d461a77eddee12cbf35f-railyard-console-prov-3c10ee6e.scribase.com",
 		// Insights tenant API (the box's tunnel route to the fork's /api/v1); token is a secret.
 		"INSIGHTS_API_URL": "",
 		// Relay's OpenAI-compatible base for the BYOK AI gateway (PY1.4); the tenant key is a secret.
