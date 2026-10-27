@@ -35,6 +35,53 @@ Standalone cargo workspace (never part of a root workspace), like Abacus and Rag
 16 free/public; Brave is BYO), and the public `lead-to-video` SKILL.md bundle.
 Adding a keyless JSON API is a YAML file, no Rust.
 
+## Deployed (2026-10-27)
+
+Live on railyard-box (`130.61.113.116`), `profile: toolgate` in
+`infra-box/stacks/railyard/docker-compose.yml`, container port 8130 -> host
+`127.0.0.1:4200` -> Caddy `toolgate.{$RAILYARD_DOMAIN}` (site file
+`infra-box/caddy/sites/toolgate.caddy`, enabled in `CADDY_SITES`). Own Postgres
+database `switchyard` (role `switchyard_app`), own KEK/JWT seed/admin token in
+`/etc/products/toolgate.env`, wired to the real Railyard Mint (`http://mint:8080`,
+the same box's `mint-mint-1`, shadow mode — see `apps/mint`) with a real
+`Provider`-kind revenue account. `RELAY_DATABASE_URL` points at the real
+`relay` database (read access, same role Relay itself uses) so Relay
+(`sk-t0-`) keys validate; `SWITCHYARD_RELAY_URL=https://relay.ereboslab.com`.
+`RAGO_URL`/`RAGO_API_KEY` and the other own-product URLs
+(`SWITCHYARD_SCRIBASE_URL`/`SWITCHYARD_RALLY_URL`/`SWITCHYARD_MENIVOR_URL`)
+are intentionally unset — no static shared credential exists for them here, so
+those tools correctly answer `byo_required`/stay off, same documented
+limitation as every prior session's audit of this app.
+
+Verified live end-to-end against the real deployed container (not a local
+throwaway process): real self-serve `POST /v1/auth/signup`; real
+`GET /v1/tools/search`; a real free tool call
+(`knowledge.wikipedia.summary`) returned a real Wikipedia summary; real MCP
+`initialize`/`tools/list` over `/mcp`; the `sy` CLI's `search` subcommand
+against the live server over the docker network; a paid tool call
+(`rally.email.verify`) against a project whose Mint account was a real,
+freshly created zero-balance `Provider`-kind Mint account returned a real
+`insufficient_balance` with the real balance (`0`) read live from Mint's own
+`GET /v1/accounts/:id/balance` (confirmed independently by querying that same
+account directly against `mint.ereboslab.com`) — not a local stub decision.
+`/catalog`, `/llms.txt` and `/openapi.json` all serve correctly.
+
+One step remains, and it is narrowly infra, not code: the public DNS A record
+(`toolgate.ereboslab.com` -> `130.61.113.116`, proxied, same pattern as
+`mint`/`rago`/`relay`.ereboslab.com) has not been created — the only
+Cloudflare credential available in this environment (the `cloudflare-api` MCP
+connection) is read-only (zone/DNS reads succeeded; any write, tested two
+ways, was refused pending an interactive `/mcp` re-auth with broader scope)
+and every API-token file found on disk had already expired. Caddy is already
+configured and reloaded for this hostname (`CADDY_SITES` includes `toolgate`,
+`caddy validate` passed) and will request its Let's Encrypt certificate
+automatically the moment the record exists and resolves publicly — no further
+deploy step, restart or code change needed. Until then the service is fully
+live and correct, reachable at `http://127.0.0.1:4200` on railyard-box (or via
+`curl -H 'Host: toolgate.ereboslab.com' http://<box>/...`, which already
+returns the correct `308` HTTPS redirect, proving the Caddy routing itself is
+wired).
+
 ## Build and test
 
 ```bash

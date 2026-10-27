@@ -40,6 +40,7 @@ sudo ./install.sh railyard abacus relay-ui                    # spend caps + ope
                      relay.     -> 127.0.0.1:3100
                      mint.      -> 127.0.0.1:3400
                      vend.      -> 127.0.0.1:3600
+                     toolgate.  -> 127.0.0.1:4200
                      turnstile. -> 127.0.0.1:3700
                      game.      -> 127.0.0.1:3800
                      abacus.    -> 127.0.0.1:3900
@@ -47,11 +48,11 @@ sudo ./install.sh railyard abacus relay-ui                    # spend caps + ope
                                    |
         docker network "products-net" (services call each other by name)
                                    |
-   rago:3000  relay:3000  mint:8080  vend:8090  turnstile:8101
+   rago:3000  relay:3000  mint:8080  vend:8090  toolgate:8130  turnstile:8101
    game-economy:8102  abacus:8100  relay-ui:4000
                                    |
                      postgres:5432 (stacks/postgres; host 127.0.0.1:5433)
-       databases: rago  mint  relay  vend  turnstile  game_economy  abacus
+       databases: rago  mint  relay  vend  switchyard  turnstile  game_economy  abacus
 ```
 
 ### Port map
@@ -66,6 +67,7 @@ side so nothing collides with Menivor (8080) or OpenJev (3000).
 | relay (LLM gateway) | `railyard` | 3100 | 3000 | `GET /health` | `relay` |
 | mint (ledger, holds, receipts) | `railyard` | 3400 | 8080 | `GET /healthz`, `/readyz` | `mint` |
 | vend (white-label LLM API) | `vend` | 3600 | 8090 | `GET /readyz` | `vend` |
+| toolgate / Switchyard (tool rail + MCP) | `toolgate` | 4200 | 8130 | `GET /healthz` | `switchyard` |
 | turnstile (AITP-402 paid tools) | `turnstile` | 3700 | 8101 | `GET /healthz` | `turnstile` |
 | game-economy (game storefront, IAP credits) | `game-economy` | 3800 | 8102 | `GET /healthz` | `game_economy` |
 | abacus (per-agent LLM spend caps) | `abacus` | 3900 | 8100 | `GET /healthz`, `/readyz` | `abacus` |
@@ -93,6 +95,7 @@ you enable the service.
 | `MINT_DB_PASSWORD` | `mint_app` | `mint` | mint |
 | `RELAY_DB_PASSWORD` | `relay_app` | `relay` | relay, relay-ui |
 | `VEND_DB_PASSWORD` | `vend_app` | `vend` | vend |
+| `TOOLGATE_DB_PASSWORD` (role `switchyard_app`, db `switchyard`) | `switchyard_app` | `switchyard` | toolgate |
 | `TURNSTILE_DB_PASSWORD` | `turnstile_app` | `turnstile` | turnstile |
 | `GAME_ECONOMY_DB_PASSWORD` | `game_economy_app` | `game_economy` | game-economy |
 | `ABACUS_DB_PASSWORD` | `abacus_app` | `abacus` | abacus |
@@ -108,6 +111,7 @@ DDL, so migration histories never collide.
 | mint | migrations at server start (production mode) | `DATABASE_URL` set |
 | relay | Postgres migrations at gateway start (observability, API keys, provider credentials) | `TENSORZERO_POSTGRES_URL` set |
 | vend | migrations at server start | `DATABASE_URL` set |
+| toolgate | explicit one-off step (`switchyard-server migrate`), not run on every boot | run once before first `up -d`, and again after a schema-changing deploy |
 | turnstile | migrations at server start | `TURNSTILE_DATABASE_URL` set |
 | game-economy | migrations at server start | `GAME_DATABASE_URL` set |
 | abacus | migrated Postgres product store (policy, receipts, open holds) | `ABACUS_DATABASE_URL` set |
@@ -126,6 +130,7 @@ contains `replace` or `example.com`.
 | relay | `relay.env` | `TENSORZERO_POSTGRES_URL`, R2 object storage (`R2_BUCKET_NAME`, `R2_S3_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`), `RELAY_CREDENTIALS_KEY`. Provider keys (`GROQ_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`): any subset boots; a provider without a key answers 503 `provider_not_configured`. Optional: `RELAY_OPERATOR_KEY_IDS`, Rago cost feed (`RELAY_COST_FEED_URL=http://rago:3000/api/v1/events`, `RELAY_COST_FEED_FORMAT=rago`, `RELAY_COST_FEED_BEARER` or `RELAY_RAGO_ROUTES_JSON`) |
 | mint | `mint.env` | `MINT_BIND_ADDR=0.0.0.0:8080`, `DATABASE_URL`, `MINT_API_KEY`, `MINT_SIGNING_KEY`, `MINT_PAYER_KEYS_JSON` |
 | vend | `vend.env` | `DATABASE_URL`, `MINT_BASE`, `MINT_API_KEY`, `RELAY_BASE=http://relay:3000`, `RELAY_KEY`, payout accounts, `VEND_MODEL_RATES_JSON`, `VEND_ADMIN_TOKEN_SHA256` |
+| toolgate | `toolgate.env` | `SWITCHYARD_PUBLIC_URL`, `SWITCHYARD_DATABASE_URL`, `SWITCHYARD_KEK`/`SWITCHYARD_KEK_VERSION` (`switchyard-server gen-kek`), `SWITCHYARD_JWT_SEED`, `SWITCHYARD_ADMIN_TOKEN`, `MINT_SERVER_URL=http://mint:8080`, `MINT_API_KEY`, `SWITCHYARD_MINT_REVENUE_ACCOUNT` (a `Provider`-kind Mint account, `POST /v1/accounts`). Optional: `RELAY_DATABASE_URL` (defaults to `SWITCHYARD_DATABASE_URL`), `RAGO_URL`/`RAGO_API_KEY` (unset = usage events stay pending), `SWITCHYARD_RELAY_URL`/`SWITCHYARD_SCRIBASE_URL`/`SWITCHYARD_RALLY_URL`/`SWITCHYARD_MENIVOR_URL` (own-product tool base URLs; unset tools answer `byo_required`) |
 | turnstile | `turnstile.env` | `MINT_SERVER_URL`, `TURNSTILE_API_KEY`, `TURNSTILE_PAYEE`, `TURNSTILE_DATABASE_URL`, `TURNSTILE_ADMIN_TOKEN`; host file `/srv/railyard/turnstile/tools.json` |
 | game-economy | `game-economy.env` | `RAILYARD_MINT_URL`, `MINT_API_KEY`, `GAME_REVENUE_ACCOUNT`, `GAME_DATABASE_URL`, `GAME_AUTH_SECRET`, `GAME_SERVER_SECRET`, `GAME_ADMIN_TOKEN`; host file `/srv/railyard/game-economy/catalog.json` |
 | abacus | `abacus.env` | `ABACUS_DATABASE_URL`, `ABACUS_API_KEY`, `MINT_SERVER_URL=http://mint:8080`, `MINT_API_KEY`, `UPSTREAM_BASE_URL=http://relay:3000`, `UPSTREAM_PATH=/openai/v1/chat/completions`, `ABACUS_PROVIDER=relay`; optional `ABACUS_ADMIN_API_KEY` (operator API). Host files `/srv/railyard/abacus/agents.json` (required) and `pricing.json` (Relay model prices; unpriced models fail with `model_not_priced`) |
