@@ -1,5 +1,7 @@
 # Console deploy blockers (owner-only)
 
+**Correction, 2026-10-27:** the last entry below ("scribase.com project creation is an interactive, owner-authenticated signup, so this one genuinely cannot be done headlessly from here") was wrong. `npx scribase init --temp --yes` provisions a real project with zero interactive steps — used it to provision a real one, applied all migrations, wired the secrets, deployed, and verified sign-in reaches the real gateway end to end. See `plans/railyard.md`'s "Console go-live (2026-10-27)" entry for the full writeup. The only genuinely owner-gated step left is converting that project from temporary (72h TTL) to permanent — needs a real `SCRIBASE_ACCESS_TOKEN` or a real $1 card check, both things only the owner can do.
+
 - 2026-10-21: `GET /api/v1/rail/status` (commit `c3b7edcf`) is merged to main
   but not deployed to the live Worker (`railyard.ereboslab.com`). Blocked on
   two things only the owner can resolve from this machine: (1)
