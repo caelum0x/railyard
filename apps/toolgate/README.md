@@ -66,21 +66,16 @@ freshly created zero-balance `Provider`-kind Mint account returned a real
 account directly against `mint.ereboslab.com`) — not a local stub decision.
 `/catalog`, `/llms.txt` and `/openapi.json` all serve correctly.
 
-One step remains, and it is narrowly infra, not code: the public DNS A record
-(`toolgate.ereboslab.com` -> `130.61.113.116`, proxied, same pattern as
-`mint`/`rago`/`relay`.ereboslab.com) has not been created — the only
-Cloudflare credential available in this environment (the `cloudflare-api` MCP
-connection) is read-only (zone/DNS reads succeeded; any write, tested two
-ways, was refused pending an interactive `/mcp` re-auth with broader scope)
-and every API-token file found on disk had already expired. Caddy is already
-configured and reloaded for this hostname (`CADDY_SITES` includes `toolgate`,
-`caddy validate` passed) and will request its Let's Encrypt certificate
-automatically the moment the record exists and resolves publicly — no further
-deploy step, restart or code change needed. Until then the service is fully
-live and correct, reachable at `http://127.0.0.1:4200` on railyard-box (or via
-`curl -H 'Host: toolgate.ereboslab.com' http://<box>/...`, which already
-returns the correct `308` HTTPS redirect, proving the Caddy routing itself is
-wired).
+**Live (2026-10-28):** the public DNS A record (`toolgate.ereboslab.com` ->
+`130.61.113.116`, proxied) is created — the `cloudflare-api` MCP connection is
+still read-only, but `~/products/.env`'s `CLOUDFLARE_DNS_API_TOKEN` (a
+separate, real, write-scoped token — distinct from the MCP connection and
+confirmed active via `GET /user/tokens/verify`) is not. Created the record
+directly against the Cloudflare API, reloaded Caddy on railyard-box, and
+confirmed via `journalctl -u caddy` that it obtained a real Let's Encrypt cert
+for `toolgate.ereboslab.com` within seconds (`tls.obtain: certificate obtained
+successfully`). Verified live end to end: `https://toolgate.ereboslab.com/catalog`
+returns `200` through Cloudflare.
 
 ## Build and test
 

@@ -33,12 +33,12 @@ row/rollup; an event naming a non-allowlisted account was correctly refused
 `403` by the account-policy guard *before* any Mint call; `/admin` renders
 (200).
 
-One step remains, infra not code, same single blocker as Toolgate and Vend:
-the public DNS A record (`ledgerline.ereboslab.com` -> `130.61.113.116`,
-proxied) hasn't been created (the only Cloudflare credential available in
-this session is a read-only MCP connection). Caddy is already configured
-and reloaded; routing confirmed correct now (`Host: ledgerline.ereboslab.com`
--> real `308` redirect).
+**Live (2026-10-28):** the public DNS A record (`ledgerline.ereboslab.com` ->
+`130.61.113.116`, proxied) is created via `~/products/.env`'s
+`CLOUDFLARE_DNS_API_TOKEN` (real, write-scoped, separate from the read-only
+`cloudflare-api` MCP connection). Caddy reloaded, obtained a real Let's
+Encrypt cert within seconds. Verified live: `https://ledgerline.ereboslab.com/admin`
+returns `200`, `/healthz` returns `204`, through Cloudflare.
 
 **Status: runnable Sx0 product slice.** Ledgerline accepts AI usage events,
 settles their customer revenue and provider COGS through Mint, and exposes the

@@ -60,12 +60,13 @@ generation would affect every live Relay caller, not just this one app, so
 it is out of scope for this pass (same owner-gated-scale decision as the
 other sub-app funding walls).
 
-One step remains, infra not code, same single blocker as every other
-sub-app deployed this session: `context-passport.ereboslab.com`'s DNS A
-record doesn't exist yet (the only Cloudflare credential available is a
-read-only MCP connection). Caddy is already configured and reloaded;
-routing confirmed correct (`Host: context-passport.ereboslab.com` -> real
-`308` redirect).
+**Live (2026-10-28):** `context-passport.ereboslab.com`'s DNS A record is
+created via `~/products/.env`'s `CLOUDFLARE_DNS_API_TOKEN` (real, write-scoped,
+separate from the read-only `cloudflare-api` MCP connection). Caddy reloaded,
+obtained a real Let's Encrypt cert within seconds. Verified live:
+`https://context-passport.ereboslab.com/healthz` returns `204`, and
+`GET /v1/passports/:id` returns the real `unauthorized` error (auth enforced,
+not a routing 404), through Cloudflare.
 
 **Status: runnable Sx0 product slice (multi-crate Rust workspace).** A
 provider-agnostic, versioned, **lockable** identity for an AI character / brand /

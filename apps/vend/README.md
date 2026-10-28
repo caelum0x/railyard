@@ -30,15 +30,13 @@ provider creem is not active` (no payment-provider credential exists in this
 environment — same funding wall as every other Railyard sub-app audited so
 far, not a Vend bug). `/console` and `/` both render.
 
-One step remains, infra not code: the public DNS A record
-(`vend.ereboslab.com` -> `130.61.113.116`, proxied) hasn't been created —
-same single blocker and same cause as Toolgate's deploy earlier this session
-(the only available Cloudflare credential is a read-only MCP connection;
-every API token file on disk was expired). Caddy is already configured and
-reloaded for this hostname and will issue its certificate automatically once
-the record exists; the routing itself is already correct right now (`curl -H
-'Host: vend.ereboslab.com' http://<box>/readyz` returns the real `308`
-redirect).
+**Live (2026-10-28):** the public DNS A record (`vend.ereboslab.com` ->
+`130.61.113.116`, proxied) is created — `~/products/.env`'s
+`CLOUDFLARE_DNS_API_TOKEN` is a real, separate, write-scoped Cloudflare token
+(the `cloudflare-api` MCP connection remains read-only; this file's earlier
+"every API token file on disk was expired" note was wrong). Reloaded Caddy on
+railyard-box, confirmed a real Let's Encrypt cert was obtained within seconds.
+Verified live: `https://vend.ereboslab.com/` returns `200` through Cloudflare.
 
 **Your own OpenRouter, white-labelled.** Vend lets an AI founder launch a
 branded LLM API: one OpenAI-compatible endpoint across every model Relay
