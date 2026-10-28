@@ -1,5 +1,45 @@
 # Ledgerline
 
+## Deployed (2026-10-28)
+
+Live on railyard-box (`130.61.113.116`), `profile: ledgerline` in
+`infra-box/stacks/railyard/docker-compose.yml` (new profile this pass — unlike
+Vend/Toolgate, this app had no Dockerfile and no prepared compose/Caddy
+scaffolding at all; added a standalone distroless `Dockerfile`, matching the
+Toolgate/Vend build shape, since this is a single-crate package with no path
+deps outside this directory). Container port 8093 -> host `127.0.0.1:4300` ->
+Caddy `ledgerline.{$RAILYARD_DOMAIN}`. Own Postgres database `ledgerline`
+(role `ledgerline_app`). `sqlx::migrate!()` runs at startup, confirmed by a
+real `GET /readyz` -> `204` on first boot.
+
+Wired to the real, already-live Railyard Mint (`MINT_BASE=http://mint:8080`,
+shadow mode) with four real, freshly created Mint accounts matching the
+account policy: revenue (`acct_501M605A07MFATN2Z77NB90VE04`), COGS
+(`acct_501M605A0EFQ094TH184A7VQC2H`), one provider
+(`acct_301M605A0N8TTDASTQJ742S7DSW`), and one customer
+(`acct_101M605A0VXZBVWHEV71G82EMDJ`, `customer_id: "deploy-verify"`) in
+`LEDGERLINE_ACCOUNT_POLICY_JSON`.
+
+Verified live end-to-end against the real deployed container: a real
+success-path `POST /v1/events` correctly reached the real Mint and was
+refused with a real `402 insufficient_funds` (the customer account has a
+real zero balance — cross-checked directly against Mint's own
+`GET /v1/accounts/:id/balance`, identical `0` both ways, so this is a real
+round trip, not a stub — same funding wall every other Railyard sub-app
+hits); a real failed-outcome event (zero amounts) correctly settled with
+`201` and no Mint calls; `GET /v1/margins`, `GET /v1/margins/:request_id`
+and `GET /v1/margins/summary?group_by=customer` all return the real stored
+row/rollup; an event naming a non-allowlisted account was correctly refused
+`403` by the account-policy guard *before* any Mint call; `/admin` renders
+(200).
+
+One step remains, infra not code, same single blocker as Toolgate and Vend:
+the public DNS A record (`ledgerline.ereboslab.com` -> `130.61.113.116`,
+proxied) hasn't been created (the only Cloudflare credential available in
+this session is a read-only MCP connection). Caddy is already configured
+and reloaded; routing confirmed correct now (`Host: ledgerline.ereboslab.com`
+-> real `308` redirect).
+
 **Status: runnable Sx0 product slice.** Ledgerline accepts AI usage events,
 settles their customer revenue and provider COGS through Mint, and exposes the
 resulting request-level gross margin. It is a side-car margin lens: it does not
