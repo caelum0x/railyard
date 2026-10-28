@@ -65,7 +65,7 @@ impl RelayConditioningSink for RelayClient {
         let response = self
             .http
             .post(format!("{}{}", self.base, self.path))
-            .header("X-API-Key", &self.api_key)
+            .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&inference_request)
             .send()
             .await
@@ -418,5 +418,73 @@ mod tests {
     fn missing_inference_id_fails_closed() {
         let error = relay_result(&json!({ "usage": {} }), None).unwrap_err();
         assert!(matches!(error, PassportError::Relay(message) if message.contains("inference_id")));
+    }
+
+    /// Regression test for a real deploy bug (2026-10-28): `RelayClient::generate`
+    /// sent `X-API-Key` instead of `Authorization: Bearer <key>`, so every real
+    /// call to a live Relay gateway failed `401 Unauthorized` before this fix —
+    /// invisible to every other test here because they all exercise
+    /// `build_inference_request`/`payment_evidence` directly, never the real
+    /// `reqwest` call this trait impl makes. Spins up a real local HTTP server
+    /// (no fakes) and asserts the actual outbound request header, end to end
+    /// through the real `generate()` call.
+    #[tokio::test]
+    async fn generate_sends_bearer_authorization_not_x_api_key() {
+        use axum::extract::Json as AxumJson;
+        use axum::http::HeaderMap as AxumHeaderMap;
+        use axum::response::IntoResponse;
+        use axum::routing::post;
+        use axum::Router;
+        use std::sync::{Arc, Mutex};
+
+        let seen_auth = Arc::new(Mutex::new(None::<String>));
+        let captured = seen_auth.clone();
+        let app = Router::new().route(
+            "/v1/passport/generate",
+            post(move |headers: AxumHeaderMap, AxumJson(_body): AxumJson<Value>| {
+                let captured = captured.clone();
+                async move {
+                    *captured.lock().unwrap() = headers
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string);
+                    let mut response = axum::Json(json!({
+                        "inference_id": "0193f0a0-0000-7000-8000-000000000001",
+                        "usage": { "input_tokens": 1, "output_tokens": 1 },
+                    }))
+                    .into_response();
+                    response
+                        .headers_mut()
+                        .insert(HEADER_RECEIPT, HeaderValue::from_static(RECEIPT));
+                    response
+                        .headers_mut()
+                        .insert(HEADER_REQUEST_ID, HeaderValue::from_static("req_live_1"));
+                    response
+                }
+            }),
+        );
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+            Err(error) => panic!("bind test server: {error}"),
+        };
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let client = RelayClient::new(base, "sk-t0-real-looking-key");
+        let result = client.generate(&sample_request()).await.unwrap();
+
+        assert_eq!(
+            result.output_ref,
+            "relay-inference:0193f0a0-0000-7000-8000-000000000001"
+        );
+        assert!(result.payment_evidence.is_some());
+        assert_eq!(
+            seen_auth.lock().unwrap().as_deref(),
+            Some("Bearer sk-t0-real-looking-key"),
+            "RelayClient must send Authorization: Bearer <key>, the header Relay's \
+             gateway actually checks — not X-API-Key, which Relay silently ignores \
+             and answers 401 to"
+        );
     }
 }

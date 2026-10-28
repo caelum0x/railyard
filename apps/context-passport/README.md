@@ -1,5 +1,72 @@
 # Identity Lock — Versioned AI Character and Brand Identity
 
+## Deployed (2026-10-28)
+
+Live on railyard-box (`130.61.113.116`), `profile: context-passport` in
+`infra-box/stacks/railyard/docker-compose.yml` (new profile this pass — this
+app had no Dockerfile and no deploy scaffolding at all). Added a standalone
+distroless `Dockerfile` + `Dockerfile.dockerignore`: this workspace
+path-depends on `apps/mint/crates/mint-protocol` (and its siblings
+`mint-core`/`mint-store`/`mint-receipts`/`mint-ledger`), outside its own
+workspace, so — like `apps/turnstile`'s Dockerfile — it builds from the repo
+root with the context trimmed to exactly those crates plus this app's own.
+Container port 8095 -> host `127.0.0.1:4400` -> Caddy
+`context-passport.{$RAILYARD_DOMAIN}`. Own Postgres database
+`context_passport` (role `context_passport_app`). Wired to the real,
+already-live Mint via well-known key discovery (`MINT_BASE_URL=http://
+mint:8080` -> `GET /.well-known/mint-verification-keys.json`, confirmed in
+the boot log: `mint receipt keys discovered`) and the real Relay (`RELAY_BASE
+=http://relay:3000`, a real `sk-t0-` key minted with `gateway
+--create-api-key`).
+
+**Found and fixed a real bug this way**, the same bar as the Toolgate
+catalog-page and Turnstile bech32 bugs from earlier sessions: `crates/
+passport-relay-client`'s `RelayClient::generate` sent `X-API-Key` to Relay's
+`/v1/passport/generate`, but Relay's gateway only accepts `Authorization:
+Bearer <key>` there — every real call failed `401 Unauthorized` before this
+fix, invisible to every existing test because they all exercise
+`build_inference_request`/`payment_evidence` directly and "tests fake the
+sink via `FakeRelay`" (this README's own words), never the real `reqwest`
+call. Fixed (one line) and added a real regression test,
+`generate_sends_bearer_authorization_not_x_api_key`: a genuine local axum
+server (no fakes) that asserts the actual outbound `Authorization` header
+through a real `generate()` call. Full workspace suite: 59/59 pass (was
+58/58 before the new test). `cargo clippy -p passport-relay-client
+--all-targets -- -D warnings`: clean.
+
+**Verified live end-to-end against the real deployed container**, the full
+core loop: real `POST /v1/passports` (brand kind, a real palette +
+voice_tone), `POST .../lock` (real content-addressed digest), `POST
+.../resolve` (real per-provider text directives), `GET .../versions`, `GET
+/v1/passports`, `/console` (200). The `generate` chain, after the auth fix,
+now genuinely reaches Relay and runs a real inference: with
+`provider:"groq"` (Relay's live, funded default) the call produces a real
+LLM completion — confirmed directly against Relay with the exact same
+request Context Passport sends — and then correctly fails closed with
+`relay_unavailable: Relay response missing AITP-Receipt`, because
+**Relay's own AITP billing is globally off in this environment**
+(`RELAY_BILLING_ENABLED` unset; confirmed by calling Relay's
+`/v1/passport/generate` directly and finding no `AITP-Receipt` header on an
+otherwise-200 response) — the exact same funding-wall boundary every other
+Railyard sub-app in this session hit, not a Context Passport bug, and
+correctly refuses to fabricate provenance without real settlement evidence
+(this app's own design intent, per `main.rs`: "it never fabricates
+settlement evidence"). `provider:"openai"` separately surfaces a real,
+pre-existing Relay gap (`Dynamic api key \`relay_openai_api_key\` is
+missing`) and its OpenRouter failover is credit-exhausted — both real,
+unrelated, already-existing Relay-side conditions, not newly introduced by
+this deploy. Flipping Relay's global AITP billing on to get a fully settled
+generation would affect every live Relay caller, not just this one app, so
+it is out of scope for this pass (same owner-gated-scale decision as the
+other sub-app funding walls).
+
+One step remains, infra not code, same single blocker as every other
+sub-app deployed this session: `context-passport.ereboslab.com`'s DNS A
+record doesn't exist yet (the only Cloudflare credential available is a
+read-only MCP connection). Caddy is already configured and reloaded;
+routing confirmed correct (`Host: context-passport.ereboslab.com` -> real
+`308` redirect).
+
 **Status: runnable Sx0 product slice (multi-crate Rust workspace).** A
 provider-agnostic, versioned, **lockable** identity for an AI character / brand /
 persona that resolves into per-provider conditioning so the *same* identity stays

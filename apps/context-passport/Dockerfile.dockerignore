@@ -1,0 +1,19 @@
+# BuildKit picks this up automatically for `-f apps/context-passport/Dockerfile`
+# (per-Dockerfile ignore file), so the repo-root build context holds only the
+# two workspaces the image compiles: context-passport itself, and the five
+# apps/mint crates mint-protocol path-depends on (mint-protocol, mint-core,
+# mint-store, mint-receipts, mint-ledger).
+*
+!apps/context-passport/Cargo.toml
+!apps/context-passport/Cargo.lock
+!apps/context-passport/crates
+!apps/mint/Cargo.toml
+!apps/mint/Cargo.lock
+!apps/mint/crates/mint-core
+!apps/mint/crates/mint-store
+!apps/mint/crates/mint-receipts
+!apps/mint/crates/mint-ledger
+!apps/mint/crates/mint-protocol
+**/target
+**/node_modules
+**/.env*

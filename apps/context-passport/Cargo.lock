@@ -1253,12 +1253,14 @@ name = "passport-relay-client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "hex",
  "mint-protocol",
  "passport-core",
  "reqwest",
  "serde_json",
  "sha2",
+ "tokio",
 ]
 
 [[package]]
