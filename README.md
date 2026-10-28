@@ -49,11 +49,11 @@ run on, it probably doesn't belong here — see
 | **Insights** (`apps/insights-edge`) | Cookieless, GDPR-friendly web analytics: email+domain signup, private per-site dashboard, session replay (paid tier), UTM/referrer/page-speed reporting. | **live** at `insights.ereboslab.com`, free up to 10,000 events/month/site |
 | **Faultline** (GlitchTip, box 2) | Sentry-compatible browser/server error tracking for the portfolio. | **live** at `errors.ereboslab.com`, wired into Scribase, Menivor, Bidstage |
 | **Vend** (`apps/vend`) | Resellable metered AI SDK on the rail (Stripe-meets-OpenRouter). Interrupted holds and payouts are replayed by `vend-reconcile`. | **live** at `vend.ereboslab.com`; tenant console at `/console`, operator admin at `/admin` |
-| **Turnstile** (`apps/turnstile`) | Drop-in paywall for paid agent tools (AITP-402 and x402). | runnable SDK + reference server; admin at `/admin` |
+| **Turnstile** (`apps/turnstile`) | Drop-in paywall for paid agent tools (AITP-402 and x402). | **live** at `turnstile.ereboslab.com`; admin at `/admin` |
 | **Rithub** (`apps/gitea`, decided 2026-10-15) | Self-hostable git forge + CI: Gitea (MIT) branded as "Rithub", with the Rago/Mint billing bridge and a registered Actions runner (`act_runner`) so pushed `.gitea/workflows/*.yml` jobs actually execute. `apps/rithub` (from-scratch Rust forge on `rit`) is the earlier effort — kept, not deleted, documented as superseded for this slot in `apps/rithub/README.md` and `apps/gitea/README.md`. | **live** at `git.ereboslab.com`; CI runner deployed 2026-10-20 |
 | **rit** (`apps/rit`) | Library-first Rust implementation of Git's object/authoring model, interop-tested against `git`. | library |
 | **agent-runtime** | Shared Rig/AITP-402 runtime: policy signing, paid SSE/multipart, cancellation reconciliation, pinned Mint-proof verification. | payment SDK ready |
-| **abacus** | Inline proxy enforcing hard, receipted per-agent spend budgets (kill-switch). | implemented; Postgres-backed |
+| **abacus** | Inline proxy enforcing hard, receipted per-agent spend budgets (kill-switch). | **live** at `abacus.ereboslab.com`; Postgres-backed |
 | **identity-lock** (Context Passport) | Provider-agnostic locked character/brand/persona identity, resolved through Relay for consistent generation. Source path: `apps/context-passport`. | **live** at `context-passport.ereboslab.com` |
 | **ledgerline** | Gross-margin lens: revenue + provider COGS on one Mint-backed ledger, settled through a durable outbox. | **live** at `ledgerline.ereboslab.com` |
 | **game-economy** | Storefront for card packs, cosmetics and battle passes on Mint hold/capture. | runnable slice |

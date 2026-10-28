@@ -25,8 +25,8 @@ starts nothing. Enable services explicitly:
 
 ```bash
 sudo ./install.sh railyard                                   # rago mint relay
-sudo ./install.sh railyard vend turnstile game-economy        # next wave
-sudo ./install.sh railyard abacus relay-ui                    # spend caps + operator console
+sudo ./install.sh railyard vend turnstile game-economy        # vend/turnstile live 2026-10-28; game-economy still next wave
+sudo ./install.sh railyard abacus relay-ui                    # abacus live 2026-10-28 (spend caps); relay-ui still next wave (operator console)
 ```
 
 ---

@@ -1,5 +1,43 @@
 # apps/turnstile
 
+## Deployed (2026-10-28)
+
+Live on railyard-box (`130.61.113.116`), `profile: turnstile` in
+`infra-box/stacks/railyard/docker-compose.yml` (this profile and its
+`turnstile.caddy` site were already prepared by an earlier session, same as
+the 2026-10-24 bech32-payee bugfix pass — this pass actually filled
+`/etc/products/turnstile.env`, seeded `/srv/railyard/turnstile/tools.json`
+with a valid empty registry (`[]`, so only the built-in demo echo tool
+serves), built the image and brought it up for the first time). Container
+port 8101 -> host `127.0.0.1:3700` -> Caddy `turnstile.{$RAILYARD_DOMAIN}`.
+Own Postgres database `turnstile` (role `turnstile_app`, password already
+reserved in `postgres.env` from an earlier next-wave prep — confirmed it
+still matched and the role/db already existed). `TURNSTILE_API_KEY` is the
+real, already-live Mint service key (same one every other sub-app on this box
+uses); `TURNSTILE_PAYEE` is a real `ait1…` address resolved from a freshly
+created real Mint Provider account (`POST /v1/accounts` + `POST
+/v1/accounts/:id/addresses` against the live `mint.ereboslab.com`) —
+`TURNSTILE_DEMO_ECHO=1` serves the built-in paid echo tool at
+`TURNSTILE_PRICE_MICROS=1000`.
+
+Verified live end-to-end against the real deployed container, both locally
+(`127.0.0.1:3700`) and over the real public hostname: an unpaid `POST
+/v1/echo` returns a real `402` with a correctly-shaped `AITP-Challenge`
+header carrying the real payee address and price; `GET /v1/admin/tools` with
+the real `TURNSTILE_ADMIN_TOKEN` shows the built-in `echo` tool `live`; MCP
+`POST /mcp` `tools/list` and `tools/call` both return correct real responses
+(`tools/call` on the unpaid path returns JSON-RPC error `-32402` with an
+embedded `aitp_challenge`, matching the HTTP behavior exactly).
+
+**Live (2026-10-28):** the public DNS A record (`turnstile.ereboslab.com` ->
+`130.61.113.116`, proxied) was created via `~/products/.env`'s
+`CLOUDFLARE_DNS_API_TOKEN` (real, separate, write-scoped Cloudflare token;
+the `cloudflare-api` MCP connection remains read-only). Caddy reloaded,
+real Let's Encrypt cert obtained automatically. Verified live:
+`https://turnstile.ereboslab.com/healthz` -> `ok` (200); the real unpaid
+`POST /v1/echo` and MCP `tools/call` both return the identical `402`/`-32402`
+challenge over HTTPS through Cloudflare as they do on loopback.
+
 > **Status: runnable Rust SDK and reference server.**
 > `apps/turnstile` is now its own cargo workspace (excluded from the repo-root
 > GPUI/Metal graph) with three crates: `turnstile-core` (framework-agnostic

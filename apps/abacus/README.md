@@ -1,5 +1,47 @@
 # Abacus
 
+## Deployed (2026-10-28)
+
+Live on railyard-box (`130.61.113.116`), `profile: abacus` in
+`infra-box/stacks/railyard/docker-compose.yml` (this profile and its
+`abacus.caddy` site were already prepared by an earlier session, same as the
+2026-10-24 live-audit pass that proved the kill-switch/insufficient-funds
+paths against a local throwaway Mint — this pass filled
+`/etc/products/abacus.env`, wrote a real `/srv/railyard/abacus/agents.json`
+(one real direct-hold agent, replacing the template placeholders) and a real
+`/srv/railyard/abacus/pricing.json` (the `relay` provider rows, since
+`ABACUS_PROVIDER=relay`/`UPSTREAM_BASE_URL=http://relay:3000` fronts the
+already-live Railyard Relay), built the image and brought it up for the
+first time). Container port 8100 -> host `127.0.0.1:3900` -> Caddy
+`abacus.{$RAILYARD_DOMAIN}`. Own Postgres database `abacus` (role
+`abacus_app`, password already reserved in `postgres.env` — confirmed it
+still matched and the role/db already existed). `MINT_API_KEY` is the real,
+already-live Mint service key every other sub-app on this box uses; the
+agent's `agent_acct`/`treasury` and the provider's payout `payee` address are
+three freshly created real Mint accounts (`POST /v1/accounts` +
+`POST /v1/accounts/:id/addresses` against the live `mint.ereboslab.com`).
+
+Verified live end-to-end against the real deployed container, both locally
+and over the real public hostname: a real `POST /v1/proxy` priced within cap
+but against the real zero-balance treasury correctly `402`s
+`insufficient_funds` from Mint's real `/v1/holds` rejection — cross-checked
+directly against `GET /v1/accounts/:id/balance` on `mint.ereboslab.com`
+(identical `0`, same ledger, not a stub); a request priced over the agent's
+`per_request_max_micros` (5,000,000 µ$) is killed with `allowance_exceeded`
+with **zero** Mint calls (confirmed via `GET /v1/admin/overview`:
+`open_holds_total: 0` before and after); a wrong `X-API-Key` is `401`; an
+unknown `X-Abacus-Agent` is rejected; `GET /v1/admin/overview` with the real
+`ABACUS_ADMIN_API_KEY` shows the real agent/budget config loaded correctly.
+
+**Live (2026-10-28):** the public DNS A record (`abacus.ereboslab.com` ->
+`130.61.113.116`, proxied) was created via `~/products/.env`'s
+`CLOUDFLARE_DNS_API_TOKEN` (real, separate, write-scoped Cloudflare token;
+the `cloudflare-api` MCP connection remains read-only). Caddy reloaded, real
+Let's Encrypt cert obtained automatically. Verified live:
+`https://abacus.ereboslab.com/healthz` -> `ok` (200); the real
+`insufficient_funds` round trip above was re-run against the public hostname
+with the identical result.
+
 **Status: implemented standalone Rust workspace.** Its five crates compile and
 the workspace suite passes: `abacus-core`, `abacus-mint-client`, `abacus-proxy`,
 `abacus-testkit`, and `abacus-upstream`. Validate from `apps/abacus` with
