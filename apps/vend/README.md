@@ -1,5 +1,45 @@
 # Vend
 
+## Deployed (2026-10-28)
+
+Live on railyard-box (`130.61.113.116`), `profile: vend` in
+`infra-box/stacks/railyard/docker-compose.yml` (this profile and its
+`vend.caddy` site were already prepared by an earlier session; this pass
+actually filled `/etc/products/vend.env`, built the image, and brought it up
+for the first time). Container port 8090 -> host `127.0.0.1:3600` -> Caddy
+`vend.{$RAILYARD_DOMAIN}`. Own Postgres database `vend` (role `vend_app`,
+password already reserved in `postgres.env` from an earlier next-wave
+prep — confirmed it still matched and the role/db already existed). Wired to
+the real, already-live Railyard Relay (`RELAY_BASE=http://relay:3000`, a real
+`sk-t0-` key minted with `gateway --create-api-key` against the live
+`railyard-relay-1`) and the real Mint (`MINT_BASE=http://mint:8080`, shadow
+mode) with three real, freshly created Mint accounts (clearing, provider
+payout, platform payout — all `POST /v1/accounts` against the live
+`mint.ereboslab.com`).
+
+Verified live end-to-end against the real deployed container, the README's
+own "Launch in five calls": real self-serve `POST /v1/auth/signup` (created a
+real tenant + app + end-user wallet, each with its own Mint account); real
+`GET /v1/models` showing the signed-up app's own markup pricing; real
+`POST /v1/wallets` and `GET /v1/wallets/:user`; a real `POST
+/v1/chat/completions` against a real zero-balance wallet correctly returned
+`insufficient_funds` — cross-checked directly against Mint's own
+`GET /v1/accounts/:id/balance` (identical `0`, same ledger, not a local
+stub); a real top-up checkout attempt correctly failed with `checkout
+provider creem is not active` (no payment-provider credential exists in this
+environment — same funding wall as every other Railyard sub-app audited so
+far, not a Vend bug). `/console` and `/` both render.
+
+One step remains, infra not code: the public DNS A record
+(`vend.ereboslab.com` -> `130.61.113.116`, proxied) hasn't been created —
+same single blocker and same cause as Toolgate's deploy earlier this session
+(the only available Cloudflare credential is a read-only MCP connection;
+every API token file on disk was expired). Caddy is already configured and
+reloaded for this hostname and will issue its certificate automatically once
+the record exists; the routing itself is already correct right now (`curl -H
+'Host: vend.ereboslab.com' http://<box>/readyz` returns the real `308`
+redirect).
+
 **Your own OpenRouter, white-labelled.** Vend lets an AI founder launch a
 branded LLM API: one OpenAI-compatible endpoint across every model Relay
 routes, a wallet for each of the founder's users, the founder's own price per
