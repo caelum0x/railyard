@@ -67,15 +67,29 @@ pub fn build_otel_enabled_routes() -> (OtelEnabledRoutes, Router<SwappableAppSta
 }
 
 /// Builds external routes that don't have OpenTelemetry tracing.
+///
+/// `build_observability_routes`/`build_datasets_routes`/`build_optimization_routes`/
+/// `build_gepa_routes`/`build_evaluations_routes` carry no per-key scoping at all
+/// (see `relay_access::require_operator_middleware`'s doc comment), so they are
+/// gated to operator keys as one `route_layer`'d sub-router; `/metrics`, `/status`,
+/// `/health`, `/v1/relay/catalog(/quotes)`, and the billing/provider-key/traces
+/// surfaces in `build_meta_observability_routes` are unaffected — each of those
+/// already scopes itself (publicly, per-key, or `require_operator`) inside its own
+/// handler.
 pub fn build_non_otel_enabled_routes(
     metrics_handle: PrometheusHandle,
 ) -> Router<SwappableAppStateData> {
-    Router::new()
+    let operator_only = Router::new()
         .merge(build_observability_routes())
         .merge(build_datasets_routes())
         .merge(build_optimization_routes())
         .merge(build_gepa_routes())
         .merge(build_evaluations_routes())
+        .route_layer(axum::middleware::from_fn(
+            crate::relay_access::require_operator_middleware,
+        ));
+    Router::new()
+        .merge(operator_only)
         .merge(build_meta_observability_routes(metrics_handle))
 }
 

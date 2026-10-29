@@ -2,6 +2,12 @@
 //!
 //! These routes are for internal use. They are unstable and might change without notice,
 //! and do not export any OpenTelemetry spans.
+//!
+//! On Railyard's shared multi-tenant deployment every route here is gated to
+//! operator API keys (`relay_access::require_operator_middleware`) except
+//! `/internal/autopilot/status`, which stays in the gateway's own
+//! `UNAUTHENTICATED_ROUTES` list and must never require a key at all, let
+//! alone an operator one.
 
 use axum::{
     Router,
@@ -298,14 +304,9 @@ pub fn build_internal_non_otel_enabled_routes() -> Router<SwappableAppStateData>
         .route(
             "/internal/resolve_uuid/{id}",
             get(endpoints::internal::resolve_uuid::resolve_uuid_handler),
-        )
-        // Other Autopilot endpoints
-        .route(
-            "/internal/autopilot/status",
-            get(endpoints::internal::autopilot::autopilot_status_handler),
         );
 
-    if feature_flags::ENABLE_CONFIG_IN_DATABASE.get() {
+    let router = if feature_flags::ENABLE_CONFIG_IN_DATABASE.get() {
         router
             .route(
                 "/internal/config_toml",
@@ -324,5 +325,18 @@ pub fn build_internal_non_otel_enabled_routes() -> Router<SwappableAppStateData>
             )
     } else {
         router
-    }
+    };
+
+    // Every route built above requires an operator key. `/internal/autopilot/status`
+    // is merged back in afterwards, unguarded: it is in the gateway's own
+    // `UNAUTHENTICATED_ROUTES` list (a liveness probe can't carry any key), so it
+    // must reach its handler with no `RequestApiKeyExtension` present at all.
+    router
+        .route_layer(axum::middleware::from_fn(
+            crate::relay_access::require_operator_middleware,
+        ))
+        .route(
+            "/internal/autopilot/status",
+            get(endpoints::internal::autopilot::autopilot_status_handler),
+        )
 }

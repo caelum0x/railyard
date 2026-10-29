@@ -8,8 +8,9 @@
 
 use axum::{
     Extension, Json,
-    extract::Query,
+    extract::{Query, Request},
     http::StatusCode,
+    middleware::Next,
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
@@ -96,6 +97,48 @@ pub fn require_operator(principal: Option<&RequestApiKeyExtension>) -> Result<St
                 "authenticated principal required",
             )
         })
+}
+
+/// Route-layer middleware for a whole sub-router: reject a non-operator key
+/// instead of calling the handler. Used for the raw TensorZero observability/
+/// dataset/evaluation and `/internal/*` surfaces (RY-RL5): those routes were
+/// built for a single trusted operator (the Relay UI's own key) and carry
+/// **no** per-key scoping at all — unlike `/relay/traces`, `/relay/billing/*`
+/// and the provider-key/catalog-price editors, which each check
+/// `require_operator` or scope to the caller's own key inside the handler. On
+/// a shared multi-tenant Relay deployment (many Railyard products' API keys
+/// against one gateway), any one of those keys could otherwise list or fetch
+/// every other tenant's stored inferences, feedback, datasets and raw
+/// object-storage bytes.
+///
+/// Unlike `require_operator`, a **missing** principal is let through rather
+/// than rejected: `[gateway.auth]` is opt-in, and when it is off (the default
+/// for a self-hosted, single-tenant TensorZero gateway, and for every e2e
+/// test that doesn't configure auth) `tensorzero_auth_middleware` is never
+/// layered on at all, so there is no `RequestApiKeyExtension` for *any*
+/// request, not just these routes — there is exactly one tenant and nothing
+/// to isolate, so that deployment's existing no-auth behavior for these
+/// routes must be unchanged. When auth IS enabled, a request reaching this
+/// `route_layer` has already passed `tensorzero_auth_middleware` (added
+/// after this one wraps the whole router, so it runs first) — any key-less
+/// request was already rejected there with 401, so a `None` here only ever
+/// means "auth is off for this whole gateway".
+pub async fn require_operator_middleware(request: Request, next: Next) -> Response {
+    let principal = request
+        .extensions()
+        .get::<RequestApiKeyExtension>()
+        .cloned();
+    if let Some(principal) = &principal
+        && !is_operator(&principal.key_info.public_id)
+    {
+        return access_error(
+            StatusCode::FORBIDDEN,
+            "relay_internal_forbidden",
+            "this endpoint is not scoped per API key; it requires an operator key \
+             (set RELAY_OPERATOR_KEY_IDS on the gateway)",
+        );
+    }
+    next.run(request).await
 }
 
 pub fn access_error(status: StatusCode, code: &str, message: &str) -> Response {
@@ -638,5 +681,76 @@ mod tests {
             cost_feed: CostFeedStatus::unconfigured(),
         };
         assert_eq!(status_warnings(&runtime, false).len(), 4);
+    }
+
+    fn test_principal(public_id: &str) -> RequestApiKeyExtension {
+        use chrono::Utc;
+        use secrecy::SecretString;
+        use tensorzero_auth::key::TensorZeroApiKey;
+        use tensorzero_auth::postgres::KeyInfo;
+
+        RequestApiKeyExtension {
+            api_key: std::sync::Arc::new(TensorZeroApiKey {
+                public_id: public_id.to_string(),
+                hashed_long_key: SecretString::from("unused-in-this-test".to_string()),
+            }),
+            key_info: KeyInfo {
+                public_id: public_id.to_string(),
+                organization: "test-org".to_string(),
+                workspace: "test-workspace".to_string(),
+                description: None,
+                created_at: Utc::now(),
+                disabled_at: None,
+                expires_at: None,
+            },
+        }
+    }
+
+    async fn status_through_middleware(principal: Option<RequestApiKeyExtension>) -> StatusCode {
+        use axum::{Router, routing::get};
+        use tower::ServiceExt as _;
+
+        let app = Router::new()
+            .route("/guarded", get(|| async { "ok" }))
+            .route_layer(axum::middleware::from_fn(require_operator_middleware));
+        let mut request = axum::http::Request::builder()
+            .uri("/guarded")
+            .body(axum::body::Body::empty())
+            .expect("build request");
+        if let Some(principal) = principal {
+            request.extensions_mut().insert(principal);
+        }
+        app.oneshot(request)
+            .await
+            .expect("router call should not fail")
+            .status()
+    }
+
+    /// No `RequestApiKeyExtension` at all (gateway auth disabled, e.g. a
+    /// single-tenant deployment or any e2e test that doesn't configure
+    /// `[gateway.auth]`) must still reach the handler, exactly as it did
+    /// before this gate existed — there's one tenant, nothing to isolate.
+    #[tokio::test]
+    async fn no_principal_passes_through_unchanged() {
+        assert_eq!(status_through_middleware(None).await, StatusCode::OK);
+    }
+
+    /// An authenticated key that is not in `RELAY_OPERATOR_KEY_IDS` is the
+    /// exact shape of a real Railyard product's own Relay key — it must be
+    /// rejected, not handed every other tenant's data. This workspace forbids
+    /// `unsafe_code`, and setting `RELAY_OPERATOR_KEY_IDS` from Rust requires
+    /// an `unsafe` block (edition 2024's `std::env::set_var`), so this test
+    /// relies on the (realistic, standard-for-a-test-process) precondition
+    /// that it isn't already set rather than clearing it itself; the
+    /// operator-allowed path is verified against the real deployed gateway
+    /// instead (see the 2026-10-29 `plans/railyard.md` entry for this fix).
+    #[tokio::test]
+    async fn non_operator_principal_is_forbidden() {
+        assert!(
+            std::env::var(OPERATOR_KEYS_ENV).is_err(),
+            "{OPERATOR_KEYS_ENV} must be unset for this test to mean anything"
+        );
+        let status = status_through_middleware(Some(test_principal("tenant-key-1"))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
     }
 }
