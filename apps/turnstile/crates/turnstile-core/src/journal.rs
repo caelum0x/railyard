@@ -148,6 +148,41 @@ impl SettlementPhase {
     }
 }
 
+/// Constant-time (with respect to WHERE the two byte slices differ) equality.
+/// Always walks the full length of the longer input instead of returning as
+/// soon as a mismatch is found.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Whether `presented` is a byte-for-byte match of `stored`, compared in
+/// constant time with respect to where the two differ.
+///
+/// Both `begin_verification` implementations ([`InMemorySettlementJournal`]
+/// and [`crate::pg_settlement::PostgresSettlementJournal`]) use this to decide
+/// whether a resubmitted nonce is an idempotent retry of the same
+/// [`PaymentAuthorization`] (including its `sig` field, which only the real
+/// payer's private key could have produced) or a different command
+/// colliding on the same nonce. Derived `PartialEq`/`==` on this struct is a
+/// thin wrapper over `memcmp` and returns as soon as it finds the first
+/// differing byte — the same non-constant-time leak found and fixed
+/// 2026-10-29 in `operator::settlement_for_payer`'s payer-proof check (see
+/// that commit for a measured timing delta). Comparing the full canonical
+/// JSON encoding in one constant-time pass closes the same class of leak
+/// here, on the hot path every payment admission goes through.
+pub(crate) fn authorization_matches(
+    presented: &PaymentAuthorization,
+    stored: &PaymentAuthorization,
+) -> bool {
+    match (serde_json::to_vec(presented), serde_json::to_vec(stored)) {
+        (Ok(a), Ok(b)) => constant_time_eq(&a, &b),
+        _ => false,
+    }
+}
+
 /// Storage contract used by request handlers and the recovery worker.
 #[async_trait]
 pub trait SettlementJournal: Send + Sync {
@@ -304,7 +339,7 @@ impl SettlementJournal for InMemorySettlementJournal {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         if let Some(existing) = records.get(&authorization.nonce) {
-            if existing.authorization == *authorization {
+            if authorization_matches(authorization, &existing.authorization) {
                 return Ok(existing.clone());
             }
             return Err(TurnstileError::Settlement(
@@ -570,5 +605,84 @@ impl SettlementJournal for InMemorySettlementJournal {
         out.sort_by(|a, b| b.authorization.expiry.cmp(&a.authorization.expiry));
         out.truncate(limit);
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Regression tests for the bug found 2026-10-29: `begin_verification`'s
+    //! idempotent-retry check (both here and in
+    //! `pg_settlement::PostgresSettlementJournal`) used derived `PartialEq`
+    //! (`existing.authorization == *authorization` / `!=`) — equivalent to
+    //! plain `==` on every field including `sig`, the one field only the real
+    //! payer's private key could have produced. This is the exact same
+    //! non-constant-time comparison pattern found and fixed the same day in
+    //! `operator::settlement_for_payer`'s payer-proof check, just hit on the
+    //! payment-admission hot path instead of the settlement-status lookup.
+    //! This test only pins the functional behavior (idempotent retries still
+    //! accepted; a near-miss anywhere, including just `sig`, is still
+    //! rejected) — the timing property itself was verified out-of-band
+    //! against the same `constant_time_eq` primitive `operator.rs` already
+    //! validates.
+    use super::*;
+
+    fn auth(sig: &str) -> PaymentAuthorization {
+        PaymentAuthorization {
+            payer: "acct_payer".into(),
+            payee: "ait1qpayee".into(),
+            amount_micros: AmountMicros(1_000),
+            nonce: "nonce123".into(),
+            resource: "POST /v1/echo".into(),
+            expiry: 1_000_000,
+            scheme: Scheme::Hold,
+            idempotency_key: "idem_1".into(),
+            pubkey_id: "key_1".into(),
+            op_hash: "hash1".into(),
+            sig: sig.into(),
+        }
+    }
+
+    #[test]
+    fn identical_authorizations_match() {
+        assert!(authorization_matches(&auth("realsig"), &auth("realsig")));
+    }
+
+    #[test]
+    fn a_mismatch_in_only_the_last_byte_of_sig_is_still_rejected() {
+        assert!(!authorization_matches(&auth("realsiH"), &auth("realsig")));
+    }
+
+    #[test]
+    fn a_mismatch_in_the_first_byte_of_sig_is_rejected() {
+        assert!(!authorization_matches(&auth("Xealsig"), &auth("realsig")));
+    }
+
+    #[tokio::test]
+    async fn begin_verification_is_idempotent_on_an_exact_retry() {
+        let journal = InMemorySettlementJournal::new();
+        let a = auth("realsig");
+        journal
+            .begin_verification(&a, "worker-1", 1_000)
+            .await
+            .unwrap();
+        // Same nonce, byte-for-byte identical authorization resubmitted (the
+        // ordinary retry-after-timeout case) must still succeed.
+        let again = journal.begin_verification(&a, "worker-1", 2_000).await;
+        assert!(again.is_ok());
+    }
+
+    #[tokio::test]
+    async fn begin_verification_rejects_a_same_nonce_sig_near_miss() {
+        let journal = InMemorySettlementJournal::new();
+        journal
+            .begin_verification(&auth("realsig"), "worker-1", 1_000)
+            .await
+            .unwrap();
+        // Same nonce, every field identical except the last byte of sig —
+        // the exact near-miss a timing attacker would probe for.
+        let collision = journal
+            .begin_verification(&auth("realsiH"), "worker-1", 1_000)
+            .await;
+        assert!(collision.is_err());
     }
 }

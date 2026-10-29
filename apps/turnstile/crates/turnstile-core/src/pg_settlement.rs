@@ -6,7 +6,8 @@ use sqlx::postgres::PgPool;
 
 use crate::error::TurnstileError;
 use crate::journal::{
-    ResourceRevenue, RevenueSummary, SettlementJournal, SettlementPhase, SettlementRecord,
+    authorization_matches, ResourceRevenue, RevenueSummary, SettlementJournal, SettlementPhase,
+    SettlementRecord,
 };
 
 const COLUMNS: &str = "nonce, authorization_json, phase, hold_id, scheme_json, actual_micros, receipt_json, owner_token, lease_until_ms, last_error";
@@ -143,7 +144,7 @@ impl SettlementJournal for PostgresSettlementJournal {
         .await
         .map_err(db)?;
         let record = self.required(&authorization.nonce).await?;
-        if record.authorization != *authorization {
+        if !authorization_matches(authorization, &record.authorization) {
             return Err(TurnstileError::Settlement(
                 "authorization nonce is bound to another settlement command".into(),
             ));
