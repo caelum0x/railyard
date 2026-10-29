@@ -13,7 +13,7 @@
 //! | `TURNSTILE_X402_CDP_API_KEY_ID` | with the CDP facilitator | CDP Secret API key id |
 //! | `TURNSTILE_X402_CDP_API_KEY_SECRET` | with the CDP facilitator | CDP key secret: PEM EC (ES256) or base64 Ed25519 (EdDSA) |
 //! | `TURNSTILE_X402_ASSET` | off Base | ERC-20 contract of the asset (USDC on Base/Base Sepolia by default) |
-//! | `TURNSTILE_X402_ASSET_NAME` / `_ASSET_VERSION` | no | EIP-712 domain (`USD Coin` / `2`) |
+//! | `TURNSTILE_X402_ASSET_NAME` / `_ASSET_VERSION` | no | EIP-712 domain (`USD Coin` / `2` on Base mainnet, `USDC` / `2` on Base Sepolia — the two real deployments answer `name()` differently, confirmed on-chain) |
 //! | `TURNSTILE_X402_MAX_TIMEOUT_SECS` | no, default 60 | `maxTimeoutSeconds` advertised |
 //! | `TURNSTILE_X402_MINT_ACCOUNT` | no | Mint account credited with every settled payment |
 //! | `TURNSTILE_PUBLIC_URL` | no | absolute origin used for `resource` URLs |
@@ -35,7 +35,20 @@ pub const USDC_BASE_SEPOLIA: &str = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 pub const TESTNET_FACILITATOR: &str = "https://x402.org/facilitator";
 
 const DEFAULT_NETWORK: &str = "base-sepolia";
+/// EIP-712 domain `name` Base mainnet's real USDC contract (`USDC_BASE`)
+/// answers `name()` with.
 const DEFAULT_ASSET_NAME: &str = "USD Coin";
+/// EIP-712 domain `name` Base Sepolia's real test USDC contract
+/// (`USDC_BASE_SEPOLIA`) answers `name()` with — a real, different string
+/// from mainnet's, confirmed live: `eth_call` for `name()` against
+/// `0x036CbD53842c5426634e7929541eC2318f3dCF7e` on `sepolia.base.org`
+/// returns `"USDC"`, not `"USD Coin"`. A facilitator checks the payer's
+/// signature against the EIP-712 domain the *real* contract reports, so the
+/// wrong default here made every real signed payment on the free, keyless
+/// testnet facilitator fail `invalid_exact_evm_token_name_mismatch` even with
+/// a perfectly valid signature and sufficient balance — found live against
+/// the real `x402.org/facilitator` on 2026-10-29.
+const DEFAULT_ASSET_NAME_BASE_SEPOLIA: &str = "USDC";
 const DEFAULT_ASSET_VERSION: &str = "2";
 const DEFAULT_MAX_TIMEOUT_SECS: u64 = 60;
 
@@ -137,6 +150,15 @@ impl X402Config {
                 "TURNSTILE_X402_ASSET must be a 0x-prefixed 20-byte contract address".into(),
             ));
         }
+        // The default EIP-712 domain name pairs with whichever known USDC
+        // deployment `asset` actually resolved to; an explicit non-default
+        // `TURNSTILE_X402_ASSET` falls back to the generic mainnet name,
+        // same as before this fix, since its real domain name is unknown.
+        let default_asset_name = if asset.eq_ignore_ascii_case(USDC_BASE_SEPOLIA) {
+            DEFAULT_ASSET_NAME_BASE_SEPOLIA
+        } else {
+            DEFAULT_ASSET_NAME
+        };
         let max_timeout_seconds = match get("TURNSTILE_X402_MAX_TIMEOUT_SECS") {
             Some(raw) => raw
                 .parse::<u64>()
@@ -165,7 +187,7 @@ impl X402Config {
             cdp_key,
             asset,
             asset_name: get("TURNSTILE_X402_ASSET_NAME")
-                .unwrap_or_else(|| DEFAULT_ASSET_NAME.into()),
+                .unwrap_or_else(|| default_asset_name.into()),
             asset_version: get("TURNSTILE_X402_ASSET_VERSION")
                 .unwrap_or_else(|| DEFAULT_ASSET_VERSION.into()),
             max_timeout_seconds,
@@ -236,6 +258,48 @@ mod tests {
         assert_eq!(cfg.facilitator_url, TESTNET_FACILITATOR);
         assert_eq!(cfg.asset, USDC_BASE_SEPOLIA);
         assert_eq!(cfg.max_timeout_seconds, 60);
+        // Regression test for the bug found live 2026-10-29: Base Sepolia's
+        // real USDC contract answers `name()` with "USDC", not "USD Coin" —
+        // confirmed via a live `eth_call` against
+        // 0x036CbD53842c5426634e7929541eC2318f3dCF7e on sepolia.base.org, and
+        // via a real `invalid_exact_evm_token_name_mismatch` rejection from
+        // the real `x402.org/facilitator` when Turnstile sent a correctly
+        // signed EIP-3009 authorization with the old wrong default. Every
+        // real payment against the default (free, keyless) testnet rail was
+        // broken by this, even with a valid signature and full balance.
+        assert_eq!(cfg.asset_name, "USDC");
+    }
+
+    #[test]
+    fn mainnet_asset_name_stays_usd_coin() {
+        let cfg = load(&[
+            ("TURNSTILE_X402_PAY_TO", PAY_TO),
+            ("TURNSTILE_X402_NETWORK", "base"),
+            (
+                "TURNSTILE_X402_FACILITATOR_URL",
+                "https://facilitator.example",
+            ),
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(cfg.asset, USDC_BASE);
+        // Base mainnet's real USDC contract answers `name()` with "USD Coin"
+        // (confirmed via a live `eth_call` against
+        // 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 on mainnet.base.org) —
+        // unlike Base Sepolia's test deployment, this default was already
+        // correct.
+        assert_eq!(cfg.asset_name, "USD Coin");
+    }
+
+    #[test]
+    fn explicit_asset_name_overrides_the_default_on_either_network() {
+        let cfg = load(&[
+            ("TURNSTILE_X402_PAY_TO", PAY_TO),
+            ("TURNSTILE_X402_ASSET_NAME", "My Custom Coin"),
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(cfg.asset_name, "My Custom Coin");
     }
 
     #[test]
