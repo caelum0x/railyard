@@ -182,6 +182,14 @@ impl LiveRegistry {
         self.echo.is_some()
     }
 
+    /// The built-in demo echo tool's gate, when `TURNSTILE_DEMO_ECHO=1` — not
+    /// routable through `snapshot.http` (it is served on its own `/v1/echo`
+    /// handler, not the generic `/v1/tools/:name/call` dispatcher), so x402
+    /// discovery needs this to list it alongside the registry's tools.
+    pub fn echo_gate(&self) -> Option<Arc<Turnstile>> {
+        self.echo.as_ref().map(|echo| echo.gate.clone())
+    }
+
     /// The snapshot every request reads from.
     pub fn snapshot(&self) -> Arc<Snapshot> {
         self.current
@@ -402,6 +410,14 @@ pub async fn discover_x402(State(registry): State<Arc<LiveRegistry>>) -> Respons
         .values()
         .filter_map(|tool| tool.gate.x402_requirements(&tool.spec.http_path()))
         .collect();
+    // The built-in demo echo tool (`TURNSTILE_DEMO_ECHO=1`) is served on its
+    // own `/v1/echo` route, not through `snapshot.http`'s generic dispatcher,
+    // so it is invisible to the loop above even though its own `402` already
+    // advertises an x402 `PaymentRequirements` (checked separately below for
+    // MCP via `snapshot.mcp`, which already includes it).
+    if let Some(gate) = registry.echo_gate() {
+        accepts.extend(gate.x402_requirements("/v1/echo"));
+    }
     accepts.sort_by(|a, b| a.resource.cmp(&b.resource));
     let mcp: Vec<PaymentRequiredV2> = snapshot
         .mcp
@@ -435,4 +451,133 @@ pub async fn discover_x402(State(registry): State<Arc<LiveRegistry>>) -> Respons
 /// `GET /v1/tools` and `GET /.well-known/aitp-tools` — the live priced catalog.
 pub async fn discover_live(State(registry): State<Arc<LiveRegistry>>) -> Response {
     Json(registry.snapshot().catalog.as_ref()).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use turnstile_core::x402::config::USDC_BASE_SEPOLIA;
+    use turnstile_core::x402::{InMemoryX402Journal, X402Config};
+    use turnstile_core::{
+        FakeVerifier, InMemoryNonceStore, InMemorySettlementJournal, InMemoryToolStore,
+        TurnstileConfig,
+    };
+
+    use super::*;
+
+    /// A registry with `TURNSTILE_DEMO_ECHO=1` and x402 enabled, same shape
+    /// `main.rs` builds in production.
+    async fn registry_with_echo_and_x402() -> Arc<LiveRegistry> {
+        let config = TurnstileConfig {
+            mint_server_url: "http://mint.internal".into(),
+            api_key: "k".into(),
+            payee: "ait1qpayee".into(),
+            price_micros: AmountMicros(1_000),
+            currency: "AIT".into(),
+            challenge_ttl_ms: 60_000,
+        };
+        let x402_facilitator: Arc<dyn turnstile_core::x402::Facilitator> =
+            Arc::new(turnstile_core::x402::HttpFacilitator::new(
+                Arc::new(
+                    aitp_client::transport::ReqwestTransport::new("https://x402.org/facilitator")
+                        .unwrap(),
+                ),
+                None,
+            ));
+        let x402 = Arc::new(X402Gate::new(
+            X402Config {
+                pay_to: "0xfBb908AA04C3644364D3998d8f683619e25E7C17".into(),
+                network: "base-sepolia".into(),
+                facilitator_url: "https://x402.org/facilitator".into(),
+                facilitator_auth: None,
+                cdp_key: None,
+                asset: USDC_BASE_SEPOLIA.into(),
+                asset_name: "USD Coin".into(),
+                asset_version: "2".into(),
+                max_timeout_seconds: 60,
+                mint_account: None,
+                public_url: Some("https://turnstile.ereboslab.com".into()),
+            },
+            x402_facilitator,
+            Arc::new(InMemoryX402Journal::new()),
+            None,
+        ));
+        let factory = GateFactory::new(
+            config.clone(),
+            Arc::new(InMemoryNonceStore::new()),
+            Arc::new(FakeVerifier::with_hold("hold_1")),
+            Arc::new(InMemorySettlementJournal::new()),
+            Duration::from_secs(30),
+        )
+        .with_x402(Some(x402));
+        let echo = BuiltinEcho {
+            gate: factory.gate_described(config.price_micros, "Echo"),
+        };
+        let registry = Arc::new(LiveRegistry::new(
+            Arc::new(InMemoryToolStore::new()),
+            factory,
+            Some(echo),
+        ));
+        registry.reload().await.unwrap();
+        registry
+    }
+
+    /// Regression test for the bug found 2026-10-29: the built-in demo echo
+    /// tool's own `402` advertises a real x402 `PaymentRequirements` (it is
+    /// `TURNSTILE_DEMO_ECHO=1`'s only paid route), but `/.well-known/x402`'s
+    /// HTTP `accepts` array only ever read `snapshot.http`, which the echo
+    /// tool is never inserted into (it is served on its own `/v1/echo`
+    /// handler, not the generic `/v1/tools/:name/call` dispatcher) — so an
+    /// x402 client doing discovery-first would never find it over HTTP, only
+    /// over MCP. `discover_x402` must list it in both places.
+    #[tokio::test]
+    async fn discover_x402_lists_the_builtin_echo_tool_over_http_too() {
+        let registry = registry_with_echo_and_x402().await;
+        let resp = discover_x402(State(registry)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        let accepts = body["accepts"].as_array().expect("accepts array");
+        assert_eq!(accepts.len(), 1, "echo tool missing from HTTP accepts: {body}");
+        assert_eq!(accepts[0]["resource"], "https://turnstile.ereboslab.com/v1/echo");
+        assert_eq!(accepts[0]["payTo"], "0xfBb908AA04C3644364D3998d8f683619e25E7C17");
+        assert_eq!(accepts[0]["maxAmountRequired"], "1000");
+
+        // Still listed over MCP too (this half already worked).
+        let mcp = body["mcp"].as_array().expect("mcp array");
+        assert_eq!(mcp.len(), 1);
+        assert_eq!(mcp[0]["resource"]["url"], "mcp://tool/echo");
+    }
+
+    #[tokio::test]
+    async fn discover_x402_is_404_when_x402_is_disabled() {
+        let config = TurnstileConfig {
+            mint_server_url: "http://mint.internal".into(),
+            api_key: "k".into(),
+            payee: "ait1qpayee".into(),
+            price_micros: AmountMicros(1_000),
+            currency: "AIT".into(),
+            challenge_ttl_ms: 60_000,
+        };
+        let factory = GateFactory::new(
+            config.clone(),
+            Arc::new(InMemoryNonceStore::new()),
+            Arc::new(FakeVerifier::with_hold("hold_1")),
+            Arc::new(InMemorySettlementJournal::new()),
+            Duration::from_secs(30),
+        );
+        let echo = BuiltinEcho {
+            gate: factory.gate_described(config.price_micros, "Echo"),
+        };
+        let registry = Arc::new(LiveRegistry::new(
+            Arc::new(InMemoryToolStore::new()),
+            factory,
+            Some(echo),
+        ));
+        registry.reload().await.unwrap();
+        let resp = discover_x402(State(registry)).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
 }
