@@ -38,23 +38,34 @@ fn is_chat_path(path: &str) -> bool {
 }
 
 fn opted_out(req: &Request) -> bool {
-    let h = |name: header::HeaderName| req.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_ascii_lowercase);
+    let h = |name: header::HeaderName| {
+        req.headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_ascii_lowercase)
+    };
     let bypass = req
         .headers()
         .get(CACHE_HEADER)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.eq_ignore_ascii_case("bypass") || v.eq_ignore_ascii_case("off"));
-    let no_cache = h(header::CACHE_CONTROL).is_some_and(|v| v.contains("no-cache") || v.contains("no-store"));
+    let no_cache =
+        h(header::CACHE_CONTROL).is_some_and(|v| v.contains("no-cache") || v.contains("no-store"));
     bypass || no_cache
 }
 
 fn tagged(mut resp: Response, value: &'static str) -> Response {
-    resp.headers_mut().insert(CACHE_HEADER, HeaderValue::from_static(value));
+    resp.headers_mut()
+        .insert(CACHE_HEADER, HeaderValue::from_static(value));
     resp
 }
 
 /// `axum::middleware::from_fn_with_state(state, semantic_cache_middleware)`.
-pub async fn semantic_cache_middleware(State(state): State<SemanticCacheState>, req: Request, next: Next) -> Response {
+pub async fn semantic_cache_middleware(
+    State(state): State<SemanticCacheState>,
+    req: Request,
+    next: Next,
+) -> Response {
     if req.method() != Method::POST || !is_chat_path(req.uri().path()) {
         return next.run(req).await;
     }
@@ -66,14 +77,25 @@ pub async fn semantic_cache_middleware(State(state): State<SemanticCacheState>, 
         return next.run(req).await;
     };
     let (parts, body) = req.into_parts();
-    let bytes: Bytes = match http_body_util::Limited::new(body, state.cache.config.max_body_bytes).collect().await {
+    let bytes: Bytes = match http_body_util::Limited::new(body, state.cache.config.max_body_bytes)
+        .collect()
+        .await
+    {
         Ok(c) => c.to_bytes(),
         Err(_) => {
-            return (StatusCode::PAYLOAD_TOO_LARGE, "The request body is larger than this gateway accepts.").into_response();
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "The request body is larger than this gateway accepts.",
+            )
+                .into_response();
         }
     };
     let rebuilt = || Request::from_parts(parts.clone(), Body::from(bytes.clone()));
-    let Some(key) = serde_json::from_slice::<Value>(&bytes).ok().as_ref().and_then(cacheable) else {
+    let Some(key) = serde_json::from_slice::<Value>(&bytes)
+        .ok()
+        .as_ref()
+        .and_then(cacheable)
+    else {
         return next.run(rebuilt()).await;
     };
     let embedding = match state.cache.embed(&key.prompt).await {
@@ -83,7 +105,11 @@ pub async fn semantic_cache_middleware(State(state): State<SemanticCacheState>, 
             return next.run(rebuilt()).await;
         }
     };
-    match state.cache.lookup(&tenant, &key.scope, &embedding, now_ms()).await {
+    match state
+        .cache
+        .lookup(&tenant, &key.scope, &embedding, now_ms())
+        .await
+    {
         Ok(Some(hit)) => {
             let mut resp = axum::Json(hit.response).into_response();
             if let Ok(v) = HeaderValue::from_str(&format!("{:.4}", hit.similarity)) {
@@ -104,15 +130,26 @@ pub async fn semantic_cache_middleware(State(state): State<SemanticCacheState>, 
         return tagged(resp, "miss");
     }
     let (rparts, rbody) = resp.into_parts();
-    let rbytes = match http_body_util::Limited::new(rbody, state.cache.config.max_body_bytes).collect().await {
+    let rbytes = match http_body_util::Limited::new(rbody, state.cache.config.max_body_bytes)
+        .collect()
+        .await
+    {
         Ok(c) => c.to_bytes(),
         Err(_) => {
             tracing::warn!("semantic cache: response too large to buffer");
-            return (StatusCode::BAD_GATEWAY, "The upstream response could not be read.").into_response();
+            return (
+                StatusCode::BAD_GATEWAY,
+                "The upstream response could not be read.",
+            )
+                .into_response();
         }
     };
     if let Ok(answer) = serde_json::from_slice::<Value>(&rbytes) {
-        if let Err(e) = state.cache.insert(&tenant, &key.scope, embedding, answer, now_ms()).await {
+        if let Err(e) = state
+            .cache
+            .insert(&tenant, &key.scope, embedding, answer, now_ms())
+            .await
+        {
             tracing::warn!(error = %e, "semantic cache: store failed");
         }
     }
@@ -132,11 +169,19 @@ mod tests {
         let cache = SemanticCache::new(
             Arc::new(LocalEmbedder::default()),
             Arc::new(MemoryVectorStore::new(100)),
-            CacheConfig { threshold: 0.9, ..CacheConfig::default() },
+            CacheConfig {
+                threshold: 0.9,
+                ..CacheConfig::default()
+            },
         );
         let state = SemanticCacheState {
             cache: Arc::new(cache),
-            tenant: Arc::new(|r: &Request| r.headers().get("x-tenant").and_then(|v| v.to_str().ok()).map(str::to_string)),
+            tenant: Arc::new(|r: &Request| {
+                r.headers()
+                    .get("x-tenant")
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string)
+            }),
         };
         axum::Router::new()
             .route(
@@ -152,19 +197,147 @@ mod tests {
             .layer(axum::middleware::from_fn_with_state(state, semantic_cache_middleware))
     }
 
-    async fn ask(app: &axum::Router, tenant: Option<&str>, text: &str, extra: Option<(&str, &str)>) -> (String, Value) {
-        let mut b = Request::builder().method("POST").uri("/openai/v1/chat/completions").header("content-type", "application/json");
+    async fn ask(
+        app: &axum::Router,
+        tenant: Option<&str>,
+        text: &str,
+        extra: Option<(&str, &str)>,
+    ) -> (String, Value) {
+        ask_with_system(app, tenant, None, text, extra).await
+    }
+
+    async fn ask_with_system(
+        app: &axum::Router,
+        tenant: Option<&str>,
+        system: Option<&str>,
+        text: &str,
+        extra: Option<(&str, &str)>,
+    ) -> (String, Value) {
+        let mut b = Request::builder()
+            .method("POST")
+            .uri("/openai/v1/chat/completions")
+            .header("content-type", "application/json");
         if let Some(t) = tenant {
             b = b.header("x-tenant", t);
         }
         if let Some((k, v)) = extra {
             b = b.header(k, v);
         }
-        let body = json!({ "model": "m", "temperature": 0, "messages": [{ "role": "user", "content": text }] });
-        let resp = app.clone().oneshot(b.body(Body::from(body.to_string())).unwrap()).await.unwrap();
-        let tag = resp.headers().get(CACHE_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("none").to_string();
+        let mut messages = Vec::new();
+        if let Some(s) = system {
+            messages.push(json!({ "role": "system", "content": s }));
+        }
+        messages.push(json!({ "role": "user", "content": text }));
+        let body = json!({ "model": "m", "temperature": 0, "messages": messages });
+        let resp = app
+            .clone()
+            .oneshot(b.body(Body::from(body.to_string())).unwrap())
+            .await
+            .unwrap();
+        let tag = resp
+            .headers()
+            .get(CACHE_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("none")
+            .to_string();
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         (tag, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn a_large_static_system_prompt_never_collapses_unrelated_questions() {
+        // Real repro: Kamiko's ~500-token persona dwarfing a few-word user
+        // turn used to cosine-match unrelated questions at 0.996+ and serve
+        // the same frozen answer to all of them. Each must now miss and get
+        // its own real answer.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = app(calls.clone());
+        let persona =
+            "You are Kamiko, a glitchy vtuber persona who reacts live to chat. ".repeat(10);
+        let (t1, a1) = ask_with_system(
+            &app,
+            Some("kamiko"),
+            Some(&persona),
+            "What color is the sky?",
+            None,
+        )
+        .await;
+        let (t2, a2) = ask_with_system(
+            &app,
+            Some("kamiko"),
+            Some(&persona),
+            "Tell me a joke about cats.",
+            None,
+        )
+        .await;
+        let (t3, a3) = ask_with_system(
+            &app,
+            Some("kamiko"),
+            Some(&persona),
+            "Recommend a movie.",
+            None,
+        )
+        .await;
+        assert_eq!(t1, "miss");
+        assert_eq!(
+            t2, "miss",
+            "a different question under the same persona must never hit a prior unrelated answer"
+        );
+        assert_eq!(
+            t3, "miss",
+            "a different question under the same persona must never hit a prior unrelated answer"
+        );
+        assert_eq!(
+            (a1["id"].as_str(), a2["id"].as_str(), a3["id"].as_str()),
+            (Some("c1"), Some("c2"), Some("c3"))
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            3,
+            "every distinct question under a big system prompt must reach the inner layer"
+        );
+        // The exact same question again, same persona, DOES hit: legitimate
+        // caching for this tenant is not broken by the fix.
+        let (t4, a4) = ask_with_system(
+            &app,
+            Some("kamiko"),
+            Some(&persona),
+            "What color is the sky?",
+            None,
+        )
+        .await;
+        assert_eq!((t4.as_str(), a4["id"].as_str()), ("hit", Some("c1")));
+    }
+
+    #[tokio::test]
+    async fn tenants_with_short_or_no_system_prompt_still_cache_normally() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = app(calls.clone());
+        // No system prompt at all.
+        let (t1, a1) = ask(&app, Some("plain"), "What is the capital of France?", None).await;
+        assert_eq!((t1.as_str(), a1["id"].as_str()), ("miss", Some("c1")));
+        let (t2, a2) = ask(&app, Some("plain"), "what is the capital of france", None).await;
+        assert_eq!((t2.as_str(), a2["id"].as_str()), ("hit", Some("c1")));
+        // Short system prompt: a reworded question still hits.
+        let (t3, a3) = ask_with_system(
+            &app,
+            Some("short"),
+            Some("Be concise."),
+            "What is the capital of France?",
+            None,
+        )
+        .await;
+        assert_eq!((t3.as_str(), a3["id"].as_str()), ("miss", Some("c2")));
+        let (t4, a4) = ask_with_system(
+            &app,
+            Some("short"),
+            Some("Be concise."),
+            "what is the capital of france",
+            None,
+        )
+        .await;
+        assert_eq!((t4.as_str(), a4["id"].as_str()), ("hit", Some("c2")));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
@@ -175,12 +348,22 @@ mod tests {
         assert_eq!((t1.as_str(), a1["id"].as_str()), ("miss", Some("c1")));
         let (t2, a2) = ask(&app, Some("acme"), "what is the capital of france", None).await;
         assert_eq!((t2.as_str(), a2["id"].as_str()), ("hit", Some("c1")));
-        assert_eq!(calls.load(Ordering::SeqCst), 1, "a hit never reaches the inner layers");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "a hit never reaches the inner layers"
+        );
         // Another tenant never sees acme's answer.
         let (t3, a3) = ask(&app, Some("globex"), "What is the capital of France?", None).await;
         assert_eq!((t3.as_str(), a3["id"].as_str()), ("miss", Some("c2")));
         // Opt-out and unauthenticated requests go straight through.
-        let (t4, _) = ask(&app, Some("acme"), "What is the capital of France?", Some(("x-relay-cache", "bypass"))).await;
+        let (t4, _) = ask(
+            &app,
+            Some("acme"),
+            "What is the capital of France?",
+            Some(("x-relay-cache", "bypass")),
+        )
+        .await;
         assert_eq!(t4, "bypass");
         let (t5, _) = ask(&app, None, "What is the capital of France?", None).await;
         assert_eq!(t5, "none");
