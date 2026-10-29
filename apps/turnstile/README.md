@@ -38,6 +38,69 @@ real Let's Encrypt cert obtained automatically. Verified live:
 `POST /v1/echo` and MCP `tools/call` both return the identical `402`/`-32402`
 challenge over HTTPS through Cloudflare as they do on loopback.
 
+## x402 (USDC) enabled live for the first time, two real bugs found and fixed (2026-10-29)
+
+The 2026-10-28 deploy above only ever exercised the AITP-402/Mint rail —
+`TURNSTILE_X402_PAY_TO` had been unset in `/etc/products/turnstile.env` since
+the first deploy, so the entire x402 code path (fully coded, unit-tested
+with fakes) had never run against the real public `x402.org` facilitator.
+Enabled it for real, non-owner-gated: the public keyless testnet facilitator
+needs no CDP account, only a real EVM payee address (generated locally,
+`0xfBb908AA04C3644364D3998d8f683619e25E7C17`; private key discarded, this
+app only needs the address). Restarted `railyard-turnstile-1` with the new
+env var; `docker logs` confirmed `x402 enabled ... facilitator
+https://x402.org/facilitator auth none`.
+
+**Bug 1 (discovery, fixed `0e8ce334`):** `GET /.well-known/x402`'s HTTP
+`accepts` array came back empty even though the built-in demo echo tool's
+own `402` already advertised a real x402 `PaymentRequirements` — the echo
+tool is served on its own `/v1/echo` handler, never inserted into
+`snapshot.http` (the generic `/v1/tools/:name/call` dispatcher's registry),
+which is the only thing `discover_x402`'s HTTP loop read. An x402 client
+doing discovery-first would never find Turnstile's one live paid HTTP route,
+only its MCP equivalent. Fixed in `live.rs` (`discover_x402` now also lists
+the echo gate's requirements directly); two new regression tests.
+
+**Bug 2 (signing, fixed `29412206`), found by actually paying it:** generated
+a real throwaway EVM keypair, signed a real EIP-3009
+`TransferWithAuthorization` (secp256k1, real typed-data domain) with it, and
+sent it as a real `X-PAYMENT` header to the live container. The real
+facilitator rejected it `invalid_exact_evm_token_name_mismatch` — not a
+signing bug: `eth_call`ing `name()` against Base Sepolia's actual test USDC
+contract (`0x036CbD53842c5426634e7929541eC2318f3dCF7e`) on `sepolia.base.org`
+live returns `"USDC"`, but `X402Config`'s single `DEFAULT_ASSET_NAME`
+constant (`"USD Coin"`, confirmed correct for Base *mainnet*'s real USDC via
+the same live `eth_call` trick) was used for both networks. Every real
+signed payment against the only free, keyless testnet rail was broken by
+this default, no matter how correct the signature was. Fixed in
+`x402/config.rs` (the default now follows which real USDC deployment
+`asset` resolved to); three tests (testnet default now asserts `"USDC"`,
+new mainnet-still-`"USD Coin"` test, new explicit-override test).
+
+**Verified live end-to-end after both fixes**, against the real deployed
+container and the real `x402.org/facilitator` over real public HTTPS — not
+mocks: `GET /.well-known/x402`'s HTTP `accepts[0].extra` now reads
+`{"name":"USDC","version":"2"}` and lists `/v1/echo`; a correctly-signed real
+payment (same throwaway key, domain name now `"USDC"`) advanced past
+signature verification for the first time and was rejected
+`invalid_exact_evm_insufficient_balance` — the real facilitator actually
+checking a real on-chain balance, the same class of real external-boundary
+rejection (vs. Mint's `insufficient_funds`) this file already treats as
+"proven, not just tested." Replaying the identical `X-PAYMENT` a second time
+correctly came back `invalid_exact_evm_payload_authorization_nonce_used`
+(the local nonce journal's replay guard, confirmed live). `GET
+/v1/admin/x402/payments` (real admin token) shows all three real rejections
+in order, each with its own real `last_error`, proving the operator console
+reads real journaled state. **Funding wall, not a bug** (same category as
+Mint/Abacus's 2026-10-21 finding): actually completing a settlement needs a
+real testnet-USDC-funded wallet; the public Base Sepolia faucets require an
+interactive login/captcha, so full settlement stays genuinely owner-gated —
+everything short of "the payer already has funds" is now proven for real.
+
+Commits `0e8ce334` and `29412206` on `caelum0x/railyard` main, pushed and
+deployed to `railyard-box` (image rebuilt, `railyard-turnstile-1` recreated,
+both confirmed healthy).
+
 > **Status: runnable Rust SDK and reference server.**
 > `apps/turnstile` is now its own cargo workspace (excluded from the repo-root
 > GPUI/Metal graph) with three crates: `turnstile-core` (framework-agnostic
