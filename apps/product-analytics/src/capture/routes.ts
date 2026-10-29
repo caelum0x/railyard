@@ -12,10 +12,33 @@ import { logPath } from "../log.ts";
 import { eventOps } from "../persons/properties.ts";
 import { updatePersonProperties } from "../persons/service.ts";
 import { groupTypeIndex, upsertGroup } from "../groups/groups.ts";
-import type { SiteDirectory } from "../tenancy/site-directory.ts";
+import type { Site, SiteDirectory } from "../tenancy/site-directory.ts";
+import { clientIp, FailureLimiter } from "./abuse-limit.ts";
 import { DecodeError, decodePayload, MAX_BODY_BYTES } from "./decode.ts";
 import { EventError, normalizeEvents, tokenOf, withoutIp } from "./normalize.ts";
 import type { CapturePipeline } from "./pipeline.ts";
+
+// An unknown-token lookup is the one expensive thing an unauthenticated
+// caller can trigger here (a real site directory round trip): a client that
+// varies the token on every request defeats CachedSiteDirectory's per-token
+// miss cache, so this counts failures only (never a real SDK's traffic) and
+// turns a sustained flood of them into 429s instead of unlimited directory
+// load. 30/window per source IP, 2000/window globally; a 10 s window keeps a
+// burst scripted in a tight loop from doing meaningful damage without ever
+// being tight enough to catch a browser that legitimately retries once or
+// twice after a typo'd token.
+const authFailures = new FailureLimiter({ windowMs: 10_000, perKeyMax: 30, globalMax: 2000 });
+
+/** The directory lookup, rate-limited on repeated failure: an unknown token throws 401 (or 429 once the caller has failed too many times). */
+async function siteOrLimit(sites: SiteDirectory, token: string, c: Context): Promise<Site> {
+  const site = await sites.byToken(token);
+  if (site) return site;
+  const now = Date.now();
+  const key = clientIp(c.req.header("cf-connecting-ip") ?? null, c.req.header("x-forwarded-for") ?? null);
+  if (authFailures.blocked(key, now)) throw new EventError(429, "Too many invalid tokens from this address. Try again shortly.");
+  authFailures.record(key, now);
+  throw new EventError(401, "The project token is not valid.");
+}
 
 export interface CaptureDeps {
   db: Db;
@@ -78,8 +101,10 @@ export function problem(c: Context, err: unknown, log: Logger) {
   const origin = c.req.header("origin");
   const plain = responseMode(new URL(c.req.url)) === "plain";
   if (err instanceof DecodeError || err instanceof EventError) {
-    if (plain) return c.text("0", err.status, CORS_HEADERS(origin));
-    return c.json({ type: err.status === 401 ? "authentication_error" : "validation_error", detail: err.message }, err.status, CORS_HEADERS(origin));
+    const headers = err.status === 429 ? { ...CORS_HEADERS(origin), "retry-after": "10" } : CORS_HEADERS(origin);
+    if (plain) return c.text("0", err.status, headers);
+    const type = err.status === 401 ? "authentication_error" : err.status === 429 ? "rate_limit_error" : "validation_error";
+    return c.json({ type, detail: err.message }, err.status, headers);
   }
   log.error("request failed", { path: logPath(c.req.url), error: (err as Error).message });
   if (plain) return c.text("0", 503, CORS_HEADERS(origin));
@@ -102,8 +127,7 @@ export function captureRoutes(deps: CaptureDeps): Hono {
         queryToken: url.searchParams.get("token") ?? url.searchParams.get("api_key"),
         sentAtQuery: Number.isFinite(sentAtQuery) && sentAtQuery > 0 ? sentAtQuery : null,
       });
-      const site = await deps.sites.byToken(n.token);
-      if (!site) throw new EventError(401, "The project token is not valid.");
+      const site = await siteOrLimit(deps.sites, n.token, c);
       await deps.pipeline.ingest(site, n.events);
       return okResponse(c, origin, url);
     } catch (err) {
@@ -148,8 +172,7 @@ export function captureRoutes(deps: CaptureDeps): Hono {
       const queryToken = url.searchParams.get("token") ?? url.searchParams.get("api_key");
       const strongToken = basicToken ?? queryToken;
       if (!strongToken) throw new EventError(401, "/import requires Basic authentication (service account or API secret) or an api_key/token query parameter; a token inside the event body alone is not enough.");
-      const site = await deps.sites.byToken(strongToken);
-      if (!site) throw new EventError(401, "The project token is not valid.");
+      const site = await siteOrLimit(deps.sites, strongToken, c);
       const n = normalizeEvents(payload, { now: deps.now(), country: c.req.header("cf-ipcountry") ?? null, queryToken: strongToken, sentAtQuery: null });
       if (n.token !== site.token) throw new EventError(400, "Every event of one request must use the same project token as the import credential.");
       const result = await deps.pipeline.ingest(site, n.events, { historical: true });
@@ -173,8 +196,7 @@ export function captureRoutes(deps: CaptureDeps): Hono {
       if (list.length === 0 || list.length > 1000 || !list.every(isObj)) throw new EventError(400, "Send one update or a list of updates.");
       const token = tokenOf(list[0], null, url.searchParams.get("token"));
       if (!token) throw new EventError(401, "The project token is missing.");
-      const site = await deps.sites.byToken(token);
-      if (!site) throw new EventError(401, "The project token is not valid.");
+      const site = await siteOrLimit(deps.sites, token, c);
       const updates = (list as Obj[]).map((u, i) => {
         const id = u.$distinct_id ?? u.distinct_id;
         if (typeof id !== "string" || !id || id.length > 200) throw new EventError(400, `Update ${i} needs a distinct_id.`);
@@ -216,8 +238,7 @@ export function captureRoutes(deps: CaptureDeps): Hono {
       if (!isObj(payload)) throw new EventError(400, "Send one group update.");
       const token = tokenOf(payload, null, url.searchParams.get("token"));
       if (!token) throw new EventError(401, "The project token is missing.");
-      const site = await deps.sites.byToken(token);
-      if (!site) throw new EventError(401, "The project token is not valid.");
+      const site = await siteOrLimit(deps.sites, token, c);
       // This service's own wire protocol uses $group_type (the group's TYPE,
       // e.g. "company") and $group_key (the group's KEY, e.g. "acme"). The
       // real Mixpanel SDK instead sends $group_key for the TYPE and

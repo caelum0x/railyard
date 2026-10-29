@@ -13,8 +13,8 @@ export const MAX_NAME = 200;
 const FUTURE_TOLERANCE_MS = 23 * 3600 * 1000;
 
 export class EventError extends Error {
-  status: 400 | 401 | 413;
-  constructor(status: 400 | 401 | 413, message: string) {
+  status: 400 | 401 | 413 | 429;
+  constructor(status: 400 | 401 | 413 | 429, message: string) {
     super(message);
     this.status = status;
   }
