@@ -730,6 +730,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_allowance_reflects_rolling_reset_before_any_further_spend() {
+        // Regression: GET /v1/allowances/:id (Ledger::read_allowance) must not
+        // report a stale pre-reset `spent_micros` once a Rolling window has
+        // elapsed — a caller polling remaining budget (e.g. an agent checking
+        // `GET /v1/budget` before deciding whether to spend) must see the
+        // reset immediately, not only after it happens to make another spend.
+        let clock = std::sync::Arc::new(mint_store::FixedClock::new(1_000_000));
+        let l = Ledger::new(InMemoryStore::with_clock(clock.clone()));
+        let g = l.create_account(AccountKind::User, None).await.unwrap();
+        l.store()
+            .seed_account(&g, Micros::new(10_000_000))
+            .await
+            .unwrap();
+        let payee = l.create_account(AccountKind::Model, None).await.unwrap();
+        l.store()
+            .seed_account(&payee, Micros::new(0))
+            .await
+            .unwrap();
+
+        let id = l
+            .grant_allowance(AllowanceGrantRequest {
+                granter: g.clone(),
+                to_key: "d".into(),
+                limit_micros: 5_000_000,
+                window: AllowanceWindow::Rolling { window_ms: 1_000 },
+                scope: None,
+                idem_key: "gk".into(),
+            })
+            .await
+            .unwrap();
+
+        l.spend_allowance(spend(&id, 5_000_000, &payee, "s1"))
+            .await
+            .unwrap();
+        // Right after fully spending the window: a plain read shows 0 remaining.
+        let before = l.read_allowance(&id).await.unwrap();
+        assert_eq!(before.spent_micros, Micros::new(5_000_000));
+
+        // Advance past the window, but make NO further spend before reading.
+        clock.advance(1_000);
+        let after = l.read_allowance(&id).await.unwrap();
+        assert_eq!(
+            after.spent_micros,
+            Micros::zero(),
+            "a plain read after the rolling window elapsed must reflect the \
+             reset immediately, not the stale pre-reset spent_micros"
+        );
+    }
+
+    #[tokio::test]
     async fn scope_mismatch_is_rejected() {
         let l = ledger();
         let g = seeded(&l, AccountKind::User, 10_000_000).await;

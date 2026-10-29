@@ -1499,7 +1499,13 @@ impl LedgerStore for PgStore {
 
     async fn get_allowance(&self, id: &AllowanceId) -> Result<AllowanceRecord, MintError> {
         let mut conn = self.pool.acquire().await.map_err(db_err)?;
-        self.get_allowance_row(&mut conn, id).await
+        let record = self.get_allowance_row(&mut conn, id).await?;
+        // Project a `Rolling` window's lazy reset onto this read (see
+        // `AllowanceRecord::as_of` doc) so GET doesn't report a stale
+        // pre-reset `spent_micros` to a caller that hasn't spent since the
+        // window elapsed. Read-only: does not write the reset back here —
+        // the next real spend still performs and persists it.
+        Ok(record.as_of(self.clock.now()))
     }
 
     async fn commit_stream_open(

@@ -1395,11 +1395,16 @@ impl LedgerStore for InMemoryStore {
     }
 
     async fn get_allowance(&self, id: &AllowanceId) -> Result<AllowanceRecord, MintError> {
-        self.lock()
+        let record = self
+            .lock()
             .allowances
             .get(id)
             .cloned()
-            .ok_or(MintError::AllowanceNotFound)
+            .ok_or(MintError::AllowanceNotFound)?;
+        // See the matching comment in mint-store-postgres::Store::get_allowance:
+        // project the `Rolling` window's lazy reset onto this read instead of
+        // returning a stale pre-reset `spent_micros`. Read-only.
+        Ok(record.as_of(self.clock.now()))
     }
 
     async fn commit_stream_open(

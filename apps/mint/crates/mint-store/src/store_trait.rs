@@ -223,6 +223,33 @@ pub struct AllowanceRecord {
     pub revoked: bool,
 }
 
+impl AllowanceRecord {
+    /// Project this record as of `now_ms`, applying the same rolling-window
+    /// reset rule `commit_allowance_spend` applies at write time, WITHOUT
+    /// mutating storage.
+    ///
+    /// The stored row only resets `spent_micros`/`window_start_ms` lazily,
+    /// inside the next `commit_allowance_spend` call — a plain read
+    /// (`get_allowance`/`GET /v1/allowances/:id`) previously returned the
+    /// stale pre-reset row, so a caller polling remaining budget after a
+    /// `Rolling` window elapsed but before the next spend would see the old,
+    /// too-low `spent_micros` (in the worst case, a fully-reset allowance
+    /// reporting itself as exhausted). Applying the identical elapsed check
+    /// on read fixes this without changing any stored state or write path.
+    pub fn as_of(&self, now_ms: i64) -> Self {
+        if let AllowanceWindow::Rolling { window_ms } = self.window {
+            if now_ms.saturating_sub(self.window_start_ms) >= window_ms {
+                return Self {
+                    spent_micros: Micros::zero(),
+                    window_start_ms: now_ms,
+                    ..self.clone()
+                };
+            }
+        }
+        self.clone()
+    }
+}
+
 /// Validated input to `commit_allowance_grant`. No `allowance_id` — the store
 /// mints it inside the critical section (like `HoldId`), so an idempotent replay
 /// returns the SAME original id.
