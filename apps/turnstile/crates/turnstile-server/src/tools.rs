@@ -205,6 +205,15 @@ pub struct UpstreamTool {
     pub spec: ToolSpec,
     client: reqwest::Client,
     auth: Option<(String, String)>,
+    /// Re-checked on every [`call`](Self::call), not just at admin-write time —
+    /// `upstream_url`'s host can legitimately resolve somewhere else later (DNS
+    /// TTL expiry, the operator's registrar changing hands, an attacker who
+    /// controls the domain re-pointing it) long after `check_url` approved it
+    /// once. A snapshot's `UpstreamTool` is also reused unchanged across every
+    /// reload while the tool's own row is untouched (see `live::activate`), so
+    /// without a per-call check the write-time approval would otherwise never
+    /// be revisited for the tool's entire lifetime.
+    policy: Arc<crate::policy::UpstreamPolicy>,
 }
 
 /// Outcome of one upstream call.
@@ -217,8 +226,9 @@ pub struct UpstreamReply {
 }
 
 impl UpstreamTool {
-    /// Bind a spec, resolving its credential from the environment.
-    pub fn new(spec: ToolSpec) -> Result<Self, String> {
+    /// Bind a spec, resolving its credential from the environment. `policy` is
+    /// re-applied to `upstream_url` on every [`call`](Self::call), not just here.
+    pub fn new(spec: ToolSpec, policy: Arc<crate::policy::UpstreamPolicy>) -> Result<Self, String> {
         let auth = match &spec.upstream_auth_env {
             Some(var) => {
                 let value = std::env::var(var)
@@ -234,7 +244,7 @@ impl UpstreamTool {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| format!("tool {}: building HTTP client: {e}", spec.name))?;
-        Ok(Self { spec, client, auth })
+        Ok(Self { spec, client, auth, policy })
     }
 
     /// Forward a paid call upstream. `query` (already URL-encoded, without the
@@ -245,6 +255,15 @@ impl UpstreamTool {
         body: Bytes,
         query: Option<&str>,
     ) -> Result<UpstreamReply, String> {
+        // Re-validate the upstream host NOW, not just whenever an operator last
+        // created/edited this tool's URL (see the `policy` field doc): a host
+        // that resolved publicly then can resolve to a private/loopback/
+        // metadata address now. `allow_private`/`allow_hosts` are honored
+        // identically to the write-time check.
+        self.policy
+            .check_url(&self.spec.upstream_url)
+            .await
+            .map_err(|e| format!("upstream blocked by policy: {e}"))?;
         let method = reqwest::Method::from_bytes(self.spec.upstream_method.as_bytes())
             .map_err(|e| e.to_string())?;
         let url = match query.filter(|q| !q.is_empty()) {
@@ -365,5 +384,100 @@ pub async fn proxy_request(tool: Arc<UpstreamTool>, req: Request) -> Response {
         }
         // Non-2xx → the gate releases the hold; nothing is charged.
         Err(error) => (StatusCode::BAD_GATEWAY, error).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Regression test for the bug found 2026-10-29: `UpstreamTool::call` had
+    //! no SSRF guard of its own — `UpstreamPolicy::check_url` only ran once,
+    //! at admin-write time, on the URL string. A hostname that resolved
+    //! publicly then (passing the check) can resolve to a loopback/private/
+    //! metadata address at any later moment (DNS TTL expiry, a re-pointed
+    //! domain) and every subsequent paid call would proxy straight to it with
+    //! zero re-validation, for the tool's entire lifetime — exactly the SSRF
+    //! this module's own doc comment says a leaked admin token must not grant.
+    use super::*;
+    use crate::policy::UpstreamPolicy;
+
+    fn loopback_spec(url: String) -> ToolSpec {
+        ToolSpec {
+            name: "poc".into(),
+            description: "poc".into(),
+            price_micros: 1,
+            upstream_url: url,
+            upstream_method: "POST".into(),
+            http_method: "POST".into(),
+            upstream_auth_env: None,
+            upstream_auth_header: default_auth_header(),
+            usage_header: None,
+            input_schema: None,
+            http: true,
+            mcp: false,
+            timeout_ms: default_timeout_ms(),
+        }
+    }
+
+    #[tokio::test]
+    async fn call_refuses_a_loopback_upstream_even_though_new_already_accepted_it() {
+        // A real local "internal" server an attacker would want to reach. If
+        // `UpstreamTool::new` had been given a loopback URL directly it would
+        // already be caught by admin-write-time `check_url` — the live bug
+        // was that nothing re-checked it once the tool existed, which this
+        // models by handing `new` the (production, unmodified) policy but
+        // never routing this exact URL through `check_url` until `call` does
+        // it internally.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf).await;
+            let body = b"INTERNAL-SECRET-DATA";
+            let resp = format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n", body.len());
+            let _ = socket.write_all(resp.as_bytes()).await;
+            let _ = socket.write_all(body).await;
+        });
+        let loopback_url = format!("http://127.0.0.1:{}/", addr.port());
+        let policy = Arc::new(UpstreamPolicy::default());
+        let tool = UpstreamTool::new(loopback_spec(loopback_url), policy).unwrap();
+
+        let result = tool
+            .call(Some("application/json"), Bytes::from_static(b"{}"), None)
+            .await;
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("call() must refuse a loopback upstream, not proxy to it"),
+        };
+        assert!(err.contains("upstream blocked by policy"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn call_still_reaches_an_allowed_upstream() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf).await;
+            let body = b"ok";
+            let resp = format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n", body.len());
+            let _ = socket.write_all(resp.as_bytes()).await;
+            let _ = socket.write_all(body).await;
+        });
+        let loopback_url = format!("http://127.0.0.1:{}/", addr.port());
+        let policy = Arc::new(UpstreamPolicy {
+            allow_private: true,
+            ..UpstreamPolicy::default()
+        });
+        let tool = UpstreamTool::new(loopback_spec(loopback_url), policy).unwrap();
+        let reply = tool
+            .call(Some("application/json"), Bytes::from_static(b"{}"), None)
+            .await
+            .unwrap();
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(&reply.body[..], b"ok");
     }
 }

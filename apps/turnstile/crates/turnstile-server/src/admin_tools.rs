@@ -249,7 +249,7 @@ async fn vet(
         }
     }
     // Same credential check the router applies: the env var must be set here.
-    UpstreamTool::new(spec.clone()).map_err(|e| {
+    UpstreamTool::new(spec.clone(), state.policy.clone()).map_err(|e| {
         invalid(format!(
             "{e}. Set it in this server's environment (all replicas) and restart, or choose another credential"
         ))

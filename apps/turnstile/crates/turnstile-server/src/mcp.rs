@@ -542,6 +542,7 @@ mod tests {
             Arc::new(InMemoryToolStore::new()),
             factory,
             Some(echo),
+            Arc::new(crate::policy::UpstreamPolicy::default()),
         ));
         registry.reload().await.unwrap();
         Arc::new(McpState { registry })

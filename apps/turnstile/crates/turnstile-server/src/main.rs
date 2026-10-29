@@ -233,7 +233,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
-    let registry = Arc::new(LiveRegistry::new(tool_store.clone(), factory, echo.clone()));
+    let upstream_policy = Arc::new(UpstreamPolicy::from_env());
+    let registry = Arc::new(LiveRegistry::new(
+        tool_store.clone(),
+        factory,
+        echo.clone(),
+        upstream_policy.clone(),
+    ));
     let snapshot = registry.reload().await?;
     for tool in snapshot.tools.values() {
         println!(
@@ -294,7 +300,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let admin_tools_state = AdminToolsState {
         operator: operator_state.clone(),
         registry: registry.clone(),
-        policy: Arc::new(UpstreamPolicy::from_env()),
+        policy: upstream_policy,
     };
     let x402_admin_api = Router::new()
         .route("/v1/admin/x402/summary", get(x402_admin::summary))

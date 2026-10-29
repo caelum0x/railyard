@@ -148,13 +148,22 @@ pub struct LiveRegistry {
     store: Arc<dyn ToolStore>,
     factory: GateFactory,
     echo: Option<BuiltinEcho>,
+    /// Upstream SSRF policy, threaded into every [`UpstreamTool`] so it is
+    /// re-checked on every real call, not just once when the tool's spec was
+    /// last written (see `UpstreamTool`'s own `policy` field doc).
+    policy: Arc<crate::policy::UpstreamPolicy>,
     current: RwLock<Arc<Snapshot>>,
     reload_lock: Mutex<()>,
     changes: watch::Sender<i64>,
 }
 
 impl LiveRegistry {
-    pub fn new(store: Arc<dyn ToolStore>, factory: GateFactory, echo: Option<BuiltinEcho>) -> Self {
+    pub fn new(
+        store: Arc<dyn ToolStore>,
+        factory: GateFactory,
+        echo: Option<BuiltinEcho>,
+        policy: Arc<crate::policy::UpstreamPolicy>,
+    ) -> Self {
         let empty = Snapshot {
             revision: -1,
             http: HashMap::new(),
@@ -168,6 +177,7 @@ impl LiveRegistry {
             store,
             factory,
             echo,
+            policy,
             current: RwLock::new(Arc::new(empty)),
             reload_lock: Mutex::new(()),
             changes,
@@ -255,7 +265,7 @@ impl LiveRegistry {
             .http_method
             .parse()
             .map_err(|_| "invalid http_method".to_string())?;
-        let upstream = Arc::new(UpstreamTool::new(spec.clone())?);
+        let upstream = Arc::new(UpstreamTool::new(spec.clone(), self.policy.clone())?);
         Ok(Arc::new(LiveTool {
             gate: self
                 .factory
@@ -518,6 +528,7 @@ mod tests {
             Arc::new(InMemoryToolStore::new()),
             factory,
             Some(echo),
+            Arc::new(crate::policy::UpstreamPolicy::default()),
         ));
         registry.reload().await.unwrap();
         registry
@@ -575,6 +586,7 @@ mod tests {
             Arc::new(InMemoryToolStore::new()),
             factory,
             Some(echo),
+            Arc::new(crate::policy::UpstreamPolicy::default()),
         ));
         registry.reload().await.unwrap();
         let resp = discover_x402(State(registry)).await;
