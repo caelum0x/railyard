@@ -2,8 +2,9 @@
 //! runtime `sqlx::query` (no compile-time DB needed). Mirrors the ActiveRecord
 //! finders the billing services rely on.
 
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{NaiveDate, NaiveDateTime, Utc};
 use rago_core::models::*;
+use rust_decimal::prelude::ToPrimitive;
 use sqlx::pool::PoolConnection;
 use sqlx::{PgPool, Postgres, Row};
 use uuid::Uuid;
@@ -505,12 +506,16 @@ impl Db {
             insert_fee_exec(&mut *tx, fee).await?;
         }
         // Prepaid settlement — same transaction, so it is all-or-nothing with the
-        // invoice write and only happens on the winning reservation.
+        // invoice write and only happens on the winning reservation. The balance
+        // draw-down is applied as a row-locked relative decrement, not the
+        // precomputed absolute `updated_wallets` snapshot: a customer can have
+        // more than one subscription funded by the same wallet, billed by
+        // different concurrent job workers, so trusting a balance read before
+        // this transaction began would lose one side's draw-down under
+        // concurrency (see `apply_prepaid_draw_down_exec`'s doc comment).
         for wtx in settlement.transactions {
             insert_wallet_transaction_exec(&mut *tx, wtx).await?;
-        }
-        for wallet in settlement.updated_wallets {
-            update_wallet_balance_exec(&mut *tx, wallet).await?;
+            apply_prepaid_draw_down_exec(&mut *tx, wtx).await?;
         }
         tx.commit().await?;
         Ok(BilledInvoice::Created)
@@ -2888,10 +2893,15 @@ impl Db {
 ///
 /// Borrows the artifacts produced by
 /// `rago_billing::prepaid::apply_prepaid_credit`: the outbound
-/// `transactions` (one per drawn-down wallet) and the `updated_wallets` with
-/// their decreased balances. The two slices are parallel to a single
-/// allocation, so persisting both — and nothing on a lost guard race —
-/// preserves conservation.
+/// `transactions` (one per drawn-down wallet) and `updated_wallets`, the
+/// wallets with the balance each would have had *if nothing else touched it
+/// concurrently*. Only `transactions` is actually persisted from — each is
+/// applied as a row-locked relative decrement via
+/// [`apply_prepaid_draw_down_exec`], not by writing `updated_wallets`'
+/// precomputed absolute balance, because that balance was read before this
+/// guarded transaction began and can be stale under concurrent billing of two
+/// subscriptions sharing one wallet. `updated_wallets` is kept on the struct
+/// for callers/tests that want to see the no-concurrency expected balance.
 pub struct PrepaidSettlement<'a> {
     pub transactions: &'a [WalletTransaction],
     pub updated_wallets: &'a [Wallet],
@@ -3050,23 +3060,59 @@ where
     Ok(())
 }
 
-/// Update a wallet's balance columns against any executor (pool or transaction)
-/// — shared by [`Db::update_wallet_balance`] and the guarded prepaid path.
-async fn update_wallet_balance_exec<'e, E>(exec: E, w: &Wallet) -> Result<()>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
-{
-    sqlx::query(
-        "UPDATE wallets SET balance_cents = $2, credits_balance = $3, consumed_credits = $4, \
-         consumed_amount_cents = $5, updated_at = $6 WHERE id = $1",
+/// Apply one prepaid wallet draw-down (an `Outbound` [`WalletTransaction`]
+/// produced by `rago_billing::prepaid::apply_prepaid_credit`) as a *relative*,
+/// row-locked decrement, inside the caller's transaction.
+///
+/// [`apply_prepaid_credit`] computes `wtx`/the matching `updated_wallets`
+/// entry from a `Wallet` snapshot read via [`Db::wallets_for_customer`]
+/// *before* the guarded invoice transaction begins (and outside any lock). A
+/// customer can have more than one active subscription drawing on the same
+/// wallet, and the durable job queue (`FOR UPDATE SKIP LOCKED`) is built to
+/// let multiple workers bill different subscriptions concurrently — so two
+/// invoices for the same wallet can both compute their draw-down from the
+/// same stale balance. Persisting that precomputed absolute balance (the
+/// previous behavior) is a lost-update race: whichever invoice's transaction
+/// commits last overwrites the other's draw-down entirely, silently
+/// under-billing the wallet relative to the sum of its own
+/// `wallet_transactions` rows.
+///
+/// This locks the wallet row (`FOR UPDATE`) before writing, re-derives the
+/// decrement in cents from `wtx.amount` against the *locked* row's own
+/// currency (never the precomputed `Wallet` snapshot), and applies it as
+/// `balance_cents = balance_cents - decrement` rather than an absolute `SET`.
+/// A second concurrent caller blocks on the same row lock until the first
+/// commits, then decrements from the already-updated value — so both
+/// draw-downs land, in some order, instead of one clobbering the other.
+// Takes a concrete `&mut PgConnection` (not a generic single-use `Executor`,
+// unlike the `*_exec` helpers above) because it issues two sequential queries
+// — the locking `SELECT ... FOR UPDATE` and the decrement `UPDATE` — against
+// the same connection. Call with `&mut *tx` from inside a transaction, same
+// as every other `_exec` helper in this file.
+async fn apply_prepaid_draw_down_exec(
+    exec: &mut sqlx::PgConnection,
+    wtx: &WalletTransaction,
+) -> Result<()> {
+    let currency: String = sqlx::query_scalar(
+        "SELECT balance_currency FROM wallets WHERE id = $1 FOR UPDATE",
     )
-    .bind(w.id)
-    .bind(w.balance_cents)
-    .bind(w.credits_balance)
-    .bind(w.consumed_credits)
-    .bind(w.consumed_amount_cents)
-    .bind(w.updated_at.naive_utc())
-    .execute(exec)
+    .bind(wtx.wallet_id)
+    .fetch_one(&mut *exec)
+    .await?;
+    let amount_cents = (wtx.amount * rago_core::money::Currency::new(&currency).subunit_to_unit_decimal())
+        .round()
+        .to_i64()
+        .unwrap_or(0);
+    sqlx::query(
+        "UPDATE wallets SET balance_cents = balance_cents - $2, \
+         credits_balance = credits_balance - $3, consumed_credits = consumed_credits + $3, \
+         consumed_amount_cents = consumed_amount_cents + $2, updated_at = $4 WHERE id = $1",
+    )
+    .bind(wtx.wallet_id)
+    .bind(amount_cents)
+    .bind(wtx.credit_amount)
+    .bind(Utc::now().naive_utc())
+    .execute(&mut *exec)
     .await?;
     Ok(())
 }
