@@ -1,2 +1,0 @@
-// Preset deck 01 — Greek Olympians.
-DeckDef(name: "Greek Olympians", cards: ["zeus","hades","athena","medusa","achilles","artemis","mars","bellona"])

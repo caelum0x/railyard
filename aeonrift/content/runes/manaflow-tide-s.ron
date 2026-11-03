@@ -1,7 +1,0 @@
-// Manaflow Tide — Sorcery / Tier1.
-RuneSpec(
-    name: "Manaflow Tide",
-    tree: Sorcery,
-    tier: Tier1,
-    effect: "Every few seconds in combat, your next ability restores resource on hit.",
-)

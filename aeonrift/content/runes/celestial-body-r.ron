@@ -1,7 +1,0 @@
-// Celestial Body — Resolve / Tier2.
-RuneSpec(
-    name: "Celestial Body",
-    tree: Resolve,
-    tier: Tier2,
-    effect: "Gain bonus maximum health that scales with level.",
-)

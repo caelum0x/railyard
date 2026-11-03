@@ -1,7 +1,0 @@
-// Waterwalking — Sorcery / Tier2.
-RuneSpec(
-    name: "Waterwalking",
-    tree: Sorcery,
-    tier: Tier2,
-    effect: "Gain move speed and adaptive force while in the river or on objective terrain.",
-)

@@ -1,7 +1,0 @@
-// Aether Flashtraption — Inspiration / Tier1.
-RuneSpec(
-    name: "Aether Flashtraption",
-    tree: Inspiration,
-    tier: Tier1,
-    effect: "When Blink is on cooldown, channel a short-range blink instead.",
-)

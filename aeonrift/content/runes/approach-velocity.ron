@@ -1,7 +1,0 @@
-// Approach Velocity — Inspiration / Tier3.
-RuneSpec(
-    name: "Approach Velocity",
-    tree: Inspiration,
-    tier: Tier3,
-    effect: "Gain move speed toward nearby impaired enemies and allies you have impaired.",
-)
