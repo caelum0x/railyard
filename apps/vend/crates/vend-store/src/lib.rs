@@ -268,6 +268,12 @@ pub struct CreateApp {
 #[derive(Clone, Debug)]
 pub struct CreateAppKey {
     pub env: KeyEnv,
+    /// Key reach. `Tenant` is refused here — this endpoint always binds a
+    /// single app, so only `App` and `EndUser` are mintable.
+    pub scope: KeyScope,
+    /// Required (and resolved + validated as owned by the target app) when
+    /// `scope` is [`KeyScope::EndUser`]; must be `None` for [`KeyScope::App`].
+    pub end_user_external_ref: Option<String>,
     pub daily_cap_micros: Option<i64>,
     pub per_end_user_daily_cap_micros: Option<i64>,
 }
@@ -998,11 +1004,27 @@ impl ControlPlaneRepo for VendStore {
         let app = ControlPlaneRepo::get_app(self, app_id)
             .await?
             .ok_or(VendError::NotFound)?;
+        // `end_user_external_ref` is both the only way to name an end-user and
+        // the belongs-to-this-app check: `find_end_user` is itself scoped by
+        // `app_id`, so a ref from another app's end-user never resolves here.
+        let end_user_id = match (input.scope, input.end_user_external_ref) {
+            (KeyScope::EndUser, Some(ext_ref)) if !ext_ref.trim().is_empty() => {
+                let end_user = TenantRepo::find_end_user(self, app_id, ext_ref.trim())
+                    .await?
+                    .ok_or(VendError::NotFound)?;
+                Some(end_user.id)
+            }
+            (KeyScope::EndUser, _) => return Err(VendError::InvalidAmount),
+            (KeyScope::App, None) => None,
+            (KeyScope::App, Some(_)) | (KeyScope::Tenant, _) => {
+                return Err(VendError::InvalidAmount)
+            }
+        };
         let minted = mint(MintParams {
             tenant_id: app.tenant_id,
             app_id: Some(app.id),
-            end_user_id: None,
-            scope: KeyScope::App,
+            end_user_id,
+            scope: input.scope,
             env: input.env,
             daily_cap_micros: input.daily_cap_micros,
             per_end_user_daily_cap_micros: input.per_end_user_daily_cap_micros,

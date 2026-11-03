@@ -21,6 +21,7 @@ use vend_core::envelope::{ErrorEnvelope, SuccessEnvelope};
 use vend_core::error::VendError;
 use vend_core::ids::{AppId, SubKeyId, TenantId};
 use vend_core::money::MarkupPolicy;
+use vend_core::records::KeyScope;
 use vend_core::transport::{CheckoutRequest, MintTransport};
 use vend_keys::KeyEnv;
 use vend_store::{
@@ -775,8 +776,26 @@ async fn list_app_keys(State(state): State<ControlState>, Path(raw): Path<String
 struct IssueKeyRequest {
     #[serde(default = "live_environment")]
     environment: String,
+    /// `"app"` (default) or `"end_user"`. `end_user` requires
+    /// `end_user_external_ref` to name an already-provisioned end-user of
+    /// this app.
+    #[serde(default = "app_key_scope")]
+    scope: String,
+    end_user_external_ref: Option<String>,
     daily_cap_micros: i64,
     per_end_user_daily_cap_micros: Option<i64>,
+}
+
+fn app_key_scope() -> String {
+    "app".into()
+}
+
+fn key_scope(value: &str) -> Result<KeyScope, VendError> {
+    match value {
+        "app" => Ok(KeyScope::App),
+        "end_user" => Ok(KeyScope::EndUser),
+        _ => Err(VendError::InvalidAmount),
+    }
 }
 
 async fn issue_app_key(
@@ -792,6 +811,10 @@ async fn issue_app_key(
         Ok(value) => value,
         Err(error) => return control_error(error),
     };
+    let scope = match key_scope(&input.scope) {
+        Ok(value) => value,
+        Err(error) => return control_error(error),
+    };
     result(
         state
             .repo
@@ -799,6 +822,8 @@ async fn issue_app_key(
                 &id,
                 CreateAppKey {
                     env: environment,
+                    scope,
+                    end_user_external_ref: input.end_user_external_ref,
                     daily_cap_micros: Some(input.daily_cap_micros),
                     per_end_user_daily_cap_micros: input.per_end_user_daily_cap_micros,
                 },
@@ -1158,6 +1183,10 @@ async fn customer_issue_app_key(
         Ok(env) => env,
         Err(error) => return control_error(error),
     };
+    let scope = match key_scope(&input.scope) {
+        Ok(scope) => scope,
+        Err(error) => return control_error(error),
+    };
     result(
         state
             .repo
@@ -1165,6 +1194,8 @@ async fn customer_issue_app_key(
                 &app.id,
                 CreateAppKey {
                     env,
+                    scope,
+                    end_user_external_ref: input.end_user_external_ref,
                     daily_cap_micros: Some(input.daily_cap_micros),
                     per_end_user_daily_cap_micros: input.per_end_user_daily_cap_micros,
                 },
@@ -2190,6 +2221,47 @@ mod tests {
                 .get(axum::http::header::CACHE_CONTROL)
                 .unwrap(),
             "no-store"
+        );
+    }
+
+    #[test]
+    fn key_scope_accepts_app_and_end_user_only() {
+        assert_eq!(key_scope("app").unwrap(), KeyScope::App);
+        assert_eq!(key_scope("end_user").unwrap(), KeyScope::EndUser);
+        // The only other variant, `Tenant`, is deliberately NOT a valid value
+        // here: this endpoint is always bound to a single app, so a caller
+        // can never mint a tenant-wide key through it (regression guard for
+        // the original finding: scope was hardcoded to `App` with no input
+        // path at all for any other scope, including `EndUser`).
+        assert_eq!(key_scope("tenant").unwrap_err(), VendError::InvalidAmount);
+        assert_eq!(key_scope("bogus").unwrap_err(), VendError::InvalidAmount);
+    }
+
+    #[test]
+    fn issue_key_request_defaults_to_app_scope_with_no_end_user_ref() {
+        // Before this fix, scope/end_user_external_ref did not exist on the
+        // wire type at all, so an EndUser-scoped key could never be
+        // requested. A body that omits both fields must keep behaving
+        // exactly as before: default scope "app", no end-user ref.
+        let input: IssueKeyRequest =
+            serde_json::from_value(json!({"daily_cap_micros": 100})).unwrap();
+        assert_eq!(input.scope, "app");
+        assert_eq!(input.end_user_external_ref, None);
+        assert_eq!(key_scope(&input.scope).unwrap(), KeyScope::App);
+    }
+
+    #[test]
+    fn issue_key_request_accepts_end_user_scope_and_ref() {
+        let input: IssueKeyRequest = serde_json::from_value(json!({
+            "scope": "end_user",
+            "end_user_external_ref": "customer-123",
+            "daily_cap_micros": 100
+        }))
+        .unwrap();
+        assert_eq!(key_scope(&input.scope).unwrap(), KeyScope::EndUser);
+        assert_eq!(
+            input.end_user_external_ref,
+            Some("customer-123".to_string())
         );
     }
 }

@@ -313,6 +313,8 @@
               "</td><td>" + (k.status === "revoked" ? "" : '<button class="danger" data-revoke="' + esc(k.id) + '">Revoke</button>') + "</td></tr>";
           }).join("") + "</tbody></table>" : '<div class="empty">No keys yet.</div>') +
         '<div class="row" style="margin-top:12px"><select id="k-env"><option value="live">live</option><option value="test">test</option></select>' +
+        '<select id="k-scope"><option value="app">app-wide</option><option value="end_user">single end-user</option></select>' +
+        '<input id="k-euref" placeholder="end-user external ref" style="width:170px;display:none" />' +
         '<input id="k-cap" type="number" min="0" step="0.01" value="100" style="width:120px" /><span class="muted">USD / day</span>' +
         '<input id="k-eu" type="number" min="0" step="0.01" placeholder="per end-user / day" style="width:170px" /><button id="k-go" class="primary">Issue key</button></div><div id="k-out"></div></div>' +
         '<div class="panel"><h2>End users</h2><div class="muted">Provision an end user with their own Mint reserve account, then pass their reference in the <code>Vend-End-User</code> header.</div>' +
@@ -336,8 +338,12 @@
         b.onclick = function () { if (!confirm("Revoke this key? Requests using it will fail immediately.")) return;
           api("DELETE", "/v1/customer/keys/" + encodeURIComponent(b.dataset.revoke)).then(function () { setStatus("Key revoked", "ok"); render(); }).catch(function (e) { setStatus(e.message, "err"); }); };
       });
+      $("k-scope").onchange = function () { $("k-euref").style.display = $("k-scope").value === "end_user" ? "" : "none"; };
       $("k-go").onclick = function () {
-        var body = { environment: $("k-env").value, daily_cap_micros: Math.round(Number($("k-cap").value) * 1e6) };
+        var scope = $("k-scope").value;
+        if (scope === "end_user" && !$("k-euref").value.trim()) { setStatus("Enter the end-user's external ref", "err"); return; }
+        var body = { environment: $("k-env").value, scope: scope, daily_cap_micros: Math.round(Number($("k-cap").value) * 1e6) };
+        if (scope === "end_user") body.end_user_external_ref = $("k-euref").value.trim();
         if ($("k-eu").value) body.per_end_user_daily_cap_micros = Math.round(Number($("k-eu").value) * 1e6);
         api("POST", base + "/keys", body).then(function (k) {
           $("k-out").innerHTML = secretBox("New provisioning key", k.secret); setStatus("Key issued", "ok");
