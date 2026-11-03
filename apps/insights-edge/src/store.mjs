@@ -140,31 +140,21 @@ const pathOf = (url) => {
   return q === -1 ? url : url.slice(0, q);
 };
 
+/** Cleans and caps a requested ordered step list the same way for every funnel kind. */
+function cleanSteps(steps) {
+  return steps.map((s) => String(s ?? "").trim()).filter(Boolean).slice(0, 8);
+}
+
 /**
- * Named multi-step path funnel for [since, until): for ordered `steps` (each
- * an exact page path or a `prefix*` path prefix), the number of distinct
- * visitor-days that reached each step, counting only visitor-days that
- * reached every earlier step first (by timestamp order, same UTC day --
- * this service's visitor id is a daily salted hash, so a funnel can only
- * ever be computed within one day, never across days). Real conversion
- * between consecutive steps is `visitors[i] / visitors[i-1]`.
+ * Shared carry-forward pass for any ordered funnel: `perStep[i]` is a map of
+ * visitor-day -> first timestamp that visitor-day reached step `i`. Counts,
+ * for each step, only the visitor-days that also reached every earlier step
+ * first (by timestamp order, same UTC day -- this service's visitor id is a
+ * daily salted hash, so a funnel can only ever be computed within one day,
+ * never across days). Real conversion between consecutive steps is
+ * `visitors[i] / visitors[i-1]`.
  */
-export async function pathFunnel(db, siteKey, since, until, steps) {
-  await ensureSchema(db);
-  const clean = steps.map((s) => String(s ?? "").trim()).filter(Boolean).slice(0, 8);
-  if (!clean.length) return { steps: [] };
-  const w = "site_key = ? AND ts >= ? AND ts < ? AND type = 'event' AND name IS NULL";
-  const perStep = [];
-  for (const step of clean) {
-    const prefix = step.endsWith("*");
-    const needle = prefix ? step.slice(0, -1) : step;
-    const sql = prefix
-      ? `SELECT visitor || substr(ts,1,10) AS vd, MIN(ts) AS first_ts FROM events WHERE ${w} AND url LIKE ? GROUP BY vd`
-      : `SELECT visitor || substr(ts,1,10) AS vd, MIN(ts) AS first_ts FROM events WHERE ${w} AND (url = ? OR url LIKE ?) GROUP BY vd`;
-    const args = prefix ? [siteKey, since, until, `${needle}%`] : [siteKey, since, until, needle, `${needle}?%`];
-    const { results } = await db.prepare(sql).bind(...args).all();
-    perStep.push(new Map(results.map((r) => [r.vd, r.first_ts])));
-  }
+function funnelFromStepMaps(perStep, clean) {
   const out = [];
   let carry = null;
   for (let i = 0; i < perStep.length; i += 1) {
@@ -180,7 +170,55 @@ export async function pathFunnel(db, siteKey, since, until, steps) {
     out.push({ step: clean[i], visitors: reached.size, rate: i === 0 || !out[i - 1]?.visitors ? null : Math.round((reached.size / out[i - 1].visitors) * 1000) / 10 });
     carry = reached;
   }
-  return { steps: out };
+  return out;
+}
+
+/**
+ * Named multi-step path funnel for [since, until): for ordered `steps` (each
+ * an exact page path or a `prefix*` path prefix), the number of distinct
+ * visitor-days that reached each step. See `funnelFromStepMaps` for how
+ * earlier-step carry-forward and conversion rate are computed.
+ */
+export async function pathFunnel(db, siteKey, since, until, steps) {
+  await ensureSchema(db);
+  const clean = cleanSteps(steps);
+  if (!clean.length) return { steps: [] };
+  const w = "site_key = ? AND ts >= ? AND ts < ? AND type = 'event' AND name IS NULL";
+  const perStep = [];
+  for (const step of clean) {
+    const prefix = step.endsWith("*");
+    const needle = prefix ? step.slice(0, -1) : step;
+    const sql = prefix
+      ? `SELECT visitor || substr(ts,1,10) AS vd, MIN(ts) AS first_ts FROM events WHERE ${w} AND url LIKE ? GROUP BY vd`
+      : `SELECT visitor || substr(ts,1,10) AS vd, MIN(ts) AS first_ts FROM events WHERE ${w} AND (url = ? OR url LIKE ?) GROUP BY vd`;
+    const args = prefix ? [siteKey, since, until, `${needle}%`] : [siteKey, since, until, needle, `${needle}?%`];
+    const { results } = await db.prepare(sql).bind(...args).all();
+    perStep.push(new Map(results.map((r) => [r.vd, r.first_ts])));
+  }
+  return { steps: funnelFromStepMaps(perStep, clean) };
+}
+
+/**
+ * Named-event sibling of `pathFunnel`: the same ordered, per-visitor-day
+ * drop-off/conversion computation, but across custom `railyard.track(name)`
+ * events (e.g. `widget_render`, `email_form_submit`) instead of page paths.
+ * `pathFunnel` only ever matches anonymous page views (`name IS NULL`), so a
+ * named custom event could previously only be read back as an unordered,
+ * un-sequenced top-10 count (`siteStats().events`) -- never as a real
+ * step-by-step drop-off funnel. This is that missing step-level view.
+ */
+export async function namedEventFunnel(db, siteKey, since, until, steps) {
+  await ensureSchema(db);
+  const clean = cleanSteps(steps);
+  if (!clean.length) return { steps: [] };
+  const w = "site_key = ? AND ts >= ? AND ts < ? AND type = 'event' AND name = ?";
+  const perStep = [];
+  for (const step of clean) {
+    const sql = `SELECT visitor || substr(ts,1,10) AS vd, MIN(ts) AS first_ts FROM events WHERE ${w} GROUP BY vd`;
+    const { results } = await db.prepare(sql).bind(siteKey, since, until, step).all();
+    perStep.push(new Map(results.map((r) => [r.vd, r.first_ts])));
+  }
+  return { steps: funnelFromStepMaps(perStep, clean) };
 }
 
 /** Home page plus the next 2 most-visited distinct paths, a reasonable funnel default for any site. */

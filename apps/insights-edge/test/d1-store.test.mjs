@@ -82,3 +82,32 @@ test("the funnel counts same-day visitor-days that progress through ordered step
     await c.close();
   }
 });
+
+test("mode=event computes the same ordered drop-off funnel over named custom events, not page paths", async () => {
+  const c = await startCollector({ d1: true, sites, bindings });
+  try {
+    // 2 visitors fire "widget_render"; only 1 of them goes on to fire
+    // "email_form_submit" afterwards -- a real step funnel across named
+    // events, which `mode=event` (unlike the default page-path funnel) can see.
+    await c.send(ev(SITE, "/start/email", { name: "widget_render" }), { "cf-connecting-ip": "203.0.113.21" });
+    await c.send(ev(SITE, "/start/email", { name: "email_form_submit" }), { "cf-connecting-ip": "203.0.113.21" });
+    await c.send(ev(SITE, "/start/email", { name: "widget_render" }), { "cf-connecting-ip": "203.0.113.22" });
+    await sleep(3500);
+    const res = await fetch(`${c.base}/api/funnel?site=${SITE}&mode=event&days=1&steps=widget_render,email_form_submit`, {
+      headers: { authorization: "Bearer stats-token-123" },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.steps.length, 2);
+    assert.equal(body.steps[0].step, "widget_render");
+    assert.equal(body.steps[0].visitors, 2);
+    assert.equal(body.steps[1].step, "email_form_submit");
+    assert.equal(body.steps[1].visitors, 1);
+    assert.equal(body.steps[1].rate, 50);
+    assert.equal((await fetch(`${c.base}/api/funnel?site=${SITE}&mode=event&days=1&steps=widget_render`)).status, 401);
+    const missingSteps = await fetch(`${c.base}/api/funnel?site=${SITE}&mode=event&days=1`, { headers: { authorization: "Bearer stats-token-123" } });
+    assert.equal(missingSteps.status, 400);
+  } finally {
+    await c.close();
+  }
+});

@@ -11,7 +11,7 @@ import { buildReport, sendReport, windows } from "./report.mjs";
 import { capMessage } from "./caps.ts";
 import { applyWebhookEvent, billingReady, createCheckout, verifyDodoWebhook } from "./dodo.mjs";
 import { createSite, deleteSite, hostMatches, resolveDashboard, signupEmail, usage } from "./selfserve.mjs";
-import { defaultFunnelSteps, pageSpeed, pathFunnel, siteStats } from "./store.mjs";
+import { defaultFunnelSteps, namedEventFunnel, pageSpeed, pathFunnel, siteStats } from "./store.mjs";
 import { ROBOTS, SITEMAP, cookielessAnalyticsPage, dashboardPage, fathomAlternativePage, googleAnalyticsAlternativePage, landingPage, liveDemoPage, messagePage, plausibleAlternativePage, privacyPage } from "./pages.mjs";
 import { REPLAY_JS, REPLAY_VIEWER_JS } from "./replay/tracker.mjs";
 import { ingestReplayChunk } from "./replay/ingest.mjs";
@@ -130,6 +130,14 @@ async function owner(request, env, url) {
     const days = Math.min(90, Math.max(1, Number(url.searchParams.get("days")) || 7));
     const w = windows(Date.now() + 86_400_000, days);
     const steps = (url.searchParams.get("steps") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    // `mode=event` is the named-custom-event sibling of the default page-path
+    // funnel below: it needs an explicit, ordered `steps` list of event names
+    // (there is no sensible "default" custom event the way there's a home page).
+    if (url.searchParams.get("mode") === "event") {
+      if (!steps.length) return reply(400, { error: "steps required for mode=event" });
+      const funnel = await namedEventFunnel(env.DB, site, ...w.cur, steps);
+      return reply(200, { site, from: w.cur[0], to: w.cur[1], ...funnel });
+    }
     const stats = steps.length ? null : await siteStats(env.DB, site, ...w.cur);
     const funnel = await pathFunnel(env.DB, site, ...w.cur, steps.length ? steps : defaultFunnelSteps(stats.top_pages));
     return reply(200, { site, from: w.cur[0], to: w.cur[1], ...funnel });
