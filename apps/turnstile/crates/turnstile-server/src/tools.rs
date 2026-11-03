@@ -260,7 +260,8 @@ impl UpstreamTool {
         // that resolved publicly then can resolve to a private/loopback/
         // metadata address now. `allow_private`/`allow_hosts` are honored
         // identically to the write-time check.
-        self.policy
+        let pinned = self
+            .policy
             .check_url(&self.spec.upstream_url)
             .await
             .map_err(|e| format!("upstream blocked by policy: {e}"))?;
@@ -271,7 +272,33 @@ impl UpstreamTool {
             Some(q) => format!("{}?{q}", self.spec.upstream_url),
             None => self.spec.upstream_url.clone(),
         };
-        let mut request = self.client.request(method, &url);
+        // `pinned` is only non-empty when `check_url` actually resolved and
+        // vetted the host (the `allow_private` fast path returns none, since
+        // no address is excluded there). When it IS non-empty, build a
+        // one-off client whose resolver is overridden to those exact
+        // addresses for this host, so the connection below cannot land
+        // anywhere `check_url` did not just approve — closing the DNS-
+        // rebinding gap between "the host we checked" and "the host reqwest
+        // would independently resolve again at connect time". The URL
+        // string (and therefore the Host header / TLS SNI) is untouched.
+        let pinned_client = if pinned.is_empty() {
+            None
+        } else {
+            let host = reqwest::Url::parse(&self.spec.upstream_url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .ok_or("upstream_url has no host")?;
+            Some(
+                reqwest::Client::builder()
+                    .timeout(Duration::from_millis(self.spec.timeout_ms))
+                    .redirect(reqwest::redirect::Policy::none())
+                    .resolve_to_addrs(&host, &pinned)
+                    .build()
+                    .map_err(|e| format!("tool {}: building pinned HTTP client: {e}", self.spec.name))?,
+            )
+        };
+        let client = pinned_client.as_ref().unwrap_or(&self.client);
+        let mut request = client.request(method, &url);
         if !self.spec.upstream_is_bodyless() {
             request = request
                 .header("content-type", content_type.unwrap_or("application/json"))

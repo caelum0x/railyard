@@ -18,7 +18,7 @@
 //! proxies to a sidecar on localhost) are not re-checked, so editing its price
 //! does not require loosening the policy.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -99,7 +99,19 @@ impl UpstreamPolicy {
     }
 
     /// Vet a new or changed upstream URL.
-    pub async fn check_url(&self, raw: &str) -> Result<(), String> {
+    ///
+    /// On success, returns the exact socket address(es) DNS resolution gave
+    /// us for `host` at the moment we vetted it — empty only when
+    /// `allow_private` makes the address irrelevant. The caller MUST connect
+    /// to one of these for *this* call rather than letting the HTTP client
+    /// re-resolve `host` on its own: a host that resolves publicly right now
+    /// can resolve to a private/loopback/metadata address a moment later
+    /// (DNS TTL expiry, an attacker-controlled authoritative server), so a
+    /// second, independent resolution at connect time can be answered
+    /// differently from this one — the classic DNS-rebinding TOCTOU. Pinning
+    /// the connection to what we just checked is what actually closes the
+    /// gap; re-running this check alone does not.
+    pub async fn check_url(&self, raw: &str) -> Result<Vec<SocketAddr>, String> {
         let url = reqwest::Url::parse(raw).map_err(|e| format!("upstream_url is not a valid URL: {e}"))?;
         if !matches!(url.scheme(), "http" | "https") {
             return Err("upstream_url must be http(s)".into());
@@ -118,36 +130,46 @@ impl UpstreamPolicy {
             ));
         }
         if self.allow_private {
-            return Ok(());
+            // No address is excluded, so there is nothing to pin against:
+            // the caller falls back to its normal (unpinned) resolution.
+            return Ok(Vec::new());
         }
         let deny = |ip: IpAddr| {
             Err(format!(
                 "upstream host {host} resolves to non-public address {ip}; set TURNSTILE_UPSTREAM_ALLOW_PRIVATE=1 to permit internal upstreams"
             ))
         };
+        let port = url.port_or_known_default().unwrap_or(443);
         let literal = host.trim_start_matches('[').trim_end_matches(']');
         if let Ok(ip) = literal.parse::<IpAddr>() {
-            return if is_public(ip) { Ok(()) } else { deny(ip) };
+            return if is_public(ip) {
+                Ok(vec![SocketAddr::new(ip, port)])
+            } else {
+                deny(ip)
+            };
         }
         if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".internal") {
             return Err(format!(
                 "upstream host {host} is internal; set TURNSTILE_UPSTREAM_ALLOW_PRIVATE=1 to permit it"
             ));
         }
-        let port = url.port_or_known_default().unwrap_or(443);
-        let resolved = tokio::time::timeout(
+        let resolved: Vec<SocketAddr> = tokio::time::timeout(
             RESOLVE_TIMEOUT,
             tokio::net::lookup_host((host.as_str(), port)),
         )
         .await
         .map_err(|_| format!("resolving upstream host {host} timed out"))?
-        .map_err(|e| format!("cannot resolve upstream host {host}: {e}"))?;
-        for addr in resolved {
+        .map_err(|e| format!("cannot resolve upstream host {host}: {e}"))?
+        .collect();
+        if resolved.is_empty() {
+            return Err(format!("upstream host {host} did not resolve to any address"));
+        }
+        for addr in &resolved {
             if !is_public(addr.ip()) {
                 return deny(addr.ip());
             }
         }
-        Ok(())
+        Ok(resolved)
     }
 
     /// Vet a new or changed credential env var name.
