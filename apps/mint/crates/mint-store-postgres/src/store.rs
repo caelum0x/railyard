@@ -2730,7 +2730,15 @@ impl LedgerStore for PgStore {
         .fetch_all(&mut *conn)
         .await
         .map_err(db_err)?;
-        rows.iter().map(Self::allowance_from_row).collect()
+        let now = self.clock.now();
+        // See the matching comment in get_allowance: project the `Rolling`
+        // window's lazy reset onto each row instead of returning a stale
+        // pre-reset `spent_micros`. Read-only.
+        let records: Vec<AllowanceRecord> = rows
+            .iter()
+            .map(Self::allowance_from_row)
+            .collect::<Result<_, _>>()?;
+        Ok(records.into_iter().map(|r| r.as_of(now)).collect())
     }
 
     async fn set_hold_expiry(&self, hold_id: &HoldId, expires_at_ms: i64) -> Result<(), MintError> {

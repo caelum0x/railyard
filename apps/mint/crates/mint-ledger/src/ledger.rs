@@ -780,6 +780,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_account_allowances_reflects_rolling_reset_before_any_further_spend() {
+        // Regression: GET /v1/accounts/:id/allowances (the store's
+        // `list_account_allowances`, called directly by the
+        // `allowances` handler) is a second, separate read path over the
+        // same `AllowanceRecord` type as `read_allowance`/`get_allowance`,
+        // and must not report a stale pre-reset `spent_micros`/`window_start_ms`
+        // once a Rolling window has elapsed either — mirrors
+        // `read_allowance_reflects_rolling_reset_before_any_further_spend`.
+        let clock = std::sync::Arc::new(mint_store::FixedClock::new(1_000_000));
+        let l = Ledger::new(InMemoryStore::with_clock(clock.clone()));
+        let g = l.create_account(AccountKind::User, None).await.unwrap();
+        l.store()
+            .seed_account(&g, Micros::new(10_000_000))
+            .await
+            .unwrap();
+        let payee = l.create_account(AccountKind::Model, None).await.unwrap();
+        l.store()
+            .seed_account(&payee, Micros::new(0))
+            .await
+            .unwrap();
+
+        let id = l
+            .grant_allowance(AllowanceGrantRequest {
+                granter: g.clone(),
+                to_key: "d".into(),
+                limit_micros: 5_000_000,
+                window: AllowanceWindow::Rolling { window_ms: 1_000 },
+                scope: None,
+                idem_key: "gk".into(),
+            })
+            .await
+            .unwrap();
+
+        l.spend_allowance(spend(&id, 5_000_000, &payee, "s1"))
+            .await
+            .unwrap();
+        // Right after fully spending the window: the listing shows 0 remaining.
+        let before = l
+            .store()
+            .list_account_allowances(&g, false, 10)
+            .await
+            .unwrap();
+        assert_eq!(before.len(), 1);
+        assert_eq!(before[0].spent_micros, Micros::new(5_000_000));
+
+        // Advance past the window, but make NO further spend before listing.
+        clock.advance(1_000);
+        let after = l
+            .store()
+            .list_account_allowances(&g, false, 10)
+            .await
+            .unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(
+            after[0].spent_micros,
+            Micros::zero(),
+            "a listing read after the rolling window elapsed must reflect the \
+             reset immediately, not the stale pre-reset spent_micros"
+        );
+    }
+
+    #[tokio::test]
     async fn scope_mismatch_is_rejected() {
         let l = ledger();
         let g = seeded(&l, AccountKind::User, 10_000_000).await;

@@ -2836,12 +2836,16 @@ impl LedgerStore for InMemoryStore {
         if !st.accounts.contains_key(account_id) {
             return Err(MintError::AccountNotFound);
         }
+        let now = self.clock.now();
         let mut out: Vec<AllowanceRecord> = st
             .allowances
             .values()
             .filter(|a| &a.granter == account_id)
             .filter(|a| include_revoked || !a.revoked)
-            .cloned()
+            // See the matching comment in get_allowance: project the
+            // `Rolling` window's lazy reset onto this read instead of
+            // returning a stale pre-reset `spent_micros`. Read-only.
+            .map(|a| a.as_of(now))
             .collect();
         out.sort_by(|a, b| b.id.as_str().cmp(a.id.as_str()));
         out.truncate(limit);
