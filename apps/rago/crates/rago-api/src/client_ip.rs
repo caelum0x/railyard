@@ -6,9 +6,19 @@
 //! dunning) use the last IP captured here (see
 //! `rago_jobs::collection::resolve_buyer_ip`).
 //!
-//! Resolution: the left-most `X-Forwarded-For` address, else `X-Real-IP`, else
+//! Resolution: the right-most `X-Forwarded-For` address, else `X-Real-IP`, else
 //! the socket peer. Only public unicast addresses are kept: a loopback or
 //! private address is the proxy, not the customer, and is never stored.
+//!
+//! Every rago host binds `127.0.0.1` only; Caddy is the sole public listener
+//! (see `apps/DEPLOY-SHARED-PLANE.md`), so there is exactly one trusted proxy
+//! hop. Caddy's `reverse_proxy` does not strip a client-supplied
+//! `X-Forwarded-For` — it appends the real peer address to whatever the
+//! client sent. That means the left-most entry is attacker-controlled (a
+//! direct caller can send `X-Forwarded-For: 1.2.3.4` and have it accepted at
+//! face value), while the right-most entry is always the one Caddy itself
+//! observed and appended. Only that single trusted hop is read; earlier
+//! entries are never consulted even if the last one fails to parse.
 
 use std::net::{IpAddr, SocketAddr};
 
@@ -78,11 +88,18 @@ fn parse_ip(raw: &str) -> Option<IpAddr> {
 }
 
 /// Resolve the public client IP from proxy headers, then the socket peer.
+///
+/// `X-Forwarded-For` is read from the **right**, trusting only the single
+/// hop Caddy appends (see the module docs): a client-supplied left-most
+/// entry is never used, even as a fallback if the last entry is absent or
+/// unparsable, since any entry other than the last is attacker-controlled.
 pub fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>) -> Option<IpAddr> {
     let forwarded = headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').find_map(parse_ip).filter(is_public));
+        .and_then(|v| v.rsplit(',').next())
+        .and_then(parse_ip)
+        .filter(is_public);
     let real = || {
         headers
             .get("x-real-ip")
@@ -109,9 +126,21 @@ mod tests {
     }
 
     #[test]
-    fn left_most_forwarded_address_is_the_customer() {
-        let h = headers(&[("x-forwarded-for", "85.105.12.7, 10.0.0.2")]);
+    fn right_most_forwarded_address_is_the_trusted_caddy_hop() {
+        // Caddy appends the real peer address as the last entry; a customer
+        // connecting directly through Caddy produces exactly this shape.
+        let h = headers(&[("x-forwarded-for", "10.0.0.2, 85.105.12.7")]);
         assert_eq!(client_ip(&h, None), Some("85.105.12.7".parse().unwrap()));
+    }
+
+    #[test]
+    fn left_most_client_supplied_forwarded_address_is_never_trusted() {
+        // An attacker connecting directly to Caddy can send any left-most
+        // value it likes; Caddy appends the real address (here `9.9.9.9`) as
+        // the last entry. The forged `1.2.3.4` must never be returned.
+        let h = headers(&[("x-forwarded-for", "1.2.3.4, 9.9.9.9")]);
+        assert_eq!(client_ip(&h, None), Some("9.9.9.9".parse().unwrap()));
+        assert_ne!(client_ip(&h, None), Some("1.2.3.4".parse().unwrap()));
     }
 
     #[test]

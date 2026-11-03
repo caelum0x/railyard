@@ -236,17 +236,35 @@ pub(crate) async fn ingest_event(
 
     // The DB unique index is the authoritative dedup guard: if a concurrent
     // request won the race between the check above and this insert, treat it as
-    // the same idempotent no-op.
-    if !st.db.insert_event(&event).await? {
-        if reserved {
-            if let Some(sub) = sub.as_ref() {
-                let transport = rago_integrations::default_transport();
-                if let Err(e) = rago_jobs::wallet_realtime::release_event_hold(&st.db, &transport, sub.customer_id, &event.transaction_id).await {
-                    tracing::warn!(error = %e, "could not release the hold of a duplicate event");
+    // the same idempotent no-op. Either way — duplicate or a genuine insert
+    // failure (pool exhaustion, connection reset, …) — any Mint hold already
+    // placed by `realtime_reserve` above must be released before we return,
+    // otherwise the customer's money stays reserved for an event that never
+    // makes it into `events` and can never be billed or refunded.
+    match st.db.insert_event(&event).await {
+        Ok(true) => {}
+        Ok(false) => {
+            if reserved {
+                if let Some(sub) = sub.as_ref() {
+                    let transport = rago_integrations::default_transport();
+                    if let Err(e) = rago_jobs::wallet_realtime::release_event_hold(&st.db, &transport, sub.customer_id, &event.transaction_id).await {
+                        tracing::warn!(error = %e, "could not release the hold of a duplicate event");
+                    }
                 }
             }
+            return Ok(Ingest::Duplicate);
         }
-        return Ok(Ingest::Duplicate);
+        Err(e) => {
+            if reserved {
+                if let Some(sub) = sub.as_ref() {
+                    let transport = rago_integrations::default_transport();
+                    if let Err(release_err) = rago_jobs::wallet_realtime::release_event_hold(&st.db, &transport, sub.customer_id, &event.transaction_id).await {
+                        tracing::warn!(error = %release_err, "could not release a real-time wallet hold after a failed event insert");
+                    }
+                }
+            }
+            return Err(ApiError::from(e));
+        }
     }
     // Pay-in-advance charges on this metric bill the event right away.
     if let Some(sub) = sub.as_ref() {
