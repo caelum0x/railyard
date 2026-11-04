@@ -51,5 +51,18 @@ export async function GET(req: Request) {
     return new Response(null, { status: 302, headers });
   }
 
-  return new Response("Pass ?provider=google|github or ?email=you@company.com", { status: 400 });
+  // Neither a recognized provider nor an email was supplied -- this is the
+  // common case for the Insights cross-sell banner (RYP-X1) and the public
+  // comparison/Rithub landing pages, which link here with only `?src=<slug>`
+  // when the visitor has no known email yet. Previously this fell through to
+  // a raw 400 with a developer-facing message, which meant every one of
+  // those marketing CTAs 404/400'd end-to-end for a logged-out visitor
+  // instead of landing them on the real sign-in page -- found auditing those
+  // pages' "Start free" CTA against actual behavior. Preserve the `src`
+  // attribution cookie and send the visitor to the normal sign-in page,
+  // where they can pick a provider or type their email; `auth/callback` and
+  // `lib/email-signin.ts` already read this same cookie at completion time.
+  const headers = new Headers({ location: `${cfg.consoleUrl}/` });
+  for (const c of srcCookie) headers.append("set-cookie", c);
+  return new Response(null, { status: 302, headers });
 }
