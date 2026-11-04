@@ -3039,16 +3039,45 @@ impl LedgerStore for PgStore {
         record: DepositReversal,
     ) -> Result<DepositReversal, MintError> {
         let now = self.clock.now();
+        // `amount_micros`/`clawed_micros`/`attempts` are monotonically
+        // non-decreasing by construction (see `apply_reversal`'s
+        // `target = base.amount_micros.max(requested)`), but the caller
+        // computes the new value from a READ taken before this write, with no
+        // lock held across the gap (the actual money movement is already
+        // idempotency-guarded independently via `commit_redeem`). Two
+        // concurrent reversal applications for the same `deposit_ref` — e.g. a
+        // provider's at-least-once webhook redelivery, or a webhook racing an
+        // operator retry — can therefore both read the same stale row and then
+        // race this UPSERT: a last-write-wins `EXCLUDED.*` overwrite would let
+        // the call that actually burned nothing (idempotent replay) clobber
+        // the other call's correctly-updated `clawed_micros`/`status` back
+        // down, silently reporting `shortfall` on a deposit that was already
+        // fully clawed back — and a LATER retry of that falsely-reported
+        // shortfall (the designed-for operator worklist flow) would then burn
+        // the account a second time for money already recovered.
+        // `GREATEST` makes the merge commutative/idempotent regardless of
+        // which concurrent writer lands last, so a stale write can only ever
+        // raise or hold these fields steady, never regress them. `status` is
+        // derived from the POST-merge totals so it can't desync, with
+        // `written_off` (an explicit, terminal operator decision) always
+        // sticky on either side of the conflict.
         let sql = format!(
             "INSERT INTO deposit_reversals (deposit_ref, account_id, amount_micros, clawed_micros, \
                                             reason, status, attempts, note, created_ms, updated_ms) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) \
              ON CONFLICT (deposit_ref) DO UPDATE SET \
-                 amount_micros = EXCLUDED.amount_micros, \
-                 clawed_micros = EXCLUDED.clawed_micros, \
+                 amount_micros = GREATEST(deposit_reversals.amount_micros, EXCLUDED.amount_micros), \
+                 clawed_micros = GREATEST(deposit_reversals.clawed_micros, EXCLUDED.clawed_micros), \
                  reason = EXCLUDED.reason, \
-                 status = EXCLUDED.status, \
-                 attempts = EXCLUDED.attempts, \
+                 status = CASE \
+                     WHEN deposit_reversals.status = 'written_off' OR EXCLUDED.status = 'written_off' \
+                         THEN 'written_off' \
+                     WHEN GREATEST(deposit_reversals.clawed_micros, EXCLUDED.clawed_micros) \
+                          >= GREATEST(deposit_reversals.amount_micros, EXCLUDED.amount_micros) \
+                         THEN 'clawed_back' \
+                     ELSE 'shortfall' \
+                 END, \
+                 attempts = GREATEST(deposit_reversals.attempts, EXCLUDED.attempts), \
                  note = EXCLUDED.note, \
                  updated_ms = EXCLUDED.updated_ms \
              RETURNING {}",
