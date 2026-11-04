@@ -10,6 +10,7 @@ export const SECRET_ENV = [
   "RAILYARD_SESSION_SECRET",
   "RAILYARD_SCRIBASE_BRIDGE_SECRET",
   "INSIGHTS_API_TOKEN",
+  "EVREN_LLM_API_KEY",
   "PRODUCT_ANALYTICS_CONSOLE_SECRET",
   "RELAY_TENANT_KEY",
   "RAILYARD_CREDENTIALS_KEY",
@@ -86,6 +87,15 @@ export interface Config {
   replayLive: boolean;
   /** Insights tenant API (PY1.3); null keeps analytics proofs and pages off. */
   insightsApi: { url: string; token: string } | null;
+  /**
+   * Evren's typed-decision gateway (lib/eventAnomaly.ts): per-app event-volume
+   * anomaly severity on the Usage page, on top of (never instead of) the
+   * plain current/baseline arithmetic that module computes itself. Null
+   * when EVREN_LLM_API_KEY is unset -- entirely optional, fail-open by
+   * design, same convention as done/big-projects/bidstage-tenders'
+   * EvrenFitEnv and sahibinden's parseEvrenRiskEnv.
+   */
+  eventAnomaly: { baseUrl: string; apiKey: string } | null;
   /**
    * Railyard Watch is shown and run only with RAILYARD_WATCH_LIVE=1 (denylist
    * rule railyard-slot-watch): set at deploy once the customer checks stack
@@ -197,6 +207,7 @@ export function readConfig(env: Env = process.env): Config {
       env.INSIGHTS_API_URL?.trim() && env.INSIGHTS_API_TOKEN?.trim()
         ? { url: env.INSIGHTS_API_URL.trim().replace(/\/$/, ""), token: env.INSIGHTS_API_TOKEN.trim() }
         : null,
+    eventAnomaly: readEventAnomaly(env),
     watchLive: env.RAILYARD_WATCH_LIVE === "1",
     replayLive: env.RAILYARD_REPLAY_LIVE === "1",
     watchAgentToken: env.WATCH_AGENT_TOKEN?.trim() && env.WATCH_AGENT_TOKEN.trim().length >= 32 ? env.WATCH_AGENT_TOKEN.trim() : null,
@@ -223,6 +234,27 @@ export function readConfig(env: Env = process.env): Config {
     },
     ship: readShip(env),
   };
+}
+
+const DEFAULT_EVREN_LLM_BASE_URL = "https://evren-llmapi.ssyz.org.tr";
+
+/** EVREN_LLM_API_KEY unset or malformed disables the Usage page's anomaly badge; never required. */
+function readEventAnomaly(env: Env): Config["eventAnomaly"] {
+  const apiKey = env.EVREN_LLM_API_KEY?.trim();
+  if (!apiKey) return null;
+  if (!apiKey.startsWith("evren_llm_")) {
+    console.error("event anomaly disabled: EVREN_LLM_API_KEY is malformed (expected an evren_llm_ prefixed key)");
+    return null;
+  }
+  const rawUrl = env.EVREN_LLM_BASE_URL?.trim() || DEFAULT_EVREN_LLM_BASE_URL;
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== "https:") throw new Error("must use https");
+    return { baseUrl: url.origin, apiKey };
+  } catch (e) {
+    console.error(`event anomaly disabled: EVREN_LLM_BASE_URL is invalid (${(e as Error).message})`);
+    return null;
+  }
 }
 
 function readOidc(env: Env): Config["oidc"] {

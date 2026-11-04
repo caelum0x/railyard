@@ -8,6 +8,7 @@ import { giteaClient, type GiteaClient } from "./gitea.ts";
 import { PostgrestRepo } from "./postgrest-repo.ts";
 import type { Repo } from "./repo.ts";
 import { insightsClient, type InsightsClient } from "./insights.ts";
+import type { EventAnomalyDeps } from "./eventAnomaly.ts";
 import { productAnalyticsFromEnv, type ProductAnalyticsClient } from "./product-analytics.ts";
 import { kvSites, type SitesStore } from "./sites.ts";
 import { PostgrestFlagsStore } from "./flags/store.ts";
@@ -29,6 +30,8 @@ export interface Deps {
   dodo: Dodo;
   sites: SitesStore;
   insights: InsightsClient | null;
+  /** Event-volume anomaly severity (lib/eventAnomaly.ts); null until EVREN_LLM_API_KEY is set. Fail-open and additive -- never required for the Usage page's real event count. */
+  eventAnomaly: EventAnomalyDeps | null;
   /** Product analytics (QY1.2); null while the service is not connected. */
   productAnalytics: ProductAnalyticsClient | null;
   flags: FlagsDeps;
@@ -81,6 +84,9 @@ export function deps(): Deps {
     dodo: new Dodo({ base: cfg.dodoBase, apiKey: cfg.dodoApiKey, allowLive: cfg.dodoAllowLive }),
     sites,
     insights: cfg.insightsApi ? insightsClient({ apiUrl: cfg.insightsApi.url, token: cfg.insightsApi.token }) : null,
+    eventAnomaly: cfg.eventAnomaly
+      ? { baseUrl: cfg.eventAnomaly.baseUrl, apiKey: cfg.eventAnomaly.apiKey, fetch: globalThis.fetch.bind(globalThis), log: (event, detail) => console.error(`${event}${detail ? ` ${JSON.stringify(detail)}` : ""}`) }
+      : null,
     productAnalytics: productAnalyticsFromEnv(),
     flags: flagsDeps(cfg),
     watch: {
