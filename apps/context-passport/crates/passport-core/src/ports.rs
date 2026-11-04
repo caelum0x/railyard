@@ -176,3 +176,40 @@ pub struct MintMeterResult {
 pub trait MintMeter: Send + Sync {
     async fn meter(&self, request: &MintMeterRequest) -> Result<MintMeterResult, PassportError>;
 }
+
+/// An AITP-402 royalty transfer owed to a passport's owner for one
+/// passport-conditioned generation, when the owner has set a nonzero
+/// `Rights::royalty_bps` and the settlement's payer is not the owner
+/// themselves (third-party generate-AS; ARCHITECTURE.md §6.1, §8.5).
+/// Idempotent on `reference` (the generation id), mirroring [`MintMeterRequest`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoyaltyTransferRequest {
+    pub reference: String,
+    pub passport_id: String,
+    pub version: i64,
+    /// The account that paid for (and owes the royalty on) the generation.
+    pub payer_account: String,
+    /// The passport owner's Mint account; the royalty's recipient.
+    pub owner_account: String,
+    /// The royalty amount, already computed from the settlement's
+    /// `amount_micros` and the passport's `royalty_bps`.
+    pub amount_micros: i64,
+}
+
+/// The result of initiating a royalty transfer: a Mint receipt reference.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoyaltyTransferResult {
+    pub receipt_ref: Option<String>,
+}
+
+/// Transport seam to Mint for AITP-402 royalty payouts. Real reqwest impl
+/// (over Mint's generic `/v1/transfers`) in `passport-mint-client`; `FakeMint`
+/// in `passport-testkit`. Like [`MintMeter`], this is success-only and never
+/// blocks or rolls back an already-recorded generation.
+#[async_trait]
+pub trait RoyaltyInitiator: Send + Sync {
+    async fn transfer_royalty(
+        &self,
+        request: &RoyaltyTransferRequest,
+    ) -> Result<RoyaltyTransferResult, PassportError>;
+}

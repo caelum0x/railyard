@@ -29,6 +29,18 @@ pub struct GenerationRecord {
     /// Optional Mint receipt reference proving the generation settled on the rail.
     #[serde(default)]
     pub mint_receipt_ref: Option<String>,
+    /// Optional Mint receipt reference from the separate success-only
+    /// metering call that tags this receipt with `passport_id`/`version`
+    /// for Ledgerline attribution (`MintMeter`, ADR-0002). `None` when no
+    /// `MintMeter` is configured or the best-effort call failed.
+    #[serde(default)]
+    pub meter_receipt_ref: Option<String>,
+    /// Optional Mint receipt reference from the AITP-402 royalty transfer
+    /// paid to the passport owner on third-party generate-AS (`Rights::royalty_bps`).
+    /// `None` when no royalty was owed, no `RoyaltyInitiator` is configured,
+    /// or the best-effort call failed.
+    #[serde(default)]
+    pub royalty_receipt_ref: Option<String>,
     /// Full request/principal-correlated signed evidence. Older stored records
     /// deserialize with `None`; new generation writes require `Some`.
     #[serde(default)]
@@ -91,6 +103,8 @@ impl GenerationRecord {
             iptc_digital_source_type: version.rights.iptc_digital_source_type.clone(),
             disclosure_required: matches!(version.rights.disclosure, DisclosureLevel::Required),
             mint_receipt_ref: None,
+            meter_receipt_ref: None,
+            royalty_receipt_ref: None,
             payment_evidence: None,
             prompt: None,
             output_text: None,
@@ -111,6 +125,23 @@ impl GenerationRecord {
         let mut next = self.clone();
         next.mint_receipt_ref = Some(evidence.receipt.receipt_hash.clone());
         next.payment_evidence = Some(evidence);
+        next
+    }
+
+    /// Attach the Mint metering receipt reference, if the best-effort
+    /// `MintMeter` call succeeded (returns a new record; no mutation).
+    pub fn with_meter_receipt(&self, receipt_ref: Option<String>) -> Self {
+        let mut next = self.clone();
+        next.meter_receipt_ref = receipt_ref;
+        next
+    }
+
+    /// Attach the AITP-402 royalty transfer's receipt reference, if a royalty
+    /// was owed and the best-effort transfer succeeded (returns a new record;
+    /// no mutation).
+    pub fn with_royalty_receipt(&self, receipt_ref: Option<String>) -> Self {
+        let mut next = self.clone();
+        next.royalty_receipt_ref = receipt_ref;
         next
     }
 }

@@ -33,7 +33,8 @@ pub use kind::PassportKind;
 pub use passport::{CreatePassport, Passport, PassportFilter, PassportView};
 pub use ports::{
     ArtifactStore, CreateOutcome, MintMeter, MintMeterRequest, MintMeterResult, PassportStore, PaymentEvidence,
-    RelayConditioningSink, RelayGenerationRequest, RelayGenerationResult, SettlementReceiptProof,
+    RelayConditioningSink, RelayGenerationRequest, RelayGenerationResult, RoyaltyInitiator,
+    RoyaltyTransferRequest, RoyaltyTransferResult, SettlementReceiptProof,
 };
 pub use rights::{ConsentBasis, DisclosureLevel, Rights};
 pub use version::{PassportVersion, VersionStatus};

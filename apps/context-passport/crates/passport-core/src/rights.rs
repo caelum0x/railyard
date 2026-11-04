@@ -63,6 +63,15 @@ pub struct Rights {
     /// IPTC digitalSourceType URI stamped onto generated assets.
     #[serde(default = "default_source_type")]
     pub iptc_digital_source_type: String,
+    /// Owner-set royalty on third-party generate-AS, in basis points of the
+    /// settlement's `amount_micros` (0..=10_000; default 0 — free for
+    /// first-party use, e.g. Menivor generating with its own passports). When
+    /// nonzero and the generation's payer is not the owner, `PassportService`
+    /// initiates an AITP-402 royalty transfer to the owner's Mint account
+    /// (ARCHITECTURE.md §6.1, §8.5). Frozen into the locked version like every
+    /// other rights field.
+    #[serde(default)]
+    pub royalty_bps: u32,
 }
 
 fn default_true() -> bool {
@@ -88,6 +97,7 @@ impl Default for Rights {
             revocable: true,
             disclosure: DisclosureLevel::Required,
             iptc_digital_source_type: default_source_type(),
+            royalty_bps: 0,
         }
     }
 }
@@ -96,6 +106,11 @@ impl Rights {
     /// A real-person likeness may not be locked without recorded consent.
     /// Enforced at lock time so no immutable version can violate it.
     pub fn validate_for_lock(&self) -> Result<(), PassportError> {
+        if self.royalty_bps > 10_000 {
+            return Err(PassportError::Invalid(
+                "royalty_bps must be at most 10000 (100%)".into(),
+            ));
+        }
         let licensed = matches!(
             self.basis,
             ConsentBasis::RealPersonLicensed | ConsentBasis::Composite

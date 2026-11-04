@@ -1233,6 +1233,7 @@ dependencies = [
  "async-trait",
  "passport-core",
  "reqwest",
+ "serde",
  "serde_json",
  "tokio",
 ]
@@ -1284,6 +1285,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "passport-core",
+ "passport-mint-client",
  "passport-provenance",
  "passport-relay-client",
  "passport-resolve",

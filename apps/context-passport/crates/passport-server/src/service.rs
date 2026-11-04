@@ -8,9 +8,10 @@ use chrono::Utc;
 
 use passport_core::{
     normalize_provider, validate_artifact_ref, ArtifactKind, ArtifactStatus, ArtifactStore,
-    TrainedArtifact, AssetsPatch, CreateOutcome, CreatePassport, Passport, PassportAssets, PassportError,
-    PassportFilter, PassportStore, PassportVersion, PassportView, RelayConditioningSink,
-    RelayGenerationRequest, VersionStatus,
+    TrainedArtifact, AssetsPatch, CreateOutcome, CreatePassport, MintMeter, MintMeterRequest,
+    Passport, PassportAssets, PassportError, PassportFilter, PassportStore, PassportVersion,
+    PassportView, RelayConditioningSink, RelayGenerationRequest, RoyaltyInitiator,
+    RoyaltyTransferRequest, VersionStatus,
 };
 use passport_provenance::{to_c2pa_manifest, GenerationRecord, ProvenanceLog};
 use passport_resolve::{ConditioningPayload, Modality, ProviderRegistry};
@@ -39,6 +40,14 @@ pub struct PassportService {
     receipt_verifier: Option<Arc<ReceiptVerifier>>,
     /// Provider-minted trained artifacts (voice clones, avatars, LoRAs).
     artifacts: Option<Arc<dyn ArtifactStore>>,
+    /// Mint metering seam: tags each settled generation's Mint receipt with
+    /// `passport_id`/`version` (ADR-0002, success-only, best-effort). Without
+    /// it, generation still works — metering is a side-channel, not a gate.
+    mint_meter: Option<Arc<dyn MintMeter>>,
+    /// AITP-402 royalty seam: pays the passport owner on third-party
+    /// generate-AS when `Rights::royalty_bps` is nonzero (§6.1, §8.5).
+    /// Best-effort, same non-blocking semantics as `mint_meter`.
+    royalty: Option<Arc<dyn RoyaltyInitiator>>,
 }
 
 /// Register a provider artifact minted from a locked version.
@@ -75,6 +84,8 @@ impl PassportService {
             registry: Arc::new(ProviderRegistry::default()),
             receipt_verifier: None,
             artifacts: None,
+            mint_meter: None,
+            royalty: None,
         }
     }
 
@@ -88,6 +99,22 @@ impl PassportService {
     /// Verify Mint receipt signatures with `verifier` (returns a new service).
     pub fn with_receipt_verifier(mut self, verifier: Arc<ReceiptVerifier>) -> Self {
         self.receipt_verifier = Some(verifier);
+        self
+    }
+
+    /// Meter every settled `generate` on Mint with `mint` (returns a new
+    /// service). Without it, generation still succeeds; no metering call is
+    /// made and no `passport_id`/`version` attribution reaches Mint.
+    pub fn with_mint_meter(mut self, mint: Arc<dyn MintMeter>) -> Self {
+        self.mint_meter = Some(mint);
+        self
+    }
+
+    /// Initiate AITP-402 royalty transfers on third-party generate-AS via
+    /// `royalty` (returns a new service). Without it, a nonzero
+    /// `Rights::royalty_bps` is recorded but never settled.
+    pub fn with_royalty_initiator(mut self, royalty: Arc<dyn RoyaltyInitiator>) -> Self {
+        self.royalty = Some(royalty);
         self
     }
 
@@ -394,10 +421,84 @@ impl PassportService {
         );
 
         let record = base
-            .with_payment_evidence(evidence)
+            .with_payment_evidence(evidence.clone())
             .with_output(prompt, generated.output_text);
+        let record = self
+            .settle_mint_side_effects(&target, provider, modality.as_str(), record, &principal, &evidence)
+            .await;
         self.provenance.record(&record).await?;
         Ok(record)
+    }
+
+    /// Best-effort Mint metering + (if the owner has set a royalty) an
+    /// AITP-402 royalty transfer, for one generation whose settlement is
+    /// already verified. Mirrors `generate`'s fail-open semantics for this
+    /// side channel: a Mint-side outage degrades to a missing meter/royalty
+    /// receipt, never to a rolled-back or lost generation (ADR-0002).
+    async fn settle_mint_side_effects(
+        &self,
+        target: &PassportVersion,
+        provider: &str,
+        modality: &str,
+        record: GenerationRecord,
+        owner: &str,
+        evidence: &passport_core::PaymentEvidence,
+    ) -> GenerationRecord {
+        let mut record = record;
+
+        if let Some(mint) = &self.mint_meter {
+            let request = MintMeterRequest {
+                reference: record.id.clone(),
+                passport_id: target.passport_id.clone(),
+                version: target.version,
+                provider: provider.to_string(),
+                modality: modality.to_string(),
+            };
+            match mint.meter(&request).await {
+                Ok(result) => record = record.with_meter_receipt(result.receipt_ref),
+                Err(err) => tracing::warn!(
+                    passport_id = %target.passport_id,
+                    version = target.version,
+                    error = %err,
+                    "mint metering failed; generation already recorded"
+                ),
+            }
+        }
+
+        if let Some(royalty) = &self.royalty {
+            // Royalty is owed only on genuine third-party generate-AS: a
+            // nonzero owner-set rate AND a settlement whose payer is not the
+            // owner. Today `generate`'s payer is always the owner (enforced
+            // by `check_settlement_evidence`), so this is a correct no-op
+            // until an upstream third-party-pays surface (e.g. Turnstile,
+            // ARCHITECTURE.md §6.2) supplies a payer distinct from the owner.
+            let rate_bps = i64::from(target.rights.royalty_bps);
+            if rate_bps > 0 && evidence.payer_account != owner {
+                let amount_micros =
+                    evidence.receipt.amount_micros.saturating_mul(rate_bps) / 10_000;
+                if amount_micros > 0 {
+                    let request = RoyaltyTransferRequest {
+                        reference: record.id.clone(),
+                        passport_id: target.passport_id.clone(),
+                        version: target.version,
+                        payer_account: evidence.payer_account.clone(),
+                        owner_account: owner.to_string(),
+                        amount_micros,
+                    };
+                    match royalty.transfer_royalty(&request).await {
+                        Ok(result) => record = record.with_royalty_receipt(result.receipt_ref),
+                        Err(err) => tracing::warn!(
+                            passport_id = %target.passport_id,
+                            version = target.version,
+                            error = %err,
+                            "AITP-402 royalty transfer failed; generation already recorded"
+                        ),
+                    }
+                }
+            }
+        }
+
+        record
     }
 
     /// Attest a generation executed outside Identity Lock itself.

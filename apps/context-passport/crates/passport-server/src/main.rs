@@ -17,6 +17,12 @@
 //! (`owner:key,...`) adds per-owner tenant keys scoped to their own passports.
 //! Receipts: `MINT_RECEIPT_PUBLIC_KEYS` (hex Ed25519, comma-separated) or
 //! `MINT_BASE_URL` (keys discovered from `/.well-known/mint-verification-keys.json`).
+//! Metering/royalty: `MINT_API_KEY` (+ `MINT_BASE_URL`) wires the real
+//! `MintClient` into the service as both `MintMeter` (tags each settled
+//! generation's receipt with `passport_id`/`version`) and `RoyaltyInitiator`
+//! (pays the owner an AITP-402 royalty on third-party generate-AS). Both are
+//! best-effort side channels — generation succeeds without them, same as a
+//! missing Relay-side AITP settlement does not invent one.
 //! The operator console is served at `GET /console`.
 
 use std::net::SocketAddr;
@@ -26,8 +32,10 @@ use anyhow::{bail, Context};
 use async_trait::async_trait;
 
 use passport_core::{
-    PassportError, RelayConditioningSink, RelayGenerationRequest, RelayGenerationResult,
+    MintMeter, PassportError, RelayConditioningSink, RelayGenerationRequest,
+    RelayGenerationResult, RoyaltyInitiator,
 };
+use passport_mint_client::MintClient;
 use passport_relay_client::RelayClient;
 use passport_server::service::PassportService;
 use passport_server::auth::OwnerKeys;
@@ -50,6 +58,14 @@ struct RelayConfig {
     key: String,
 }
 
+/// Optional Mint metering/royalty transport credentials. Unlike Relay and the
+/// receipt-verification keys, this is never mandatory: metering and royalty
+/// payouts are best-effort side channels (ADR-0002), not a generation gate.
+struct MintMeterConfig {
+    base: String,
+    key: String,
+}
+
 enum ReceiptKeys {
     Static(Vec<String>),
     Discover(String),
@@ -63,6 +79,7 @@ struct Config {
     receipt_keys: ReceiptKeys,
     store: StoreMode,
     relay: Option<RelayConfig>,
+    mint_meter: Option<MintMeterConfig>,
 }
 
 impl Config {
@@ -121,6 +138,15 @@ impl Config {
             }
         };
 
+        // Metering/royalty is a best-effort side channel, never a generation
+        // gate: unlike Relay and the receipt-verification keys, it is
+        // optional even in `postgres` (production) mode.
+        let mint_meter = match (optional("MINT_API_KEY"), optional("MINT_BASE_URL")) {
+            (Some(key), Some(base)) => Some(MintMeterConfig { base, key }),
+            (Some(_), None) => bail!("MINT_API_KEY requires MINT_BASE_URL to be set"),
+            (None, _) => None,
+        };
+
         Ok(Self {
             bind_addr,
             api_key,
@@ -128,6 +154,7 @@ impl Config {
             receipt_keys,
             store,
             relay,
+            mint_meter,
         })
     }
 }
@@ -185,6 +212,22 @@ async fn main() -> anyhow::Result<()> {
         ReceiptKeys::None => {
             tracing::warn!(
                 "mint receipt keys unconfigured — /attest is disabled until MINT_RECEIPT_PUBLIC_KEYS or MINT_BASE_URL is set"
+            );
+            service
+        }
+    };
+
+    let service = match &config.mint_meter {
+        Some(cfg) => {
+            let mint_client = Arc::new(MintClient::new(cfg.base.clone(), cfg.key.clone()));
+            tracing::info!(mint = %cfg.base, "mint metering + AITP-402 royalty seam wired");
+            service
+                .with_mint_meter(mint_client.clone() as Arc<dyn MintMeter>)
+                .with_royalty_initiator(mint_client as Arc<dyn RoyaltyInitiator>)
+        }
+        None => {
+            tracing::warn!(
+                "mint metering/royalty unconfigured — set MINT_API_KEY (+ MINT_BASE_URL) to tag settled generations on Mint and pay owner royalties"
             );
             service
         }

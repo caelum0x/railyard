@@ -8,7 +8,8 @@ use async_trait::async_trait;
 
 use passport_core::{
     MintMeter, MintMeterRequest, MintMeterResult, PassportError, PaymentEvidence,
-    RelayConditioningSink, RelayGenerationRequest, RelayGenerationResult, SettlementReceiptProof,
+    RelayConditioningSink, RelayGenerationRequest, RelayGenerationResult, RoyaltyInitiator,
+    RoyaltyTransferRequest, RoyaltyTransferResult, SettlementReceiptProof,
 };
 
 /// A Relay fake that echoes a deterministic output ref and counts calls.
@@ -106,11 +107,16 @@ impl RelayConditioningSink for ReplayRelay {
 #[derive(Default)]
 pub struct FakeMint {
     pub calls: AtomicUsize,
+    pub royalty_calls: AtomicUsize,
 }
 
 impl FakeMint {
     pub fn call_count(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
+    }
+
+    pub fn royalty_call_count(&self) -> usize {
+        self.royalty_calls.load(Ordering::SeqCst)
     }
 }
 
@@ -120,6 +126,22 @@ impl MintMeter for FakeMint {
         let n = self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(MintMeterResult {
             receipt_ref: Some(format!("rcpt_{}_{n}", request.reference)),
+        })
+    }
+}
+
+#[async_trait]
+impl RoyaltyInitiator for FakeMint {
+    async fn transfer_royalty(
+        &self,
+        request: &RoyaltyTransferRequest,
+    ) -> Result<RoyaltyTransferResult, PassportError> {
+        if request.amount_micros <= 0 {
+            return Ok(RoyaltyTransferResult { receipt_ref: None });
+        }
+        let n = self.royalty_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(RoyaltyTransferResult {
+            receipt_ref: Some(format!("royalty_rcpt_{}_{n}", request.reference)),
         })
     }
 }
