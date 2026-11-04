@@ -760,6 +760,7 @@ mod tests {
             store: store.clone(),
             api_key: Arc::from("secret"),
             policy: Arc::new(crate::policy::AccountPolicy::unrestricted()),
+            receipt_verifier: Arc::new(crate::receipt_verify::SourceReceiptVerifier::none()),
         };
         let (replayed, created) = ingest_event(&state, event.clone())
             .await

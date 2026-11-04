@@ -26,6 +26,15 @@ pub enum EventOutcome {
 }
 
 /// Signed settlement evidence emitted by Relay/Mint for the source request.
+///
+/// [`MeterEvent::validate`] only checks this struct's *shape*: that its fields
+/// are non-empty and correlate with the event's own `request_id`/
+/// `payer_account`/`operation`/`amount_micros`. It is a pure function with no
+/// key material, so it cannot prove `signature` is a genuine Relay/Mint
+/// attestation rather than a value the caller invented. That cryptographic
+/// check — the actual trust boundary — is
+/// [`crate::receipt_verify::SourceReceiptVerifier::verify`], run at the HTTP
+/// ingest boundary in [`crate::server::ingest_event`] before any settlement.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceSettlementReceipt {
     pub request_id: String,

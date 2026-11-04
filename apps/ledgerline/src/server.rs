@@ -15,6 +15,7 @@ use crate::domain::{MarginFilter, MarginRecord, MarginSummaryQuery, MarginSummar
 use crate::error::LedgerlineError;
 use crate::mint::MintSettlement;
 use crate::policy::AccountPolicy;
+use crate::receipt_verify::SourceReceiptVerifier;
 use crate::store::EventStore;
 
 #[derive(Clone)]
@@ -25,6 +26,10 @@ pub struct AppState {
     /// Which Mint accounts an ingested event may name (enforced at the HTTP
     /// boundary before any settlement).
     pub policy: Arc<AccountPolicy>,
+    /// Trusted Relay/Mint public keys for cryptographically verifying any
+    /// `source_settlement_receipt` an event carries (enforced before any
+    /// settlement, alongside `policy`).
+    pub receipt_verifier: Arc<SourceReceiptVerifier>,
 }
 
 const ADMIN_HTML: &str = include_str!("../assets/admin.html");
@@ -191,6 +196,17 @@ pub async fn ingest_event(
     event: MeterEvent,
 ) -> Result<(MarginRecord, bool), LedgerlineError> {
     event.validate()?;
+    // `validate()` only checks that a receipt's fields are present and
+    // correlate with this request's own principal/amount — it is a pure
+    // function and cannot hold key material. Prove the receipt was genuinely
+    // issued by Relay/Mint (not just typed in by whoever holds the
+    // Ledgerline API key) before any money moves.
+    if let Some(receipt) = &event.source_settlement_receipt {
+        state
+            .receipt_verifier
+            .verify(receipt)
+            .map_err(LedgerlineError::Invalid)?;
+    }
 
     if let Some(mut existing) = state
         .store
@@ -233,10 +249,11 @@ mod tests {
     use async_trait::async_trait;
     use axum::body::{to_bytes, Body};
     use axum::http::Request;
+    use ed25519_dalek::{Signer as _, SigningKey};
     use tower::ServiceExt;
 
     use super::*;
-    use crate::domain::{EventOutcome, EventSource, SettlementRefs};
+    use crate::domain::{EventOutcome, EventSource, SettlementRefs, SourceSettlementReceipt};
     use crate::store::MemoryStore;
 
     #[derive(Default)]
@@ -284,6 +301,7 @@ mod tests {
             store: Arc::new(MemoryStore::default()),
             api_key: Arc::from("secret"),
             policy: Arc::new(AccountPolicy::unrestricted()),
+            receipt_verifier: Arc::new(SourceReceiptVerifier::none()),
         };
 
         let (first, created) = ingest_event(&state, event()).await.expect("first ingest");
@@ -303,6 +321,7 @@ mod tests {
             store: Arc::new(MemoryStore::default()),
             api_key: Arc::from("secret"),
             policy: Arc::new(AccountPolicy::unrestricted()),
+            receipt_verifier: Arc::new(SourceReceiptVerifier::none()),
         };
         ingest_event(&state, event()).await.expect("first ingest");
         let mut changed = event();
@@ -321,6 +340,7 @@ mod tests {
             store: Arc::new(MemoryStore::default()),
             api_key: Arc::from("secret"),
             policy: Arc::new(AccountPolicy::unrestricted()),
+            receipt_verifier: Arc::new(SourceReceiptVerifier::none()),
         };
         ingest_event(&state, event()).await.expect("first ingest");
         let mut duplicate_request = event();
@@ -340,6 +360,7 @@ mod tests {
             store: Arc::new(MemoryStore::default()),
             api_key: Arc::from("secret"),
             policy: Arc::new(AccountPolicy::unrestricted()),
+            receipt_verifier: Arc::new(SourceReceiptVerifier::none()),
         };
         let mut failed = event();
         failed.outcome = EventOutcome::Failed;
@@ -358,6 +379,7 @@ mod tests {
             store: Arc::new(MemoryStore::default()),
             api_key: Arc::from("secret"),
             policy: Arc::new(AccountPolicy::unrestricted()),
+            receipt_verifier: Arc::new(SourceReceiptVerifier::none()),
         };
         let app = build_router(state);
         let body = serde_json::to_vec(&event()).expect("serialize event");
@@ -403,5 +425,95 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(queried.status(), StatusCode::OK);
+    }
+
+    fn relay_gateway_event(receipt: SourceSettlementReceipt) -> MeterEvent {
+        let mut e = event();
+        e.source = EventSource::RelayGateway;
+        e.source_settlement_receipt = Some(receipt);
+        e
+    }
+
+    fn signed_receipt(signing_key: &SigningKey, event: &MeterEvent) -> SourceSettlementReceipt {
+        let hash = [11u8; 32];
+        let signature = signing_key.sign(&hash);
+        SourceSettlementReceipt {
+            request_id: event.request_id.clone(),
+            payer_account: event.customer_account.clone(),
+            sequence: 42,
+            operation: "hold.capture".into(),
+            amount_micros: event.cogs_micros,
+            operation_hash: "op_hash".into(),
+            receipt_hash: hex::encode(hash),
+            signature: hex::encode(signature.to_bytes()),
+        }
+    }
+
+    #[tokio::test]
+    async fn relay_gateway_event_with_a_fabricated_receipt_is_rejected() {
+        let signing_key = SigningKey::from_bytes(&[21u8; 32]);
+        let verifier = Arc::new(
+            SourceReceiptVerifier::from_hex_keys([hex::encode(
+                signing_key.verifying_key().as_bytes(),
+            )])
+            .expect("valid key"),
+        );
+        let state = AppState {
+            mint: Arc::new(CountingMint::default()),
+            store: Arc::new(MemoryStore::default()),
+            api_key: Arc::from("secret"),
+            policy: Arc::new(AccountPolicy::unrestricted()),
+            receipt_verifier: verifier,
+        };
+
+        // Shape-valid (passes `MeterEvent::validate`), but the signature is
+        // fabricated, not a genuine Relay/Mint attestation.
+        let fabricated = relay_gateway_event(SourceSettlementReceipt {
+            request_id: "request-1".into(),
+            payer_account: "acct_customer".into(),
+            sequence: 42,
+            operation: "hold.capture".into(),
+            amount_micros: 600_000,
+            operation_hash: "op_hash".into(),
+            receipt_hash: hex::encode([11u8; 32]),
+            signature: hex::encode([0u8; 64]),
+        });
+        assert!(fabricated.validate().is_ok());
+        assert_eq!(
+            ingest_event(&state, fabricated).await,
+            Err(LedgerlineError::Invalid(
+                "source settlement receipt signature does not verify against any trusted \
+                 Relay/Mint key"
+                    .into()
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn relay_gateway_event_with_a_genuinely_signed_receipt_settles() {
+        let signing_key = SigningKey::from_bytes(&[21u8; 32]);
+        let verifier = Arc::new(
+            SourceReceiptVerifier::from_hex_keys([hex::encode(
+                signing_key.verifying_key().as_bytes(),
+            )])
+            .expect("valid key"),
+        );
+        let mint = Arc::new(CountingMint::default());
+        let state = AppState {
+            mint: mint.clone(),
+            store: Arc::new(MemoryStore::default()),
+            api_key: Arc::from("secret"),
+            policy: Arc::new(AccountPolicy::unrestricted()),
+            receipt_verifier: verifier,
+        };
+
+        let base = event();
+        let genuine = relay_gateway_event(signed_receipt(&signing_key, &base));
+        let (record, created) = ingest_event(&state, genuine)
+            .await
+            .expect("genuine receipt");
+        assert!(created);
+        assert_eq!(mint.0.load(Ordering::SeqCst), 1);
+        assert_eq!(record.margin_micros, 300_000);
     }
 }

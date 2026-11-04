@@ -6,6 +6,7 @@ pub mod error;
 pub mod mint;
 pub mod outbox;
 pub mod policy;
+pub mod receipt_verify;
 pub mod recovery;
 pub mod server;
 pub mod settle;

@@ -7,6 +7,7 @@ use anyhow::{bail, Context};
 use ledgerline::mint::{MintClient, MintSettlement};
 use ledgerline::outbox::{OutboxStore, PostgresOutbox};
 use ledgerline::policy::AccountPolicy;
+use ledgerline::receipt_verify::SourceReceiptVerifier;
 use ledgerline::recovery::{spawn_recovery_worker, RecoveryConfig};
 use ledgerline::server::{build_router, AppState};
 use ledgerline::settle::{Clock, SettlementCoordinator, SystemClock};
@@ -52,6 +53,15 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("running Ledgerline migrations")?;
 
+    // Independent Ed25519 verification for Relay/Mint's signed
+    // `source_settlement_receipt` evidence (required on every `RelayGateway`
+    // event). Explicit keys win; otherwise discover them from Mint's own
+    // key-rotation-aware discovery document. Discovery failure never blocks
+    // startup — it fails closed instead, rejecting every
+    // `source_settlement_receipt` until keys are configured or Mint is
+    // reachable, rather than silently accepting unverifiable evidence.
+    let receipt_verifier = Arc::new(load_receipt_verifier(&config.mint_base).await);
+
     // The coordinator drives the hold+capture+COGS trio through a durable outbox
     // so a mid-sequence failure is atomic-or-compensated, never half-settled.
     let mint_ops = Arc::new(MintClient::new(config.mint_base, config.mint_api_key));
@@ -84,6 +94,7 @@ async fn main() -> anyhow::Result<()> {
         store: event_store,
         api_key: Arc::from(config.ledgerline_api_key),
         policy: Arc::new(config.policy),
+        receipt_verifier,
     };
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await
@@ -118,6 +129,51 @@ fn load_policy() -> anyhow::Result<AccountPolicy> {
                 )
             }
         }
+    }
+}
+
+/// Load the trusted Relay/Mint source-settlement-receipt verification keys.
+///
+/// `LEDGERLINE_SOURCE_RECEIPT_PUBLIC_KEYS` (comma-separated hex Ed25519 public
+/// keys) wins if set. Otherwise, discover the active keys from Mint's own
+/// `.well-known/mint-verification-keys.json`. Neither path blocks startup: a
+/// malformed static key list or an unreachable Mint logs a warning and falls
+/// back to [`SourceReceiptVerifier::none`], which fails closed (every
+/// `source_settlement_receipt` is rejected) rather than failing open.
+async fn load_receipt_verifier(mint_base: &str) -> SourceReceiptVerifier {
+    match std::env::var("LEDGERLINE_SOURCE_RECEIPT_PUBLIC_KEYS") {
+        Ok(raw) if !raw.trim().is_empty() => {
+            match SourceReceiptVerifier::from_hex_keys(raw.split(',')) {
+                Ok(verifier) => verifier,
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        "LEDGERLINE_SOURCE_RECEIPT_PUBLIC_KEYS is invalid; every \
+                         source_settlement_receipt will be rejected until it is fixed"
+                    );
+                    SourceReceiptVerifier::none()
+                }
+            }
+        }
+        _ => match SourceReceiptVerifier::fetch(mint_base).await {
+            Ok(verifier) => {
+                tracing::info!(
+                    mint = %mint_base,
+                    "source-settlement-receipt verification keys discovered from Mint"
+                );
+                verifier
+            }
+            Err(error) => {
+                tracing::warn!(
+                    mint = %mint_base,
+                    %error,
+                    "could not discover source-settlement-receipt verification keys; every \
+                     source_settlement_receipt will be rejected until \
+                     LEDGERLINE_SOURCE_RECEIPT_PUBLIC_KEYS or a reachable Mint is configured"
+                );
+                SourceReceiptVerifier::none()
+            }
+        },
     }
 }
 
