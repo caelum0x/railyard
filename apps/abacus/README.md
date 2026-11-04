@@ -69,10 +69,34 @@ cargo run -p abacus-proxy
 Replace the example treasury account and payee in the copied JSON with real Mint
 identities before sending paid traffic.
 
+Compute the derived key the template's example agent must present (see the
+per-agent key contract below) with:
+
+```bash
+printf '%s' "agent_01ARZ3NDEKTSV4RRFFQ69G5FAV" \
+  | openssl dgst -sha256 -hmac "proxy-secret" | awk '{print $2}'
+```
+
+That hex string — not `proxy-secret` — is the `X-API-Key` this agent sends on
+`POST /v1/proxy` / `GET /v1/budget`.
+
 Clients call `POST /v1/proxy` with `X-API-Key`, `X-Abacus-Agent`, and the
 upstream `Authorization: Bearer ...` header. An agent reads its own remaining
 budget (policy, live allowance headroom, reservations in flight) with
 `GET /v1/budget` and the same `X-API-Key` + `X-Abacus-Agent` headers.
+
+**`X-API-Key` on these two routes is per-agent, not the raw `ABACUS_API_KEY`.**
+`ABACUS_API_KEY` is the operator-only master secret; it is NEVER handed to an
+agent directly. Each agent instead gets its own derived key —
+`hex(HMAC-SHA256(ABACUS_API_KEY, agent_id))` (see
+[`auth::derive_agent_key`](crates/abacus-proxy/src/auth.rs)) — computed once by
+the operator and distributed only to that agent. `require_api_key` recomputes
+this per-agent key from the `X-Abacus-Agent` the caller claims and compares it
+to the presented `X-API-Key`, so one agent's key can never authenticate as a
+different `X-Abacus-Agent`: swapping the header without also knowing that
+other agent's derived key is a `401`, not a cross-agent spend/read. (Routes
+with no agent header, like `GET /v1/receipts/:request_id`, still take the bare
+master key, matching their existing single-ingress-secret contract.)
 
 Operators use a SEPARATE key, `ABACUS_ADMIN_API_KEY` (min 24 chars, must differ
 from `ABACUS_API_KEY`; unset disables the operator API): `GET /v1/admin/overview`
@@ -109,11 +133,14 @@ cryptographically-receipted spend budget — and kills the request the microseco
 would breach it, so a looping agent can never burn $40k overnight.
 
 ## Full plan
-See **[`docs/apps-vision/abacus.md`](../../docs/apps-vision/abacus.md)** for the
-complete plan: problem/thesis, wedge + first customer, architecture, monetization,
-moat, GTM, risks, phased roadmap (Ax0→Ax4), and success metrics.
+There is no separate `docs/apps-vision/abacus.md` in this repo — it was never
+committed (confirmed via `git log --all`), so the old link here was dead. This
+README (architecture, reuse map, deployment status, runtime contract above) is
+the current source of truth for the product. Cross-portfolio history, status,
+and next-steps tracking for this product lives in `plans/railyard.md` in the
+owner's `~/products` workspace (outside this repo).
 
-## What it reuses (see the doc for specifics)
+## What it reuses
 - **Relay** (`apps/relay/crates/*`): `relay-server` (proxy body), `relay-router` /
   `relay-normalize` / `relay-providers` (any-provider metering), `relay-tokenize`
   (pre-flight cost estimate), `relay-keys` (identity/attribution),
