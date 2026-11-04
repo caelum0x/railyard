@@ -31,6 +31,7 @@ pub fn router(st: AppState) -> Router {
         .route("/readyz", get(meta::readyz))
         .route("/llms.txt", get(meta::llms_txt))
         .route("/openapi.json", get(meta::openapi))
+        .route("/sitemap.xml", get(meta::sitemap_xml))
         // Public signup + human catalog (items 6, 13)
         .route("/v1/auth/signup", post(signup::signup))
         .route("/catalog", get(catalog_page::html))

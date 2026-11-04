@@ -56,6 +56,17 @@ pub async fn llms_txt(State(st): State<AppState>) -> Response {
     ([("content-type", "text/plain; charset=utf-8")], text).into_response()
 }
 
+/// `GET /sitemap.xml` -- lists only the one real public, indexable page
+/// (`/catalog`). `/admin` is deliberately excluded: it is the per-operator
+/// console, not a marketing page search engines should crawl.
+pub async fn sitemap_xml(State(st): State<AppState>) -> Response {
+    let base = &st.settings.public_url;
+    let body = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n  <url>\n    <loc>{base}/catalog</loc>\n  </url>\n</urlset>\n"
+    );
+    ([("content-type", "application/xml; charset=utf-8")], body).into_response()
+}
+
 pub async fn openapi(State(st): State<AppState>) -> Response {
     let bearer = json!([{ "bearer": [] }]);
     let env = |data: serde_json::Value| json!({ "type": "object", "properties": { "ok": { "type": "boolean" }, "data": data } });

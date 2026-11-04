@@ -97,9 +97,33 @@ pub async fn html(State(st): State<AppState>) -> Response {
             rows,
         ));
     }
+    let desc = esc(
+        "One API key reaches every AI tool: Switchyard's own products first, then free and public routes, then your own keys. Every call prices in micro-USD up front; failures are never billed.",
+    );
     let doc = format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+<meta name=\"description\" content=\"{desc}\">
+<link rel=\"canonical\" href=\"{base}/catalog\">
+<meta property=\"og:type\" content=\"website\">
+<meta property=\"og:site_name\" content=\"Toolgate\">
+<meta property=\"og:title\" content=\"Switchyard catalog -- 24 capabilities, tools and live pricing\">
+<meta property=\"og:description\" content=\"{desc}\">
+<meta property=\"og:url\" content=\"{base}/catalog\">
+<meta name=\"twitter:card\" content=\"summary\">
+<meta name=\"twitter:title\" content=\"Switchyard catalog -- 24 capabilities, tools and live pricing\">
+<meta name=\"twitter:description\" content=\"{desc}\">
 <title>Switchyard catalog -- 24 capabilities, tools and live pricing</title>
+<script type=\"application/ld+json\">
+{{
+  \"@context\": \"https://schema.org\",
+  \"@type\": \"SoftwareApplication\",
+  \"name\": \"Toolgate\",
+  \"url\": \"{base}/catalog\",
+  \"description\": \"{desc}\",
+  \"applicationCategory\": \"DeveloperApplication\",
+  \"operatingSystem\": \"Any\"
+}}
+</script>
 <style>
 body{{font:15px/1.5 system-ui,-apple-system,sans-serif;margin:0;background:#0b0e14;color:#e6e9ef}}
 header{{padding:36px 28px 20px;border-bottom:1px solid #1e2430}}
