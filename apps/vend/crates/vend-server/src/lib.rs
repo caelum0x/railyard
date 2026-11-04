@@ -92,6 +92,7 @@ pub struct AppState {
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(landing_page))
+        .route("/sitemap.xml", get(sitemap_xml))
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/models", get(list_models))
         .route("/admin", get(admin_page))
@@ -109,6 +110,28 @@ pub fn build_router(state: AppState) -> Router {
 /// or linking to either, so nobody landing on the bare root found either.
 async fn landing_page() -> axum::response::Html<&'static str> {
     axum::response::Html(include_str!("../assets/landing.html"))
+}
+
+/// `GET /sitemap.xml` — lists only the one real public, indexable page
+/// (`/`). `/admin` and `/console` are deliberately excluded: both already
+/// carry `<meta name="robots" content="noindex">` and are per-operator/
+/// per-customer app surfaces, not marketing pages search engines should crawl.
+async fn sitemap_xml() -> Response {
+    const BODY: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://vend.ereboslab.com/</loc>
+  </url>
+</urlset>
+"#;
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/xml; charset=utf-8",
+        )],
+        BODY,
+    )
+        .into_response()
 }
 
 /// `GET /admin` — a self-contained operator console (static HTML + vanilla JS,
