@@ -2988,15 +2988,45 @@ impl LedgerStore for InMemoryStore {
     ) -> Result<DepositReversal, MintError> {
         let now = self.clock.now();
         let mut st = self.lock();
-        let created_ms = st
-            .reversals
-            .get(&record.deposit_ref)
-            .map(|r| r.created_ms)
-            .unwrap_or(now);
-        let stored = DepositReversal {
-            created_ms,
-            updated_ms: now,
-            ..record
+        let existing = st.reversals.get(&record.deposit_ref).cloned();
+        let created_ms = existing.as_ref().map(|r| r.created_ms).unwrap_or(now);
+        // Mirror the Postgres store's monotonic merge (see its doc comment):
+        // the caller computes `record` from a read taken with no lock held
+        // across the gap, so two concurrent reversal applications for the
+        // same `deposit_ref` can race this write. `amount_micros` /
+        // `clawed_micros` / `attempts` only ever grow, so take the max of
+        // whichever write lands; derive `status` from the merged totals
+        // (with `written_off` sticky) rather than trusting either side's
+        // possibly-stale status.
+        let stored = match existing {
+            Some(prev) => {
+                let amount_micros = prev.amount_micros.max(record.amount_micros);
+                let clawed_micros = prev.clawed_micros.max(record.clawed_micros);
+                let attempts = prev.attempts.max(record.attempts);
+                let status = if prev.status == ReversalStatus::WrittenOff
+                    || record.status == ReversalStatus::WrittenOff
+                {
+                    ReversalStatus::WrittenOff
+                } else if clawed_micros >= amount_micros {
+                    ReversalStatus::ClawedBack
+                } else {
+                    ReversalStatus::Shortfall
+                };
+                DepositReversal {
+                    amount_micros,
+                    clawed_micros,
+                    attempts,
+                    status,
+                    created_ms,
+                    updated_ms: now,
+                    ..record
+                }
+            }
+            None => DepositReversal {
+                created_ms,
+                updated_ms: now,
+                ..record
+            },
         };
         st.reversals
             .insert(stored.deposit_ref.clone(), stored.clone());
@@ -4010,5 +4040,122 @@ mod tests {
                 .unwrap();
         });
         assert_eq!(s.receipts_snapshot().len(), receipts_before.len() + 2);
+    }
+
+    /// Repro for the lost-update race this file's `upsert_deposit_reversal`
+    /// now guards against: two concurrent reversal applications for the same
+    /// `deposit_ref` each read the row BEFORE either writes (exactly what
+    /// `apply_reversal` does with no lock held across its own read-then-write
+    /// gap — see the handler's doc comment), so the second call's write is
+    /// computed from stale data. Before the fix this was a blind overwrite:
+    /// the stale, "nothing burned yet" write would land last and silently
+    /// regress a fully-clawed-back reversal back to `shortfall` — and that
+    /// falsely-reported shortfall is exactly what the designed-for operator
+    /// worklist retries, burning the account a second time for money already
+    /// recovered. With the fix the merge is monotonic, so the stale write can
+    /// only hold the record steady, never regress it.
+    #[tokio::test]
+    async fn concurrent_reversal_upsert_does_not_lose_the_winning_write() {
+        let s = store();
+        let deposit_ref = "stripe:ch_lost_update";
+        let account_id = "ait1testaccount0000000000000000000000000000";
+
+        // Both racers read the SAME pre-state: no reversal recorded yet.
+        assert!(s.get_deposit_reversal(deposit_ref).await.unwrap().is_none());
+
+        // Racer A: the real webhook delivery. It successfully burns the full
+        // amount and writes `clawed_back`.
+        let a_write = DepositReversal {
+            deposit_ref: deposit_ref.to_string(),
+            account_id: account_id.to_string(),
+            amount_micros: 5_000_000,
+            clawed_micros: 5_000_000,
+            reason: "refund".to_string(),
+            status: ReversalStatus::ClawedBack,
+            attempts: 1,
+            note: None,
+            created_ms: 0,
+            updated_ms: 0,
+        };
+        let after_a = s.upsert_deposit_reversal(a_write).await.unwrap();
+        assert_eq!(after_a.status, ReversalStatus::ClawedBack);
+        assert_eq!(after_a.clawed_micros, 5_000_000);
+
+        // Racer B: a duplicate delivery of the SAME webhook event, computed
+        // from the pre-A read (idem_key collision means `commit_redeem`
+        // burned nothing on this side, `idempotent_replay: true`), so its
+        // locally-computed write is stale: `clawed_micros: 0, shortfall`.
+        let b_write = DepositReversal {
+            deposit_ref: deposit_ref.to_string(),
+            account_id: account_id.to_string(),
+            amount_micros: 5_000_000,
+            clawed_micros: 0,
+            reason: "refund".to_string(),
+            status: ReversalStatus::Shortfall,
+            attempts: 1,
+            note: None,
+            created_ms: 0,
+            updated_ms: 0,
+        };
+        let after_b = s.upsert_deposit_reversal(b_write).await.unwrap();
+
+        // The stale write must NOT regress the record: a later retry of a
+        // falsely-reported shortfall would otherwise burn the account twice
+        // for money that was already fully recovered.
+        assert_eq!(
+            after_b.status,
+            ReversalStatus::ClawedBack,
+            "a stale concurrent write regressed a clawed-back reversal to shortfall"
+        );
+        assert_eq!(after_b.clawed_micros, 5_000_000);
+
+        // And the row actually persisted this way, not just the return value.
+        let persisted = s.get_deposit_reversal(deposit_ref).await.unwrap().unwrap();
+        assert_eq!(persisted.status, ReversalStatus::ClawedBack);
+        assert_eq!(persisted.clawed_micros, 5_000_000);
+    }
+
+    /// A deliberate, explicit write-off must stick even if a stale reversal
+    /// write (e.g. a slow-arriving duplicate webhook) lands after it.
+    #[tokio::test]
+    async fn written_off_is_sticky_against_a_late_stale_reversal_write() {
+        let s = store();
+        let deposit_ref = "stripe:ch_writeoff_race";
+        let account_id = "ait1testaccount0000000000000000000000000000";
+
+        let shortfall = DepositReversal {
+            deposit_ref: deposit_ref.to_string(),
+            account_id: account_id.to_string(),
+            amount_micros: 5_000_000,
+            clawed_micros: 2_000_000,
+            reason: "refund".to_string(),
+            status: ReversalStatus::Shortfall,
+            attempts: 1,
+            note: None,
+            created_ms: 0,
+            updated_ms: 0,
+        };
+        s.upsert_deposit_reversal(shortfall.clone()).await.unwrap();
+
+        // Operator writes off the remaining shortfall.
+        let written_off = DepositReversal {
+            status: ReversalStatus::WrittenOff,
+            ..shortfall.clone()
+        };
+        let after_writeoff = s.upsert_deposit_reversal(written_off).await.unwrap();
+        assert_eq!(after_writeoff.status, ReversalStatus::WrittenOff);
+
+        // A late, stale duplicate-webhook write (computed before the
+        // write-off) must not resurrect the shortfall.
+        let late_stale = DepositReversal {
+            status: ReversalStatus::Shortfall,
+            ..shortfall
+        };
+        let after_late = s.upsert_deposit_reversal(late_stale).await.unwrap();
+        assert_eq!(
+            after_late.status,
+            ReversalStatus::WrittenOff,
+            "a stale reversal write resurrected a written-off reversal"
+        );
     }
 }
