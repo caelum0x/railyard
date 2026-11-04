@@ -34,6 +34,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 subtle = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 ulid = { workspace = true }
 async-trait = { workspace = true }
 sqlx = { workspace = true }
