@@ -1,0 +1,54 @@
+name: Bug report
+description: Something in one of the apps is broken or behaving incorrectly.
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: app
+    attributes:
+      label: Which app?
+      description: Which `apps/<name>` is this about?
+      options:
+        - mint
+        - relay
+        - rago
+        - vend
+        - turnstile
+        - abacus
+        - ledgerline
+        - context-passport
+        - toolgate (switchyard)
+        - console
+        - insights / insights-edge
+        - product-analytics
+        - gitea / rithub / rithub-forge
+        - rit
+        - agent-runtime
+        - game-economy
+        - ranguard
+        - other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: >-
+        Minimal steps, a request/response, or a failing test. For money-path
+        bugs (anything touching Mint holds/captures), please say so explicitly —
+        see SECURITY.md if this is a vulnerability rather than a bug.
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Rust/Node version, OS, and whether you're running the app's own test suite or a live deployment.
+    validations:
+      required: false

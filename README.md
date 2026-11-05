@@ -8,6 +8,11 @@
   [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
   [![Insights](https://img.shields.io/badge/insights-live-brightgreen)](https://insights.ereboslab.com)
   [![Faultline](https://img.shields.io/badge/errors-live-brightgreen)](https://errors.ereboslab.com)
+  [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat)](CONTRIBUTING.md)
+  [![GitHub contributors](https://img.shields.io/github/contributors/caelum0x/railyard)](https://github.com/caelum0x/railyard/graphs/contributors)
+  [![GitHub commit activity](https://img.shields.io/github/commit-activity/m/caelum0x/railyard)](https://github.com/caelum0x/railyard/commits/main)
+
+  [Apps](#apps) · [Architecture](#architecture) · [Quickstart](#quickstart) · [Contributing](#contributing) · [Discussions](https://github.com/caelum0x/railyard/discussions)
 </div>
 
 ---
@@ -169,6 +174,16 @@ workspace with its own tests — run those before opening a PR, and keep the
 design invariants above (integer microdollars, success-only billing, Mint as
 the only vault, injectable transport traits) intact in anything that touches
 money.
+
+## Community & support
+
+- [GitHub Discussions](https://github.com/caelum0x/railyard/discussions) —
+  questions, design discussion, "how do I wire app X to Mint."
+- [GitHub Issues](https://github.com/caelum0x/railyard/issues) — bugs and
+  concrete feature requests (templates provided).
+- [`SECURITY.md`](SECURITY.md) — private vulnerability reporting; please
+  don't file money-path or auth bugs as public issues.
+- [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ## License
 

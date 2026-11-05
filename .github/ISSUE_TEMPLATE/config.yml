@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/caelum0x/railyard/security/advisories/new
+    about: Please report security vulnerabilities privately, not as a public issue — see SECURITY.md.
+  - name: Questions / discussion
+    url: https://github.com/caelum0x/railyard/discussions
+    about: General questions, design discussion, or "how do I..." — not a bug or a concrete feature proposal.

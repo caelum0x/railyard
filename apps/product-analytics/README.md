@@ -6,8 +6,9 @@ with `@railyard/analytics-js` (web and Expo) or `@railyard/analytics-node`
 (servers). The token is the app's public site key, so `scribase add analytics`
 needs no new key.
 
-Status: not deployed. Limits are targets until the owner sets them
-(`src/plans.ts`).
+Status: **live** at `pa.ereboslab.com` (deployed 2026-10-29, re-verified live
+2026-11-04 — `/healthz` returns `200`, capture endpoints validate real
+requests). Limits are targets until the owner sets them (`src/plans.ts`).
 
 ## Run
 

@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a new capability for one of the apps, or a new app for the rail.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What are you trying to do that the rail doesn't support today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: >-
+        If this touches money (anything calling Mint) or a new app, please
+        sanity-check it against the design invariants in CONTRIBUTING.md and
+        docs/RAILYARD_ENTERPRISE_ARCHITECTURE.md §0 first — e.g. integer
+        microdollars, success-only billing, Mint as the only vault.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I checked docs/OSS_FOUNDATIONS.md to see if there's already a permissively-licensed foundation to build on instead of writing this from scratch.
+          required: false
+        - label: I'm willing to open a PR for this myself.
+          required: false
