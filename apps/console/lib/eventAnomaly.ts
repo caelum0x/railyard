@@ -1,32 +1,39 @@
 import type { InsightsSummary } from "./insights.ts";
+import {
+  EVREN_SYSTEMONE_MODEL,
+  DEFAULT_SYSTEMONE_TIMEOUT_MS,
+  callSystemOne,
+  parseScoreAnswer,
+  parseChoiceAnswer,
+  type GatewayDeps,
+  type GatewayLog,
+  type SystemOneQuestions,
+} from "./evrenDecisionCore.ts";
 
 // Typed AI judgment of per-app event-volume anomaly severity, on top of (never
 // instead of) the plain current/baseline arithmetic this module computes
 // itself from two real insightsClient.summary() calls. Calls Evren's decision
-// gateway (POST /v1/systemone, model "laya") -- same wire contract and module
-// shape as done/big-projects/bidstage-tenders' match/evren-fit.ts,
-// sahibinden's packages/db/src/repository/evren-risk.ts and homeplan's
-// lib/architectFit.ts (read all three first): a pure request/response module
-// with no env or fetch globals baked in, so the only caller (the Usage page,
-// via lib/deps.ts) injects both. Today the Usage page only renders a bare
+// gateway (POST /v1/systemone, model "laya") through the shared
+// lib/evrenDecisionCore.ts wrapper (vendored from
+// ai-knowledges/evren/decision-core, which this repo's own hand-rolled
+// fetch+parse boilerplate here was one of the 5 real consumers it was
+// factored out of, 2026-11-05) -- same wire contract and module shape as
+// done/big-projects/bidstage-tenders' match/evren-fit.ts, sahibinden's
+// packages/db/src/repository/evren-risk.ts and homeplan's lib/architectFit.ts
+// (read all three first): a pure request/response module with no env or
+// fetch globals baked in, so the only caller (the Usage page, via
+// lib/deps.ts) injects both. Today the Usage page only renders a bare
 // current-period event count against the plan cap (lib/caps.ts's
 // capMessage) -- there is no anomaly/spike/drop detection anywhere in this
 // repo. This module is additive only: a gateway outage or bad response can
 // never remove or block the existing event count or cap note.
 
-export const EVENT_ANOMALY_MODEL = "laya";
-export const DEFAULT_EVENT_ANOMALY_TIMEOUT_MS = 8_000;
+export const EVENT_ANOMALY_MODEL = EVREN_SYSTEMONE_MODEL;
+export const DEFAULT_EVENT_ANOMALY_TIMEOUT_MS = DEFAULT_SYSTEMONE_TIMEOUT_MS;
 
-export type EventAnomalyLog = (event: string, detail?: Record<string, unknown>) => void;
+export type EventAnomalyLog = GatewayLog;
 
-export type EventAnomalyDeps = {
-  /** Origin of the Evren LLM gateway, e.g. https://evren-llmapi.ssyz.org.tr */
-  readonly baseUrl: string;
-  readonly apiKey: string;
-  readonly fetch: typeof fetch;
-  readonly log: EventAnomalyLog;
-  readonly timeoutMs?: number;
-};
+export type EventAnomalyDeps = GatewayDeps;
 
 /**
  * Fixed, reviewable reason labels. The model only ever picks one of these keys
@@ -162,13 +169,9 @@ function toResult(position: number, reasonCode: EventAnomalyReasonCode): EventAn
 
 /** Pure parse of a /v1/systemone response body; exported so callers never need a live network call to test it. */
 export function parseEventAnomaly(body: DecisionBody): EventAnomalyResult | null {
-  const answers = body.answers ?? {};
-  const severityRaw = answers.severity?.score;
-  const reasonRaw = answers.reason?.choice;
-  if (typeof severityRaw !== "number" || !Number.isFinite(severityRaw)) return null;
-  const reasonCode = typeof reasonRaw === "string" && (REASON_CODES as readonly string[]).includes(reasonRaw) ? (reasonRaw as EventAnomalyReasonCode) : null;
-  if (!reasonCode) return null;
-  const position = clamp01(severityRaw / (SEVERITY_LEVELS.length - 1));
+  const position = parseScoreAnswer(body, "severity", SEVERITY_LEVELS.length);
+  const reasonCode = parseChoiceAnswer(body, "reason", REASON_CODES);
+  if (position === null || reasonCode === null) return null;
   return toResult(position, reasonCode);
 }
 
@@ -177,32 +180,17 @@ export function parseEventAnomaly(body: DecisionBody): EventAnomalyResult | null
  * null and is logged, never thrown. The Usage page's real event count and
  * lib/caps.ts's capMessage are the sole authoritative path; this call can
  * only add an anomaly badge on top of them, so a gateway outage or bad
- * response can never break the Usage page.
+ * response can never break the Usage page. HTTP/timeout/fail-open mechanics
+ * now live in lib/evrenDecisionCore.ts's callSystemOne; this function only
+ * builds the request shape and parses the response the same way it always
+ * has.
  */
 export async function classifyEventAnomaly(deps: EventAnomalyDeps, features: EventAnomalyFeatures, currentPeriodDays: number, baselinePeriodDays: number): Promise<EventAnomalyResult | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? DEFAULT_EVENT_ANOMALY_TIMEOUT_MS);
-  try {
-    const res = await deps.fetch(`${deps.baseUrl}/v1/systemone`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${deps.apiKey}` },
-      body: JSON.stringify({ model: EVENT_ANOMALY_MODEL, state: state(features, currentPeriodDays, baselinePeriodDays), questions: QUESTIONS }),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      deps.log("event_anomaly.http_error", { status: res.status, app_id: features.appId });
-      return null;
-    }
-    const body = (await res.json()) as DecisionBody;
-    const result = parseEventAnomaly(body);
-    if (!result) deps.log("event_anomaly.unparseable_response", { app_id: features.appId });
-    return result;
-  } catch (error) {
-    deps.log("event_anomaly.failed", { app_id: features.appId, error: error instanceof Error ? error.message : String(error) });
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+  const body = await callSystemOne(deps, state(features, currentPeriodDays, baselinePeriodDays), QUESTIONS as unknown as SystemOneQuestions);
+  if (!body) return null;
+  const result = parseEventAnomaly(body as DecisionBody);
+  if (!result) deps.log("event_anomaly.unparseable_response", { app_id: features.appId });
+  return result;
 }
 
 export type EventAnomalyEvidence = { readonly ratio: number | null; readonly hasBaseline: boolean };
