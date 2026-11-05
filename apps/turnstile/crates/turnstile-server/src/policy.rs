@@ -214,10 +214,7 @@ impl UpstreamPolicy {
 fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_public_v4(v4),
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => is_public_v4(v4),
-            None => is_public_v6(v6),
-        },
+        IpAddr::V6(v6) => !is_blocked_v6(v6),
     }
 }
 
@@ -236,14 +233,45 @@ fn is_public_v4(ip: Ipv4Addr) -> bool {
         || a >= 240)
 }
 
-fn is_public_v6(ip: Ipv6Addr) -> bool {
-    let first = ip.segments()[0];
-    !(ip.is_loopback()
+/// True when `ip` is NOT a globally routable unicast IPv6 address — including
+/// the four standard encodings that embed a literal IPv4 address, each
+/// checked against `is_public_v4`'s own rules rather than re-litigating them:
+/// IPv4-mapped (`::ffff:a.b.c.d`), IPv4-compatible (deprecated `::a.b.c.d`),
+/// NAT64 (`64:ff9b::/96`), and 6to4 (`2002::/16`). Mirrors the sibling
+/// Toolgate app's `switchyard-egress::policy::v6_blocked` (same threat model:
+/// a leaked operator token must not become an SSRF proxy) — see the
+/// `refuses_ipv4_embedded_in_compat_nat64_and_6to4_ipv6_forms` regression
+/// test below for why the embedded-IPv4 forms matter: before this fix,
+/// `is_public_v6` only decoded the IPv4-*mapped* form, so a loopback,
+/// link-local/metadata or private address wrapped in IPv4-compatible,
+/// NAT64 or 6to4 notation was treated as public and approved as an upstream.
+fn is_blocked_v6(ip: Ipv6Addr) -> bool {
+    let s = ip.segments();
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return !is_public_v4(v4);
+    }
+    // IPv4-compatible (deprecated `::a.b.c.d`) and NAT64 `64:ff9b::/96` both
+    // embed the IPv4 address in the last two segments.
+    if s[0..6] == [0, 0, 0, 0, 0, 0] || (s[0] == 0x64 && s[1] == 0xff9b && s[2..6] == [0, 0, 0, 0]) {
+        let v4 = Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8);
+        return ip.is_unspecified() || ip.is_loopback() || !is_public_v4(v4);
+    }
+    // 6to4 `2002::/16` embeds the IPv4 address in segments 1-2.
+    if s[0] == 0x2002 {
+        let v4 = Ipv4Addr::new((s[1] >> 8) as u8, s[1] as u8, (s[2] >> 8) as u8, s[2] as u8);
+        if !is_public_v4(v4) {
+            return true;
+        }
+    }
+    ip.is_loopback()
         || ip.is_unspecified()
         || ip.is_multicast()
-        || (first & 0xfe00) == 0xfc00 // unique local fc00::/7
-        || (first & 0xffc0) == 0xfe80 // link-local fe80::/10
-        || first == 0x2001 && ip.segments()[1] == 0x0db8) // documentation
+        || (s[0] & 0xfe00) == 0xfc00 // unique local fc00::/7
+        || (s[0] & 0xffc0) == 0xfe80 // link-local fe80::/10
+        || (s[0] & 0xffc0) == 0xfec0 // deprecated site-local fec0::/10
+        || (s[0] == 0x2001 && s[1] == 0x0db8) // documentation 2001:db8::/32
+        || (s[0] == 0x2001 && s[1] == 0) // Teredo 2001::/32
+        || (s[0] == 0x0100 && s[1..4] == [0, 0, 0]) // discard-only 100::/64
 }
 
 #[cfg(test)]
@@ -266,6 +294,41 @@ mod tests {
         }
         let open = UpstreamPolicy { allow_private: true, ..UpstreamPolicy::default() };
         assert!(open.check_url("http://127.0.0.1:8080/").await.is_ok());
+    }
+
+    /// Regression test for a real SSRF bypass found 2026-11-06: `is_public_v6`
+    /// only special-cased the IPv4-*mapped* form (`::ffff:a.b.c.d`, via Rust's
+    /// `to_ipv4_mapped`). It did not decode the three OTHER standard IPv6
+    /// encodings that embed a literal IPv4 address — IPv4-compatible
+    /// (deprecated `::a.b.c.d`), NAT64 (`64:ff9b::/96`), and 6to4
+    /// (`2002::/16`) — so a loopback, link-local/metadata, or private IPv4
+    /// address wrapped in one of those three forms sailed through `is_public`
+    /// as "public" and `check_url` approved it as an upstream, even though
+    /// each one unambiguously names a non-public address once decoded. The
+    /// sibling Toolgate app's `switchyard-egress::policy` (same threat model:
+    /// a leaked operator/admin token must not become an SSRF proxy) already
+    /// decodes all three forms; Turnstile's own `UpstreamPolicy` — written
+    /// for the identical threat model stated in this file's own doc comment
+    /// — did not.
+    #[tokio::test]
+    async fn refuses_ipv4_embedded_in_compat_nat64_and_6to4_ipv6_forms() {
+        let policy = UpstreamPolicy::default();
+        for (url, embeds) in [
+            ("http://[::127.0.0.1]/", "IPv4-compatible loopback"),
+            ("http://[::10.0.0.5]/", "IPv4-compatible private"),
+            ("http://[64:ff9b::a9fe:a9fe]/", "NAT64 cloud-metadata (169.254.169.254)"),
+            ("http://[64:ff9b::7f00:1]/", "NAT64 loopback"),
+            ("http://[2002:7f00:1::]/", "6to4 loopback"),
+            ("http://[2002:a9fe:a9fe::]/", "6to4 cloud-metadata (169.254.169.254)"),
+        ] {
+            assert!(
+                policy.check_url(url).await.is_err(),
+                "{url} ({embeds}) must be refused, not treated as a public address"
+            );
+        }
+        // allow_private still bypasses all of the above, same as every other form.
+        let open = UpstreamPolicy { allow_private: true, ..UpstreamPolicy::default() };
+        assert!(open.check_url("http://[::127.0.0.1]/").await.is_ok());
     }
 
     #[test]
