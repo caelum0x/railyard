@@ -16,8 +16,8 @@ use vend_core::error::VendError;
 use vend_core::transport::{
     CaptureRequest, CaptureResponse, CheckoutRequest, CheckoutResponse, CreateAccountRequest,
     CreateAccountResponse, HoldRequest, HoldResponse,
-    HoldView, MintBalance, MintTransport, ReleaseRequest, ReleaseResponse, SettlementProof, TransferRequest,
-    TransferResponse,
+    HoldView, MintAccountInfo, MintBalance, MintTransport, ReleaseRequest, ReleaseResponse,
+    SettlementProof, TransferRequest, TransferResponse,
 };
 
 /// A configured client for one mint-server deployment.
@@ -344,6 +344,17 @@ impl MintTransport for MintClient {
             owner_ref: req.owner_ref,
         };
         self.post_json("/v1/accounts", &wire).await
+    }
+
+    async fn get_account(&self, account_id: &str) -> Result<MintAccountInfo, VendError> {
+        if account_id.is_empty()
+            || !account_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b':'))
+        {
+            return Err(VendError::BadId);
+        }
+        self.get_json(&format!("/v1/accounts/{account_id}")).await
     }
 }
 

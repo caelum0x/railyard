@@ -566,7 +566,14 @@ Unknown `Vend-End-User` values are rejected. End-user-funded apps never fall
 back to charging the app account, and end-user-scoped keys resolve their bound
 typed id before accepting a matching external reference. For
 `end_user_reserve` apps, prefer `POST /v1/wallets`: it opens the Mint wallet
-for you. Mapping an existing Mint account by hand is still supported.
+for you. Mapping an existing Mint account by hand is still supported — **on
+the operator route above only.** The mirrored self-serve
+`POST /v1/customer/apps/:app_id/end-users` verifies the claimed
+`mint_account_id` was actually opened by `ensure_wallet`/`POST /v1/wallets`
+for that exact `(app, external_ref)` (its Mint `owner_ref` must match), so a
+tenant admin can never attribute billing to a Mint account it doesn't
+actually own; the operator's deployment-wide `ADMIN_TOKEN` route is trusted
+by design and keeps the unrestricted hand-mapping behavior.
 
 BYOK funding is still not built. The atomic request claim prevents concurrent duplicate execution,
 and `vend-reconcile` closes pre-attachment, attached-hold, lost local-capture,

@@ -18,8 +18,9 @@ use vend_core::error::VendError;
 use vend_core::transport::{
     CaptureRequest, CaptureResponse, CheckoutRequest, CheckoutResponse, CreateAccountRequest,
     CreateAccountResponse, HoldRequest, HoldResponse,
-    HoldStatus, HoldView, MintBalance, MintTransport, RelayRequest, RelayResponse, RelayTransport,
-    ReleaseRequest, ReleaseResponse, SettlementProof, TransferRequest, TransferResponse, Usage,
+    HoldStatus, HoldView, MintAccountInfo, MintBalance, MintTransport, RelayRequest,
+    RelayResponse, RelayTransport, ReleaseRequest, ReleaseResponse, SettlementProof,
+    TransferRequest, TransferResponse, Usage,
 };
 
 pub use store::InMemoryStore;
@@ -296,6 +297,22 @@ impl MintTransport for FakeMint {
         s.balances.insert(account_id.clone(), 0);
         s.created_accounts.push((account_id.clone(), req));
         Ok(CreateAccountResponse { account_id })
+    }
+
+    async fn get_account(&self, account_id: &str) -> Result<MintAccountInfo, VendError> {
+        let s = self.inner.lock().unwrap();
+        let owner_ref = s
+            .created_accounts
+            .iter()
+            .find(|(id, _)| id == account_id)
+            .and_then(|(_, req)| req.owner_ref.clone());
+        if !s.balances.contains_key(account_id) {
+            return Err(VendError::NotFound);
+        }
+        Ok(MintAccountInfo {
+            account_id: account_id.to_string(),
+            owner_ref,
+        })
     }
 }
 

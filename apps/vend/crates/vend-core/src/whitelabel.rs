@@ -12,6 +12,18 @@ use crate::error::VendError;
 use crate::ids::{AppId, TenantId};
 use crate::money::ModelMarkup;
 
+/// The exact `owner_ref` Vend records on every Mint account it opens for an
+/// end-user wallet (`ensure_wallet`, `POST /v1/wallets`). This is the ONLY
+/// place either side of the ownership check — wallet creation and wallet
+/// provisioning verification — is allowed to compute this string, so they
+/// can never drift apart.
+pub fn wallet_owner_ref(app_id: &AppId, external_ref: &str) -> String {
+    format!("vend:{}:{external_ref}", app_id.as_str())
+        .chars()
+        .take(256)
+        .collect()
+}
+
 /// One stored per-model markup override.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelMarkupEntry {

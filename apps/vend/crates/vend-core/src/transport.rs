@@ -165,6 +165,18 @@ pub struct CreateAccountResponse {
     pub account_id: String,
 }
 
+/// `GET /v1/accounts/:id` projection used ONLY to verify that a
+/// caller-supplied `mint_account_id` was actually created by Vend for the
+/// app/end-user that now claims it — never to display account data.
+/// `owner_ref` is the exact opaque string `ensure_wallet` recorded on
+/// creation (`vend:{app_id}:{external_ref}`, see `whitelabel::wallets`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MintAccountInfo {
+    pub account_id: String,
+    #[serde(default)]
+    pub owner_ref: Option<String>,
+}
+
 /// The Mint data-plane seam. Object-safe (async_trait boxes the futures) so it
 /// can be stored as `Arc<dyn MintTransport>` in the server state.
 #[async_trait]
@@ -197,6 +209,10 @@ pub trait MintTransport: Send + Sync {
         &self,
         req: CreateAccountRequest,
     ) -> Result<CreateAccountResponse, VendError>;
+    /// `GET /v1/accounts/:id` — fetch an account's `owner_ref` so a caller
+    /// claiming an EXISTING `mint_account_id` can be checked against it
+    /// before it is trusted as a billing funding source.
+    async fn get_account(&self, account_id: &str) -> Result<MintAccountInfo, VendError>;
 }
 
 // ---------------------------------------------------------------------------

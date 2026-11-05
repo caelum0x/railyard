@@ -107,10 +107,7 @@ pub async fn ensure_wallet(
             _ => Err(VendError::WalletUnprovisioned),
         };
     }
-    let owner_ref: String = format!("vend:{}:{external_ref}", app.id.as_str())
-        .chars()
-        .take(256)
-        .collect();
+    let owner_ref = vend_core::whitelabel::wallet_owner_ref(&app.id, external_ref);
     let account = mint
         .create_account(CreateAccountRequest {
             kind: "user".into(),

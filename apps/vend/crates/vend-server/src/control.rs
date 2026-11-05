@@ -1204,6 +1204,38 @@ async fn customer_issue_app_key(
     )
 }
 
+/// Verify that `mint_account_id` is a REAL Mint account Vend itself already
+/// opened for this exact `(app_id, external_ref)` pair via `ensure_wallet`
+/// (`POST /v1/wallets` / the console "create wallet" action) — i.e. its
+/// `owner_ref` is the one Vend wrote at creation time
+/// ([`vend_core::whitelabel::wallet_owner_ref`]).
+///
+/// This gate exists ONLY on the self-serve customer route. The operator-only
+/// `/v1/control/apps/:app_id/end-users` (`provision_end_user` below, behind
+/// the deployment's single `ADMIN_TOKEN`) intentionally skips it — the
+/// README documents hand-mapping an externally-known Mint account as a
+/// supported operator capability, and the operator is already as trusted as
+/// direct database access. A self-serve tenant admin is not: without this
+/// check, ANY tenant could bind an arbitrary `mint_account_id` string
+/// (something they learned, not something Vend ever verified they control)
+/// as their own app's end-user funding source, and every hold that app's
+/// metered traffic opens would be charged to that account, not the tenant's
+/// own money.
+async fn verify_customer_owns_mint_account(
+    mint: &dyn MintTransport,
+    app_id: &AppId,
+    external_ref: &str,
+    mint_account_id: &str,
+) -> Result<(), VendError> {
+    let expected = vend_core::whitelabel::wallet_owner_ref(app_id, external_ref.trim());
+    let account = mint.get_account(mint_account_id).await?;
+    if account.owner_ref.as_deref() == Some(expected.as_str()) {
+        Ok(())
+    } else {
+        Err(VendError::Unauthorized)
+    }
+}
+
 async fn customer_provision_end_user(
     State(state): State<ControlState>,
     Extension(principal): Extension<CustomerPrincipal>,
@@ -1217,6 +1249,16 @@ async fn customer_provision_end_user(
         Ok(app) => app,
         Err(error) => return control_error(error),
     };
+    if let Err(error) = verify_customer_owns_mint_account(
+        state.mint.as_ref(),
+        &app.id,
+        &input.external_ref,
+        &input.mint_account_id,
+    )
+    .await
+    {
+        return control_error(error);
+    }
     result(
         state
             .repo
@@ -2263,5 +2305,93 @@ mod tests {
             input.end_user_external_ref,
             Some("customer-123".to_string())
         );
+    }
+
+    /// The half of the cross-tenant wallet-binding fix that does NOT need
+    /// Postgres: `vend-store/tests/cross_tenant_wallet_binding.rs` proves,
+    /// against the real `VendStore`, that `provision_end_user` itself (the
+    /// method shared by the operator and the self-serve customer route)
+    /// accepts any caller-supplied `mint_account_id` with no ownership
+    /// check at all. This proves the gate `customer_provision_end_user`
+    /// now calls BEFORE reaching that method actually closes it: a
+    /// self-serve tenant can no longer attribute an app's end-user to a
+    /// Mint account it did not itself open via `ensure_wallet`.
+    #[tokio::test]
+    async fn verify_customer_owns_mint_account_rejects_an_unowned_account_and_accepts_a_real_wallet(
+    ) {
+        use vend_testkit::FakeMint;
+
+        let mint = FakeMint::new();
+        let app_id = AppId::generate();
+        let other_app_id = AppId::generate();
+
+        // A real wallet, opened the only legitimate way (`ensure_wallet`):
+        // Mint records the owner_ref Vend itself writes.
+        let legit_account = mint
+            .create_account(vend_core::transport::CreateAccountRequest {
+                kind: "user".into(),
+                owner_ref: Some(vend_core::whitelabel::wallet_owner_ref(
+                    &app_id,
+                    "real-customer",
+                )),
+            })
+            .await
+            .unwrap()
+            .account_id;
+
+        // The exact exploit from the Postgres-level test: a DIFFERENT app
+        // claims the SAME real account id as its own end-user's wallet.
+        let cross_tenant = verify_customer_owns_mint_account(
+            &mint,
+            &other_app_id,
+            "attacker-user",
+            &legit_account,
+        )
+        .await;
+        assert_eq!(
+            cross_tenant.unwrap_err(),
+            VendError::Unauthorized,
+            "a wallet opened for one app must never be claimable by another"
+        );
+
+        // Same app, but the wrong external_ref also must not match — the
+        // owner_ref binds one specific (app, external_ref) pair, not just
+        // the app.
+        let wrong_ref =
+            verify_customer_owns_mint_account(&mint, &app_id, "not-the-real-customer", &legit_account)
+                .await;
+        assert_eq!(wrong_ref.unwrap_err(), VendError::Unauthorized);
+
+        // An account nobody ever created via ensure_wallet (no owner_ref at
+        // all) must also be rejected, not treated as "unclaimed, so allow".
+        let orphan_account = mint
+            .create_account(vend_core::transport::CreateAccountRequest {
+                kind: "user".into(),
+                owner_ref: None,
+            })
+            .await
+            .unwrap()
+            .account_id;
+        let orphan = verify_customer_owns_mint_account(
+            &mint,
+            &app_id,
+            "real-customer",
+            &orphan_account,
+        )
+        .await;
+        assert_eq!(orphan.unwrap_err(), VendError::Unauthorized);
+
+        // The legitimate, exact-matching case still works — this is what
+        // keeps `POST /v1/wallets` → `POST /v1/customer/apps/:app/end-users`
+        // (an idempotent confirm of a wallet the customer actually opened)
+        // functional after the fix.
+        let legit = verify_customer_owns_mint_account(
+            &mint,
+            &app_id,
+            "real-customer",
+            &legit_account,
+        )
+        .await;
+        assert!(legit.is_ok(), "{legit:?}");
     }
 }
