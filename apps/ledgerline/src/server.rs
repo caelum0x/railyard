@@ -436,8 +436,7 @@ mod tests {
 
     fn signed_receipt(signing_key: &SigningKey, event: &MeterEvent) -> SourceSettlementReceipt {
         let hash = [11u8; 32];
-        let signature = signing_key.sign(&hash);
-        SourceSettlementReceipt {
+        let mut receipt = SourceSettlementReceipt {
             request_id: event.request_id.clone(),
             payer_account: event.customer_account.clone(),
             sequence: 42,
@@ -445,8 +444,13 @@ mod tests {
             amount_micros: event.cogs_micros,
             operation_hash: "op_hash".into(),
             receipt_hash: hex::encode(hash),
-            signature: hex::encode(signature.to_bytes()),
-        }
+            signature: String::new(),
+        };
+        // Sign the full claim commitment (crate::receipt_verify::commitment_digest),
+        // not the bare receipt_hash — see receipt_verify.rs's 2026-11-06 fix.
+        let signature = signing_key.sign(&crate::receipt_verify::commitment_digest(&receipt));
+        receipt.signature = hex::encode(signature.to_bytes());
+        receipt
     }
 
     #[tokio::test]
@@ -483,7 +487,7 @@ mod tests {
             ingest_event(&state, fabricated).await,
             Err(LedgerlineError::Invalid(
                 "source settlement receipt signature does not verify against any trusted \
-                 Relay/Mint key"
+                 Relay/Mint key for this exact claim"
                     .into()
             ))
         );
@@ -515,5 +519,60 @@ mod tests {
         assert!(created);
         assert_eq!(mint.0.load(Ordering::SeqCst), 1);
         assert_eq!(record.margin_micros, 300_000);
+    }
+
+    /// End-to-end proof (through the real `ingest_event` chokepoint, not just
+    /// `receipt_verify`'s own unit tests) that a genuine, signed receipt for
+    /// one real request cannot be replayed verbatim to back a forged claim
+    /// for a different request/amount. This is the exact gap the 2026-11-05
+    /// fix (`600d177e`) left open and the 2026-11-06 follow-up closes.
+    #[tokio::test]
+    async fn relay_gateway_event_cannot_replay_a_different_requests_genuine_receipt() {
+        let signing_key = SigningKey::from_bytes(&[21u8; 32]);
+        let verifier = Arc::new(
+            SourceReceiptVerifier::from_hex_keys([hex::encode(
+                signing_key.verifying_key().as_bytes(),
+            )])
+            .expect("valid key"),
+        );
+        let mint = Arc::new(CountingMint::default());
+        let state = AppState {
+            mint: mint.clone(),
+            store: Arc::new(MemoryStore::default()),
+            api_key: Arc::from("secret"),
+            policy: Arc::new(AccountPolicy::unrestricted()),
+            receipt_verifier: verifier,
+        };
+
+        // A genuine receipt, correctly signed for request-1's real $0.60 COGS.
+        let base = event();
+        let genuine_receipt = signed_receipt(&signing_key, &base);
+
+        // Replay that EXACT receipt_hash + signature onto a different
+        // request claiming a 1000x larger COGS amount against the same
+        // payer. Pre-fix, `receipt_verify::verify` only checked the
+        // signature against the bare `receipt_hash` — unchanged by this
+        // substitution — so this would have incorrectly settled.
+        let mut forged = relay_gateway_event(genuine_receipt);
+        forged.idempotency_key = "idem-forged".into();
+        forged.request_id = "request-forged".into();
+        if let Some(receipt) = forged.source_settlement_receipt.as_mut() {
+            receipt.request_id = "request-forged".into();
+        }
+        forged.cogs_micros = 600_000_000;
+        if let Some(receipt) = forged.source_settlement_receipt.as_mut() {
+            receipt.amount_micros = 600_000_000;
+        }
+
+        let result = ingest_event(&state, forged).await;
+        assert!(
+            matches!(result, Err(LedgerlineError::Invalid(_))),
+            "a genuine receipt replayed onto a forged claim must be rejected, got {result:?}"
+        );
+        assert_eq!(
+            mint.0.load(Ordering::SeqCst),
+            0,
+            "no Mint settlement must occur for the rejected forged claim"
+        );
     }
 }
