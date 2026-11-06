@@ -2,7 +2,8 @@
 //!
 //! The Switchyard HTTP API (`/v1/*`), MCP endpoint (`/mcp`), OAuth 2.1
 //! authorization server (`/oauth/*`, `/.well-known/*`), `/admin` console,
-//! `llms.txt` and `openapi.json`, all on one axum router.
+//! `llms.txt`/`llms-full.txt`/`ai.txt`, `/catalog.md` and `openapi.json`,
+//! all on one axum router.
 
 pub mod config;
 pub mod http_util;
@@ -30,11 +31,14 @@ pub fn router(st: AppState) -> Router {
         .route("/healthz", get(meta::healthz))
         .route("/readyz", get(meta::readyz))
         .route("/llms.txt", get(meta::llms_txt))
+        .route("/llms-full.txt", get(meta::llms_full_txt))
+        .route("/ai.txt", get(meta::ai_txt))
         .route("/openapi.json", get(meta::openapi))
         .route("/sitemap.xml", get(meta::sitemap_xml))
         // Public signup + human catalog (items 6, 13)
         .route("/v1/auth/signup", post(signup::signup))
         .route("/catalog", get(catalog_page::html))
+        .route("/catalog.md", get(catalog_page::markdown))
         .route("/v1/catalog", get(catalog_page::as_json))
         // Tools
         .route("/v1/tools/search", get(tools::search))

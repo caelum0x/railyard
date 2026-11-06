@@ -71,6 +71,78 @@ pub async fn as_json(State(st): State<AppState>) -> Response {
     Json(catalog_json(&st)).into_response()
 }
 
+/// Renders `/catalog`'s real content as markdown, straight from the same
+/// `st.catalog` data `html()` below renders from (not a hand-copied
+/// duplicate, so the two can never drift) -- for AI crawlers/agents that
+/// read markdown far more reliably than rendered HTML. Same pattern already
+/// shipped for scribase.com/homeplan (`plans/scribase.md`/`plans/homeplan.md`
+/// 2026-11-06 entries).
+pub(crate) fn catalog_markdown(st: &AppState) -> String {
+    let base = &st.settings.public_url;
+    let mut sections = String::new();
+    for c in st.catalog.capabilities() {
+        let tools = st.catalog.tools_for_capability(&c.id);
+        if tools.is_empty() {
+            continue;
+        }
+        let mut rows = String::new();
+        for t in &tools {
+            rows.push_str(&format!(
+                "| `{}` | {} | {} | {} |\n",
+                t.id,
+                t.provider,
+                t.side_effect.as_str(),
+                price_label(&t.price),
+            ));
+        }
+        sections.push_str(&format!(
+            "## {}\n\n{}\n\n| Tool | Provider | Effect | Price |\n|---|---|---|---|\n{}\n",
+            c.title, c.description, rows,
+        ));
+    }
+    format!(
+        "# Switchyard catalog\n\n\
+One `sk-t0-` key reaches every tool below: our own products first, then free \
+and public routes, then your own keys. Every call names its cost in \
+micro-USD up front; failures are never billed.\n\n\
+Get a key: `POST {base}/v1/auth/signup {{\"org_name\": \"acme\"}}` -- no \
+operator in the loop, returns a full-scope key in the same response.\n\n\
+{sections}\n\
+## Related\n\n\
+- [llms.txt]({base}/llms.txt): the machine-readable index for this whole API.\n\
+- [openapi.json]({base}/openapi.json): the full OpenAPI 3.1 spec.\n"
+    )
+}
+
+/// `GET /catalog.md` -- markdown mirror of `/catalog`, headers per the
+/// shared mirror contract (`text/markdown`, `noindex, follow`,
+/// `Content-Location`/`Link: rel="canonical"` back to the real HTML page).
+pub async fn markdown(State(st): State<AppState>) -> Response {
+    let base = st.settings.public_url.clone();
+    let html_url = format!("{base}/catalog");
+    let body = catalog_markdown(&st);
+    let mut resp = (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/markdown; charset=utf-8",
+        )],
+        body,
+    )
+        .into_response();
+    let headers = resp.headers_mut();
+    headers.insert(
+        "X-Robots-Tag",
+        axum::http::HeaderValue::from_static("noindex, follow"),
+    );
+    if let Ok(location) = axum::http::HeaderValue::from_str(&html_url) {
+        headers.insert("Content-Location", location);
+    }
+    if let Ok(link) = axum::http::HeaderValue::from_str(&format!("<{html_url}>; rel=\"canonical\"")) {
+        headers.insert("Link", link);
+    }
+    resp
+}
+
 pub async fn html(State(st): State<AppState>) -> Response {
     let base = &st.settings.public_url;
     let mut sections = String::new();
@@ -103,7 +175,9 @@ pub async fn html(State(st): State<AppState>) -> Response {
     let doc = format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
 <meta name=\"description\" content=\"{desc}\">
+<meta name=\"ai-summary\" content=\"Toolgate (Switchyard) is the tool-calling rail next to Relay's model rail: one API key reaches a schema-typed catalog of AI tools, priced in micro-USD per call, with built-in spend caps and a hash-chained usage ledger. Part of Railyard, the open-source payments/fund-custody backbone for agent-built apps.\">
 <link rel=\"canonical\" href=\"{base}/catalog\">
+<link rel=\"alternate\" type=\"text/markdown\" href=\"{base}/catalog.md\">
 <meta property=\"og:type\" content=\"website\">
 <meta property=\"og:site_name\" content=\"Toolgate\">
 <meta property=\"og:title\" content=\"Switchyard catalog -- 24 capabilities, tools and live pricing\">
@@ -145,6 +219,7 @@ code{{color:#8fd6ff}}
 <h1>Switchyard catalog</h1>
 <p>One <code>sk-t0-</code> key reaches every tool below: our own products first, then free and public routes, then your own keys. Every call names its cost in micro-USD up front; failures are never billed.</p>
 <a class=\"cta\" href=\"{base}/v1/auth/signup\">Get a key -- POST /v1/auth/signup</a>
+&nbsp; <a href=\"{base}/catalog.md\" style=\"color:#9aa4b2\">catalog.md</a>
 &nbsp; <a href=\"{base}/llms.txt\" style=\"color:#9aa4b2\">llms.txt</a>
 &nbsp; <a href=\"{base}/openapi.json\" style=\"color:#9aa4b2\">openapi.json</a>
 </header>

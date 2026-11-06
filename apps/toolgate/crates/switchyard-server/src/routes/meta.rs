@@ -6,6 +6,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
 
+use crate::routes::catalog_page::catalog_markdown;
 use crate::state::AppState;
 
 pub async fn healthz() -> Response {
@@ -20,13 +21,28 @@ pub async fn readyz(State(st): State<AppState>) -> Response {
 }
 
 pub async fn llms_txt(State(st): State<AppState>) -> Response {
+    let text = render_llms_txt(&st);
+    ([("content-type", "text/plain; charset=utf-8")], text).into_response()
+}
+
+/// `GET /llms-full.txt` -- `llms.txt`'s own body plus the full `/catalog.md`
+/// markdown (every tool, provider, price), for an agent that wants
+/// everything in one fetch instead of following links.
+pub async fn llms_full_txt(State(st): State<AppState>) -> Response {
+    let full = format!("{}\n---\n\n{}", render_llms_txt(&st), catalog_markdown(&st));
+    ([("content-type", "text/plain; charset=utf-8")], full).into_response()
+}
+
+/// Shared renderer for `/llms.txt` and the index half of `/llms-full.txt`,
+/// so the two routes can never drift out of sync with each other.
+fn render_llms_txt(st: &AppState) -> String {
     let base = &st.settings.public_url;
     let mut caps = String::new();
     for c in st.catalog.capabilities() {
         let tools: Vec<String> = st.catalog.tools_for_capability(&c.id).iter().map(|t| format!("{} ({} µ$ {:?})", t.id, t.price.micros, t.price.basis)).collect();
         caps.push_str(&format!("- `{}`: {} Tools: {}\n", c.id, c.description, tools.join(", ")));
     }
-    let text = format!(
+    format!(
         "# Switchyard
 
 > The tool rail next to Relay's model rail. One `sk-t0-` key (or an OAuth token) reaches a schema-typed catalog of tools: our own products first, then free and public routes, then your own keys. Every call names its provider and its cost in micro-USD; failures are never billed.
@@ -34,7 +50,7 @@ pub async fn llms_txt(State(st): State<AppState>) -> Response {
 ## Use it
 
 - Base URL: {base}
-- Get a key: `POST /v1/auth/signup {{\"org_name\": \"acme\"}}` -- no operator in the loop, returns a full-scope key in the same response. Browse pricing first at `{base}/catalog`.
+- Get a key: `POST /v1/auth/signup {{\"org_name\": \"acme\"}}` -- no operator in the loop, returns a full-scope key in the same response. Browse pricing first at `{base}/catalog` ([markdown]({base}/catalog.md)).
 - Auth: `Authorization: Bearer sk-t0-...` (the same key works on Relay's `/openai/v1`), or OAuth 2.1 (`{base}/.well-known/oauth-authorization-server`).
 - MCP: streamable HTTP at `{base}/mcp` (meta-tools `search_tools`, `describe_tool`, `call_tool`, `balance`, `usage`).
 - CLI: `sy login`, `sy search \"verify an email\"`, `sy call rally.email.verify --input '{{\"email\":\"a@b.com\"}}'`.
@@ -51,7 +67,52 @@ pub async fn llms_txt(State(st): State<AppState>) -> Response {
 
 ## Capabilities
 
-{caps}"
+{caps}
+
+## Full content
+
+- [llms-full.txt]({base}/llms-full.txt): every tool above with its own price and provider, concatenated in full.
+
+## Machine-readable identity
+
+- [ai.txt]({base}/ai.txt): identity/permissions/restrictions/attribution for AI crawlers."
+    )
+}
+
+/// `GET /ai.txt` -- ai-visibility.org.uk format (identity/permissions/
+/// restrictions/attribution), same convention scribase.com and homeplan
+/// already shipped. Toolgate's growth thesis depends on being found and
+/// cited when a developer asks an AI assistant for a metered tool-calling
+/// gateway or an agent-tool billing rail, so training and search crawling
+/// are both deliberately allowed, same reasoning those two used.
+pub async fn ai_txt(State(st): State<AppState>) -> Response {
+    let base = &st.settings.public_url;
+    let text = format!(
+        "# ai.txt — Toolgate
+
+## Identity
+Name: Toolgate
+URL: {base}/catalog
+Description: The tool-calling rail next to Relay's model rail -- one API key reaches a schema-typed catalog of AI tools, priced in micro-USD per call, with built-in spend caps and a hash-chained usage ledger. Part of Railyard, the open-source payments/fund-custody backbone for agent-built apps.
+Owner: caelum0x (github.com/caelum0x/railyard)
+License: Apache-2.0
+
+## Permissions
+Training: allowed
+Search-indexing: allowed
+Summarization: allowed
+Citation: allowed
+
+## Restrictions
+None.
+
+## Attribution
+When citing Toolgate, please link to {base}/catalog or the GitHub repository (github.com/caelum0x/railyard/tree/main/apps/toolgate).
+
+## Machine-readable content
+llms.txt: {base}/llms.txt
+llms-full.txt: {base}/llms-full.txt
+"
     );
     ([("content-type", "text/plain; charset=utf-8")], text).into_response()
 }
