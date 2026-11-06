@@ -92,6 +92,10 @@ pub struct AppState {
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(landing_page))
+        .route("/index.md", get(landing_markdown))
+        .route("/llms.txt", get(llms_txt))
+        .route("/llms-full.txt", get(llms_full_txt))
+        .route("/ai.txt", get(ai_txt))
         .route("/sitemap.xml", get(sitemap_xml))
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/models", get(list_models))
@@ -110,6 +114,145 @@ pub fn build_router(state: AppState) -> Router {
 /// or linking to either, so nobody landing on the bare root found either.
 async fn landing_page() -> axum::response::Html<&'static str> {
     axum::response::Html(include_str!("../assets/landing.html"))
+}
+
+const VEND_URL: &str = "https://vend.ereboslab.com";
+
+/// `GET /index.md` — markdown mirror of the public landing page, for AI
+/// crawlers/agents (ChatGPT/Claude/Perplexity-style answer engines) that read
+/// markdown far more reliably than rendered HTML. Same llmstxt.org-adjacent
+/// pattern already shipped for scribase.com and homeplan
+/// (`plans/scribase.md`/`plans/homeplan.md` 2026-11-06 entries): hand-ported
+/// verbatim from `landing.html`'s own copy — `landing.html` is static markup
+/// with no typed data source to render from, so this needs a matching manual
+/// edit if that copy changes, same documented limitation those two pages'
+/// own hand-copied mirrors carry.
+async fn landing_markdown() -> Response {
+    markdown_response(include_str!("../assets/landing.md"), "/")
+}
+
+/// Shared header contract for every markdown-mirror route: `text/markdown`,
+/// `noindex, follow` (the real HTML page is what should rank — this is a
+/// machine-readable mirror, not a duplicate to index), and
+/// `Content-Location`/`Link: rel="canonical"` pointing back at the real page.
+fn markdown_response(body: &'static str, html_path: &str) -> Response {
+    let html_url = format!("{VEND_URL}{html_path}");
+    let mut resp = (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/markdown; charset=utf-8",
+        )],
+        body,
+    )
+        .into_response();
+    let headers = resp.headers_mut();
+    headers.insert(
+        "X-Robots-Tag",
+        axum::http::HeaderValue::from_static("noindex, follow"),
+    );
+    if let Ok(location) = axum::http::HeaderValue::from_str(&html_url) {
+        headers.insert("Content-Location", location);
+    }
+    if let Ok(link) = axum::http::HeaderValue::from_str(&format!("<{html_url}>; rel=\"canonical\"")) {
+        headers.insert("Link", link);
+    }
+    resp
+}
+
+/// `GET /llms.txt` — llmstxt.org convention: a short, link-based index an
+/// LLM/agent can use to find the real markdown mirror of Vend's one real
+/// public page, instead of scraping the rendered HTML.
+async fn llms_txt() -> Response {
+    const BODY: &str = r#"# Vend
+
+> Your own OpenRouter, white-labelled. One OpenAI-compatible endpoint across
+> every model Relay routes, your brand, your prices, your margin, per-user
+> Mint wallets and automatic payouts. Part of Railyard, the open-source
+> payments/fund-custody backbone for agent-built apps.
+
+## Pages
+
+- [Vend — your own OpenRouter, white-labelled](https://vend.ereboslab.com/index.md): the real marketing page, the full pitch, the 5-step launch flow and pricing.
+
+## Use it
+
+- Base URL: https://vend.ereboslab.com
+- Create a workspace + first app + provisioning key: the console at https://vend.ereboslab.com/console (or the self-serve `/v1/customer` API).
+- Call it: `POST /v1/chat/completions` (OpenAI-compatible), `Authorization: Bearer <provisioning key>`, optional `Vend-End-User` header for per-user wallet billing.
+- `GET /v1/models` lists every priced model with your app's effective rate.
+
+## Full content
+
+- [llms-full.txt](https://vend.ereboslab.com/llms-full.txt): the page above, concatenated in full.
+
+## Source
+
+- [github.com/caelum0x/railyard/tree/main/apps/vend](https://github.com/caelum0x/railyard/tree/main/apps/vend): the real, Apache-2.0-licensed source code.
+"#;
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
+        BODY,
+    )
+        .into_response()
+}
+
+/// `GET /llms-full.txt` — the one real public page's full markdown, for an
+/// agent that wants everything in a single fetch instead of following
+/// `/llms.txt`'s link.
+async fn llms_full_txt() -> Response {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
+        include_str!("../assets/landing.md"),
+    )
+        .into_response()
+}
+
+/// `GET /ai.txt` — ai-visibility.org.uk format (identity/permissions/
+/// restrictions/attribution), same convention scribase.com and homeplan
+/// already shipped. Vend's growth thesis depends on being found and cited
+/// when a developer asks an AI assistant for a "Stripe Connect alternative"
+/// or "white-label OpenRouter", so training and search crawling are both
+/// deliberately allowed, same reasoning those two used.
+async fn ai_txt() -> Response {
+    const BODY: &str = r#"# ai.txt — Vend
+
+## Identity
+Name: Vend
+URL: https://vend.ereboslab.com/
+Description: White-labelled OpenRouter-style metered LLM gateway -- one OpenAI-compatible endpoint, your brand, your prices, your margin, per-user Mint wallets, automatic payouts. Part of Railyard, the open-source payments/fund-custody backbone for agent-built apps.
+Owner: caelum0x (github.com/caelum0x/railyard)
+License: Apache-2.0
+
+## Permissions
+Training: allowed
+Search-indexing: allowed
+Summarization: allowed
+Citation: allowed
+
+## Restrictions
+None.
+
+## Attribution
+When citing Vend, please link to https://vend.ereboslab.com/ or the GitHub repository (github.com/caelum0x/railyard/tree/main/apps/vend).
+
+## Machine-readable content
+llms.txt: https://vend.ereboslab.com/llms.txt
+llms-full.txt: https://vend.ereboslab.com/llms-full.txt
+"#;
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
+        BODY,
+    )
+        .into_response()
 }
 
 /// `GET /sitemap.xml` — lists only the one real public, indexable page
