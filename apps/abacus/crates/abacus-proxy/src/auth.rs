@@ -125,8 +125,29 @@ pub async fn require_admin_key(State(state): State<AppState>, req: Request, next
     }
 }
 
-/// Accept either the ingress key (an agent reading its own receipt) or the
-/// operator key (console lookups).
+/// Accept either an agent's own derived key (scoped to the `X-Abacus-Agent` it
+/// presents, reading its own receipt) or the separate operator key (console /
+/// cross-agent lookups).
+///
+/// ## Real gap closed here (2026-11-06)
+///
+/// This used to accept the bare `ABACUS_API_KEY` directly, with no agent
+/// binding at all — documented at the time (README) as "routes with no agent
+/// header ... still take the bare master key, matching their existing
+/// single-ingress-secret contract." That was a real, if narrower, instance of
+/// the exact bug class `require_api_key` was fixed for: the master secret is
+/// supposed to be operator-only and never handed to an agent directly, so in
+/// practice this route was reachable only by the operator — but (1) it gave
+/// `ABACUS_API_KEY` itself (meant only for *deriving* per-agent keys) the same
+/// cross-agent blast radius as the separate, dedicated `ABACUS_ADMIN_API_KEY`,
+/// widening what a leaked ingress secret exposes beyond its stated purpose,
+/// and (2) it meant no properly-provisioned agent — which per the per-agent
+/// model only ever holds ITS OWN derived key, never the master secret — could
+/// actually use the endpoint this module's own doc comment says exists for
+/// "an agent reading its own spend." Now this route accepts exactly the same
+/// per-agent derived key `require_api_key` does (bound to the `X-Abacus-Agent`
+/// it names) or the admin key; the bare master secret alone no longer
+/// authenticates ANY route directly, closing that gap consistently.
 pub async fn require_ingress_or_admin_key(
     State(state): State<AppState>,
     req: Request,
@@ -137,13 +158,32 @@ pub async fn require_ingress_or_admin_key(
         .get(API_KEY_HEADER)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    let ingress = state.ingress_api_key.as_bytes();
-    let ingress_ok: bool = !ingress.is_empty() && bool::from(ingress.ct_eq(provided.as_bytes()));
     let admin_ok: bool = state
         .admin_api_key
         .as_deref()
         .filter(|k| !k.is_empty())
         .is_some_and(|k| bool::from(k.as_bytes().ct_eq(provided.as_bytes())));
+    let agent_header = req
+        .headers()
+        .get(AGENT_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty());
+    let ingress_ok: bool = match agent_header {
+        Some(agent_id) => {
+            !state.ingress_api_key.is_empty()
+                && bool::from(
+                    derive_agent_key(state.ingress_api_key.as_bytes(), agent_id)
+                        .as_bytes()
+                        .ct_eq(provided.as_bytes()),
+                )
+        }
+        // No `X-Abacus-Agent` ⇒ there is no agent identity to scope a derived
+        // key to; only the separate admin key authenticates an agent-less
+        // request on this route (handled by `admin_ok` above). The bare
+        // master secret is never accepted directly, on this route or any
+        // other.
+        None => false,
+    };
     if ingress_ok || admin_ok {
         next.run(req).await
     } else {

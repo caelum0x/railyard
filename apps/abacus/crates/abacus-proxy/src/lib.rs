@@ -79,7 +79,10 @@ pub fn build_router(state: AppState) -> Router {
             auth::require_api_key,
         ));
 
-    // Receipt lookup: an agent reading its own spend, or an operator.
+    // Receipt lookup: an agent reading its OWN spend (its derived key bound
+    // to its X-Abacus-Agent header, same model as require_api_key — see
+    // audit::get_receipt's ownership check), or an operator (admin key, no
+    // agent header, any receipt).
     let receipts = Router::new()
         .route("/v1/receipts/:request_id", get(audit::get_receipt))
         .route_layer(middleware::from_fn_with_state(

@@ -94,9 +94,18 @@ the operator and distributed only to that agent. `require_api_key` recomputes
 this per-agent key from the `X-Abacus-Agent` the caller claims and compares it
 to the presented `X-API-Key`, so one agent's key can never authenticate as a
 different `X-Abacus-Agent`: swapping the header without also knowing that
-other agent's derived key is a `401`, not a cross-agent spend/read. (Routes
-with no agent header, like `GET /v1/receipts/:request_id`, still take the bare
-master key, matching their existing single-ingress-secret contract.)
+other agent's derived key is a `401`, not a cross-agent spend/read.
+
+`GET /v1/receipts/:request_id` (an agent reading back its own settled
+receipt) uses the identical per-agent derived key + `X-Abacus-Agent` pair —
+**fixed 2026-11-06**: it used to accept the bare `ABACUS_API_KEY` directly
+with no agent binding at all (a real, narrower instance of the same bug
+class the two routes above were fixed for first); now it also enforces that
+the receipt returned actually belongs to the agent that authenticated
+(a mismatch reports the same `404` as "never existed", so an agent can't
+enumerate other agents' receipts by probing request ids). The bare master
+key is never accepted directly on any route, including this one — use
+`ABACUS_ADMIN_API_KEY` for cross-agent/operator reads instead.
 
 Operators use a SEPARATE key, `ABACUS_ADMIN_API_KEY` (min 24 chars, must differ
 from `ABACUS_API_KEY`; unset disables the operator API): `GET /v1/admin/overview`
