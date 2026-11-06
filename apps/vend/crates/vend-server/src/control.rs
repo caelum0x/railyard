@@ -22,7 +22,7 @@ use vend_core::error::VendError;
 use vend_core::ids::{AppId, SubKeyId, TenantId};
 use vend_core::money::MarkupPolicy;
 use vend_core::records::KeyScope;
-use vend_core::transport::{CheckoutRequest, MintTransport};
+use vend_core::transport::{CheckoutRequest, CreateAccountRequest, MintTransport};
 use vend_keys::KeyEnv;
 use vend_store::{
     AuditActorKind, AuditOutcome, BootstrapConfig, ControlPlaneRepo, CreateApp, CreateAppKey,
@@ -1062,6 +1062,40 @@ async fn customer_list_apps(
     result(state.repo.list_apps(&principal.tenant_id).await)
 }
 
+/// Overwrites `input.mint_account_id` with a FRESH Mint account Vend itself
+/// opens and owns, discarding whatever the caller sent.
+///
+/// A self-serve tenant admin must never dictate which Mint account funds
+/// their own app. `CreateApp.mint_account_id` is a bare client-supplied
+/// string with no ownership proof attached to it — the exact same
+/// cross-tenant fund-custody bug class [`verify_customer_owns_mint_account`]
+/// closes for end-user provisioning, just reachable here via app creation
+/// instead: without this, any tenant could set `mint_account_id` to an
+/// account id they merely *knew* (another tenant's real reserve, say), and
+/// every hold their new app's traffic opens under `tenant_reserve` funding
+/// would draw on that other account's money
+/// ([`vend_tenancy::funding_account_id`] reads `app.mint_account_id`
+/// directly). Every self-serve app gets a fresh account instead, the same
+/// pattern the self-serve signup flow already uses for a tenant's first app
+/// ([`crate::whitelabel::signup::create_workspace`]). The operator-only
+/// `/v1/control/tenants/:tenant_id/apps` route (`create_app` below, behind
+/// `ADMIN_TOKEN`) is untouched and keeps the hand-mapping capability, same
+/// asymmetry already documented on [`verify_customer_owns_mint_account`].
+async fn provision_self_serve_app_mint_account(
+    mint: &dyn MintTransport,
+    tenant_id: &TenantId,
+    mut input: CreateApp,
+) -> Result<CreateApp, VendError> {
+    let account = mint
+        .create_account(CreateAccountRequest {
+            kind: "org".into(),
+            owner_ref: Some(format!("vend:customer-app:{}", tenant_id.as_str())),
+        })
+        .await?;
+    input.mint_account_id = account.account_id;
+    Ok(input)
+}
+
 async fn customer_create_app(
     State(state): State<ControlState>,
     Extension(principal): Extension<CustomerPrincipal>,
@@ -1080,6 +1114,16 @@ async fn customer_create_app(
         return control_error(VendError::NotFound);
     };
     input.markup_policy.platform_fee_bps = platform_fee_bps;
+    input = match provision_self_serve_app_mint_account(
+        state.mint.as_ref(),
+        &principal.tenant_id,
+        input,
+    )
+    .await
+    {
+        Ok(input) => input,
+        Err(error) => return control_error(error),
+    };
     result(state.repo.create_app(&principal.tenant_id, input).await)
 }
 
@@ -2393,5 +2437,78 @@ mod tests {
         )
         .await;
         assert!(legit.is_ok(), "{legit:?}");
+    }
+
+    /// Second, separate entry point for the exact same unbound-
+    /// `mint_account_id` bug class the fix above closes for end-user
+    /// provisioning: `POST /v1/customer/apps` (`customer_create_app`) took a
+    /// bare `CreateApp.mint_account_id` straight from the client with no
+    /// ownership check at all, so a tenant could attribute a brand-new
+    /// app's `tenant_reserve` funding to another tenant's real Mint account
+    /// just by guessing/knowing its id. Proves
+    /// `provision_self_serve_app_mint_account` discards an attacker-supplied
+    /// id and substitutes a fresh account Vend itself just opened.
+    #[tokio::test]
+    async fn provision_self_serve_app_mint_account_discards_a_client_supplied_id() {
+        use vend_testkit::FakeMint;
+
+        let mint = FakeMint::new();
+        let tenant_id = TenantId::generate();
+
+        let attacker_supplied_account_id = "acct_some_other_tenants_real_wallet".to_string();
+        let input = CreateApp {
+            name: "evil app".into(),
+            model_allowlist: vec![],
+            zdr: false,
+            markup_policy: MarkupPolicy {
+                markup_bps: 0,
+                min_fee_micros: 0,
+                platform_fee_bps: 0,
+                funding_mode: vend_core::money::FundingMode::TenantReserve,
+            },
+            mint_account_id: attacker_supplied_account_id.clone(),
+        };
+
+        let provisioned = provision_self_serve_app_mint_account(&mint, &tenant_id, input)
+            .await
+            .expect("provisioning a fresh account must not fail");
+
+        assert_ne!(
+            provisioned.mint_account_id, attacker_supplied_account_id,
+            "the client-supplied mint_account_id must never reach the stored app row"
+        );
+        // The substituted account must be a REAL one Vend just opened via
+        // Mint (`get_account` succeeds) and owned by this exact tenant, not
+        // an unverified string.
+        let opened = mint
+            .get_account(&provisioned.mint_account_id)
+            .await
+            .expect("the substituted account must be a real Mint account");
+        assert_eq!(
+            opened.owner_ref.as_deref(),
+            Some(format!("vend:customer-app:{}", tenant_id.as_str()).as_str())
+        );
+
+        // Calling it again for the same tenant must mint a SECOND distinct
+        // account, not reuse/guess one — each app gets its own reserve.
+        let second = provision_self_serve_app_mint_account(
+            &mint,
+            &tenant_id,
+            CreateApp {
+                name: "second app".into(),
+                model_allowlist: vec![],
+                zdr: false,
+                markup_policy: MarkupPolicy {
+                    markup_bps: 0,
+                    min_fee_micros: 0,
+                    platform_fee_bps: 0,
+                    funding_mode: vend_core::money::FundingMode::TenantReserve,
+                },
+                mint_account_id: "also-ignored".into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_ne!(second.mint_account_id, provisioned.mint_account_id);
     }
 }
