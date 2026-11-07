@@ -36,6 +36,44 @@ fn signed_receipt(seed: u8) -> (String, String) {
     (hex::encode(hash), hex::encode(mint_key().sign(&hash).to_bytes()))
 }
 
+/// A genuine `SettlementAttestationProof` (Mint's `HoldSettlementAttestation`
+/// wire shape, see `passport_server::receipts`), signed by the same stand-in
+/// Mint key, binding these exact claim fields together — required by
+/// `/attest` since the 2026-11-07 fix (`receipts.rs` module docs).
+fn signed_attestation(
+    receipt_hash: &str,
+    operation: &str,
+    operation_hash: &str,
+    amount_micros: i64,
+    sequence: u64,
+) -> Value {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine as _;
+    use ed25519_dalek::Signer;
+    use sha2::{Digest, Sha256};
+
+    let payload = serde_json::to_vec(&json!({
+        "sequence": sequence,
+        "operation": operation,
+        "operation_hash": operation_hash,
+        "amount_micros": amount_micros,
+        "receipt_hash": receipt_hash,
+    }))
+    .unwrap();
+    let mut hasher = Sha256::new();
+    hasher.update(b"mint-hold-settlement-attestation-v1\0");
+    hasher.update(&payload);
+    let digest: [u8; 32] = hasher.finalize().into();
+    let signature = mint_key().sign(&digest);
+    json!({
+        "format": "mint-hold-settlement-attestation-v1",
+        "payload_base64url": URL_SAFE_NO_PAD.encode(&payload),
+        "digest_sha256": hex::encode(digest),
+        "signer_key_id": "mint-verifier-key-1",
+        "signature_hex": hex::encode(signature.to_bytes()),
+    })
+}
+
 fn harness() -> Harness {
     build_harness(false)
 }
@@ -362,6 +400,7 @@ async fn external_generation_attestation_is_locked_receipted_and_idempotent() {
     let h = attest_harness();
     let id = create_locked_character(&h.app).await;
     let (receipt_hash, signature) = signed_receipt(7);
+    let attestation = signed_attestation(&receipt_hash, "hold.capture", "op-hash", 990000, 42);
     let body = json!({
         "provider": "runway",
         "modality": "image",
@@ -379,7 +418,8 @@ async fn external_generation_attestation_is_locked_receipted_and_idempotent() {
                 "amount_micros": 990000,
                 "receipt_hash": receipt_hash,
                 "signature": signature
-            }
+            },
+            "attestation": attestation
         }
     });
     let uri = format!("/v1/passports/{id}/attest");
@@ -457,6 +497,7 @@ async fn external_attestation_rejects_forged_signature_and_receipt_replay() {
     let id = create_locked_character(&h.app).await;
     let uri = format!("/v1/passports/{id}/attest");
     let (receipt_hash, signature) = signed_receipt(3);
+    let attestation = signed_attestation(&receipt_hash, "hold.capture", "op", 1, 1);
     let body = |request_id: &str, sig: &str| {
         json!({
             "provider": "runway",
@@ -473,7 +514,8 @@ async fn external_attestation_rejects_forged_signature_and_receipt_replay() {
                     "amount_micros": 1,
                     "receipt_hash": receipt_hash,
                     "signature": sig
-                }
+                },
+                "attestation": attestation.clone()
             }
         })
     };
@@ -486,6 +528,46 @@ async fn external_attestation_rejects_forged_signature_and_receipt_replay() {
     // ...and cannot be replayed under a fresh request id.
     let (status, _) = send(&h.app, "POST", &uri, Some(API_KEY), Some(body("req-b", &signature))).await;
     assert_eq!(status, StatusCode::CONFLICT);
+}
+
+/// The exact attack fixed 2026-11-07: an owner holds a genuine
+/// `(receipt_hash, signature)` from their own real, small settlement and
+/// tries to attest a forged, much larger `amount_micros` alongside it. Before
+/// this fix `ReceiptVerifier::verify` only checked the signature over the
+/// bare `receipt_hash` — unrelated to `amount_micros` — so this would have
+/// been accepted and written verbatim into a permanent `GenerationRecord`.
+#[tokio::test]
+async fn external_attestation_rejects_a_genuine_receipt_with_a_forged_amount() {
+    let h = attest_harness();
+    let id = create_locked_character(&h.app).await;
+    let uri = format!("/v1/passports/{id}/attest");
+    let (receipt_hash, signature) = signed_receipt(5);
+    // A real attestation exists for the real $0.000001 settlement...
+    let attestation = signed_attestation(&receipt_hash, "hold.capture", "op", 1, 1);
+    let body = json!({
+        "provider": "runway",
+        "modality": "image",
+        "output_ref": "r2://asset",
+        "settled_at_ms": 1_787_854_400_000_i64,
+        "payment_evidence": {
+            "request_id": "req-forged-amount",
+            "payer_account": "menivor",
+            "receipt": {
+                "sequence": 1,
+                "operation": "hold.capture",
+                "operation_hash": "op",
+                // ...but the attacker claims a $1,000 payment alongside the
+                // SAME genuine receipt_hash/signature/attestation.
+                "amount_micros": 1_000_000_000,
+                "receipt_hash": receipt_hash,
+                "signature": signature
+            },
+            "attestation": attestation
+        }
+    });
+    let (status, error) = send(&h.app, "POST", &uri, Some(API_KEY), Some(body)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(error["error"]["code"], "invalid_passport");
 }
 
 #[tokio::test]

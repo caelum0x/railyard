@@ -48,6 +48,7 @@ impl RelayConditioningSink for FakeRelay {
                     receipt_hash: format!("receipt_hash_{n}"),
                     signature: format!("signed_receipt_{n}"),
                 },
+                attestation: None,
             }),
             output_text: Some(format!(
                 "fake output {n}: {}",
@@ -97,6 +98,7 @@ impl RelayConditioningSink for ReplayRelay {
                     receipt_hash: "receipt_hash_stable".into(),
                     signature: "signed_receipt_stable".into(),
                 },
+                attestation: None,
             }),
             output_text: Some("stable output".into()),
         })

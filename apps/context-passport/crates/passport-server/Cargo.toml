@@ -34,6 +34,12 @@ anyhow = { workspace = true }
 ed25519-dalek = "2"
 hex = { workspace = true }
 reqwest = { workspace = true }
+# Attestation-digest verification (`receipts::ReceiptVerifier::verify_bound`),
+# mirroring mint-server's `attestation::{attestation_digest,
+# hold_attestation_digest}` byte-for-byte so Mint's signed
+# `payload_base64url` verifies here without depending on mint-server.
+sha2 = { workspace = true }
+base64 = { workspace = true }
 
 [dev-dependencies]
 passport-testkit = { workspace = true }

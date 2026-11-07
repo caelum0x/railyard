@@ -289,6 +289,12 @@ fn payment_evidence(
             receipt_hash: receipt.hash,
             signature: receipt.sig,
         },
+        // Relay's `/v1/passport/generate` currently transports only the flat
+        // `AITP-Receipt` header, not Mint's bound `HoldSettlementAttestation`
+        // (see `passport_server::receipts::ReceiptVerifier::verify_bound`).
+        // `generate()`'s evidence stays trusted via the in-process
+        // `RelayConditioningSink` seam rather than this attestation.
+        attestation: None,
     })
 }
 
@@ -400,6 +406,7 @@ mod tests {
                 receipt_hash: "rh".into(),
                 signature: "sig".into(),
             },
+            attestation: None,
         };
         let body = json!({
             "inference_id": "0193f0a0-0000-7000-8000-000000000000",

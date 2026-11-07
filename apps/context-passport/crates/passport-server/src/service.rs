@@ -398,6 +398,14 @@ impl PassportService {
         // `RelayConditioningSink` implementation is injected.
         check_settlement_evidence(&principal, &evidence).map_err(PassportError::Relay)?;
         if let Some(verifier) = &self.receipt_verifier {
+            // Plain `verify`, not `verify_bound`: Relay's `/v1/passport/generate`
+            // transports only the legacy `AITP-Receipt` header today, not Mint's
+            // bound attestation (`passport_relay_client::payment_evidence`), so
+            // this evidence's `amount_micros`/`operation`/`sequence` are still
+            // trusted via the in-process `RelayConditioningSink` seam rather than
+            // independently bound to `receipt_hash`. This path inherits the gap
+            // `verify_bound` closes the moment a less-trusted
+            // `RelayConditioningSink` is wired in (see `receipts.rs` module docs).
             verifier.verify(&evidence).map_err(PassportError::Relay)?;
         }
 
@@ -536,7 +544,13 @@ impl PassportService {
                     .into(),
             )
         })?;
-        verifier.verify(&evidence).map_err(PassportError::Invalid)?;
+        // `verify_bound` (not the bare `verify`) because this evidence comes
+        // from an external caller: it additionally requires and checks Mint's
+        // signed attestation, so `amount_micros`/`operation`/`operation_hash`/
+        // `sequence` are proven to be the values Mint actually settled, not
+        // just claims traveling unbound alongside a genuine `receipt_hash`
+        // from an unrelated settlement (see `receipts.rs` module docs).
+        verifier.verify_bound(&evidence).map_err(PassportError::Invalid)?;
         // One settled receipt backs exactly one generation of this passport: a
         // genuine receipt cannot be replayed under a fresh request id.
         let record_id_for_request = format!("gen_ext_{}", evidence.request_id);

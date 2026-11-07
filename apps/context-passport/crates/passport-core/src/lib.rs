@@ -32,9 +32,10 @@ pub use ids::{new_artifact_id, new_generation_id, new_passport_id};
 pub use kind::PassportKind;
 pub use passport::{CreatePassport, Passport, PassportFilter, PassportView};
 pub use ports::{
-    ArtifactStore, CreateOutcome, MintMeter, MintMeterRequest, MintMeterResult, PassportStore, PaymentEvidence,
-    RelayConditioningSink, RelayGenerationRequest, RelayGenerationResult, RoyaltyInitiator,
-    RoyaltyTransferRequest, RoyaltyTransferResult, SettlementReceiptProof,
+    ArtifactStore, CreateOutcome, MintMeter, MintMeterRequest, MintMeterResult, PassportStore,
+    PaymentEvidence, RelayConditioningSink, RelayGenerationRequest, RelayGenerationResult,
+    RoyaltyInitiator, RoyaltyTransferRequest, RoyaltyTransferResult, SettlementAttestationProof,
+    SettlementReceiptProof,
 };
 pub use rights::{ConsentBasis, DisclosureLevel, Rights};
 pub use version::{PassportVersion, VersionStatus};

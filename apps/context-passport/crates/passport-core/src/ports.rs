@@ -135,11 +135,36 @@ pub struct SettlementReceiptProof {
     pub signature: String,
 }
 
+/// Mint's independently-verifiable `TransferAttestation`/
+/// `HoldSettlementAttestation` envelope (`mint-server::attestation`): the
+/// exact bytes Mint signed are `payload_base64url`, decoded and hashed with
+/// the format-specific domain separator, never reserialized. Its signature
+/// binds `receipt_hash` TOGETHER with `amount_micros`/`operation`/
+/// `operation_hash`/`sequence` under one digest, unlike `receipt.signature`
+/// (see [`SettlementReceiptProof`]), which only proves `receipt_hash` itself
+/// is genuine and says nothing about the fields claimed alongside it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementAttestationProof {
+    pub format: String,
+    pub payload_base64url: String,
+    pub digest_sha256: String,
+    pub signer_key_id: String,
+    pub signature_hex: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaymentEvidence {
     pub request_id: String,
     pub payer_account: String,
     pub receipt: SettlementReceiptProof,
+    /// Required for externally-submitted evidence (`POST
+    /// /v1/passports/:id/attest`) so `ReceiptVerifier::verify_bound` can
+    /// confirm `receipt.amount_micros`/`operation`/`operation_hash`/
+    /// `sequence` were the exact values Mint signed, not just that
+    /// `receipt.receipt_hash` itself is a genuine (but possibly unrelated)
+    /// Mint receipt.
+    #[serde(default)]
+    pub attestation: Option<SettlementAttestationProof>,
 }
 
 /// Transport seam to Relay (the provider fan-out gateway). Real reqwest impl in
